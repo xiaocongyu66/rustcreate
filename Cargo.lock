@@ -1481,7 +1481,6 @@ dependencies = [
  "mcv_render",
  "mcv_save",
  "mcv_worldgen",
- "wgpu",
  "winit",
 ]
 

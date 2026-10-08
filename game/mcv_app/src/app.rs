@@ -913,7 +913,8 @@ impl AppState {
             log::error!("gpu not ready");
             return;
         };
-        let mut runtime = GameRuntime::new(seed, device, queue, dir, mode);
+        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
+        let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
         if mode == GameMode::Creative {
             runtime.player.flying = true;
         }
@@ -1084,7 +1085,8 @@ impl AppState {
                 Err(_) => GameMode::Survival,
             }
         };
-        let runtime = GameRuntime::new(seed, device, queue, dir, mode);
+        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
+        let runtime = GameRuntime::new(seed, uploader, dir, mode);
         self.enter_game(runtime);
     }
 }

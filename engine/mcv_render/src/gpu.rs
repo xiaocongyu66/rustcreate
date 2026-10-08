@@ -40,6 +40,66 @@ pub struct RenderChunk {
     pub aabb: (Vec3, Vec3),
 }
 
+/// 网格上传器：游戏层只交出顶点/索引字节，拿回 [`RenderChunk`]。
+///
+/// 这是引擎把 wgpu 挡在游戏层之外的唯一入口——C++ mesher 产出裸字节，
+/// 本结构负责建 GPU 缓冲；游戏层因此不 `use wgpu`。水几何只上传独立索引
+/// 缓冲、复用 opaque 顶点缓冲（与既有渲染语义一致）。
+pub struct MeshUploader {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl MeshUploader {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self { device, queue }
+    }
+
+    fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {
+        let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("chunk-vb"),
+            size: (v.len() as u64).max(1),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        self.queue.write_buffer(&vb, 0, v);
+        vb.unmap();
+        let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("chunk-ib"),
+            size: (i.len() as u64 * 4).max(4),
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        self.queue.write_buffer(&ib, 0, bytemuck::cast_slice(i));
+        ib.unmap();
+        (vb, ib)
+    }
+
+    /// 由裸网格字节组装整块 [`RenderChunk`]（16×256×16 AABB，origin 传入）。
+    pub fn build_chunk(
+        &self,
+        origin: [f32; 3],
+        vbytes: &[u8],
+        ibytes: &[u32],
+        water_ibytes: Option<&[u32]>,
+    ) -> RenderChunk {
+        let (vertex_buf, index_buf) = self.vertex_index(vbytes, ibytes);
+        let water_index_buf = water_ibytes.map(|wi| self.vertex_index(&[], wi).1);
+        RenderChunk {
+            origin,
+            vertex_buf,
+            index_buf,
+            opaque_range: 0..ibytes.len() as u32,
+            water_index_buf,
+            water_range: 0..water_ibytes.map_or(0, <[u32]>::len) as u32,
+            aabb: (
+                Vec3::new(origin[0], 0.0, origin[2]),
+                Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),
+            ),
+        }
+    }
+}
+
 /// One HUD rectangle (pixels, top-left origin). `tex` selects the source:
 /// 0 = font atlas cell (glyph or the reserved solid-white cell 127),
 /// 1 = terrain array layer, 2 = GUI sprite sheet (MC 素材).

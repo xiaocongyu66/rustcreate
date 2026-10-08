@@ -23,7 +23,7 @@
 //! - `minecraft/font/unifont.zip`（含 unifont_page_*.png 位图字形）
 //! - `minecraft/font/unifont_jp.zip`、`minecraft/font/unifont_pua.zip`
 //! - jar 内 `assets/minecraft/font/include/unifont.json`（26.1 里 providers
-//!     为空壳，实际定义在资产 zip 与 default/uniform.json 字体定义中）
+//!   为空壳，实际定义在资产 zip 与 default/uniform.json 字体定义中）
 //!
 //! 中文真正上屏需要字体层后续接入 unifont 字形图集（或自带开源 CJK 位图
 //! 字体如 unifont 本尊，GPL+例外需评估）扩展 `mcv_render::font` 的码点覆盖。

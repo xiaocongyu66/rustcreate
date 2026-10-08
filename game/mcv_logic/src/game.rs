@@ -46,41 +46,32 @@ impl GameMode {
     }
 }
 
-/// GPU mesh produced by a [`ChunkMesher`].
-pub struct MeshGpu {
-    pub vertex_buf: wgpu::Buffer,
-    pub index_buf: wgpu::Buffer,
-    pub opaque_range: std::ops::Range<u32>,
-    /// Separate water index buffer + range (water is meshed per pass).
-    pub water: Option<(wgpu::Buffer, std::ops::Range<u32>)>,
-}
-
 /// Abstraction over the C++ mesher so the runtime wiring can land before
 /// the mesher itself merges.
 pub trait ChunkMesher: Send {
     /// `handles` = 3x3 neighbourhood, row-major (dz outer), center = [4].
-    fn build(&mut self, handles: &[Arc<ChunkHandle>; 9]) -> Option<MeshGpu>;
+    /// 返回引擎侧组装好的 [`RenderChunk`]（游戏层不触 wgpu，上传经
+    /// [`mcv_render::gpu::MeshUploader`]）。
+    fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk>;
 }
 
 /// Real mesher: C++ greedy mesh via mcv_mesher + GPU upload.
 pub struct CxxMesher {
     mesher: mcv_mesher::Mesher,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    uploader: mcv_render::gpu::MeshUploader,
 }
 
 impl CxxMesher {
-    pub fn new(budget: u64, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(budget: u64, uploader: mcv_render::gpu::MeshUploader) -> Self {
         Self {
             mesher: mcv_mesher::Mesher::new(budget).expect("mesh pool"),
-            device,
-            queue,
+            uploader,
         }
     }
 }
 
 impl ChunkMesher for CxxMesher {
-    fn build(&mut self, handles: &[Arc<ChunkHandle>; 9]) -> Option<MeshGpu> {
+    fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
         // Copy the 9 neighbourhoods out (locks taken one at a time).
         let mut voxels = vec![0u16; 9 * 65536];
         let mut lights = vec![0xF0; 9 * 65536]; // sky=15 until light wires in
@@ -97,39 +88,14 @@ impl ChunkMesher for CxxMesher {
         });
         let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
         let water = self.mesher.build(&slots, mcv_mesher::MESH_WATER).ok();
-        let to_gpu =
-            |buf: &mcv_ffi::CxxMeshBuffer| -> (wgpu::Buffer, wgpu::Buffer, std::ops::Range<u32>) {
-                let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: None,
-                    size: (buf.vertex_data().len() as u64).max(1),
-                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: true,
-                });
-                self.queue.write_buffer(&vb, 0, buf.vertex_data());
-                vb.unmap();
-                let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
-                    label: None,
-                    size: (buf.indices().len() as u64 * 4).max(4),
-                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: true,
-                });
-                self.queue
-                    .write_buffer(&ib, 0, bytemuck::cast_slice(buf.indices()));
-                ib.unmap();
-                let n = buf.indices().len() as u32;
-                (vb, ib, 0..n)
-            };
-        let (vertex_buf, index_buf, opaque_range) = to_gpu(&opaque);
-        let water = water.map(|w| {
-            let (vb, ib, range) = to_gpu(&w);
-            (vb, ib, range)
-        });
-        Some(MeshGpu {
-            vertex_buf,
-            index_buf,
-            opaque_range,
-            water: water.map(|(_, ib, r)| (ib, r)),
-        })
+        // 裸字节交给引擎上传；水的索引缓冲复用 opaque 顶点缓冲（既有语义）。
+        let origin = [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32];
+        Some(self.uploader.build_chunk(
+            origin,
+            opaque.vertex_data(),
+            opaque.indices(),
+            water.as_ref().map(|w| w.indices()),
+        ))
     }
 }
 
@@ -224,8 +190,7 @@ const THIRD_PERSON_DIST: f32 = 4.0;
 impl GameRuntime {
     pub fn new(
         seed: u64,
-        device: wgpu::Device,
-        queue: wgpu::Queue,
+        uploader: mcv_render::gpu::MeshUploader,
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
@@ -236,7 +201,7 @@ impl GameRuntime {
             player: Player::default(),
             input: InputState::default(),
             time_ticks: 6_000, // noon start
-            mesher: Box::new(CxxMesher::new(256 << 20, device.clone(), queue.clone())),
+            mesher: Box::new(CxxMesher::new(256 << 20, uploader)),
             save_dir,
             render_chunks: Vec::new(),
             spawned: false,
@@ -598,24 +563,8 @@ impl GameRuntime {
                     handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
                 }
             }
-            if let Some(mesh) = self.mesher.build(&handles) {
-                let origin = [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32];
-                let (water_index_buf, water_range) = match mesh.water {
-                    Some((ib, r)) => (Some(ib), r),
-                    None => (None, 0..0),
-                };
-                let rc = RenderChunk {
-                    origin,
-                    vertex_buf: mesh.vertex_buf,
-                    index_buf: mesh.index_buf,
-                    opaque_range: mesh.opaque_range,
-                    water_index_buf,
-                    water_range,
-                    aabb: (
-                        Vec3::new(origin[0], 0.0, origin[2]),
-                        Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),
-                    ),
-                };
+            if let Some(rc) = self.mesher.build(pos, &handles) {
+                let origin = rc.origin;
                 self.render_chunks
                     .retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
                 self.render_chunks.push(rc);
