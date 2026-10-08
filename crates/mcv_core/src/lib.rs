@@ -1,4 +1,11 @@
-//! Shared foundation: chunk layout, block registry, positions.
+//! Shared foundation: chunk layout, block registry, positions, task pool,
+//! chunk state machine.
+
+pub mod chunk;
+pub mod pool;
+
+pub use chunk::{ChunkHandle, Stage};
+pub use pool::TaskPool;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SY: usize = 256;
@@ -156,6 +163,15 @@ pub struct ChunkLight(pub Box<[u8; CHUNK_VOL]>);
 impl ChunkVoxels {
     pub fn filled(id: BlockId) -> Self {
         Self(Box::new([id; CHUNK_VOL]))
+    }
+
+    /// Raw byte view for FFI (BlockId is repr(transparent) over u8).
+    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
+        unsafe { std::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), CHUNK_VOL) }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        unsafe { std::slice::from_raw_parts(self.0.as_ptr().cast(), CHUNK_VOL) }
     }
 }
 

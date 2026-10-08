@@ -88,11 +88,21 @@ pub fn check_abi() {
     );
 }
 
+struct PoolInner {
+    raw: *mut McvPool,
+}
+
+impl Drop for PoolInner {
+    fn drop(&mut self) {
+        unsafe { mcv_pool_destroy(self.raw) };
+    }
+}
+
 /// RAII owner of a C++ mesh buffer pool. Thread-safe: the pool uses atomic
 /// free lists, so buffers may be acquired on worker threads and released on
 /// the main thread (or vice versa).
 pub struct MemPool {
-    raw: *mut McvPool,
+    inner: Arc<PoolInner>,
 }
 
 // The C++ pool is internally synchronized with atomics.
@@ -105,15 +115,13 @@ impl MemPool {
         if raw.is_null() {
             None
         } else {
-            Some(Self { raw })
+            Some(Self {
+                inner: Arc::new(PoolInner { raw }),
+            })
         }
     }
 
-    pub fn acquire(
-        self: &Arc<Self>,
-        vertex_cap: u32,
-        index_cap: u32,
-    ) -> Result<CxxMeshBuffer, i32> {
+    pub fn acquire(&self, vertex_cap: u32, index_cap: u32) -> Result<CxxMeshBuffer, i32> {
         let mut buf = McvMeshBuffer {
             vertex_data: std::ptr::null_mut(),
             indices: std::ptr::null_mut(),
@@ -123,11 +131,11 @@ impl MemPool {
             index_cap: 0,
             pool_class: 0,
         };
-        let rc = unsafe { mcv_meshbuf_acquire(self.raw, vertex_cap, index_cap, &mut buf) };
+        let rc = unsafe { mcv_meshbuf_acquire(self.inner.raw, vertex_cap, index_cap, &mut buf) };
         if rc == err::OK {
             Ok(CxxMeshBuffer {
                 raw: buf,
-                pool: Arc::clone(self),
+                _pool: Arc::clone(&self.inner),
             })
         } else {
             Err(rc)
@@ -137,31 +145,26 @@ impl MemPool {
     pub fn stats(&self) -> (u32, u64) {
         let (mut live, mut bytes) = (0u32, 0u64);
         unsafe {
-            mcv_pool_stats(self.raw, &mut live, &mut bytes);
+            mcv_pool_stats(self.inner.raw, &mut live, &mut bytes);
         }
         (live, bytes)
     }
 
     /// Makes this pool the active pool for `mcv_mesh_build` on the current
     /// thread. Returns a guard that restores the previous state on Drop.
-    pub fn activate(self: &Arc<Self>) -> ActivePool<'_> {
-        unsafe { mcv_set_active_pool(self.raw) };
+    pub fn activate(&self) -> ActivePool<'_> {
+        unsafe { mcv_set_active_pool(self.inner.raw) };
         ActivePool {
             _lifetime: PhantomData,
         }
     }
 }
 
-impl Drop for MemPool {
-    fn drop(&mut self) {
-        unsafe { mcv_pool_destroy(self.raw) };
-    }
-}
-
 /// Single-owner handle to pool memory. `Drop` releases it exactly once.
+/// The `_pool` field keeps the owning pool alive for the buffer's lifetime.
 pub struct CxxMeshBuffer {
     raw: McvMeshBuffer,
-    pool: Arc<MemPool>,
+    _pool: Arc<PoolInner>,
 }
 
 unsafe impl Send for CxxMeshBuffer {}
@@ -244,7 +247,7 @@ pub fn mesh_build_raw(
     voxels: &[Option<&[u8]>; 9],
     lights: &[Option<&[u8]>; 9],
     mesh_kind: u32,
-    pool: &Arc<MemPool>,
+    pool: &MemPool,
 ) -> Result<CxxMeshBuffer, i32> {
     let _active = pool.activate();
     let mut voxel_ptrs: [*const u8; 9] = [std::ptr::null(); 9];
@@ -279,7 +282,7 @@ pub fn mesh_build_raw(
     if rc == err::OK {
         Ok(CxxMeshBuffer {
             raw: buf,
-            pool: Arc::clone(pool),
+            _pool: Arc::clone(&pool.inner),
         })
     } else {
         Err(rc)

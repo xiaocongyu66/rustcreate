@@ -75,7 +75,7 @@ inline float fbm2(uint64_t seed, float x, float y, int octaves) {
     float amp = 1.0f;
     float norm = 0.0f;
     for (int i = 0; i < octaves; ++i) {
-        sum += value2(seed + static_cast<uint64_t>(i) * 0x1000_0000ull, x, y) * amp;
+        sum += value2(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y) * amp;
         norm += amp;
         amp *= 0.5f;
         x *= 2.0f;
@@ -90,7 +90,7 @@ inline float fbm3(uint64_t seed, float x, float y, float z, int octaves) {
     float amp = 1.0f;
     float norm = 0.0f;
     for (int i = 0; i < octaves; ++i) {
-        sum += value3(seed + static_cast<uint64_t>(i) * 0x1000_0000ull, x, y, z) * amp;
+        sum += value3(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y, z) * amp;
         norm += amp;
         amp *= 0.5f;
         x *= 2.0f;

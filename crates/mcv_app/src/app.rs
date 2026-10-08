@@ -108,7 +108,7 @@ struct Gpu {
 
 impl Gpu {
     async fn new(window: Arc<Window>) -> Result<Self, Box<dyn std::error::Error>> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance.create_surface(window.clone())?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -122,6 +122,7 @@ impl Gpu {
                 label: Some("mcv-device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::downlevel_defaults(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
             })
@@ -157,14 +158,13 @@ impl Gpu {
     }
 
     fn render(&self) {
+        use wgpu::CurrentSurfaceTexture as Out;
         let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(wgpu::SurfaceError::OutOfMemory) => {
-                log::error!("surface OOM");
-                return;
-            }
-            Err(_) => {
-                // Lost / outdated / timeout: reconfigure and retry next frame.
+            Out::Success(f) | Out::Suboptimal(f) => f,
+            // Transient: skip this frame.
+            Out::Timeout | Out::Occluded => return,
+            // Surface needs reconfiguration.
+            Out::Outdated | Out::Lost | Out::Validation => {
                 self.surface.configure(&self.device, &self.config);
                 return;
             }
