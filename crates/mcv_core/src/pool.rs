@@ -6,10 +6,18 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub type Job = Box<dyn FnOnce() + Send + 'static>;
 
-#[derive(Default)]
 pub struct PriorityQ<T> {
     hi: VecDeque<T>,
     lo: VecDeque<T>,
+}
+
+impl<T> Default for PriorityQ<T> {
+    fn default() -> Self {
+        Self {
+            hi: VecDeque::new(),
+            lo: VecDeque::new(),
+        }
+    }
 }
 
 impl<T> PriorityQ<T> {
