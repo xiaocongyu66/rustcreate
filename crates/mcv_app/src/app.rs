@@ -411,6 +411,20 @@ impl AppState {
         q
     }
 
+    /// 纹理包目录（texturepack/）：Android 优先 internal 数据目录下的
+    /// texturepack/（仅当目录存在），否则退回 <exe 目录>/texturepack/。
+    fn texture_pack_dir(&self) -> Option<std::path::PathBuf> {
+        if let Some(data) = &self.android_data {
+            let dir = data.join("texturepack");
+            if dir.is_dir() {
+                return Some(dir);
+            }
+        }
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("texturepack")))
+    }
+
     /// 存档根目录（saves/）。
     fn saves_root(&self) -> std::path::PathBuf {
         #[cfg(target_os = "android")]
@@ -657,11 +671,9 @@ impl ApplicationHandler for AppState {
         };
         match Self::init_gpu(window.clone()) {
             Ok((surface, config, depth, device, queue, max_extent)) => {
-                // 纹理包目录：<exe>/texturepack/（桌面）
-                let pack_dir = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|d| d.join("texturepack")));
-                let pack = pack_dir.filter(|d| d.is_dir());
+                // 纹理包目录:Android 用 <internal data>/texturepack/,
+                // 否则 <exe>/texturepack/(仅当目录存在时生效)
+                let pack = self.texture_pack_dir().filter(|d| d.is_dir());
                 self.cached_device = Some(device.clone());
                 self.cached_queue = Some(queue.clone());
                 self.renderer = Some(mcv_render::Renderer::new(
