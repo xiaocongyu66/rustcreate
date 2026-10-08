@@ -494,8 +494,95 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
+
+        // unifont CJK 位图图集（text.rs 经 OnceLock 用同一份 cjk.f16 生成 quad）
+        let unifont_view = {
+            let mk_white = || {
+                let t = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("unifont-placeholder"),
+                    size: wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue.write_texture(
+                    t.as_image_copy(),
+                    &[255, 255, 255, 255],
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4),
+                        rows_per_image: Some(1),
+                    },
+                    wgpu::Extent3d {
+                        width: 1,
+                        height: 1,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                t.create_view(&wgpu::TextureViewDescriptor::default())
+            };
+            match crate::text::unifont_shared() {
+                None => Some(mk_white()),
+                Some(u) => {
+                    let (rgba, w, h) = u.atlas_rgba();
+                    let max = device.limits().max_texture_dimension_2d;
+                    if w as u32 > max || h as u32 > max {
+                        log::warn!("unifont atlas {w}x{h} > device max {max}, CJK disabled");
+                        Some(mk_white())
+                    } else {
+                        let t = device.create_texture(&wgpu::TextureDescriptor {
+                            label: Some("unifont-atlas"),
+                            size: wgpu::Extent3d {
+                                width: w as u32,
+                                height: h as u32,
+                                depth_or_array_layers: 1,
+                            },
+                            mip_level_count: 1,
+                            sample_count: 1,
+                            dimension: wgpu::TextureDimension::D2,
+                            format: wgpu::TextureFormat::Rgba8Unorm,
+                            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                                | wgpu::TextureUsages::COPY_DST,
+                            view_formats: &[],
+                        });
+                        queue.write_texture(
+                            t.as_image_copy(),
+                            rgba,
+                            wgpu::TexelCopyBufferLayout {
+                                offset: 0,
+                                bytes_per_row: Some((w * 4) as u32),
+                                rows_per_image: Some(h as u32),
+                            },
+                            wgpu::Extent3d {
+                                width: w as u32,
+                                height: h as u32,
+                                depth_or_array_layers: 1,
+                            },
+                        );
+                        Some(t.create_view(&wgpu::TextureViewDescriptor::default()))
+                    }
+                }
+            }
+        };
 
         // ---- buffers ---------------------------------------------------
         let frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -593,6 +680,12 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::TextureView(&gui_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(
+                        unifont_view.as_ref().expect("unifont view"),
+                    ),
                 },
             ],
         });

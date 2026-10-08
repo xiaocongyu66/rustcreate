@@ -10,12 +10,13 @@ struct HudUniforms {
 @group(0) @binding(2) var hud_samp: sampler;
 @group(0) @binding(3) var terrain_tex: texture_2d_array<f32>;
 @group(0) @binding(4) var gui_tex: texture_2d<f32>;
+@group(0) @binding(5) var unifont_tex: texture_2d<f32>;
 
 struct VtxIn {
     @location(0) pos: vec2<f32>, // pixels, top-left origin
     @location(1) uv: vec2<f32>,  // 0..1 inside source cell
     @location(2) color: vec4<f32>,
-    @location(3) src: vec2<u32>, // x = texture id (0 字体, 1 地形, 2 GUI 精灵), y = layer
+    @location(3) src: vec2<u32>, // x = texture id (0 字体, 1 地形, 2 GUI 精灵, 3 unifont CJK), y = layer
 };
 
 struct VtxOut {
@@ -45,6 +46,8 @@ fn fs_hud(v: VtxOut) -> @location(0) vec4<f32> {
         texel = textureSample(font_tex, hud_samp, v.uv);
     } else if (v.src.x == 2u) {
         texel = textureSample(gui_tex, hud_samp, v.uv);
+    } else if (v.src.x == 3u) {
+        texel = textureSample(unifont_tex, hud_samp, v.uv);
     } else {
         texel = textureSample(terrain_tex, hud_samp, v.uv, v.src.y);
     }
