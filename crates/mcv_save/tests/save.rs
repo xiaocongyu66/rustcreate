@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use mcv_save::{chunk_local, chunk_region, rle_decode, rle_encode, LevelMeta, RegionFile};
 
 /// Deterministic pseudo-random voxel buffer with mixed run lengths
@@ -45,7 +43,7 @@ fn rle_rejects_truncated() {
 
 #[test]
 fn region_roundtrip() {
-    let dir = PathBuf::from(std::env::temp_dir().join("mcv_region_test"));
+    let dir = std::env::temp_dir().join("mcv_region_test");
     let _ = std::fs::remove_dir_all(&dir);
     let mut region = RegionFile::open(&dir, 0, 0).expect("open");
 

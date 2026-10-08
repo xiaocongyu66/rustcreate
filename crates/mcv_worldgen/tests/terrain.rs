@@ -68,7 +68,7 @@ fn bedrock_floor_and_sea_water() {
             let vox = voxels_of(&t);
             assert_eq!(vox[vidx(0, 0, 0)], BEDROCK);
             assert_eq!(vox[vidx(15, 0, 15)], BEDROCK);
-            if vox.iter().any(|&b| b == WATER) {
+            if vox.contains(&WATER) {
                 saw_water = true;
             }
         }

@@ -46,9 +46,11 @@ struct Vtx {
     flags: u8,
 }
 
+#[allow(clippy::almost_complete_range)]
+#[allow(unknown_lints, clippy::manual_chunks)]
 fn decode(buf: &CxxMeshBuffer) -> Vec<Vtx> {
     buf.vertex_data()
-        .chunks_exact(24)
+        .chunks(24)
         .map(|b| {
             let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
             Vtx {

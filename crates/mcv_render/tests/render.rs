@@ -7,6 +7,7 @@
 use glam::{Vec3, Vec4};
 use mcv_render::gpu::{HudQuad, RenderChunk, Scene, TERRAIN_STRIDE};
 use mcv_render::{font, Camera, OffscreenTarget};
+use wgpu::util::DeviceExt;
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -42,6 +43,7 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
     ];
     let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
     RenderChunk {
+        water_index_buf: None,
         origin: [0.0, 0.0, 0.0],
         vertex_buf: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("test-vbuf"),
@@ -65,6 +67,7 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
         power_preference: wgpu::PowerPreference::None,
         compatible_surface: None,
         force_fallback_adapter: false,
+        apply_limit_buckets: false,
     }))
     .expect("no adapter: install mesa-vulkan-drivers for lavapipe");
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -174,7 +177,7 @@ fn terrain_sky_and_hud_render() {
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
     target.enqueue_copy(&mut encoder);
-    device.queue().submit([encoder.finish()]);
+    queue.submit([encoder.finish()]);
     let rgba = target.read_pixels(&device);
 
     let (green_share, blue_share) = sample_stats(&rgba, extent.width, extent.height);

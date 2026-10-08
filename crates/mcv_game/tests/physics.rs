@@ -76,7 +76,7 @@ fn free_fall_lands() {
 /// 2. 无地板 600 步：水中下沉终端 2 m/s，|vel.y| ≤ 4。
 #[test]
 fn terminal_velocity_bounded() {
-    let mut world = TestWorld::new();
+    let world = TestWorld::new();
     let mut p = ground_player(0.5, 20.0, 0.5);
 
     for _ in 0..600 {
@@ -155,7 +155,7 @@ fn wall_no_tunneling() {
 }
 
 /// 5. raycast：眼位向 -Y 命中脚下 STONE（法线 +Y）；空中向 +X 无命中；
-/// 水/空气穿透、花可命中。
+///    水/空气穿透、花可命中。
 #[test]
 fn raycast_hits_and_misses() {
     let mut world = TestWorld::new();
@@ -192,7 +192,7 @@ fn raycast_hits_and_misses() {
 }
 
 /// 6. can_place_block：脚下格（STONE）不可放、面前一格可放、
-/// 与玩家重叠或已是实体方块不可放。
+///    与玩家重叠或已是实体方块不可放。
 #[test]
 fn can_place_block_rules() {
     let mut world = TestWorld::new();

@@ -9,8 +9,8 @@ fn payload_layout() {
     let mip1 = atlas::LAYERS * 8 * 8 * 4;
     assert_eq!(p.len(), mip0 + mip1);
     // layer 0 is debug magenta placeholder; grass_top (1) must be greenish
-    let g = p[(1 * atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4 + 1];
-    let r = p[(1 * atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4];
+    let g = p[(atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4 + 1];
+    let r = p[(atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4];
     assert!(g > r, "grass_top center must be green-dominant");
 }
 
@@ -48,8 +48,8 @@ fn mip_downsample() {
     let mut mip1 = vec![0u8; atlas::LAYERS * 8 * 8 * 4];
     atlas::generate_mip1(&mip0, &mut mip1);
     // per-channel average of the four top-left pixels of layer 1
-    let src = 1 * atlas::TILE_PX * atlas::TILE_PX * 4;
-    let dst = 1 * 8 * 8 * 4; // layer 1 base in the downsampled buffer
+    let src = atlas::TILE_PX * atlas::TILE_PX * 4;
+    let dst = 8 * 8 * 4; // layer 1 base in the downsampled buffer
     for c in 0..4 {
         // 2x2 block: (0,0),(1,0),(0,1),(1,1) — row stride is TILE_PX*4 bytes
         let offs = [0usize, 4, atlas::TILE_PX * 4, atlas::TILE_PX * 4 + 4];

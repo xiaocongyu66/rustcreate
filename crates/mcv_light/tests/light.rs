@@ -31,6 +31,7 @@ impl World {
         w
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn box_fill(
         &mut self,
         x0: usize,
