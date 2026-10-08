@@ -1268,6 +1268,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcv_entity"
+version = "0.1.0"
+dependencies = [
+ "glam",
+ "log",
+ "mcv_core",
+ "mcv_game",
+ "mcv_item",
+]
+
+[[package]]
 name = "mcv_ffi"
 version = "0.1.0"
 dependencies = [

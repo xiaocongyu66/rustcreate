@@ -16,6 +16,8 @@ mcv_mesher = { path = "crates/mcv_mesher" }
 mcv_render = { path = "crates/mcv_render" }
 mcv_game = { path = "crates/mcv_game" }
 mcv_save = { path = "crates/mcv_save" }
+mcv_entity = { path = "crates/mcv_entity" }
+mcv_item = { path = "crates/mcv_item" }
 
 wgpu = "=30.0.1"
 winit = { version = "=0.30.13", features = ["android-native-activity"] }
