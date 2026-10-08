@@ -119,7 +119,7 @@ fn sample_stats(rgba: &[u8], w: u32, h: u32) -> (f64, f64) {
 
 #[test]
 fn terrain_sky_and_hud_render() {
-    let (device, _queue, mut renderer) = setup();
+    let (device, queue, mut renderer) = setup();
     let extent = wgpu::Extent3d {
         width: 320,
         height: 240,

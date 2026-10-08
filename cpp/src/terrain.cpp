@@ -59,19 +59,20 @@ inline int floor_div(int v, int d) {
 // peaks_valleys fold applied to the ridge channel).
 float base_height(uint64_t seed, float wx, float wz) {
     const float cont =
-        mcvnoise::fbm2(seed ^ kSeedCont, wx / 700.0f, wz / 700.0f, 3) * 2.0f -
+        mcvnoise::fbm2(seed ^ kSeedCont, wx / 256.0f, wz / 256.0f, 3) * 2.0f -
         1.0f;  // [-1, 1]
     const float r =
-        mcvnoise::fbm2(seed ^ kSeedRidge, wx / 220.0f, wz / 220.0f, 4) * 2.0f -
+        mcvnoise::fbm2(seed ^ kSeedRidge, wx / 110.0f, wz / 110.0f, 4) * 2.0f -
         1.0f;
     const float ridge = std::max(0.0f, mcvnoise::peaks_valleys(r));
     const float inland = std::clamp(cont * 1.6f + 0.15f, 0.0f, 1.0f);
     const float det =
-        (mcvnoise::fbm2(seed ^ kSeedDetail, wx / 40.0f, wz / 40.0f, 3) * 2.0f -
+        (mcvnoise::fbm2(seed ^ kSeedDetail, wx / 24.0f, wz / 24.0f, 3) * 2.0f -
          1.0f) *
         3.0f;
-    return static_cast<float>(kSEA) + 2.0f + cont * 38.0f +
-           ridge * inland * 46.0f + det;
+    // 基准抬高 +4：均值柱面 ~SEA+17，平原为主、湖泊为辅
+    return static_cast<float>(kSEA) + 4.0f + cont * 26.0f +
+           ridge * inland * 38.0f + det;
 }
 
 // Forest density mask in [0, 1]: 0 = plains, 1 = dense forest.
