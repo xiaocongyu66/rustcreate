@@ -21,23 +21,27 @@ const UNBREAKABLE: f32 = f32::INFINITY;
 fn hardness_matches_mc_26_1() {
     // (我们的方块名, MC 26.1 方块, strength 硬度)
     let table: &[(&str, &str, f32)] = &[
-        ("air", "air", 0.0),                              // instabreak/air
-        ("stone", "stone", 1.5),                          // strength(1.5, 6.0)
-        ("dirt", "dirt", 0.5),                            // strength(0.5)
-        ("grass", "grass_block", 0.6),                    // strength(0.6)
-        ("sand", "sand", 0.5),                            // strength(0.5)
-        ("water", "water", 100.0),                        // strength(100.0)
-        ("log", "oak_log", 2.0),                          // logProperties: strength(2.0)
-        ("leaves", "oak_leaves", 0.2),                    // leavesProperties: strength(0.2)
-        ("planks", "oak_planks", 2.0),                    // strength(2.0, 3.0)
-        ("cobble", "cobblestone", 2.0),                   // strength(2.0, 6.0)
-        ("bedrock", "bedrock", UNBREAKABLE),              // strength(-1, 3600000)
+        ("air", "air", 0.0),                 // instabreak/air
+        ("stone", "stone", 1.5),             // strength(1.5, 6.0)
+        ("dirt", "dirt", 0.5),               // strength(0.5)
+        ("grass", "grass_block", 0.6),       // strength(0.6)
+        ("sand", "sand", 0.5),               // strength(0.5)
+        ("water", "water", 100.0),           // strength(100.0)
+        ("log", "oak_log", 2.0),             // logProperties: strength(2.0)
+        ("leaves", "oak_leaves", 0.2),       // leavesProperties: strength(0.2)
+        ("planks", "oak_planks", 2.0),       // strength(2.0, 3.0)
+        ("cobble", "cobblestone", 2.0),      // strength(2.0, 6.0)
+        ("bedrock", "bedrock", UNBREAKABLE), // strength(-1, 3600000)
         // 复合外观方块：本体按 grass_block 0.6（雪层 strength(0.1) 属独立方块）
         ("snow_grass", "grass_block(覆雪)", 0.6),
-        ("flower_red", "poppy", 0.0),                     // instabreak
-        ("flower_yellow", "dandelion", 0.0),              // instabreak
+        ("flower_red", "poppy", 0.0),        // instabreak
+        ("flower_yellow", "dandelion", 0.0), // instabreak
     ];
-    assert_eq!(table.len(), mcv_core::BLOCKS.len(), "对照表应覆盖全部注册方块");
+    assert_eq!(
+        table.len(),
+        mcv_core::BLOCKS.len(),
+        "对照表应覆盖全部注册方块"
+    );
     for &(ours, mc, h) in table {
         let def = by_name(ours);
         assert_eq!(def.hardness, h, "方块 {ours}（MC: {mc}）硬度应为 {h}");
@@ -49,7 +53,11 @@ fn hardness_matches_mc_26_1() {
 #[test]
 fn light_emit_matches_mc_26_1() {
     for def in mcv_core::BLOCKS.iter() {
-        assert_eq!(def.light_emit, 0, "{} 在 MC 26.1 中不发光，应为 0", def.name);
+        assert_eq!(
+            def.light_emit, 0,
+            "{} 在 MC 26.1 中不发光，应为 0",
+            def.name
+        );
     }
 }
 
@@ -79,19 +87,19 @@ fn bedrock_is_unbreakable() {
 fn flags_match_mc_26_1() {
     // (方块名, solid, opaque, liquid)
     let table: &[(&str, bool, bool, bool)] = &[
-        ("air", false, false, false),         // noCollision()
+        ("air", false, false, false), // noCollision()
         ("stone", true, true, false),
         ("dirt", true, true, false),
         ("grass", true, true, false),
         ("sand", true, true, false),
-        ("water", false, false, true),        // noCollision() + liquid()
+        ("water", false, false, true), // noCollision() + liquid()
         ("log", true, true, false),
-        ("leaves", true, false, false),       // 有碰撞但 noOcclusion()
+        ("leaves", true, false, false), // 有碰撞但 noOcclusion()
         ("planks", true, true, false),
         ("cobble", true, true, false),
         ("bedrock", true, true, false),
-        ("snow_grass", true, true, false),    // 本体 grass_block：solid + occluding
-        ("flower_red", false, false, false),  // noCollision()
+        ("snow_grass", true, true, false), // 本体 grass_block：solid + occluding
+        ("flower_red", false, false, false), // noCollision()
         ("flower_yellow", false, false, false),
     ];
     for &(name, solid, opaque, liquid) in table {
