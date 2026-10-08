@@ -74,11 +74,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/mcv.exe, README.md -DestinationPath ${{ matrix.artifact }}.zip
+          mkdir bundle; Copy-Item target/x86_64-pc-windows-msvc/release/mcv.exe bundle/; Copy-Item README.md bundle/; Copy-Item texturepack bundle/ -Recurse
+          Compress-Archive -Path bundle/* -DestinationPath ${{ matrix.artifact }}.zip
       - name: Package (unix)
         if: runner.os != 'Windows' && !matrix.android
         run: |
-          tar czf ${{ matrix.artifact }}.tar.gz -C target/${{ matrix.target }}/release mcv -C "$GITHUB_WORKSPACE" README.md
+          tar czf ${{ matrix.artifact }}.tar.gz -C target/${{ matrix.target }}/release mcv -C "$GITHUB_WORKSPACE" README.md texturepack
       - name: Rename apk
         if: matrix.android
         run: |
