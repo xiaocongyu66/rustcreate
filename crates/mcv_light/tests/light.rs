@@ -375,7 +375,14 @@ fn golden_sky_source_column_transmission() {
     }
 
     // 树叶截断源柱：15 → 14（入叶格）→ 13 → 12 …
-    for (y, expect) in [(62u32, 15u8), (61, 14), (60, 13), (59, 12), (58, 11), (57, 10)] {
+    for (y, expect) in [
+        (62u32, 15u8),
+        (61, 14),
+        (60, 13),
+        (59, 12),
+        (58, 11),
+        (57, 10),
+    ] {
         assert_eq!(sky(&c, 8, y as usize, 8), expect, "树叶柱 y={y}");
     }
 
@@ -401,13 +408,25 @@ fn golden_sky_through_material_columns() {
     // 格本身，49..46 为板下洞窟中的柱内序列。
     const CASES: [(u8, [(u32, u8); 6]); 4] = [
         // 石头：板上方 15，材料格及其下全挡（15-15=0）。
-        (STONE, [(51, 15), (50, 0), (49, 0), (48, 0), (47, 0), (46, 0)]),
+        (
+            STONE,
+            [(51, 15), (50, 0), (49, 0), (48, 0), (47, 0), (46, 0)],
+        ),
         // 树叶 damp=1：15 → 14 → 13 → …
-        (LEAVES, [(51, 15), (50, 14), (49, 13), (48, 12), (47, 11), (46, 10)]),
+        (
+            LEAVES,
+            [(51, 15), (50, 14), (49, 13), (48, 12), (47, 11), (46, 10)],
+        ),
         // 水 damp=1（26.1 LiquidBlock；不是旧版的每格 -3）。
-        (WATER, [(51, 15), (50, 14), (49, 13), (48, 12), (47, 11), (46, 10)]),
+        (
+            WATER,
+            [(51, 15), (50, 14), (49, 13), (48, 12), (47, 11), (46, 10)],
+        ),
         // 花（玻璃类 damp=0）：不截断源柱，整列 15 全透射。
-        (FLOWER_RED, [(51, 15), (50, 15), (49, 15), (48, 15), (47, 15), (46, 15)]),
+        (
+            FLOWER_RED,
+            [(51, 15), (50, 15), (49, 15), (48, 15), (47, 15), (46, 15)],
+        ),
     ];
 
     for (material, expected) in CASES {
@@ -449,14 +468,23 @@ fn golden_sky_through_material_columns() {
 fn golden_light_constants_match_26_1() {
     // ---- 透光（lightDampening → mcv_light::opacity 查表）----
     let opaque = [
-        1u8, 2, 3, 4, 6, 8, 9, 10, 11, // stone dirt grass sand log planks cobble bedrock snow_grass
+        1u8, 2, 3, 4, 6, 8, 9, 10,
+        11, // stone dirt grass sand log planks cobble bedrock snow_grass
     ];
     for id in opaque {
         assert_eq!(opacity(BlockId(id)), 15, "id={id} 实心整方块应 damp=15");
     }
     assert_eq!(opacity(BlockId(0)), 0, "空气 damp=0");
-    assert_eq!(opacity(BlockId(WATER)), 1, "水 damp=1（LiquidBlock 截断源柱）");
-    assert_eq!(opacity(BlockId(LEAVES)), 1, "树叶 damp=1（LeavesBlock 覆盖值）");
+    assert_eq!(
+        opacity(BlockId(WATER)),
+        1,
+        "水 damp=1（LiquidBlock 截断源柱）"
+    );
+    assert_eq!(
+        opacity(BlockId(LEAVES)),
+        1,
+        "树叶 damp=1（LeavesBlock 覆盖值）"
+    );
     assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（玻璃同类）");
     assert_eq!(opacity(BlockId(13)), 0, "黄花 damp=0");
     assert_eq!(opacity(BlockId(99)), 15, "未注册 id 保守按全挡");

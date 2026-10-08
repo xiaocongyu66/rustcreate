@@ -197,7 +197,25 @@ pub struct GameRuntime {
     pub render_dist: i32,
     /// 鼠标/触摸灵敏度倍率。
     pub sens: f32,
+    /// 视角：F5 循环 第一→第三后→第三前（MC 26.1 GameRenderer 顺序）。
+    pub cam_type: CameraType,
+    /// 行为音效播放器（静音回退由 app 装配，见 set_audio）。
+    pub audio: mcv_audio::AudioManager,
+    /// 脚步触发：自上次音效以来水平移动距离（格）。
+    step_dist: f32,
 }
+
+/// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum CameraType {
+    #[default]
+    FirstPerson,
+    ThirdPersonBack,
+    ThirdPersonFront,
+}
+
+/// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
+const THIRD_PERSON_DIST: f32 = 4.0;
 
 impl GameRuntime {
     pub fn new(
@@ -229,7 +247,24 @@ impl GameRuntime {
             hardcore_death: false,
             render_dist: RENDER_DIST,
             sens: 1.0,
+            cam_type: CameraType::default(),
+            audio: mcv_audio::AudioManager::silent(mcv_audio::default_sounds_dir()),
+            step_dist: 0.0,
         }
+    }
+
+    /// 装配真实音频后端（app 层 open 成功后注入；失败保持 silent 降级）。
+    pub fn set_audio(&mut self, audio: mcv_audio::AudioManager) {
+        self.audio = audio;
+    }
+
+    /// F5 循环视角：第一 → 第三后 → 第三前（26.1 顺序）。
+    pub fn cycle_camera(&mut self) {
+        self.cam_type = match self.cam_type {
+            CameraType::FirstPerson => CameraType::ThirdPersonBack,
+            CameraType::ThirdPersonBack => CameraType::ThirdPersonFront,
+            CameraType::ThirdPersonFront => CameraType::FirstPerson,
+        };
     }
 
     /// Loads player state + world time from level.meta (if present).
@@ -322,7 +357,7 @@ impl GameRuntime {
     }
 
     pub fn camera(&self, aspect: f32) -> Camera {
-        Camera {
+        let mut cam = Camera {
             pos: self.player.pos,
             yaw: self.player.yaw,
             pitch: self.player.pitch,
@@ -330,7 +365,30 @@ impl GameRuntime {
             aspect,
             near: 0.1,
             far: (self.render_dist * 16) as f32 * 1.6,
+        };
+        if self.cam_type != CameraType::FirstPerson {
+            // 视眼 = pos + EYE_HEIGHT；第三人称沿视线平移，遇方块拉近
+            //（MC GameRenderer 的 camera-clip 行为简化为 DDA 钳距）。
+            let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+            let d = cam.dir();
+            let sign = if self.cam_type == CameraType::ThirdPersonFront {
+                1.0
+            } else {
+                -1.0
+            };
+            let mut dist = THIRD_PERSON_DIST;
+            let view = WorldView {
+                chunks: &self.chunks,
+            };
+            if let Some((hit, _)) = dda_hit(&view, eye, d * sign, THIRD_PERSON_DIST + 0.5) {
+                let t = (Vec3::new(hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5)
+                    - eye)
+                    .dot(d * sign);
+                dist = dist.min((t - 0.3).max(0.5));
+            }
+            cam.pos = self.player.pos + d * (sign * dist);
         }
+        cam
     }
 
     /// Request missing chunks in a spiral around the player (a few per call),
@@ -665,6 +723,64 @@ impl GameRuntime {
         }
         self.mobs.retain(|m| m.health > 0.0);
 
+        // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
+        {
+            let f = self.camera(1.0).dir();
+            let f = Vec3::new(f.x, 0.0, f.z)
+                .try_normalize()
+                .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
+            let r = f.cross(Vec3::Y);
+            let i = &self.input;
+            let mut wish = Vec3::ZERO;
+            if i.forward {
+                wish += f;
+            }
+            if i.back {
+                wish -= f;
+            }
+            if i.right {
+                wish += r;
+            }
+            if i.left {
+                wish -= r;
+            }
+            let wish_dir = wish.normalize_or_zero();
+            let was_air = !self.player.on_ground;
+            let fall_v = self.player.vel.y.min(0.0);
+            let before = self.player.pos;
+            let in_water = self.in_water(&view);
+            let step_input = mcv_game::StepInput {
+                wish_dir,
+                jump: i.jump,
+                in_water,
+                sneak: i.sneak,
+            };
+            mcv_game::step(&view, &mut self.player, &step_input);
+            // ---- 行为音效：脚步 / 落地 ----
+            let moved = (self.player.pos - before).length();
+            self.step_dist += moved;
+            if self.player.on_ground && was_air && fall_v < -3.0 {
+                let p = self.player.pos;
+                self.audio.play_at(
+                    mcv_audio::SoundId::LandFall,
+                    [p.x, p.y, p.z],
+                    [p.x, p.y, p.z],
+                    0.5,
+                );
+            }
+            if self.player.on_ground && self.step_dist > 2.2 {
+                self.step_dist = 0.0;
+                let p = self.player.pos;
+                let under = view
+                    .block(BlockPos::new(p.x as i32, (p.y - 0.5) as i32, p.z as i32))
+                    .0;
+                if let Some(sid) = step_sound(under) {
+                    self.audio
+                        .play_at(sid, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
+                }
+            }
+        }
+
         // ---- 虚空死亡（y < -10）----
         if self.player.pos.y < -10.0 {
             if self.mode == GameMode::Hardcore {
@@ -873,8 +989,21 @@ impl GameRuntime {
             } else {
                 0
             });
+            let old = handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx];
+            // 破坏按原方块发声，放置按新方块发声（26.1 GameRenderer 行为音）
+            let snd_vid = if place { new_id.0 } else { old };
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+            if old != 0 || place {
+                if let Some(sid) = dig_sound(snd_vid) {
+                    let p = [
+                        target.x as f32 + 0.5,
+                        target.y as f32 + 0.5,
+                        target.z as f32 + 0.5,
+                    ];
+                    self.audio.play_at(sid, p, [eye.x, eye.y, eye.z], 1.0);
+                }
+            }
         }
     }
 
@@ -882,56 +1011,118 @@ impl GameRuntime {
         &self.render_chunks
     }
 
-    /// HUD: crosshair + hotbar + debug line.
-    pub fn build_hud(&self, width: f32, height: f32) -> Vec<HudQuad> {
+    /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），
+    /// `gui` 为 None 时整体回退旧程序化绘制；触屏摇杆始终程序化。
+    pub fn build_hud(
+        &self,
+        width: f32,
+        height: f32,
+        gui: Option<&mcv_render::gui::SpriteSheet>,
+    ) -> Vec<HudQuad> {
         let mut quads = Vec::new();
-        // crosshair
-        let (cx, cy) = (width * 0.5 - 1.0, height * 0.5 - 8.0);
-        quads.push(text::rect(cx, cy, 2.0, 16.0, [1.0, 1.0, 1.0, 0.75]));
-        quads.push(text::rect(
-            width * 0.5 - 8.0,
-            height * 0.5 - 1.0,
-            16.0,
-            2.0,
-            [1.0, 1.0, 1.0, 0.75],
-        ));
-        // hotbar
-        let slot = 40.0;
-        let total = slot * 9.0;
-        let x0 = width * 0.5 - total * 0.5;
-        let y0 = height - slot - 8.0;
-        quads.push(text::rect(
-            x0 - 2.0,
-            y0 - 2.0,
-            total + 4.0,
-            slot + 4.0,
-            [0.1, 0.1, 0.1, 0.6],
-        ));
-        for (i, &id) in HOTBAR.iter().enumerate() {
-            let x = x0 + i as f32 * slot;
-            quads.push(text::rect(
-                x + 1.0,
-                y0 + 1.0,
-                slot - 2.0,
-                slot - 2.0,
-                [0.25, 0.25, 0.28, 0.8],
-            ));
-            if id != 0 {
-                quads.push(text::tile_icon(
-                    mcv_core::BLOCKS[id as usize].tiles[2],
-                    x + 5.0,
-                    y0 + 5.0,
-                    slot - 10.0,
-                ));
+        let s = mcv_render::gui_scale(height);
+        let white = [1.0, 1.0, 1.0, 1.0];
+        let sel = self.player.sel_slot % 9;
+        if let Some(g) = gui {
+            // 准星：15x15 居中（MC crosshair.png）
+            if let Some(q) = g.sprite_full(
+                "crosshair",
+                (width - 15.0 * s) * 0.5,
+                (height - 15.0 * s) * 0.5,
+                15.0 * s,
+                15.0 * s,
+                [1.0, 1.0, 1.0, 0.85],
+            ) {
+                quads.push(q);
             }
-            if i == self.player.sel_slot % 9 {
+            // 快捷栏：hotbar.png 182x22，选中框 24x23（外扩 1px）
+            quads.extend(g.sprite_full(
+                "hotbar",
+                width * 0.5 - 91.0 * s,
+                height - 22.0 * s,
+                182.0 * s,
+                22.0 * s,
+                white,
+            ));
+            quads.extend(g.sprite_full(
+                "hotbar_sel",
+                width * 0.5 - 92.0 * s + sel as f32 * 20.0 * s,
+                height - 23.0 * s,
+                24.0 * s,
+                23.0 * s,
+                white,
+            ));
+            for (i, &id) in HOTBAR.iter().enumerate() {
+                if id != 0 {
+                    quads.push(text::tile_icon(
+                        mcv_core::BLOCKS[id as usize].tiles[2],
+                        width * 0.5 - 88.0 * s + i as f32 * 20.0 * s,
+                        height - 19.0 * s,
+                        16.0 * s,
+                    ));
+                }
+            }
+            // 心（左上）与饥饿（右上镜像）：Player 尚无血量/饥饿字段，
+            // 按任务要求以满值 20 占位；行距/间距见 NOTES-ui.md。
+            let x_left = width * 0.5 - 91.0 * s;
+            let x_right = width * 0.5 + 91.0 * s;
+            let y_base = height - 39.0 * s;
+            for i in 0..10 {
+                let hx = x_left + i as f32 * 8.0 * s;
+                let fx = x_right - i as f32 * 8.0 * s - 9.0 * s;
+                quads.extend(g.sprite_full("heart_container", hx, y_base, 9.0 * s, 9.0 * s, white));
+                quads.extend(g.sprite_full("heart_full", hx, y_base, 9.0 * s, 9.0 * s, white));
+                quads.extend(g.sprite_full("food_empty", fx, y_base, 9.0 * s, 9.0 * s, white));
+                quads.extend(g.sprite_full("food_full", fx, y_base, 9.0 * s, 9.0 * s, white));
+            }
+        } else {
+            // 回退：旧程序化准星 + 快捷栏
+            let (cx, cy) = (width * 0.5 - 1.0, height * 0.5 - 8.0);
+            quads.push(text::rect(cx, cy, 2.0, 16.0, [1.0, 1.0, 1.0, 0.75]));
+            quads.push(text::rect(
+                width * 0.5 - 8.0,
+                height * 0.5 - 1.0,
+                16.0,
+                2.0,
+                [1.0, 1.0, 1.0, 0.75],
+            ));
+            let slot = 40.0;
+            let total = slot * 9.0;
+            let x0 = width * 0.5 - total * 0.5;
+            let y0 = height - slot - 8.0;
+            quads.push(text::rect(
+                x0 - 2.0,
+                y0 - 2.0,
+                total + 4.0,
+                slot + 4.0,
+                [0.1, 0.1, 0.1, 0.6],
+            ));
+            for (i, &id) in HOTBAR.iter().enumerate() {
+                let x = x0 + i as f32 * slot;
                 quads.push(text::rect(
-                    x - 1.0,
-                    y0 - 1.0,
-                    slot + 2.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 0.9],
+                    x + 1.0,
+                    y0 + 1.0,
+                    slot - 2.0,
+                    slot - 2.0,
+                    [0.25, 0.25, 0.28, 0.8],
                 ));
+                if id != 0 {
+                    quads.push(text::tile_icon(
+                        mcv_core::BLOCKS[id as usize].tiles[2],
+                        x + 5.0,
+                        y0 + 5.0,
+                        slot - 10.0,
+                    ));
+                }
+                if i == sel {
+                    quads.push(text::rect(
+                        x - 1.0,
+                        y0 - 1.0,
+                        slot + 2.0,
+                        2.0,
+                        [1.0, 1.0, 1.0, 0.9],
+                    ));
+                }
             }
         }
         // 触屏控件（仅在收到过触摸事件后显示）
@@ -1163,4 +1354,28 @@ fn dda_hit(
         }
     }
     None
+}
+
+/// 挖掘/放置音效材质映射（BLOCKS 表序：0air 1stone 2dirt 3grass 4sand 5water
+/// 6log 7leaves 8planks 9cobble 10bedrock 11snow_grass 12/13花）。
+/// 26.1 素材库无 dig/dirt 组，泥土/草/沙共用 grass 音组（见 mcv_audio 注释）。
+fn dig_sound(vid: u8) -> Option<mcv_audio::SoundId> {
+    use mcv_audio::SoundId as S;
+    match vid {
+        1 | 9 | 10 => Some(S::DigStone),
+        2 | 3 | 4 | 7 | 11 => Some(S::DigDirt),
+        6 | 8 => Some(S::DigWood),
+        _ => None,
+    }
+}
+
+/// 脚步材质映射：草方块踩草地音，沙/石踩石头音，木板/原木踩木头音。
+fn step_sound(vid: u8) -> Option<mcv_audio::SoundId> {
+    use mcv_audio::SoundId as S;
+    match vid {
+        1 | 4 | 9 | 10 => Some(S::StepStone),
+        2 | 3 | 7 | 11 => Some(S::StepGrass),
+        6 | 8 => Some(S::StepWood),
+        _ => None,
+    }
 }

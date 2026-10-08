@@ -2,6 +2,7 @@
 
 pub mod consts;
 pub mod interact;
+pub mod keymap;
 pub mod mining;
 pub mod physics;
 pub mod raycast;

@@ -1,0 +1,16 @@
+{
+  "_comment": "DEVELOP_ONLY — 本文件是自维护补充表（非 Mojang 官方内容）。收录官方 en_us/zh_cn 中不存在、但引擎 UI 需要的 key（多为官方全称的短标签变体）。key 统一用 mcv. 前缀避免与官方命名空间冲突。",
+  "mcv.selectWorld.title":    { "en": "Select World",             "zh": "选择世界" },
+  "mcv.createWorld.create":   { "en": "Create World",             "zh": "创建世界" },
+  "mcv.mode.survival":        { "en": "Survival",                 "zh": "生存" },
+  "mcv.mode.creative":        { "en": "Creative",                 "zh": "创造" },
+  "mcv.mode.hardcore":        { "en": "Hardcore",                 "zh": "极限" },
+  "mcv.createWorld.mode":     { "en": "Mode: %s",                 "zh": "模式：%s" },
+  "mcv.options.renderDistanceChunk": { "en": "Render Distance: %s Chunks", "zh": "渲染距离：%s 区块" },
+  "mcv.createWorld.hardcoreDesc":    { "en": "Like Survival, but death deletes the world", "zh": "同生存，死亡即删除世界" },
+  "mcv.options.sensitivityScale":    { "en": "Sensitivity: %sx", "zh": "灵敏度：%sx" },
+  "mcv.createWorld.survivalDesc":    { "en": "Gather resources, build, explore", "zh": "收集资源、建造、冒险" },
+  "mcv.createWorld.creativeDesc":    { "en": "Fly, instant mining, invincible", "zh": "飞行、瞬间挖掘、不受伤害" },
+  "mcv.options.clouds":              { "en": "Clouds", "zh": "云朵" },
+  "mcv.options.languageTitle":       { "en": "Language", "zh": "语言" }
+}

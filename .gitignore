@@ -5,3 +5,5 @@ saves/
 crates/mcv_app/assets/texturepack/
 crates/mcv_app/assets/sounds/
 crates/mcv_app/assets/manifest.txt
+ci/.cache/
+__pycache__/

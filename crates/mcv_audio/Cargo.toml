@@ -1,0 +1,14 @@
+[package]
+name = "mcv_audio"
+description = "纯 Rust 游戏音效播放器(behavior sound effects):tinyaudio 输出后端 + symphonia 解码"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 输出后端:tinyaudio 2.x(纯 Rust,Android AAudio / Windows DirectSound / Linux ALSA,无 C、无 JNI)
+tinyaudio = "2.0"
+# 解码:symphonia(纯 Rust)。ogg+vorbis 覆盖全部开发期素材;wav+pcm 为后续兼容预留。
+# 锁 0.5.5:0.6.x 改了 feature 组织与 API 面,本 crate 按 0.5.5 签名编写。
+symphonia = { version = "0.5.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm"] }
+log = { workspace = true }

@@ -37,7 +37,7 @@ pub struct MobDef {
     pub attack_damage: f32,
     /// ARMOR attribute.
     pub armor: f32,
-    /// FOLLOW_RANGE (Zombie 35).
+    /// FOLLOW_RANGE（26.1 基础值 16，Mob.java:162；仅 Zombie 覆写 35，Zombie.java:132）
     pub follow_range: f32,
     /// SPEED attribute (movement_speed; ×43.17 ≈ m/s since player 0.1=4.317).
     pub speed_attr: f32,
@@ -61,40 +61,42 @@ pub static MOBS: [MobDef; 7] = [
         xp: 5,
         half_size: [0.3, 0.95, 0.3],
     },
-    // Skeleton: health 20, ATTACK 2.0 (bow), ARMOR 0, SPEED 0.25
+    // Skeleton.java/AbstractSkeleton.java — health 20(默认), ATTACK 2.0(弓, 近战兜底),
+    // ARMOR 0, SPEED 0.25, FOLLOW 16(基础值, AbstractSkeleton 未覆写)
     MobDef {
         name: "skeleton",
         kind: MobKind::Skeleton,
         health: 20.0,
         attack_damage: 2.0,
         armor: 0.0,
-        follow_range: 35.0,
+        follow_range: 16.0,
         speed_attr: 0.25,
         hostile: true,
         xp: 5,
         half_size: [0.35, 0.99, 0.35],
     },
-    // Creeper: health 20, no melee ATTACK (explosion), SPEED 0.25
+    // Creeper.java:77-79 — health 20(默认), 近战无伤害(爆炸怪), SPEED 0.25, FOLLOW 16(基础值)
     MobDef {
         name: "creeper",
         kind: MobKind::Creeper,
         health: 20.0,
         attack_damage: 0.0,
         armor: 0.0,
-        follow_range: 35.0,
+        follow_range: 16.0,
         speed_attr: 0.25,
         hostile: true,
         xp: 5,
         half_size: [0.3, 0.85, 0.3],
     },
-    // Spider: health 16, ATTACK 2.0(?), SPEED 0.3
+    // Spider.java:88-90 — health 16(MAX_HEALTH 覆写), ATTACK 2.0(Monster 默认, Attributes.java:14),
+    // SPEED 0.3, FOLLOW 16(基础值)
     MobDef {
         name: "spider",
         kind: MobKind::Spider,
         health: 16.0,
         attack_damage: 2.0,
         armor: 0.0,
-        follow_range: 35.0,
+        follow_range: 16.0,
         speed_attr: 0.3,
         hostile: true,
         xp: 5,

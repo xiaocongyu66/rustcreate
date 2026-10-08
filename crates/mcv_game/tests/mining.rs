@@ -117,7 +117,10 @@ fn bare_hand_penalty_and_tool_multiplier() {
     );
     let ratio = t_stone_bare / t_stone_wood;
     assert!(
-        close(ratio, (MODIFIER_INCORRECT / MODIFIER_CORRECT) * TOOL_SPEED_WOOD),
+        close(
+            ratio,
+            (MODIFIER_INCORRECT / MODIFIER_CORRECT) * TOOL_SPEED_WOOD
+        ),
         "比值 {ratio}"
     );
     // 速度对但工具不对（如木锄挖石）：只吃倍率、不吃 30 档。
@@ -260,10 +263,7 @@ fn correct_tool_requirement_table() {
     let requires = [STONE, COBBLE];
     let free = [DIRT, LOG, PLANKS, FLOWER_RED];
     for id in requires {
-        assert!(
-            requires_correct_tool(bid(id)),
-            "{id} 应需要正确工具"
-        );
+        assert!(requires_correct_tool(bid(id)), "{id} 应需要正确工具");
         assert!(!has_correct_tool_for_drops(bid(id), &HeldTool::BARE_HAND));
         assert!(has_correct_tool_for_drops(
             bid(id),

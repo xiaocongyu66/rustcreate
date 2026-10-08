@@ -1,13 +1,18 @@
 //! Mobs: definitions, spawn rules (NaturalSpawner, MC 26.1), combat math
-//! (Player.attack / LivingEntity.hurt / CombatRules). All constants from
-//! /root/mc-ref/NOTES-2.md with source line references.
+//! (Player.attack / LivingEntity.hurt / CombatRules), hostile AI state machine
+//! (Goal-system equivalent, simplified) and death drops.
+//! All constants from /root/mc-ref/NOTES-mobs.md & NOTES-2.md (source line refs).
 
+pub mod ai;
 pub mod combat;
 pub mod defs;
+pub mod drops;
 pub mod spawner;
 
+pub use ai::{ai_table, AiAction, Brain, MobAiTable, MobState, Percept};
 pub use defs::{MobDef, MobId, MOBS};
-pub use spawner::{SpawnCategory, SpawnRule, SPAWN_CAPS};
+pub use drops::{death_drops, DropEvent};
+pub use spawner::{SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned, SPAWN_CAPS};
 
 use glam::Vec3;
 
@@ -26,6 +31,8 @@ pub struct Mob {
     /// Ticks idle (despawn accounting).
     pub idle_ticks: u64,
     pub burning: bool,
+    /// AI 状态机（每只一份）。
+    pub brain: Brain,
 }
 
 impl Mob {
@@ -41,6 +48,7 @@ impl Mob {
             last_hurt: 0.0,
             idle_ticks: 0,
             burning: false,
+            brain: Brain::new(),
         }
     }
 

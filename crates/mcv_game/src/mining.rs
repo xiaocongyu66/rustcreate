@@ -120,12 +120,7 @@ pub fn has_correct_tool_for_drops(id: BlockId, tool: &HeldTool) -> bool {
 ///
 /// 返回 `0.0`：不可挖（基岩，MC hardness == -1 / 本引擎 INFINITY；
 /// 或速度 ≤ 0）；返回 `f32::INFINITY`：硬度 ≤ 0 的瞬间破坏方块（花等）。
-pub fn progress_per_tick(
-    id: BlockId,
-    tool: &HeldTool,
-    on_ground: bool,
-    submerged: bool,
-) -> f32 {
+pub fn progress_per_tick(id: BlockId, tool: &HeldTool, on_ground: bool, submerged: bool) -> f32 {
     let h = hardness(id);
     if h.is_infinite() {
         return 0.0; // MC: destroySpeed == -1 → return 0
@@ -174,12 +169,7 @@ fn scale_by_dt(per_tick: f32, dt: f32) -> f32 {
 
 /// 预期总挖掘时长（秒）：`hardness × modifier × MC_TICK / speed`。
 /// `INFINITY` = 不可挖；`0.0` = 瞬间破坏。用于数值对照与 HUD 预估。
-pub fn break_seconds(
-    id: BlockId,
-    tool: &HeldTool,
-    on_ground: bool,
-    submerged: bool,
-) -> f32 {
+pub fn break_seconds(id: BlockId, tool: &HeldTool, on_ground: bool, submerged: bool) -> f32 {
     let per = progress_per_tick(id, tool, on_ground, submerged);
     if per == 0.0 {
         f32::INFINITY

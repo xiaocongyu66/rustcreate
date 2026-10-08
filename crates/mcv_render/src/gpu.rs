@@ -9,6 +9,8 @@ use wgpu::util::DeviceExt;
 use crate::camera::Camera;
 use crate::font;
 use crate::frustum::Frustum;
+use crate::gui::SpriteSheet;
+use crate::player_mesh::{self, PlayerVertex, PART_COUNT, PLAYER_STRIDE, SKIN_LAYERS};
 use mcv_core::atlas;
 
 pub const TERRAIN_STRIDE: usize = 24;
@@ -40,7 +42,7 @@ pub struct RenderChunk {
 
 /// One HUD rectangle (pixels, top-left origin). `tex` selects the source:
 /// 0 = font atlas cell (glyph or the reserved solid-white cell 127),
-/// 1 = terrain array layer.
+/// 1 = terrain array layer, 2 = GUI sprite sheet (MC 素材).
 pub struct HudQuad {
     pub x: f32,
     pub y: f32,
@@ -51,6 +53,8 @@ pub struct HudQuad {
     pub color: [f32; 4],
     pub tex: u32,
     pub layer: u32,
+    /// 绕 quad 中心的旋转角(弧度,splash 文字用);常规 quad 传 0。
+    pub rot: f32,
 }
 
 pub struct Scene<'a> {
@@ -63,6 +67,10 @@ pub struct Scene<'a> {
     pub height: f32,
     pub chunks: &'a [RenderChunk],
     pub hud: &'a [HudQuad],
+    /// 云：(资源, 设置)；None 或 enabled=false 不画（天空后、地形前）。
+    pub cloud: Option<(&'a crate::Clouds, crate::CloudSettings)>,
+    /// 玩家模型：(12 部位模型矩阵, 皮肤层 0=steve 1=alex)；第三人称时传入。
+    pub player: Option<(&'a [glam::Mat4; PART_COUNT], u32)>,
 }
 
 pub struct Renderer {
@@ -81,9 +89,28 @@ pub struct Renderer {
     frame_bind: wgpu::BindGroup,
     hud_bind: wgpu::BindGroup,
     sky_bind: wgpu::BindGroup,
+    /// MC GUI 精灵表(texturepack/gui/);None = 回退程序化绘制。
+    gui: Option<SpriteSheet>,
+    player_pipeline: wgpu::RenderPipeline,
+    player_bind_layout: wgpu::BindGroupLayout,
+    player_uniform: wgpu::Buffer,
+    player_vbuf: wgpu::Buffer,
+    player_ibuf: wgpu::Buffer,
+    player_bind: wgpu::BindGroup,
+    skins_loaded: bool,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
+
+/// 玩家管线 uniform:view_proj + 12 部位模型矩阵(mat4x4 align 16,无填充)。
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+pub struct PlayerUniforms {
+    pub view_proj: [[f32; 4]; 4],
+    pub models: [[[f32; 4]; 4]; PART_COUNT],
+}
+
+const _: () = assert!(size_of::<PlayerUniforms>() == 832);
 
 fn terrain_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -147,6 +174,32 @@ fn hud_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
         ],
     }
 }
+
+fn player_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
+    wgpu::VertexBufferLayout {
+        array_stride: PLAYER_STRIDE as wgpu::BufferAddress,
+        step_mode: wgpu::VertexStepMode::Vertex,
+        attributes: &[
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Float32x3,
+                offset: 0,
+                shader_location: 0,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Unorm8x2,
+                offset: 12,
+                shader_location: 1,
+            },
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Uint32x2,
+                offset: 16,
+                shader_location: 2,
+            },
+        ],
+    }
+}
+
+const _: () = assert!(size_of::<PlayerVertex>() == PLAYER_STRIDE);
 
 impl Renderer {
     pub fn new(
@@ -228,7 +281,9 @@ impl Renderer {
         });
 
         // ---- font texture ---------------------------------------------
-        let font_data = font::build_texture_data();
+        // 优先 MC ascii.png,失败回退程序化字体(见 font.rs)
+        let (font_data, font_widths, _mc_font) = font::load_atlas(texture_pack_dir);
+        font::install_widths(font_widths);
         let font_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("font"),
             size: wgpu::Extent3d {
@@ -269,6 +324,63 @@ impl Renderer {
             queue.submit([enc.finish()]);
         }
         let font_view = font_tex.create_view(&wgpu::TextureViewDescriptor::default());
+
+        // ---- GUI 精灵表(texturepack/gui/)-----------------------------
+        // 缺素材时建 1x1 占位纹理,gui 字段为 None → 上层回退程序化绘制。
+        let gui = texture_pack_dir.and_then(|dir| SpriteSheet::load(dir));
+        let (gui_rgba, gui_w, gui_h) = match &gui {
+            Some(s) => (s.rgba.clone(), s.w, s.h),
+            None => (vec![0u8; 4], 1, 1),
+        };
+        let gui_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gui-sprites"),
+            size: wgpu::Extent3d {
+                width: gui_w,
+                height: gui_h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        {
+            let bpr = gui_w as usize * 4;
+            // COPY_BUFFER_ALIGN = 256:staging 行需补齐到 256 字节
+            let padded_bpr = bpr.div_ceil(256) * 256;
+            let mut padded = vec![0u8; padded_bpr * gui_h as usize];
+            for row in 0..gui_h as usize {
+                let s = row * bpr..(row + 1) * bpr;
+                let d = row * padded_bpr..row * padded_bpr + bpr;
+                padded[d].copy_from_slice(&gui_rgba[s]);
+            }
+            let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("gui-staging"),
+                contents: &padded,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(padded_bpr),
+                        rows_per_image: Some(gui_h),
+                    },
+                },
+                gui_tex.as_image_copy(),
+                wgpu::Extent3d {
+                    width: gui_w,
+                    height: gui_h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([enc.finish()]);
+        }
+        let gui_view = gui_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hud_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("hud-sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
@@ -372,6 +484,16 @@ impl Renderer {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -467,6 +589,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&terrain_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&gui_view),
                 },
             ],
         });
@@ -635,9 +761,162 @@ impl Renderer {
             cache: None,
         });
 
+        // ---- player pipeline -------------------------------------------
+        let player_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("player"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../assets/player.wgsl").into()),
+        });
+        let player_bind_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("player-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            // nearest 采样不要求 filterable float(sRGB array 在
+                            // GLES 上也不满足 filterable 要求)
+                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Nearest),
+                        count: None,
+                    },
+                ],
+            });
+        let player_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("player-pipeline-layout"),
+            bind_group_layouts: &[Some(&player_bind_layout)],
+            immediate_size: 0,
+        });
+        let player_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("player"),
+            layout: Some(&player_layout),
+            vertex: wgpu::VertexState {
+                module: &player_mod,
+                entry_point: Some("vs_player"),
+                compilation_options: Default::default(),
+                buffers: &[Some(player_vertex_layout())],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &player_mod,
+                entry_point: Some("fs_player"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: None, // cutout:shader 内 alpha discard
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                // player_mesh 的角点序经镜像变换(行列式 -1)后从盒外看为 CW,
+                // 与 wgpu 默认 CCW 前置相反;若剔背面会只剩内壁。剔正面又会
+                // 在 overlay discard 处透出内背壁。两难之下不剔(每盒 ≤24 三角,
+                // 代价可忽略),由深度测试取胜者。
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let mesh = player_mesh::build_player_mesh();
+        let player_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("player-uniforms"),
+            size: size_of::<PlayerUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let player_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("player-vbuf"),
+            contents: bytemuck::cast_slice(&mesh.verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let player_ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("player-ibuf"),
+            contents: bytemuck::cast_slice(&mesh.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let player_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("player-sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        // 皮肤未加载前的 1x1x2 全透明占位(draw_player 亦以 skins_loaded 短路)。
+        let placeholder = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("player-skin-placeholder"),
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: SKIN_LAYERS,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let player_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("player-bind-placeholder"),
+            layout: &player_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: player_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&placeholder.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            dimension: Some(wgpu::TextureViewDimension::D2Array),
+                            ..Default::default()
+                        },
+                    )),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&player_sampler),
+                },
+            ],
+        });
+
         Self {
             device,
             queue,
+            player_pipeline,
+            player_bind_layout,
+            player_uniform,
+            player_vbuf,
+            player_ibuf,
+            player_bind,
+            skins_loaded: false,
             terrain_pipeline,
             water_pipeline,
             sky_pipeline,
@@ -651,9 +930,123 @@ impl Renderer {
             frame_bind,
             hud_bind,
             sky_bind,
+            gui,
             max_chunks,
             max_hud_quads,
         }
+    }
+
+    /// MC GUI 精灵表;None 表示 texturepack 未带 gui/ 素材,上层应回退
+    /// 程序化绘制。
+    pub fn gui(&self) -> Option<&SpriteSheet> {
+        self.gui.as_ref()
+    }
+
+    /// 上传 steve/alex 皮肤为 64x64x2 texture_2d_array(layer 0=steve,
+    /// 1=alex,与 PlayerVertex.meta.x 约定一致)。可在任意时刻调用(重建 bind group)。
+    pub fn load_skins(&mut self, steve_png: &[u8], alex_png: &[u8]) -> Result<(), String> {
+        let decode = |png: &[u8], name: &str| -> Result<Vec<u8>, String> {
+            let img = image::load_from_memory(png)
+                .map_err(|e| format!("{name} png: {e}"))?
+                .to_rgba8();
+            if img.width() != 64 || img.height() != 64 {
+                return Err(format!(
+                    "{name}: 需要 64x64 皮肤,得到 {}x{}",
+                    img.width(),
+                    img.height()
+                ));
+            }
+            Ok(img.into_raw())
+        };
+        let mut data = decode(steve_png, "steve")?;
+        data.extend_from_slice(&decode(alex_png, "alex")?);
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("player-skins"),
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: SKIN_LAYERS,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            tex.as_image_copy(),
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(64 * 4), // 256B 对齐,无需 padding
+                rows_per_image: Some(64),
+            },
+            wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: SKIN_LAYERS,
+            },
+        );
+        let view = tex.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        self.player_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("player-bind"),
+            layout: &self.player_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: self.player_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.player_sampler),
+                },
+            ],
+        });
+        self.skins_loaded = true;
+        Ok(())
+    }
+
+    /// 皮肤是否已就绪(app.rs 可用 `player_mesh::update_walk_animation` 等
+    /// 计算姿态,不必在皮肤缺失时白白计算矩阵)。
+    pub fn has_skins(&self) -> bool {
+        self.skins_loaded
+    }
+
+    /// 在(带 Depth24Plus 深度附件的)world pass 内绘制一次玩家。几何同时含
+    /// steve/alex 两套顶点(meta.x 选皮肤层),`skin_layer` 选对应索引区间;
+    /// `part_models` 来自 `player_mesh::model_matrices(&pose)`。
+    /// 皮肤未加载时为 no-op。
+    pub fn draw_player(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view_proj: [[f32; 4]; 4],
+        part_models: &[glam::Mat4; PART_COUNT],
+        skin_layer: u32,
+    ) {
+        if !self.skins_loaded || skin_layer >= SKIN_LAYERS {
+            return;
+        }
+        let mut models = [[[0f32; 4]; 4]; PART_COUNT];
+        for (m, dst) in part_models.iter().zip(models.iter_mut()) {
+            *dst = m.to_cols_array_2d();
+        }
+        let u = PlayerUniforms { view_proj, models };
+        self.queue
+            .write_buffer(&self.player_uniform, 0, bytemuck::bytes_of(&u));
+        pass.set_pipeline(&self.player_pipeline);
+        pass.set_bind_group(0, &self.player_bind, &[]);
+        pass.set_vertex_buffer(0, self.player_vbuf.slice(..));
+        pass.set_index_buffer(self.player_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+        // 整款一次 draw:shader 按 meta.y 逐顶点取模型矩阵、meta.x 取皮肤层。
+        pass.draw_indexed(0..(PART_COUNT * player_mesh::PART_INDEXES) as u32, 0, 0..1);
     }
 
     /// Renders one frame into `target` (color view + matching depth view).
@@ -756,6 +1149,11 @@ impl Renderer {
             pass.set_bind_group(0, &self.sky_bind, &[]);
             pass.draw(0..3, 0..1);
 
+            // clouds: sky 之后、不透明之前（26.1 RenderPassOrder）
+            if let Some((clouds, settings)) = scene.cloud {
+                clouds.draw(&mut pass, &vp.to_cols_array_2d(), eye, scene.time, settings);
+            }
+
             // opaque
             pass.set_pipeline(&self.terrain_pipeline);
             for (slot, rc) in &visible {
@@ -766,6 +1164,11 @@ impl Renderer {
                 if !rc.opaque_range.is_empty() {
                     pass.draw_indexed(rc.opaque_range.clone(), 0, 0..1);
                 }
+            }
+
+            // player: 不透明地形后、水前（entity 在 translucent 之前渲染）
+            if let Some((models, skin)) = scene.player {
+                self.draw_player(&mut pass, vp.to_cols_array_2d(), models, skin);
             }
 
             // water: far to near
@@ -792,7 +1195,18 @@ impl Renderer {
 
         // HUD pass
         if !scene.hud.is_empty() {
-            let (verts, indices) = flatten_hud(scene.hud);
+            // 防溢出:菜单铺贴 quad 数量超预期时截断并告警,而不是 panic
+            let hud: &[HudQuad] = if scene.hud.len() as u32 > self.max_hud_quads {
+                log::warn!(
+                    "hud: {} quads > max {}, truncating",
+                    scene.hud.len(),
+                    self.max_hud_quads
+                );
+                &scene.hud[..self.max_hud_quads as usize]
+            } else {
+                scene.hud
+            };
+            let (verts, indices) = flatten_hud(hud);
             self.queue
                 .write_buffer(&self.hud_vbuf, 0, bytemuck::cast_slice(&verts));
             self.queue
@@ -858,14 +1272,25 @@ fn flatten_hud(quads: &[HudQuad]) -> (Vec<HudVertex>, Vec<u32>) {
             (q.color[2] * 255.0) as u8,
             (q.color[3] * 255.0) as u8,
         ];
-        for (dx, dy, uv) in [
-            (0.0, 0.0, q.uv[0]),
-            (q.w, 0.0, [q.uv[1][0], q.uv[0][1]]),
-            (q.w, q.h, q.uv[1]),
-            (0.0, q.h, [q.uv[0][0], q.uv[1][1]]),
+        // rot != 0 时绕 quad 中心旋转(splash 文字);常规 quad 走直线分支
+        let (cos, sin) = if q.rot == 0.0 {
+            (1.0, 0.0)
+        } else {
+            (q.rot.cos(), q.rot.sin())
+        };
+        let hw = q.w * 0.5;
+        let hh = q.h * 0.5;
+        for (ox, oy, uv) in [
+            (-hw, -hh, q.uv[0]),
+            (hw, -hh, [q.uv[1][0], q.uv[0][1]]),
+            (hw, hh, q.uv[1]),
+            (-hw, hh, [q.uv[0][0], q.uv[1][1]]),
         ] {
             verts.push(HudVertex {
-                pos: [q.x + dx, q.y + dy],
+                pos: [
+                    q.x + hw + ox * cos - oy * sin,
+                    q.y + hh + ox * sin + oy * cos,
+                ],
                 uv,
                 color: c,
                 src: [q.tex, q.layer],

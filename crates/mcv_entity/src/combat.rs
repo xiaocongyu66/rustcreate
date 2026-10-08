@@ -64,6 +64,41 @@ pub fn armor_durability_loss(damage: f32) -> u16 {
     (damage / 4.0).max(1.0) as u16
 }
 
+/// 受击击退向量（LivingEntity.knockback:1612-1630，26.1 verbatim）：
+/// `p = power × (1 − knockback_resistance)`；
+/// `vel' = (vel.x/2 − d.x·p,  on_ground ? min(0.4, vel.y/2 + p) : vel.y,
+///           vel.z/2 − d.z·p)`，d = 攻击方向水平单位向量（指向目标）。
+/// 玩家全力冲刺命中 power = 0.5（Player.java:966,987 causeExtraKnockback；
+/// ATTACK_KNOCKBACK 属性另加）。方向退化为零向量时原版用随机数，这里保持不动。
+pub fn knockback_velocity(
+    cur: glam::Vec3,
+    on_ground: bool,
+    knockback_resist: f32,
+    power: f32,
+    push_dir_xz: glam::Vec3,
+) -> glam::Vec3 {
+    let power = power * (1.0 - knockback_resist.clamp(0.0, 1.0));
+    if power <= 0.0 {
+        return cur;
+    }
+    let mut d = push_dir_xz;
+    d.y = 0.0;
+    let len = d.length();
+    if len < 1e-6 {
+        return cur;
+    }
+    let v = d / len * power;
+    glam::Vec3::new(
+        cur.x / 2.0 - v.x,
+        if on_ground {
+            (cur.y / 2.0 + power).min(0.4)
+        } else {
+            cur.y
+        },
+        cur.z / 2.0 - v.z,
+    )
+}
+
 /// Full melee attack resolution (attacker → target), per Player.attack.
 pub struct AttackContext {
     pub attacker_pos_eye: glam::Vec3,

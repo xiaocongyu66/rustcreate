@@ -41,6 +41,23 @@ struct WorldEntry {
     mode: &'static str,
 }
 
+/// 主界面 splash 短语(自写;MC 原版 splashes.txt 是 Mojang 资产)。
+const SPLASHES: [&str; 10] = [
+    "100% Rust 打造!",
+    "也支持安卓!",
+    "小心苦力怕!",
+    "挖到钻石了吗?",
+    "试着睡一觉?",
+    "别敲末影龙!",
+    "方块无限好!",
+    "现在就能玩!",
+    "你好,方块世界!",
+    "纯 Rust 引擎!",
+];
+
+/// GUI 整数缩放(统一走 mcv_render::gui_scale)。
+use mcv_render::gui_scale;
+
 const SETTINGS_MIN_DIST: i32 = 4;
 const SETTINGS_MAX_DIST: i32 = 16;
 
@@ -93,6 +110,18 @@ struct AppState {
     step_accum: f32,
     last_time: Option<std::time::Instant>,
     save_timer: Option<std::time::Instant>,
+    /// 本启动会话随机 splash 短语
+    splash: &'static str,
+    /// splash 动画时间基准
+    menu_t0: Option<std::time::Instant>,
+    /// 界面语言：0=English 1=中文
+    set_lang: usize,
+    /// 渲染云（官方 CloudStatus）：0=OFF 1=FAST 2=FANCY
+    set_clouds: usize,
+    /// 云资源（GPU 缓冲 + 单元表，启动建一次）
+    clouds: Option<mcv_render::Clouds>,
+    /// 走路动画状态：(相位, 幅值)
+    walk_anim: (f32, f32),
     /// Android 应用私有目录（internal_data_path），存档放这里
     #[cfg(target_os = "android")]
     android_data: Option<std::path::PathBuf>,
@@ -120,303 +149,615 @@ struct SurfacePair {
 }
 
 impl AppState {
-    /// 构建菜单界面（HUD quad + 按钮命中表）。
+    /// MC 风格按钮：真 MC button 三态贴图九宫格（缺素材回退纯色矩形）+
+    /// 白色阴影文字居中；悬停换高亮贴图并染黄（MC AbstractButton 行为）。
+    /// 逻辑 id 与旧版一致，只换皮。
+    #[allow(clippy::too_many_arguments)]
+    fn mc_button(
+        q: &mut Vec<mcv_render::HudQuad>,
+        hot: &mut Vec<MenuButton>,
+        gui: Option<&mcv_render::gui::SpriteSheet>,
+        hover: Option<(f32, f32)>,
+        id: &'static str,
+        x: f32,
+        y: f32,
+        bw: f32,
+        bh: f32,
+        label: &str,
+        scale: f32,
+        accent: [f32; 4],
+        align_left: bool,
+    ) {
+        use mcv_render::text;
+        let hovered =
+            hover.is_some_and(|(mx, my)| mx >= x && mx <= x + bw && my >= y && my <= y + bh);
+        match gui {
+            Some(g) => {
+                let sprite = if hovered { "button_hl" } else { "button" };
+                q.extend(g.nine_slice(sprite, x, y, bw, bh, 3, scale, [1.0, 1.0, 1.0, 1.0]));
+            }
+            None => q.push(text::rect(x, y, bw, bh, accent)),
+        }
+        let color = if hovered && gui.is_some() {
+            [1.0, 0.98, 0.6, 1.0] // MC 悬停黄
+        } else {
+            [1.0, 1.0, 1.0, 1.0]
+        };
+        let tw = text::text_width(label, scale);
+        let max_w = (bw - 4.0 * scale).max(8.0);
+        let ts = if tw > max_w {
+            scale * max_w / tw
+        } else {
+            scale
+        };
+        let tx = if align_left {
+            x + 4.0 * scale
+        } else {
+            x + bw * 0.5 - text::text_width(label, ts) * 0.5
+        };
+        let ty = y + (bh - 8.0 * ts) * 0.5;
+        q.extend(text::text_quads(label, tx, ty, ts, color));
+        hot.push(MenuButton {
+            id,
+            x,
+            y,
+            w: bw,
+            h: bh,
+        });
+    }
+
+    /// MC 主界面 splash：logo 右下，-20° 旋转 + 脉动缩放 + 逐字符正弦
+    /// 摆动，黄色带阴影（SplashRenderer 常数，见 NOTES-ui.md）。
+    fn splash_quads(&self, w: f32, h: f32, s: f32, t: f32) -> Vec<mcv_render::HudQuad> {
+        use mcv_render::font::{advance, glyph_uv};
+        let mut q = Vec::new();
+        if self.splash.is_empty() {
+            return q;
+        }
+        let _ = h;
+        let text_w: f32 = self.splash.chars().map(|c| advance(c as u32)).sum();
+        if text_w <= 0.0 {
+            return q;
+        }
+        let phase = 1.8 - ((t * std::f32::consts::TAU).sin().abs() * 0.1);
+        let scale_u = phase * 100.0 / (text_w + 32.0);
+        let px = scale_u * s;
+        let rot = -std::f32::consts::PI / 9.0;
+        let (cs, sn) = (rot.cos(), rot.sin());
+        let anchor = (w * 0.5 + 123.0 * s, 69.0 * s);
+        let yellow = [1.0, 1.0, 0.33, 1.0]; // MC 0xFFFFFF55
+        let yshadow = [0.25, 0.25, 0.08, 1.0];
+        let mut lx = -text_w * 0.5;
+        for (i, ch) in self.splash.chars().enumerate() {
+            let adv = advance(ch as u32);
+            if ch != ' ' {
+                let code = ch as u32;
+                let cell = if (32..256).contains(&code) && adv > 1.0 {
+                    code
+                } else {
+                    b'?' as u32
+                };
+                // 逐字符正弦摆动（任务规定，Bedrock 风格）
+                let wave = (i as f32 * 0.5 + t * 3.0).sin() * 0.8;
+                let gx = lx + adv * 0.5;
+                let gy = -4.0 + wave; // 局部中心（顶 -8 + 半高 4）
+                for (ox, oy, col) in [(1.0, 1.0, yshadow), (0.0, 0.0, yellow)] {
+                    let wx = anchor.0 + ox + px * (gx * cs - gy * sn);
+                    let wy = anchor.1 + oy + px * (gx * sn + gy * cs);
+                    q.push(mcv_render::HudQuad {
+                        x: wx - 4.0 * px,
+                        y: wy - 4.0 * px,
+                        w: 8.0 * px,
+                        h: 8.0 * px,
+                        uv: glyph_uv(cell),
+                        color: col,
+                        tex: 0,
+                        layer: 0,
+                        rot,
+                    });
+                }
+            }
+            lx += adv;
+        }
+        q
+    }
+
+    /// 构建菜单界面（HUD quad + 按钮命中表）。MC 26.1 风格：dirt 铺贴
+    /// 背景、原版 logo + splash、button 三态贴图；素材缺失自动回退。
     fn menu_ui(&mut self, w: f32, h: f32) -> Vec<mcv_render::HudQuad> {
         use mcv_render::text;
         let mut q: Vec<mcv_render::HudQuad> = Vec::new();
         self.menu_hot.clear();
         self.world_hot.clear();
-        let btn_w = (w * 0.36).clamp(180.0, 320.0);
-        let btn_h = 44.0;
-        let gap = 14.0;
+        let s = gui_scale(h);
+        let gui: Option<&mcv_render::gui::SpriteSheet> =
+            self.renderer.as_ref().and_then(|r| r.gui());
+        let hover = self.last_cursor.map(|(x, y)| (x as f32, y as f32));
+        let t = self
+            .menu_t0
+            .map(|t0| t0.elapsed().as_secs_f32())
+            .unwrap_or(0.0);
+
+        // 背景：dirt 平铺 × 0.4 亮度（暂停界面保留游戏画面 + 遮罩）
+        if self.screen != Screen::Paused {
+            let tile = 16.0 * s;
+            let mut y = 0.0;
+            let mut n = 0u32;
+            while y < h && n < 1400 {
+                let mut x = 0.0;
+                while x < w {
+                    q.push(mcv_render::HudQuad {
+                        x,
+                        y,
+                        w: tile,
+                        h: tile,
+                        uv: [[0.0, 0.0], [1.0, 1.0]],
+                        color: [0.4, 0.4, 0.4, 1.0],
+                        tex: 1,
+                        layer: u32::from(mcv_core::tiles::DIRT),
+                        rot: 0.0,
+                    });
+                    x += tile;
+                    n += 1;
+                }
+                y += tile;
+            }
+        }
+
+        // 通用按钮布局常数（MC：宽 200、高 20、间距 4，GUI 单位）
+        let btn_w = (200.0 * s).min(w * 0.9);
+        let btn_h = 20.0 * s;
+        let gap = 4.0 * s;
         let x = w * 0.5 - btn_w * 0.5;
-        let row = |q: &mut Vec<mcv_render::HudQuad>,
-                   hot: &mut Vec<MenuButton>,
-                   y: f32,
-                   label: &str,
-                   id: &'static str,
-                   accent: [f32; 4]| {
-            q.push(text::rect(x, y, btn_w, btn_h, accent));
-            let scale = 2.0;
-            let tw = label.chars().count() as f32 * 16.0 * scale * 0.62;
-            q.extend(text::text_quads(
-                label,
-                w * 0.5 - tw * 0.5,
-                y + btn_h * 0.5 - 16.0,
-                scale,
-                [1.0, 1.0, 1.0, 0.95],
-            ));
-            hot.push(MenuButton {
-                id,
-                x,
-                y,
-                w: btn_w,
-                h: btn_h,
-            });
-        };
+
         match self.screen {
             Screen::Main => {
-                // 标题
-                q.extend(text::text_quads(
-                    "MCV",
-                    w * 0.5 - 96.0,
-                    h * 0.22,
-                    6.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                let y0 = h * 0.42;
+                if let Some(g) = gui {
+                    // logo：256x44 显示（纹理上 44/64 行），居中，保比例
+                    let lw = (256.0 * s).min(w * 0.9);
+                    let lh = lw * (mcv_render::gui::LOGO_VISIBLE_H as f32 / 256.0);
+                    if let Some(qd) = g.sprite(
+                        "logo",
+                        0.0,
+                        0.0,
+                        1.0,
+                        mcv_render::gui::LOGO_VISIBLE_H as f32 / 64.0,
+                        (w - lw) * 0.5,
+                        30.0 * s,
+                        lw,
+                        lh,
+                        [1.0, 1.0, 1.0, 1.0],
+                    ) {
+                        q.push(qd);
+                    }
+                    q.extend(self.splash_quads(w, h, s, t));
+                } else {
+                    // 回退：程序化标题
+                    q.extend(text::text_quads_centered(
+                        "MCV",
+                        w * 0.5,
+                        h * 0.22,
+                        4.0 * s,
+                        [1.0, 1.0, 1.0, 1.0],
+                    ));
+                }
+                let lang = self.lang();
+                let y0 = (h * 0.48).max(30.0 * s + 44.0 * s + 24.0 * s);
                 for (i, (label, id)) in [
-                    ("单人游戏", "single"),
-                    ("设置", "settings"),
-                    ("退出", "quit"),
+                    (crate::i18n::t(lang, "menu.singleplayer"), "single"),
+                    (crate::i18n::t(lang, "menu.options"), "settings"),
+                    (crate::i18n::t(lang, "menu.quit"), "quit"),
                 ]
                 .iter()
                 .enumerate()
                 {
-                    row(
+                    Self::mc_button(
                         &mut q,
                         &mut self.menu_hot,
-                        y0 + i as f32 * (btn_h + gap),
-                        label,
+                        gui,
+                        hover,
                         id,
+                        x,
+                        y0 + i as f32 * (btn_h + gap),
+                        btn_w,
+                        btn_h,
+                        label,
+                        s,
                         [0.15, 0.16, 0.2, 0.82],
+                        false,
                     );
                 }
             }
             Screen::Worlds => {
-                q.extend(text::text_quads(
-                    "选择世界",
-                    w * 0.5 - 80.0,
-                    h * 0.1,
-                    3.0,
+                let lang = self.lang();
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, "mcv.selectWorld.title"),
+                    w * 0.5,
+                    12.0 * s,
+                    s,
                     [1.0, 1.0, 1.0, 1.0],
                 ));
-                // 世界列表（最多 5 行）
+                // 世界列表（最多 5 行）：button 贴图行，文字左对齐
                 for (i, entry) in self.worlds.iter().take(5).enumerate() {
-                    let y = h * 0.2 + i as f32 * (btn_h + 10.0);
-                    q.push(text::rect(
-                        x,
-                        y,
-                        btn_w * 1.7,
-                        btn_h,
-                        [0.12, 0.13, 0.17, 0.85],
-                    ));
+                    let y = 30.0 * s + i as f32 * (btn_h + gap);
                     let label = format!("{}  [{}]", entry.name, entry.mode);
-                    q.extend(text::text_quads(
-                        &label,
-                        x + 16.0,
-                        y + 10.0,
-                        2.0,
-                        [0.95, 0.95, 0.95, 1.0],
-                    ));
-                    self.world_hot.push((i, x, y, btn_w * 1.7, btn_h));
+                    match gui {
+                        Some(g) => {
+                            let hovered = hover.is_some_and(|(mx, my)| {
+                                mx >= x && mx <= x + btn_w && my >= y && my <= y + btn_h
+                            });
+                            let sprite = if hovered { "button_hl" } else { "button" };
+                            q.extend(g.nine_slice(sprite, x, y, btn_w, btn_h, 3, s, [1.0; 4]));
+                            q.extend(text::text_quads(
+                                &label,
+                                x + 4.0 * s,
+                                y + (btn_h - 8.0 * s) * 0.5,
+                                s,
+                                [1.0, 1.0, 1.0, 1.0],
+                            ));
+                        }
+                        None => {
+                            q.push(text::rect(x, y, btn_w, btn_h, [0.12, 0.13, 0.17, 0.85]));
+                            q.extend(text::text_quads(
+                                &label,
+                                x + 8.0,
+                                y + btn_h * 0.5 - 4.0 * s,
+                                s,
+                                [0.95, 0.95, 0.95, 1.0],
+                            ));
+                        }
+                    }
+                    self.world_hot.push((i, x, y, btn_w, btn_h));
                 }
-                let y0 = h - (btn_h + gap) * 2.0 - 24.0;
-                row(
+                let y0 = h - (btn_h + gap) * 2.0 - 8.0 * s;
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y0,
-                    "创建新世界",
+                    gui,
+                    hover,
                     "create",
+                    x,
+                    y0,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "selectWorld.create"),
+                    s,
                     [0.13, 0.3, 0.16, 0.85],
+                    false,
                 );
-                row(
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y0 + btn_h + gap,
-                    "返回",
+                    gui,
+                    hover,
                     "back",
+                    x,
+                    y0 + btn_h + gap,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "gui.back"),
+                    s,
                     [0.15, 0.16, 0.2, 0.82],
+                    false,
                 );
             }
             Screen::Create => {
-                q.extend(text::text_quads(
-                    "创建新世界",
-                    w * 0.5 - 100.0,
-                    h * 0.14,
-                    3.0,
+                let lang = self.lang();
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, "selectWorld.newWorld"),
+                    w * 0.5,
+                    12.0 * s,
+                    s,
                     [1.0, 1.0, 1.0, 1.0],
                 ));
-                let mode_names = ["生存", "创造", "极限"];
+                let mode_keys = [
+                    "mcv.mode.survival",
+                    "mcv.mode.creative",
+                    "mcv.mode.hardcore",
+                ];
                 let y0 = h * 0.34;
-                // 模式选择按钮
-                q.push(text::rect(x, y0, btn_w, btn_h, [0.2, 0.14, 0.3, 0.85]));
-                let label = format!("模式：{}", mode_names[self.create_mode]);
-                q.extend(text::text_quads(
-                    &label,
-                    w * 0.5 - 80.0,
-                    y0 + 12.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                self.menu_hot.push(MenuButton {
-                    id: "mode",
+                let label = format!(
+                    "{}: {}",
+                    crate::i18n::t(lang, "selectWorld.gameMode"),
+                    crate::i18n::t(lang, mode_keys[self.create_mode])
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "mode",
                     x,
-                    y: y0,
-                    w: btn_w,
-                    h: btn_h,
-                });
+                    y0,
+                    btn_w,
+                    btn_h,
+                    &label,
+                    s,
+                    [0.2, 0.14, 0.3, 0.85],
+                    false,
+                );
                 // 模式说明
-                let desc = match self.create_mode {
-                    1 => "飞行、瞬间挖掘、不受伤害",
-                    2 => "同生存，死亡即删除世界",
-                    _ => "收集资源、建造、冒险",
+                let desc_key = match self.create_mode {
+                    1 => "mcv.createWorld.creativeDesc",
+                    2 => "mcv.createWorld.hardcoreDesc",
+                    _ => "mcv.createWorld.survivalDesc",
                 };
-                q.extend(text::text_quads(
-                    desc,
-                    w * 0.5 - 176.0,
-                    y0 + btn_h + 6.0,
-                    1.5,
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, desc_key),
+                    w * 0.5,
+                    y0 + btn_h + 6.0 * s,
+                    s,
                     [0.8, 0.8, 0.8, 0.9],
                 ));
-                let y1 = y0 + btn_h + 48.0;
-                row(
+                let y1 = y0 + btn_h + 30.0 * s;
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y1,
-                    "创建世界",
+                    gui,
+                    hover,
                     "go",
+                    x,
+                    y1,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "mcv.createWorld.create"),
+                    s,
                     [0.13, 0.3, 0.16, 0.85],
+                    false,
                 );
-                row(
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y1 + btn_h + gap,
-                    "返回",
+                    gui,
+                    hover,
                     "back",
+                    x,
+                    y1 + btn_h + gap,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "gui.back"),
+                    s,
                     [0.15, 0.16, 0.2, 0.82],
+                    false,
                 );
             }
             Screen::Settings => {
-                q.extend(text::text_quads(
-                    "设置",
-                    w * 0.5 - 40.0,
-                    h * 0.12,
-                    3.0,
+                let lang = self.lang();
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, "options.title"),
+                    w * 0.5,
+                    12.0 * s,
+                    s,
                     [1.0, 1.0, 1.0, 1.0],
                 ));
-                let y0 = h * 0.28;
-                // 渲染距离
-                q.push(text::rect(x, y0, btn_w, btn_h, [0.15, 0.16, 0.2, 0.82]));
-                let dlabel = format!("渲染距离：{} 区块", self.set_dist);
-                q.extend(text::text_quads(
-                    &dlabel,
-                    w * 0.5 - 96.0,
-                    y0 + 12.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                self.menu_hot.push(MenuButton {
-                    id: "dist-",
-                    x,
-                    y: y0,
-                    w: btn_w,
-                    h: btn_h,
-                });
-                self.menu_hot.push(MenuButton {
-                    id: "dist+",
-                    x: x + btn_w,
-                    y: y0,
-                    w: 48.0,
-                    h: btn_h,
-                });
-                q.extend(text::text_quads(
-                    "+",
-                    x + btn_w + 12.0,
-                    y0 + 14.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                // 灵敏度
-                let y1 = y0 + btn_h + gap;
-                q.push(text::rect(x, y1, btn_w, btn_h, [0.15, 0.16, 0.2, 0.82]));
-                let slabel = format!("灵敏度：{:.2}x", self.set_sens);
-                q.extend(text::text_quads(
-                    &slabel,
-                    w * 0.5 - 84.0,
-                    y1 + 12.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                self.menu_hot.push(MenuButton {
-                    id: "sens-",
-                    x,
-                    y: y1,
-                    w: btn_w,
-                    h: btn_h,
-                });
-                self.menu_hot.push(MenuButton {
-                    id: "sens+",
-                    x: x + btn_w,
-                    y: y1,
-                    w: 48.0,
-                    h: btn_h,
-                });
-                q.extend(text::text_quads(
-                    "+",
-                    x + btn_w + 12.0,
-                    y1 + 14.0,
-                    2.0,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                let y2 = y1 + btn_h + gap * 2.0;
-                row(
+                let y0 = h * 0.22;
+                // 渲染距离：主按钮 = 减，右侧 + 小按钮（逻辑不变）
+                let dlabel = format!(
+                    "{}: {}",
+                    crate::i18n::t(lang, "options.renderDistance"),
+                    self.set_dist
+                );
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y2,
-                    "返回",
-                    "back",
+                    gui,
+                    hover,
+                    "dist-",
+                    x,
+                    y0,
+                    btn_w,
+                    btn_h,
+                    &dlabel,
+                    s,
                     [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "dist+",
+                    x + btn_w + gap,
+                    y0,
+                    20.0 * s,
+                    btn_h,
+                    "+",
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                // 灵敏度
+                let y1 = y0 + btn_h + gap;
+                let slabel = format!(
+                    "{}: {:.2}x",
+                    crate::i18n::t(lang, "options.sensitivity"),
+                    self.set_sens
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "sens-",
+                    x,
+                    y1,
+                    btn_w,
+                    btn_h,
+                    &slabel,
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "sens+",
+                    x + btn_w + gap,
+                    y1,
+                    20.0 * s,
+                    btn_h,
+                    "+",
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                // 渲染云：官方 CloudStatus 三态循环 OFF→流畅→高品质（点击主按钮循环）
+                let y2 = y1 + btn_h + gap;
+                let cloud_cap = match self.set_clouds {
+                    0 => crate::i18n::t(lang, "options.off"),
+                    1 => crate::i18n::t(lang, "options.clouds.fast"),
+                    _ => crate::i18n::t(lang, "options.clouds.fancy"),
+                };
+                let clabel = format!(
+                    "{}: {}",
+                    crate::i18n::t(lang, "options.renderClouds"),
+                    cloud_cap
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "clouds",
+                    x,
+                    y2,
+                    btn_w,
+                    btn_h,
+                    &clabel,
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                // 语言：English ↔ 中文
+                let y3 = y2 + btn_h + gap;
+                let llabel = format!(
+                    "{}: {}",
+                    crate::i18n::t(lang, "mcv.options.languageTitle"),
+                    if self.set_lang == 1 {
+                        "中文"
+                    } else {
+                        "English"
+                    }
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "lang",
+                    x,
+                    y3,
+                    btn_w,
+                    btn_h,
+                    &llabel,
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+                let y4 = y3 + btn_h + gap * 2.0;
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "back",
+                    x,
+                    y4,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "gui.back"),
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
                 );
             }
             Screen::Paused => {
-                // 半透明遮罩
+                let lang = self.lang();
+                // 半透明遮罩（MC 暂停界面）
                 q.push(text::rect(0.0, 0.0, w, h, [0.0, 0.0, 0.0, 0.55]));
-                q.extend(text::text_quads(
-                    "游戏暂停",
-                    w * 0.5 - 80.0,
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, "menu.paused"),
+                    w * 0.5,
                     h * 0.2,
-                    3.0,
+                    s,
                     [1.0, 1.0, 1.0, 1.0],
                 ));
                 let y0 = h * 0.36;
-                row(
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y0,
-                    "回到游戏",
+                    gui,
+                    hover,
                     "resume",
+                    x,
+                    y0,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "menu.returnToGame"),
+                    s,
                     [0.13, 0.3, 0.16, 0.85],
+                    false,
                 );
-                row(
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y0 + btn_h + gap,
-                    "设置",
+                    gui,
+                    hover,
                     "settings",
+                    x,
+                    y0 + btn_h + gap,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "menu.options"),
+                    s,
                     [0.15, 0.16, 0.2, 0.82],
+                    false,
                 );
-                row(
+                Self::mc_button(
                     &mut q,
                     &mut self.menu_hot,
-                    y0 + (btn_h + gap) * 2.0,
-                    "保存并退出",
+                    gui,
+                    hover,
                     "savequit",
+                    x,
+                    y0 + (btn_h + gap) * 2.0,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "menu.returnToMenu"),
+                    s,
                     [0.3, 0.15, 0.13, 0.85],
+                    false,
                 );
-                // Paused -> settings 回来要回 Paused：借用 back 逻辑不行，改为在 on_menu_click 处理
-                self.menu_hot.push(MenuButton {
-                    id: "pause-settings-back",
-                    x: 0.0,
-                    y: 0.0,
-                    w: 0.0,
-                    h: 0.0,
-                });
-                self.menu_hot.pop();
             }
             Screen::InGame => {}
         }
         q
+    }
+
+    /// 音效素材目录：Android 优先 internal 数据目录下 sounds/（APK 解包产物），
+    /// 否则交给 mcv_audio::default_sounds_dir（env → workspace → ./sounds）。
+    fn sounds_dir(&self) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "android")]
+        if let Some(d) = self.android_data.as_ref() {
+            let p = d.join("sounds");
+            if p.is_dir() {
+                return Some(p);
+            }
+        }
+        let p = mcv_audio::default_sounds_dir();
+        p.is_dir().then_some(p)
+    }
+
+    /// 当前界面语言。
+    fn lang(&self) -> crate::i18n::Lang {
+        if self.set_lang == 1 {
+            crate::i18n::Lang::Zh
+        } else {
+            crate::i18n::Lang::En
+        }
     }
 
     /// 纹理包目录（texturepack/）：Android 优先 internal 数据目录下的
@@ -518,6 +859,13 @@ impl AppState {
     fn enter_game(&mut self, mut runtime: GameRuntime) {
         runtime.render_dist = self.set_dist;
         runtime.sens = self.set_sens;
+        // 音频后端：无声卡/无素材时保持 silent 降级，不阻塞进游戏
+        if let Some(dir) = self.sounds_dir() {
+            match mcv_audio::AudioManager::open(&dir) {
+                Ok(a) => runtime.set_audio(a),
+                Err(e) => log::warn!("audio unavailable ({dir:?}): {e}"),
+            }
+        }
         runtime.load_meta();
         runtime.save_meta();
         self.save_timer = Some(std::time::Instant::now());
@@ -623,6 +971,9 @@ impl AppState {
             }
             (Screen::Settings, "sens+") => self.set_sens = (self.set_sens + 0.25).min(3.0),
             (Screen::Settings, "sens-") => self.set_sens = (self.set_sens - 0.25).max(0.25),
+            // 官方 CloudStatus 点击循环：OFF→FAST→FANCY
+            (Screen::Settings, "clouds") => self.set_clouds = (self.set_clouds + 1) % 3,
+            (Screen::Settings, "lang") => self.set_lang = (self.set_lang + 1) % 2,
             (Screen::Settings, "back") => self.screen = Screen::Main,
             (Screen::Paused, "resume") => self.screen = Screen::InGame,
             (Screen::Paused, "savequit") => self.quit_to_menu(false),
@@ -691,8 +1042,27 @@ impl ApplicationHandler for AppState {
                     config.format,
                     pack.as_deref(),
                 ));
+                self.clouds = Some(mcv_render::Clouds::new(&device, &queue));
+                // 玩家皮肤：texturepack/skin/{steve,alex}.png（开发期素材）
+                if let Some(dir) = self.texture_pack_dir() {
+                    let read = |n: &str| std::fs::read(dir.join("skin").join(n)).ok();
+                    if let (Some(s), Some(a)) = (read("steve.png"), read("alex.png")) {
+                        if let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a) {
+                            log::warn!("skin load failed: {e}");
+                        }
+                    }
+                }
                 self.set_dist = 8;
                 self.set_sens = 1.0;
+                self.set_lang = 0;
+                self.set_clouds = 2;
+                // splash：本会话随机一条 + 动画时钟
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.subsec_nanos())
+                    .unwrap_or(7);
+                self.splash = SPLASHES[(seed as usize) % SPLASHES.len()];
+                self.menu_t0 = Some(std::time::Instant::now());
                 self.screen = Screen::Main;
                 self.refresh_worlds();
                 self.surface = Some(SurfacePair {
@@ -766,6 +1136,11 @@ impl ApplicationHandler for AppState {
                     KeyCode::KeyF => {
                         if pressed {
                             runtime.player.flying = !runtime.player.flying;
+                        }
+                    }
+                    KeyCode::F5 => {
+                        if pressed {
+                            runtime.cycle_camera();
                         }
                     }
                     KeyCode::Escape => match self.screen {
@@ -934,6 +1309,8 @@ impl AppState {
             height: mh,
             chunks: &[],
             hud: &hud,
+            cloud: None,
+            player: None,
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -1039,6 +1416,15 @@ impl AppState {
             self.redraw_menu();
             return;
         }
+        // 暂停：先构建 MC 风格菜单 quad(借用 self，须在 runtime 借用之前)
+        let pause_menu = if self.screen == Screen::Paused {
+            match self.surface.as_ref() {
+                Some(sp) => self.menu_ui(sp.config.width as f32, sp.config.height as f32),
+                None => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
         let (Some(sp), Some(runtime), Some(window)) = (
             self.surface.as_mut(),
             self.runtime.as_mut(),
@@ -1094,8 +1480,43 @@ impl AppState {
 
         let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
         let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
-        let hud = runtime.build_hud(sp.config.width as f32, sp.config.height as f32);
+        let mut hud = runtime.build_hud(
+            sp.config.width as f32,
+            sp.config.height as f32,
+            self.renderer.as_ref().and_then(|r| r.gui()),
+        );
+        if self.screen == Screen::Paused {
+            // 暂停：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
+            hud.extend(pause_menu);
+        }
         let chunks: Vec<mcv_render::RenderChunk> = runtime.render_chunks().to_vec();
+        // 云（官方 CloudStatus 映射到模块设置；云距跟随渲染距离，MC renderDistance 语义）
+        let cloud_settings = mcv_render::CloudSettings {
+            enabled: self.set_clouds != 0,
+            fast: self.set_clouds == 1,
+            distance: (runtime.render_dist * 16) as f32,
+            ..Default::default()
+        };
+        let clouds = self.clouds.as_ref();
+        // 第三人称玩家：走路动画推进 + 12 部位矩阵
+        let third_person = runtime.cam_type != crate::game::CameraType::FirstPerson;
+        let has_player = third_person
+            && self.renderer.as_ref().is_some_and(|r| r.has_skins())
+            && !runtime.hardcore_death;
+        let mut models = [glam::Mat4::IDENTITY; 12];
+        if has_player {
+            let speed = glam::Vec3::new(runtime.player.vel.x, 0.0, runtime.player.vel.z).length();
+            self.walk_anim =
+                mcv_render::update_walk_animation(self.walk_anim.0, self.walk_anim.1, speed, dt);
+            let pose = mcv_render::PlayerPose {
+                pos: runtime.player.pos,
+                yaw: runtime.player.yaw,
+                pitch: runtime.player.pitch,
+                phase: self.walk_anim.0,
+                amount: self.walk_anim.1,
+            };
+            models = mcv_render::model_matrices(&pose);
+        }
         let scene = mcv_render::Scene {
             camera: &camera,
             time: (runtime.time_ticks % 24_000) as f32 / 20.0,
@@ -1105,6 +1526,8 @@ impl AppState {
             height: sp.config.height as f32,
             chunks: &chunks,
             hud: &hud,
+            cloud: clouds.map(|c| (c, cloud_settings)),
+            player: has_player.then_some((&models, 0)),
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);

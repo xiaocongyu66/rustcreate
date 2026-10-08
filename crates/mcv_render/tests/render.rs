@@ -150,6 +150,7 @@ fn terrain_sky_and_hud_render() {
             color: [1.0, 1.0, 1.0, 1.0],
             tex: 0,
             layer: 0,
+            rot: 0.0,
         },
         HudQuad {
             x: 100.0,
@@ -160,6 +161,7 @@ fn terrain_sky_and_hud_render() {
             color: [1.0, 1.0, 1.0, 1.0],
             tex: 0,
             layer: 0,
+            rot: 0.0,
         },
     ];
 
@@ -173,6 +175,8 @@ fn terrain_sky_and_hud_render() {
         height: 240.0,
         chunks: std::slice::from_ref(&chunk),
         hud: &hud,
+        cloud: None,
+        player: None,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());

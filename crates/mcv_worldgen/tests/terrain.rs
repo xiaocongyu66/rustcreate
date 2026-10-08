@@ -192,7 +192,10 @@ fn surface_dominated_by_grass_and_stone() {
             }
         }
     }
-    assert!(grassy * 100 >= total * 35, "grassy share too low: {grassy}/{total}");
+    assert!(
+        grassy * 100 >= total * 35,
+        "grassy share too low: {grassy}/{total}"
+    );
     assert!(
         valid * 100 >= total * 95,
         "unexpected surface blocks: {valid}/{total}"

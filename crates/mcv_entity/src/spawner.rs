@@ -1,10 +1,12 @@
-//! Natural spawn rules (NOTES-2 §2, NaturalSpawner.java line refs).
+//! Natural spawn rules (NOTES-mobs.md §5, NaturalSpawner.java / Monster.java line refs).
 //!
 //! Loop shape (26.1): per eligible chunk, 3 spawn "groups"; each group walks
 //! up to 4 candidate positions with ±(next(6)-next(6)) jitter; category
 //! filters: global cap, local density, light rules, distance rules.
+//! 逻辑层简化：不遍历 chunk，按玩家环形带 (24,128] 随机采样，常数照抄原版。
 
 use glam::Vec3;
+use mcv_core::BlockPos;
 
 /// Per-category global caps (MobCategory.java, 26.1 decompiled enum).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -89,15 +91,236 @@ pub fn group_walk(start: Vec3, rng: &mut impl FnMut() -> u32) -> Vec3 {
     Vec3::new(start.x + jx, start.y, start.z + jz)
 }
 
-/// 白天燃烧（Mob.java:478-512，26.1 环境属性版）：
-/// 夜晚不燃；白天对暴露天空者 `rand*30 < (brightness-0.4)*2` 判定，燃 8s。
-/// brightness 为 0..1 环境值；sky=15 时 brightness≈1 → (1-0.4)*2=1.2 →
-/// rand<0.04 即 4%/tick。TODO(research)：EnvironmentAttributeSystem 曲线。
+/// 白天燃烧（Mob.java:480-513，26.1 环境属性曲线版）：
+/// 白天(MONSTERS_BURN) && 眼睛可见天 && !sheltered(入水/细雪/头盔) &&
+/// `br > 0.5 && rand·30 < (br−0.4)·2` → 点燃 8s。
+/// br = magic_light(maxLocalRawBrightness)，见 [`magic_light`]。
 pub fn burn_in_daylight(
     sky_exposed: bool,
-    brightness: f32,
+    sheltered: bool,
+    br: f32,
     day: bool,
     rng: &mut impl FnMut() -> u32,
 ) -> bool {
-    day && sky_exposed && rng() as f32 / u32::MAX as f32 * 30.0 < (brightness - 0.4) * 2.0
+    if !(day && sky_exposed) || sheltered {
+        return false;
+    }
+    br > 0.5 && rng() as f32 / u32::MAX as f32 * 30.0 < (br - 0.4) * 2.0
+}
+
+/// `LevelReader.getLightLevelDependentMagicValue`（LevelReader.java:113-117）：
+/// `v = raw/15; br = v/(4−3v)`（overworld ambient=0 时的 lerp 退化形式）。
+/// raw 为 maxLocalRawBrightness（0..15）。
+pub fn magic_light(raw: u8) -> f32 {
+    let v = raw.min(15) as f32 / 15.0;
+    v / (4.0 - 3.0 * v)
+}
+
+// ---------------------------------------------------------------------------
+// 26.1 精确刷怪（Monster.isDarkEnoughToSpawn + NaturalSpawner 常数）
+// ---------------------------------------------------------------------------
+
+/// NaturalSpawner.java:61 — MAGIC_NUMBER = 17²，全局配额分母。
+pub const MAGIC_NUMBER: u32 = 289;
+/// NaturalSpawner.java:239 — 世界出生点 24 格内不刷。
+pub const RESPAWN_REJECT_DIST: f32 = 24.0;
+/// NaturalSpawner.java:59 — 生成外半径 128（内半径见 MIN_PLAYER_DIST_SQR）。
+pub const MAX_SPAWN_DIST: f32 = 128.0;
+
+/// 全局配额：`cap × spawnableChunks / 289`（NaturalSpawner.java:537）。
+pub fn global_cap_total(spawnable_chunks: u32, cap: u32) -> u32 {
+    cap * spawnable_chunks / MAGIC_NUMBER
+}
+
+/// 世界查询接口（由主控接线：光照引擎 + 生成位置扫描）。
+pub trait SpawnWorld {
+    /// LightLayer.SKY（0..15）。
+    fn sky_light(&self, p: BlockPos) -> u8;
+    /// LightLayer.BLOCK（0..15）。
+    fn block_light(&self, p: BlockPos) -> u8;
+    /// maxLocalRawBrightness（雷暴修正 `getMaxLocalRawBrightness(pos,10)`，
+    /// Monster.java:97，由接线侧统一处理）。
+    fn max_local_raw_brightness(&self, p: BlockPos) -> u8 {
+        self.sky_light(p).max(self.block_light(p))
+    }
+    fn can_see_sky(&self, p: BlockPos) -> bool;
+    /// 在 (x,z) 柱内找可生成格（下方实心 + 自身及头顶空气，SpawnPlacements
+    /// ON_GROUND 语义）；找不到返回 None。
+    fn find_spawn_pos(&self, x: i32, z: i32) -> Option<BlockPos>;
+}
+
+/// 刷怪配置（原版常数默认，和平/创造豁免暴露给调用方）。
+#[derive(Clone, Copy, Debug)]
+pub struct SpawnConfig {
+    /// DimensionType.monsterSpawnBlockLightLimit（overworld 经典 = 0；
+    /// 维度 json 未提取，TODO(research)）。
+    pub block_light_limit: u8,
+    /// DimensionType.monsterSpawnLightTest = uniform(0..=7) → 亮度 ≤ rand(8)。
+    pub light_test_max: u8,
+    /// 距最近玩家 ≤ 24 格拒刷（distSqr ≤ 576，NaturalSpawner.java:234）。
+    pub min_dist_sqr: f32,
+    pub max_dist_sqr: f32,
+    /// 世界出生点（Some 时其 24 格内拒刷）。
+    pub respawn_center: Option<Vec3>,
+    /// MobCategory.MONSTER 上限 70（MobCategory.java:7）。
+    pub monster_cap: u32,
+    /// NaturalSpawner.java:170 — 每起点 3 组。
+    pub groups_per_round: usize,
+    /// NaturalSpawner.java:176 — 初始 ceil(rand×4) 上限 = 4 步。
+    pub walks_per_group: usize,
+    /// 组内数量 min..=max（原版来自生物群系 spawndata，默认 1..4）。
+    pub group_min: usize,
+    pub group_max: usize,
+    /// 和平难度不刷怪（Monster.java:104）。
+    pub peaceful: bool,
+    /// 创造/游戏规则豁免（ServerChunkCache.spawnEnemies，调用方控制）。
+    pub spawn_enemies: bool,
+}
+
+impl Default for SpawnConfig {
+    fn default() -> Self {
+        Self {
+            block_light_limit: 0,
+            light_test_max: 7,
+            min_dist_sqr: MIN_PLAYER_DIST_SQR,
+            max_dist_sqr: MAX_SPAWN_DIST * MAX_SPAWN_DIST,
+            respawn_center: None,
+            monster_cap: 70,
+            groups_per_round: GROUPS_PER_CHUNK,
+            walks_per_group: ATTEMPTS_PER_GROUP,
+            group_min: 1,
+            group_max: 4,
+            peaceful: false,
+            spawn_enemies: true,
+        }
+    }
+}
+
+/// Monster.isDarkEnoughToSpawn（Monster.java:86-99）逐步照抄：
+/// 1. `sky > rand(32)` 拒；2. `limit < 15 && block > limit` 拒；
+/// 3. `brightness <= rand(light_test_max+1)`。
+pub fn is_dark_enough(
+    sky: u8,
+    block: u8,
+    brightness: u8,
+    cfg: &SpawnConfig,
+    rng: &mut impl FnMut() -> u32,
+) -> bool {
+    if u32::from(sky) > rng() % 32 {
+        return false;
+    }
+    if cfg.block_light_limit < 15 && block > cfg.block_light_limit {
+        return false;
+    }
+    u32::from(brightness) <= rng() % (u32::from(cfg.light_test_max) + 1)
+}
+
+/// 玩家环形带随机采样：r² 均匀落在 (min², max²]（原版按 chunk 采样 +
+/// ≤576 拒绝，此处直接环形采样，分布等价）。返回 (x, z, r²)。
+pub fn annulus_pos(
+    player: Vec3,
+    cfg: &SpawnConfig,
+    rng: &mut impl FnMut() -> u32,
+) -> (f32, f32, f32) {
+    let r1 = rng() as f64 / u32::MAX as f64;
+    let r2 = rng() as f64 / u32::MAX as f64;
+    let lo = (cfg.min_dist_sqr + 1.0) as f64;
+    let hi = cfg.max_dist_sqr as f64;
+    let d2 = lo + r1 * (hi - lo);
+    let ang = r2 * std::f64::consts::TAU;
+    let d = d2.sqrt() as f32;
+    (
+        player.x + ang.cos() * d,
+        player.z + ang.sin() * d,
+        d2 as f32,
+    )
+}
+
+/// 一次刷怪尝试的输出。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Spawned {
+    pub kind: crate::defs::MobId,
+    pub pos: BlockPos,
+}
+
+/// 一轮刷怪（调用方每 N tick 触发；N≈20 即每秒一轮）。
+/// 结构照抄 spawnCategoryForPosition：每组先环形采样起点，随后
+/// ≤walks 步 ±(6,6) jitter 游走；组内类型首次成功后固定；
+/// 组数量 group_min..=group_max；受全局配额与 24/128 距离、亮度约束。
+pub fn spawn_round(
+    world: &dyn SpawnWorld,
+    players: &[Vec3],
+    alive_monsters: u32,
+    spawnable_chunks: u32,
+    kinds: &[crate::defs::MobId],
+    cfg: &SpawnConfig,
+    rng: &mut impl FnMut() -> u32,
+) -> Vec<Spawned> {
+    let mut out = Vec::new();
+    // 和平难度 / 关闭敌对生成（创造豁免）→ 直接空（Monster.java:104）。
+    if cfg.peaceful || !cfg.spawn_enemies || players.is_empty() || kinds.is_empty() {
+        return out;
+    }
+    let cap_total = global_cap_total(spawnable_chunks, cfg.monster_cap);
+    let mut room = cap_total.saturating_sub(alive_monsters);
+    if room == 0 {
+        return out;
+    }
+    for _group in 0..cfg.groups_per_round {
+        if room == 0 {
+            break;
+        }
+        let player = players[(rng() as usize) % players.len()];
+        let (px, pz, _) = annulus_pos(player, cfg, rng);
+        let (mut cx, mut cz) = (px.floor() as i32, pz.floor() as i32);
+        let mut kind: Option<usize> = None;
+        let mut want = 0usize;
+        let mut got = 0usize;
+        for _walk in 0..cfg.walks_per_group {
+            if (want != 0 && got >= want) || room == 0 {
+                break;
+            }
+            // NaturalSpawner.java:180-181 — 步进 jitter ±(next(6)-next(6))。
+            cx += (rng() % 6) as i32 - (rng() % 6) as i32;
+            cz += (rng() % 6) as i32 - (rng() % 6) as i32;
+            let Some(pos) = world.find_spawn_pos(cx, cz) else {
+                continue;
+            };
+            let center = Vec3::new(pos.x as f32 + 0.5, pos.y as f32, pos.z as f32 + 0.5);
+            // 距最近玩家检查（getNearestPlayer 语义，NaturalSpawner.java:185-188）。
+            let d2 = players
+                .iter()
+                .map(|q| q.distance_squared(center))
+                .fold(f32::INFINITY, f32::min);
+            if d2 <= cfg.min_dist_sqr || d2 > cfg.max_dist_sqr {
+                continue;
+            }
+            if let Some(r) = cfg.respawn_center {
+                if r.distance_squared(center) <= RESPAWN_REJECT_DIST * RESPAWN_REJECT_DIST {
+                    continue;
+                }
+            }
+            if !is_dark_enough(
+                world.sky_light(pos),
+                world.block_light(pos),
+                world.max_local_raw_brightness(pos),
+                cfg,
+                rng,
+            ) {
+                continue;
+            }
+            if kind.is_none() {
+                // 组类型固定（原版按生物群系权重；此处均匀采样 kinds）。
+                kind = Some((rng() as usize) % kinds.len());
+                want = cfg.group_min + (rng() as usize) % (cfg.group_max - cfg.group_min + 1);
+            }
+            out.push(Spawned {
+                kind: kinds[kind.unwrap()],
+                pos,
+            });
+            got += 1;
+            room -= 1;
+        }
+    }
+    out
 }
