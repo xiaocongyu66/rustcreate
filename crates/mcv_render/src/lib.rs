@@ -9,7 +9,7 @@ pub mod offscreen;
 
 pub use camera::Camera;
 pub use gpu::{FrameUniforms, HudQuad, RenderChunk, Renderer, Scene};
-pub use offscreen::{read_back, OffscreenTarget};
+pub use offscreen::OffscreenTarget;
 
 use glam::Vec3;
 
