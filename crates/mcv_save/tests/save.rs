@@ -91,6 +91,7 @@ fn meta_roundtrip() {
         seed: 0xDEAD_BEEF_1234_5678,
         name: "新的世界".into(),
         day_time: 13_000,
+        mode: 0,
         player: Some(mcv_save::PlayerMeta {
             x: 1.5,
             y: 97.0,
@@ -116,6 +117,7 @@ fn meta_roundtrip() {
         seed: 7,
         name: "w".into(),
         day_time: 0,
+        mode: 0,
         player: None,
     };
     let back = LevelMeta::decode(&bare.encode()).expect("decode");

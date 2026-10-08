@@ -106,6 +106,8 @@ pub struct LevelMeta {
     pub name: String,
     /// Absolute day time in ticks (24000 ticks per day, MC convention).
     pub day_time: u64,
+    /// 0 = survival, 1 = creative, 2 = hardcore.
+    pub mode: u8,
     pub player: Option<PlayerMeta>,
 }
 
@@ -125,7 +127,7 @@ impl LevelMeta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&Self::MAGIC);
-        out.extend_from_slice(&1u16.to_le_bytes()); // format version
+        out.extend_from_slice(&2u16.to_le_bytes()); // format version
         out.extend_from_slice(&self.seed.to_le_bytes());
         out.extend_from_slice(&self.day_time.to_le_bytes());
         let name = self.name.as_bytes();
@@ -144,6 +146,7 @@ impl LevelMeta {
                 out.push(p.sel_slot);
             }
         }
+        out.push(self.mode);
         out
     }
 
@@ -152,7 +155,7 @@ impl LevelMeta {
             return Err(SaveError::Corrupt("bad magic"));
         }
         let ver = u16::from_le_bytes([data[4], data[5]]);
-        if ver != 1 {
+        if ver > 2 {
             return Err(SaveError::Corrupt("unsupported meta version"));
         }
         let seed = u64::from_le_bytes(data[6..14].try_into().unwrap());
@@ -187,10 +190,21 @@ impl LevelMeta {
             }
             Some(_) => return Err(SaveError::Corrupt("bad player flag")),
         };
+        // v2 appends the game mode byte; v1 files are survival.
+        let mode = if ver >= 2 {
+            let m = data.last().copied().unwrap_or(0);
+            if m > 2 {
+                return Err(SaveError::Corrupt("bad game mode"));
+            }
+            m
+        } else {
+            0
+        };
         Ok(Self {
             seed,
             name,
             day_time,
+            mode,
             player,
         })
     }

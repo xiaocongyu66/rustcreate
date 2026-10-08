@@ -20,6 +20,32 @@ use mcv_render::{text, Camera, HudQuad};
 pub const RENDER_DIST: i32 = 8;
 pub const HOTBAR: [u8; 9] = [1, 2, 3, 4, 8, 6, 7, 5, 10];
 
+/// 游戏模式（存档 meta.mode 字段值对应）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GameMode {
+    Survival = 0,
+    Creative = 1,
+    Hardcore = 2,
+}
+
+impl GameMode {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::Creative,
+            2 => Self::Hardcore,
+            _ => Self::Survival,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Survival => "生存",
+            Self::Creative => "创造",
+            Self::Hardcore => "极限",
+        }
+    }
+}
+
 /// GPU mesh produced by a [`ChunkMesher`].
 pub struct MeshGpu {
     pub vertex_buf: wgpu::Buffer,
@@ -155,7 +181,6 @@ pub struct GameRuntime {
     pub time_ticks: u64,
     pub mesher: Box<dyn ChunkMesher>,
     pub save_dir: std::path::PathBuf,
-    renderer: mcv_render::Renderer,
     render_chunks: Vec<RenderChunk>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
@@ -165,6 +190,13 @@ pub struct GameRuntime {
     pub player_xp: u32,
     pub hotbar_slot: Option<mcv_item::ItemStack>,
     pub touch: crate::touch::TouchState,
+    pub mode: GameMode,
+    /// 极限模式死亡后置位：app 层负责删档并回主菜单。
+    pub hardcore_death: bool,
+    /// 渲染距离（区块），设置界面可调。
+    pub render_dist: i32,
+    /// 鼠标/触摸灵敏度倍率。
+    pub sens: f32,
 }
 
 impl GameRuntime {
@@ -172,22 +204,9 @@ impl GameRuntime {
         seed: u64,
         device: wgpu::Device,
         queue: wgpu::Queue,
-        color_format: wgpu::TextureFormat,
         save_dir: std::path::PathBuf,
+        mode: GameMode,
     ) -> Self {
-        // Texture pack: <exe dir>/texturepack/ (siblings of saves/)
-        let pack_dir = save_dir
-            .parent()
-            .and_then(|p| p.parent())
-            .map(|p| p.join("texturepack"))
-            .unwrap_or_else(|| std::path::PathBuf::from("texturepack"));
-        let pack = if pack_dir.is_dir() {
-            Some(pack_dir)
-        } else {
-            None
-        };
-        let renderer =
-            mcv_render::Renderer::new(device.clone(), queue.clone(), color_format, pack.as_deref());
         Self {
             seed,
             chunks: HashMap::new(),
@@ -197,7 +216,6 @@ impl GameRuntime {
             time_ticks: 6_000, // noon start
             mesher: Box::new(CxxMesher::new(256 << 20, device.clone(), queue.clone())),
             save_dir,
-            renderer,
             render_chunks: Vec::new(),
             spawned: false,
             border_synced: HashMap::new(),
@@ -207,11 +225,11 @@ impl GameRuntime {
             player_xp: 0,
             hotbar_slot: Some(mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
             touch: crate::touch::TouchState::default(),
+            mode,
+            hardcore_death: false,
+            render_dist: RENDER_DIST,
+            sens: 1.0,
         }
-    }
-
-    pub fn renderer(&mut self) -> &mut mcv_render::Renderer {
-        &mut self.renderer
     }
 
     /// Loads player state + world time from level.meta (if present).
@@ -224,6 +242,7 @@ impl GameRuntime {
             Ok(meta) => {
                 self.seed = meta.seed;
                 self.time_ticks = meta.day_time;
+                self.mode = GameMode::from_u8(meta.mode);
                 if let Some(p) = meta.player {
                     self.player.pos = Vec3::new(p.x, p.y, p.z);
                     self.player.yaw = p.yaw;
@@ -247,6 +266,7 @@ impl GameRuntime {
             seed: self.seed,
             name: "world".into(),
             day_time: self.time_ticks,
+            mode: self.mode as u8,
             player: Some(mcv_save::PlayerMeta {
                 x: self.player.pos.x,
                 y: self.player.pos.y,
@@ -309,7 +329,7 @@ impl GameRuntime {
             fov_y: 1.25,
             aspect,
             near: 0.1,
-            far: (RENDER_DIST * 16) as f32 * 1.6,
+            far: (self.render_dist * 16) as f32 * 1.6,
         }
     }
 
@@ -325,7 +345,8 @@ impl GameRuntime {
             .chunks
             .keys()
             .filter(|c| {
-                (c.x - center.x).abs() > RENDER_DIST + 2 || (c.z - center.z).abs() > RENDER_DIST + 2
+                (c.x - center.x).abs() > self.render_dist + 2
+                    || (c.z - center.z).abs() > self.render_dist + 2
             })
             .copied()
             .collect();
@@ -337,7 +358,7 @@ impl GameRuntime {
         }
         // request in ring order; bounded per frame
         let mut budget = 4;
-        'outer: for r in 0..=RENDER_DIST {
+        'outer: for r in 0..=self.render_dist {
             for dx in -r..=r {
                 for dz in -r..=r {
                     if dx.abs() != r && dz.abs() != r {
@@ -643,6 +664,20 @@ impl GameRuntime {
             }
         }
         self.mobs.retain(|m| m.health > 0.0);
+
+        // ---- 虚空死亡（y < -10）----
+        if self.player.pos.y < -10.0 {
+            if self.mode == GameMode::Hardcore {
+                self.hardcore_death = true;
+            } else {
+                // 重生到出生点上方
+                let (sx, sz) = (8.5f32, 8.5f32);
+                self.player.pos = Vec3::new(sx, 200.0, sz);
+                self.player.vel = Vec3::ZERO;
+                // 落地前给飞行防摔（创造保持飞行，生存直接掉落）
+                self.player.flying = self.mode == GameMode::Creative;
+            }
+        }
         let _ = day;
     }
 
@@ -732,6 +767,11 @@ impl GameRuntime {
         }
     }
 
+    /// 创造模式：挖掘无间隔。返回是否跳过冷却。
+    pub fn instant_mine(&self) -> bool {
+        self.mode == GameMode::Creative
+    }
+
     /// Left-click attack: crosshair ray over mobs first, else mine block.
     pub fn attack(&mut self) {
         self.interact(false);
@@ -789,8 +829,9 @@ impl GameRuntime {
 
     /// Mouse look.
     pub fn look(&mut self, dx: f64, dy: f64) {
-        self.player.yaw += dx as f32 * 0.0025;
-        self.player.pitch = (self.player.pitch - dy as f32 * 0.0025).clamp(-1.55, 1.55);
+        let k = 0.0025 * self.sens;
+        self.player.yaw += dx as f32 * k;
+        self.player.pitch = (self.player.pitch - dy as f32 * k).clamp(-1.55, 1.55);
     }
 
     /// Break / place at the crosshair. Uses a temporary inline DDA until the
