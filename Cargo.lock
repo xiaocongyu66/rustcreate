@@ -1284,6 +1284,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcv_item"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "mcv_core",
+]
+
+[[package]]
 name = "mcv_light"
 version = "0.1.0"
 dependencies = [

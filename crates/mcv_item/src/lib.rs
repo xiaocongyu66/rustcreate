@@ -16,13 +16,48 @@ pub struct ToolMaterial {
     pub enchant_value: u8,
 }
 
-pub const WOOD: ToolMaterial = ToolMaterial { durability: 59, speed: 2, attack_bonus: 0, enchant_value: 15 };
-pub const STONE_M: ToolMaterial = ToolMaterial { durability: 131, speed: 4, attack_bonus: 1, enchant_value: 5 };
-pub const COPPER: ToolMaterial = ToolMaterial { durability: 190, speed: 5, attack_bonus: 1, enchant_value: 13 };
-pub const IRON: ToolMaterial = ToolMaterial { durability: 250, speed: 6, attack_bonus: 2, enchant_value: 14 };
-pub const DIAMOND: ToolMaterial = ToolMaterial { durability: 1561, speed: 8, attack_bonus: 3, enchant_value: 10 };
-pub const GOLD: ToolMaterial = ToolMaterial { durability: 32, speed: 12, attack_bonus: 0, enchant_value: 22 };
-pub const NETHERITE: ToolMaterial = ToolMaterial { durability: 2031, speed: 9, attack_bonus: 4, enchant_value: 15 };
+pub const WOOD: ToolMaterial = ToolMaterial {
+    durability: 59,
+    speed: 2,
+    attack_bonus: 0,
+    enchant_value: 15,
+};
+pub const STONE_M: ToolMaterial = ToolMaterial {
+    durability: 131,
+    speed: 4,
+    attack_bonus: 1,
+    enchant_value: 5,
+};
+pub const COPPER: ToolMaterial = ToolMaterial {
+    durability: 190,
+    speed: 5,
+    attack_bonus: 1,
+    enchant_value: 13,
+};
+pub const IRON: ToolMaterial = ToolMaterial {
+    durability: 250,
+    speed: 6,
+    attack_bonus: 2,
+    enchant_value: 14,
+};
+pub const DIAMOND: ToolMaterial = ToolMaterial {
+    durability: 1561,
+    speed: 8,
+    attack_bonus: 3,
+    enchant_value: 10,
+};
+pub const GOLD: ToolMaterial = ToolMaterial {
+    durability: 32,
+    speed: 12,
+    attack_bonus: 0,
+    enchant_value: 22,
+};
+pub const NETHERITE: ToolMaterial = ToolMaterial {
+    durability: 2031,
+    speed: 9,
+    attack_bonus: 4,
+    enchant_value: 15,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemKind {
@@ -68,7 +103,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 26] = [
+pub static ITEMS: [ItemDef; 32] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -80,16 +115,51 @@ pub static ITEMS: [ItemDef; 26] = [
     def!("wooden_sword", ItemKind::Sword(WOOD), 3.0, -2.4, 59, 1),
     def!("stone_sword", ItemKind::Sword(STONE_M), 3.0, -2.4, 131, 1),
     def!("iron_sword", ItemKind::Sword(IRON), 3.0, -2.4, 250, 1),
-    def!("diamond_sword", ItemKind::Sword(DIAMOND), 3.0, -2.4, 1561, 1),
+    def!(
+        "diamond_sword",
+        ItemKind::Sword(DIAMOND),
+        3.0,
+        -2.4,
+        1561,
+        1
+    ),
     def!("golden_sword", ItemKind::Sword(GOLD), 3.0, -2.4, 32, 1),
-    def!("netherite_sword", ItemKind::Sword(NETHERITE), 3.0, -2.4, 2031, 1),
+    def!(
+        "netherite_sword",
+        ItemKind::Sword(NETHERITE),
+        3.0,
+        -2.4,
+        2031,
+        1
+    ),
     // pickaxes: baseline 1.0, speed -2.8
     def!("wooden_pickaxe", ItemKind::Pickaxe(WOOD), 1.0, -2.8, 59, 1),
-    def!("stone_pickaxe", ItemKind::Pickaxe(STONE_M), 1.0, -2.8, 131, 1),
+    def!(
+        "stone_pickaxe",
+        ItemKind::Pickaxe(STONE_M),
+        1.0,
+        -2.8,
+        131,
+        1
+    ),
     def!("iron_pickaxe", ItemKind::Pickaxe(IRON), 1.0, -2.8, 250, 1),
-    def!("diamond_pickaxe", ItemKind::Pickaxe(DIAMOND), 1.0, -2.8, 1561, 1),
+    def!(
+        "diamond_pickaxe",
+        ItemKind::Pickaxe(DIAMOND),
+        1.0,
+        -2.8,
+        1561,
+        1
+    ),
     def!("golden_pickaxe", ItemKind::Pickaxe(GOLD), 1.0, -2.8, 32, 1),
-    def!("netherite_pickaxe", ItemKind::Pickaxe(NETHERITE), 1.0, -2.8, 2031, 1),
+    def!(
+        "netherite_pickaxe",
+        ItemKind::Pickaxe(NETHERITE),
+        1.0,
+        -2.8,
+        2031,
+        1
+    ),
     // axes (speed -3.0, baseline 5.0 in 26.1; NOTES-2 notes baseline only for
     // sword/pickaxe — axe values approximate MC data, marked TODO(research))
     def!("wooden_axe", ItemKind::Axe(WOOD), 5.0, -3.0, 59, 1),
@@ -98,8 +168,22 @@ pub static ITEMS: [ItemDef; 26] = [
     def!("diamond_axe", ItemKind::Axe(DIAMOND), 5.0, -3.0, 1561, 1),
     // shovels (speed -3.0, baseline 1.5, TODO(research))
     def!("iron_shovel", ItemKind::Shovel(IRON), 1.5, -3.0, 250, 1),
-    def!("diamond_shovel", ItemKind::Shovel(DIAMOND), 1.5, -3.0, 1561, 1),
+    def!(
+        "diamond_shovel",
+        ItemKind::Shovel(DIAMOND),
+        1.5,
+        -3.0,
+        1561,
+        1
+    ),
     def!("wooden_shovel", ItemKind::Shovel(WOOD), 1.5, -3.0, 59, 1),
+    // block items (mine -> item; place -> block)
+    def!("planks", ItemKind::Block(BlockId(8)), 0.0, 0.0, 0, 0),
+    def!("cobblestone", ItemKind::Block(BlockId(9)), 0.0, 0.0, 0, 0),
+    def!("stone", ItemKind::Block(BlockId(1)), 0.0, 0.0, 0, 0),
+    def!("iron_ore", ItemKind::Block(BlockId(1)), 0.0, 0.0, 0, 0),
+    def!("diamond_ore", ItemKind::Block(BlockId(1)), 0.0, 0.0, 0, 0),
+    def!("log", ItemKind::Block(BlockId(6)), 0.0, 0.0, 0, 0),
 ];
 
 pub const STICK: u16 = 0;
@@ -109,6 +193,19 @@ pub const DIAMOND_ITEM: u16 = 3;
 pub const LAPIS: u16 = 4;
 pub const BOOK: u16 = 5;
 pub const ENCHANTED_BOOK: u16 = 6;
+pub const PLANKS: u16 = 26;
+pub const COBBLESTONE: u16 = 27;
+pub const STONE_ITEM: u16 = 28;
+pub const IRON_ORE_ITEM: u16 = 29;
+pub const DIAMOND_ORE_ITEM: u16 = 30;
+pub const LOG: u16 = 31;
+
+// tool registry indices for recipes/tests
+pub const WOODEN_SWORD_INDEX: u16 = 7;
+pub const STONE_SWORD_INDEX: u16 = 8;
+pub const IRON_SWORD_INDEX: u16 = 9;
+pub const WOODEN_PICKAXE_INDEX: u16 = 13;
+pub const IRON_PICKAXE_INDEX: u16 = 15;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnchStack {
@@ -199,7 +296,7 @@ impl ItemStack {
                     taken += 1;
                 }
             }
-            pending = taken;
+            pending = taken as u16;
         }
         self.damage = self.damage.saturating_add(pending as u16);
         self.damage >= self.max_damage()
@@ -210,7 +307,7 @@ impl ItemStack {
         if self.max_damage() == 0 || self.damage == 0 {
             return xp;
         }
-        let heal = (xp * 2).min(u32::from(self.max_damage() - self.damage));
+        let heal = (xp * 2).min(u32::from(self.damage));
         self.damage -= heal as u16;
         xp - heal.div_ceil(2)
     }
