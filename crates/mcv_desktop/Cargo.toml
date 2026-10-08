@@ -1,0 +1,15 @@
+[package]
+name = "mcv_desktop"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "mcv"
+path = "src/main.rs"
+
+[dependencies]
+mcv_app.workspace = true
+pollster.workspace = true
+log.workspace = true
+env_logger.workspace = true

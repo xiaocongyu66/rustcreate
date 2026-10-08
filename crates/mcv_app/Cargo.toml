@@ -7,9 +7,6 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
-[[bin]]
-name = "mcv"
-path = "src/main.rs"
 
 [dependencies]
 log.workspace = true

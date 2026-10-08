@@ -57,7 +57,7 @@ jobs:
 
       - name: Build (desktop)
         if: ${{ !matrix.android }}
-        run: cargo build --release --locked -p mcv_app --target ${{ matrix.target }}
+        run: cargo build --release --locked -p mcv_desktop --target ${{ matrix.target }}
 
       - name: Generate ephemeral signing keystore
         if: matrix.android
