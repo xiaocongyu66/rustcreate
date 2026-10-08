@@ -99,14 +99,19 @@ pub struct GameRuntime {
     pub input: InputState,
     pub time_ticks: u64,
     pub mesher: Box<dyn ChunkMesher>,
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
+    renderer: mcv_render::Renderer,
     render_chunks: Vec<RenderChunk>,
     stream_cursor: u32,
 }
 
 impl GameRuntime {
-    pub fn new(seed: u64, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(
+        seed: u64,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        color_format: wgpu::TextureFormat,
+    ) -> Self {
+        let renderer = mcv_render::Renderer::new(device.clone(), queue.clone(), color_format, None);
         Self {
             seed,
             chunks: HashMap::new(),
@@ -115,11 +120,14 @@ impl GameRuntime {
             input: InputState::default(),
             time_ticks: 6_000, // noon start
             mesher: Box::new(NoopMesher),
-            device,
-            queue,
+            renderer,
             render_chunks: Vec::new(),
             stream_cursor: 0,
         }
+    }
+
+    pub fn renderer(&mut self) -> &mut mcv_render::Renderer {
+        &mut self.renderer
     }
 
     pub fn camera(&self, aspect: f32) -> Camera {
@@ -240,6 +248,7 @@ impl GameRuntime {
         let _ = dt;
     }
 
+    #[allow(dead_code)] // wired into physics once mcv_game::step merges
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
         let b = BlockPos::new(p.x as i32, (p.y + 0.5) as i32, p.z as i32);

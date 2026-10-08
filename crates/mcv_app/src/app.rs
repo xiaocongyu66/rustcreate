@@ -1,17 +1,15 @@
-//! winit 0.30 application shell + minimal wgpu 30 surface loop.
-//!
-//! M1 scope: window, clear-color render loop, resize, Android suspend/resume.
-//! Game integration lands in M3+.
+//! winit 0.30 shell: window + surface + input → [`GameRuntime`].
 
 use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
-const SKY_CLEAR: [f64; 4] = [0.47, 0.65, 1.0, 1.0];
+use crate::game::GameRuntime;
 
 #[cfg(target_os = "android")]
 type AndroidApp = android_activity::AndroidApp;
@@ -26,24 +24,34 @@ pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::
     }
     let _ = android;
     let event_loop = builder.build()?;
-    let mut app_state = AppState::default();
-    event_loop.run_app(&mut app_state)?;
+    let mut state = AppState::default();
+    event_loop.run_app(&mut state)?;
     Ok(())
 }
 
 #[derive(Default)]
 struct AppState {
     window: Option<Arc<Window>>,
-    gpu: Option<Gpu>,
+    surface: Option<SurfacePair>,
+    runtime: Option<GameRuntime>,
+    last_cursor: Option<(f64, f64)>,
+    step_accum: f32,
+    last_time: Option<std::time::Instant>,
+}
+
+struct SurfacePair {
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    depth: wgpu::TextureView,
 }
 
 impl ApplicationHandler for AppState {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.gpu.is_some() {
+        if self.surface.is_some() {
             return;
         }
         let attrs = Window::default_attributes()
-            .with_title("MCV")
+            .with_title("MCV — rustcreate")
             .with_inner_size(LogicalSize::new(1280.0f32, 720.0f32));
         let window = match event_loop.create_window(attrs) {
             Ok(w) => Arc::new(w),
@@ -53,10 +61,21 @@ impl ApplicationHandler for AppState {
                 return;
             }
         };
-        match pollster::block_on(Gpu::new(window.clone())) {
-            Ok(gpu) => {
+        match Self::init_gpu(window.clone()) {
+            Ok((surface, config, depth, device, queue)) => {
+                let seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(42);
+                self.runtime = Some(GameRuntime::new(seed, device, queue, config.format));
+                let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Confined);
+                window.set_cursor_visible(false);
+                self.surface = Some(SurfacePair {
+                    surface,
+                    config,
+                    depth,
+                });
                 self.window = Some(window);
-                self.gpu = Some(gpu);
                 window.request_redraw();
             }
             Err(e) => {
@@ -67,10 +86,10 @@ impl ApplicationHandler for AppState {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
-        // Drop surface + window; device/pipeline state dies with Gpu and is
-        // rebuilt on the next `resumed` (Android lifecycle requirement).
-        self.gpu = None;
+        self.surface = None;
         self.window = None;
+        // runtime persists; its GPU buffers die with the device on Android —
+        // for M6 we rebuild runtime on resume if the device was lost.
     }
 
     fn window_event(
@@ -82,16 +101,99 @@ impl ApplicationHandler for AppState {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                if let Some(gpu) = self.gpu.as_mut() {
-                    gpu.resize(size.width, size.height);
+                if let (Some(sp), Some(_)) = (self.surface.as_mut(), self.runtime.as_ref()) {
+                    if size.width > 0 && size.height > 0 {
+                        sp.config.width = size.width;
+                        sp.config.height = size.height;
+                        // reconfigure happens lazily in redraw
+                    }
+                }
+            }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        state,
+                        physical_key: PhysicalKey::Code(code),
+                        ..
+                    },
+                ..
+            } => {
+                let Some(runtime) = self.runtime.as_mut() else {
+                    return;
+                };
+                let pressed = state == ElementState::Pressed;
+                match code {
+                    KeyCode::KeyW => runtime.input.forward = pressed,
+                    KeyCode::KeyS => runtime.input.back = pressed,
+                    KeyCode::KeyA => runtime.input.left = pressed,
+                    KeyCode::KeyD => runtime.input.right = pressed,
+                    KeyCode::Space => runtime.input.jump = pressed,
+                    KeyCode::ShiftLeft => runtime.input.sneak = pressed,
+                    KeyCode::ControlLeft | KeyCode::ShiftRight => runtime.input.sprint = pressed,
+                    KeyCode::KeyF => {
+                        if pressed {
+                            runtime.player.flying = !runtime.player.flying;
+                        }
+                    }
+                    KeyCode::Escape => event_loop.exit(),
+                    code @ (KeyCode::Digit1
+                    | KeyCode::Digit2
+                    | KeyCode::Digit3
+                    | KeyCode::Digit4
+                    | KeyCode::Digit5
+                    | KeyCode::Digit6
+                    | KeyCode::Digit7
+                    | KeyCode::Digit8
+                    | KeyCode::Digit9) => {
+                        if pressed {
+                            let n = match code {
+                                KeyCode::Digit1 => 0,
+                                KeyCode::Digit2 => 1,
+                                KeyCode::Digit3 => 2,
+                                KeyCode::Digit4 => 3,
+                                KeyCode::Digit5 => 4,
+                                KeyCode::Digit6 => 5,
+                                KeyCode::Digit7 => 6,
+                                KeyCode::Digit8 => 7,
+                                _ => 8,
+                            };
+                            runtime.player.sel_slot = n;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                if let (Some(runtime), Some(last)) = (self.runtime.as_mut(), self.last_cursor) {
+                    runtime.look(position.x - last.0, position.y - last.1);
+                }
+                self.last_cursor = Some((position.x, position.y));
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                let Some(runtime) = self.runtime.as_mut() else {
+                    return;
+                };
+                let pressed = state == ElementState::Pressed;
+                match button {
+                    MouseButton::Left => {
+                        runtime.input.mining = pressed;
+                        if pressed {
+                            runtime.interact(false);
+                        }
+                    }
+                    MouseButton::Right => {
+                        runtime.input.placing = pressed;
+                        if pressed {
+                            runtime.interact(true);
+                        }
+                    }
+                    _ => {}
                 }
             }
             WindowEvent::RedrawRequested => {
-                if let Some(gpu) = self.gpu.as_ref() {
-                    gpu.render();
-                }
-                if let Some(window) = self.window.as_ref() {
-                    window.request_redraw();
+                self.redraw();
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
                 }
             }
             _ => {}
@@ -99,35 +201,35 @@ impl ApplicationHandler for AppState {
     }
 }
 
-struct Gpu {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-}
-
-impl Gpu {
-    async fn new(window: Arc<Window>) -> Result<Self, Box<dyn std::error::Error>> {
+impl AppState {
+    fn init_gpu(
+        window: Arc<Window>,
+    ) -> Result<
+        (
+            wgpu::Surface<'static>,
+            wgpu::SurfaceConfiguration,
+            wgpu::TextureView,
+            wgpu::Device,
+            wgpu::Queue,
+        ),
+        Box<dyn std::error::Error>,
+    > {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance.create_surface(window.clone())?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                force_fallback_adapter: false,
-            })
-            .await?;
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: Some(&surface),
+            force_fallback_adapter: false,
+        }))?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("mcv-device"),
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::downlevel_defaults(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
-            })
-            .await?;
-
+            }))?;
         let caps = surface.get_capabilities(&adapter);
         let size = window.inner_size();
         let config = wgpu::SurfaceConfiguration {
@@ -141,59 +243,89 @@ impl Gpu {
             desired_maximum_frame_latency: 2,
         };
         surface.configure(&device, &config);
-        Ok(Self {
-            device,
-            queue,
-            surface,
-            config,
-        })
+        let depth = Self::depth_view(&device, config.width, config.height);
+        Ok((surface, config, depth, device, queue))
     }
 
-    fn resize(&mut self, width: u32, height: u32) {
-        if width > 0 && height > 0 {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
+    fn depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("depth"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth24Plus,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn redraw(&mut self) {
+        let (Some(sp), Some(runtime), Some(window)) = (
+            self.surface.as_mut(),
+            self.runtime.as_mut(),
+            self.window.clone(),
+        ) else {
+            return;
+        };
+        let size = window.inner_size();
+        if size.width > 0
+            && size.height > 0
+            && (sp.config.width != size.width || sp.config.height != size.height)
+        {
+            sp.config.width = size.width;
+            sp.config.height = size.height;
+            sp.surface.configure(&runtime.device, &sp.config);
+            sp.depth = Self::depth_view(&runtime.device, size.width, size.height);
         }
-    }
 
-    fn render(&self) {
-        use wgpu::CurrentSurfaceTexture as Out;
-        let frame = match self.surface.get_current_texture() {
-            Out::Success(f) | Out::Suboptimal(f) => f,
-            // Transient: skip this frame.
-            Out::Timeout | Out::Occluded => return,
-            // Surface needs reconfiguration.
-            Out::Outdated | Out::Lost | Out::Validation => {
-                self.surface.configure(&self.device, &self.config);
+        // simulation ticks
+        let now = std::time::Instant::now();
+        let dt = self
+            .last_time
+            .replace(now)
+            .map_or(0.016, |t| now.duration_since(t).as_secs_f32());
+        self.step_accum = (self.step_accum + dt).min(0.2);
+        while self.step_accum >= 1.0 / 60.0 {
+            runtime.fixed_step(1.0 / 60.0);
+            self.step_accum -= 1.0 / 60.0;
+        }
+        runtime.time_ticks += (dt * 20.0) as u64; // 20 ticks/s
+        runtime.stream();
+
+        use wgpu::CurrentSurfaceTexture as Tex;
+        let frame = match sp.surface.get_current_texture() {
+            Tex::Success(f) | Tex::Suboptimal(f) => f,
+            _ => {
+                sp.surface
+                    .configure(runtime.renderer().device(), &sp.config);
                 return;
             }
         };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("frame"),
-            });
-        {
-            let _pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(SKY_CLEAR),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-            });
-        }
-        self.queue.submit([encoder.finish()]);
+
+        let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
+        let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
+        let hud = runtime.build_hud(sp.config.width as f32, sp.config.height as f32);
+        let scene = mcv_render::Scene {
+            camera: &camera,
+            time: dt as f32 * 0.0 + (runtime.time_ticks % 24_000) as f32 / 20.0,
+            day_factor: day,
+            sun_dir: sun,
+            width: sp.config.width as f32,
+            height: sp.config.height as f32,
+            chunks: runtime.render_chunks(),
+            hud: &hud,
+        };
+        runtime.renderer().draw_frame(&view, &sp.depth, &scene);
         frame.present();
     }
 }
