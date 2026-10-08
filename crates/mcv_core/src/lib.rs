@@ -112,6 +112,10 @@ macro_rules! block {
     };
 }
 
+/// 硬度与发光已对照反编译 Minecraft 26.1 `Blocks.java` 校准，
+/// 数值来源与完整对照表见仓库外笔记 `/root/mc-ref/NOTES-blocks.md`。
+/// 注意：MC 的 `strength(x)` 单参同时设硬度与抗爆值；`strength(-1)`（基岩）
+/// 在此用 `f32::INFINITY` 表示不可挖；水按注册表原值 strength(100)。
 pub static BLOCKS: [BlockDef; 14] = [
     block!("air", solid: false, opaque: false, liquid: false, emit: 0,
            tiles: [0; 6], hardness: 0.0),
@@ -125,18 +129,25 @@ pub static BLOCKS: [BlockDef; 14] = [
            hardness: 0.6),
     block!("sand", solid: true, opaque: true, liquid: false, emit: 0,
            tiles: [tiles::SAND; 6], hardness: 0.5),
+    // MC 26.1 water: strength(100)（原版注册表原值；靠 liquid/replaceable
+    // 判定不可获取，手挖 100 秒等同不可挖。原 0.0 会让水面被瞬间"挖掉"）
     block!("water", solid: false, opaque: false, liquid: true, emit: 0,
-           tiles: [tiles::WATER; 6], hardness: 0.0),
+           tiles: [tiles::WATER; 6], hardness: 100.0),
     block!("log", solid: true, opaque: true, liquid: false, emit: 0,
            tiles: [tiles::LOG_SIDE, tiles::LOG_SIDE, tiles::LOG_TOP,
                    tiles::LOG_TOP, tiles::LOG_SIDE, tiles::LOG_SIDE],
-           hardness: 1.0),
+           // MC 26.1 oak_log: strength(2.0)（原为 1.0）
+           hardness: 2.0),
     block!("leaves", solid: true, opaque: false, liquid: false, emit: 0,
            tiles: [tiles::LEAVES; 6], hardness: 0.2),
+    // MC 26.1 oak_planks: strength(2.0, 3.0)（原为 1.0）
     block!("planks", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::PLANKS; 6], hardness: 1.0),
+           tiles: [tiles::PLANKS; 6], hardness: 2.0),
+    // MC 26.1 cobblestone: strength(2.0, 6.0)（原误用石头的 1.5）
     block!("cobble", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::COBBLE; 6], hardness: 1.5),
+           tiles: [tiles::COBBLE; 6], hardness: 2.0),
+    // MC 26.1 bedrock: strength(-1, 3600000)→不可破坏,
+    // 沿用本引擎现有不可挖表示法 f32::INFINITY（不引入新字段/新约定）
     block!("bedrock", solid: true, opaque: true, liquid: false, emit: 0,
            tiles: [tiles::BEDROCK; 6], hardness: f32::INFINITY),
     block!("snow_grass", solid: true, opaque: true, liquid: false, emit: 0,
