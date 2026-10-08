@@ -97,6 +97,7 @@ pub struct Renderer {
     player_vbuf: wgpu::Buffer,
     player_ibuf: wgpu::Buffer,
     player_bind: wgpu::BindGroup,
+    player_sampler: wgpu::Sampler,
     skins_loaded: bool,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
@@ -367,7 +368,7 @@ impl Renderer {
                     buffer: &staging,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(padded_bpr),
+                        bytes_per_row: Some(padded_bpr as u32),
                         rows_per_image: Some(gui_h),
                     },
                 },
@@ -888,7 +889,7 @@ impl Renderer {
                     wgpu::BindGroupLayoutEntry {
                         binding: 2,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Nearest),
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                 ],
@@ -1009,6 +1010,7 @@ impl Renderer {
             player_vbuf,
             player_ibuf,
             player_bind,
+            player_sampler,
             skins_loaded: false,
             terrain_pipeline,
             water_pipeline,

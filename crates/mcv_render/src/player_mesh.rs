@@ -71,6 +71,8 @@ pub struct PlayerVertex {
     pub pos: [f32; 3],
     /// Unorm8x2 → 0..1。64px 皮肤：像素 p → p·255/64，精度足够。
     pub uv: [u8; 2],
+    /// 显式 2B pad：消除 repr(C) 隐式 padding，bytemuck Pod 才合法（stride 24）。
+    pub _pad: [u8; 2],
     pub meta: [u32; 2],
 }
 
@@ -320,7 +322,8 @@ pub fn build_player_mesh() -> PlayerMesh {
     let mut m = PlayerMesh {
         verts: Vec::with_capacity(SKIN_LAYERS as usize * PART_COUNT * PART_VERTS),
         indices: Vec::with_capacity(SKIN_LAYERS as usize * PART_COUNT * PART_INDEXES),
-        slices: [[0..0; PART_COUNT]; SKIN_LAYERS as usize],
+        // Range<u32> 非 Copy，不能用 [[r; N]; M] 重复表达式初始化
+        slices: std::array::from_fn(|_| std::array::from_fn(|_| 0..0)),
     };
     for (s, slim) in [false, true].iter().enumerate() {
         let defs = part_defs(*slim);
@@ -346,6 +349,7 @@ pub fn build_player_mesh() -> PlayerMesh {
                             -(pz - def.pivot[2]) * PX,
                         ],
                         uv: [(uu * uv_scale) as u8, (vv * uv_scale) as u8],
+                        _pad: [0; 2],
                         meta: [s as u32, p as u32],
                     });
                 }
@@ -412,7 +416,7 @@ pub fn model_matrices(pose: &PlayerPose) -> [Mat4; PART_COUNT] {
         -s,
     ];
     let ry = Mat4::from_axis_angle(Vec3::Y, pose.yaw);
-    let rx_axis = ry * Vec3::X;
+    let rx_axis = ry.transform_vector3(Vec3::X);
     let mut out = [Mat4::IDENTITY; PART_COUNT];
     for p in 0..PART_COUNT {
         // pivot 相对脚底的本空间偏移（MC y↓ 根在头顶，脚底 y=24）
@@ -421,7 +425,7 @@ pub fn model_matrices(pose: &PlayerPose) -> [Mat4; PART_COUNT] {
             (24.0 - PIVOTS[p][1]) * PX,
             -PIVOTS[p][2] * PX,
         );
-        let world_piv = pose.pos + ry * off;
+        let world_piv = pose.pos + ry.transform_point3(off);
         let rx = Mat4::from_axis_angle(rx_axis, rots[p]);
         out[p] = Mat4::from_translation(world_piv) * ry * rx;
     }
@@ -503,7 +507,7 @@ mod tests {
                 .iter()
                 .filter(|v| v.meta[0] == 0 && v.meta[1] == part as u32)
             {
-                let w = mm[part] * v.pos.extend(1.0);
+                let w = mm[part] * Vec3::from(v.pos).extend(1.0);
                 lo = lo.min(w.y);
                 hi = hi.max(w.y);
             }
@@ -573,7 +577,7 @@ mod tests {
                 .iter()
                 .filter(|v| v.meta[0] == 0 && v.meta[1] == part as u32)
             {
-                let w = mm[part] * v.pos.extend(1.0);
+                let w = mm[part] * Vec3::from(v.pos).extend(1.0);
                 lo = lo.min(w.x);
                 hi = hi.max(w.x);
             }
@@ -610,7 +614,7 @@ mod tests {
         };
         let mm = model_matrices(&pose);
         // 肢体末端（pivot 正下方 0.5m）：负 z = 前摆
-        let tip = |p: usize| (mm[p] * Vec3::new(0.0, -0.5, 0.0)).z;
+        let tip = |p: usize| mm[p].transform_point3(Vec3::new(0.0, -0.5, 0.0)).z;
         assert!(tip(P_R_LEG) < 0.0, "right leg forward {}", tip(P_R_LEG));
         assert!(tip(P_R_ARM) > 0.0, "right arm back {}", tip(P_R_ARM));
     }

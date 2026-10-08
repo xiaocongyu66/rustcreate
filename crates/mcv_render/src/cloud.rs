@@ -143,7 +143,7 @@ impl Clouds {
         let empty = |x: isize, y: isize| -> bool {
             let x = x.rem_euclid(width as isize) as u32;
             let y = y.rem_euclid(height as isize) as u32;
-            img[(x, y)].a() < EMPTY_ALPHA
+            img[(x, y)].0[3] < EMPTY_ALPHA
         };
         let mut cells = vec![0u8; width * height];
         for y in 0..height as isize {

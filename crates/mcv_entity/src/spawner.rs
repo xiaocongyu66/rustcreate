@@ -230,8 +230,8 @@ pub fn annulus_pos(
     let ang = r2 * std::f64::consts::TAU;
     let d = d2.sqrt() as f32;
     (
-        player.x + ang.cos() * d,
-        player.z + ang.sin() * d,
+        player.x + ang.cos() as f32 * d,
+        player.z + ang.sin() as f32 * d,
         d2 as f32,
     )
 }
