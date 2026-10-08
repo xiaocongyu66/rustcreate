@@ -100,7 +100,10 @@ fn fit_surface_size(w: u32, h: u32, max: u32) -> (u32, u32) {
         (w.max(1), h.max(1))
     } else {
         let k = max as f64 / m as f64;
-        (((w as f64 * k) as u32).max(1), ((h as f64 * k) as u32).max(1))
+        (
+            ((w as f64 * k) as u32).max(1),
+            ((h as f64 * k) as u32).max(1),
+        )
     }
 }
 
