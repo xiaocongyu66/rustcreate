@@ -61,7 +61,7 @@ jobs:
 
       - name: Build (android apk)
         if: matrix.android
-        run: cargo apk build --release
+        run: cargo apk build -p mcv_app --release
 
       - name: Package (windows)
         if: runner.os == 'Windows'

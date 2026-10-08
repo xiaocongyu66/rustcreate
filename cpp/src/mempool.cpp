@@ -15,6 +15,7 @@
 #include "mcv.h"
 
 #include <atomic>
+#include <new>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
