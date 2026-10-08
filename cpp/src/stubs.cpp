@@ -1,13 +1,5 @@
-// Mesh implementation lands in M4 (terrain is implemented; lighting is pure
-// Rust). This stub keeps the M1 ABI surface linkable and testable.
+// Placeholder translation unit. The mcv_mesh_build stub that lived here was
+// replaced by the real implementation in mesher.cpp (M4); the file is kept
+// in the build so the M1 link surface stays unchanged.
 
 #include "mcv.h"
-
-extern "C" {
-
-int32_t mcv_mesh_build(const uint8_t* const[9], const uint8_t* const[9],
-                       uint32_t, McvMeshBuffer*) {
-    return MCV_ERR_NOT_IMPLEMENTED;
-}
-
-}  // extern "C"

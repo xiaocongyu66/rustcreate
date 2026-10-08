@@ -142,6 +142,13 @@ void mcv_set_active_pool(McvPool* pool) {
     g_active_pool = reinterpret_cast<Pool*>(pool);
 }
 
+/* Internal helper for mcv_mesh_build (mesher.cpp): exposes the thread-local
+ * active pool so the mesher can acquire its output buffer. Not part of the
+ * public mcv.h surface. */
+McvPool* mcv_active_pool(void) {
+    return reinterpret_cast<McvPool*>(g_active_pool);
+}
+
 McvPool* mcv_pool_create(uint64_t budget_bytes) {
     Pool* p = new (std::nothrow) Pool();
     if (p == nullptr) {
