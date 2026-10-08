@@ -64,26 +64,14 @@ struct BlockInfo {
     uint16_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
 };
 
-/* Must stay strictly in sync with mcv_core::BLOCKS (id/flags). tiles[] are
- * texture-array layer indices into the real-tile atlas: values are the
- * tiles_manifest.json indexes (see mcv_core::tiles), NOT the pre-1171 layout.
- * ids >= kBlocksCount fall back to kUnknown (opaque, tile 0) until the
- * registry feed reaches the mesher. */
+/* Generated from the same ci/gen-blocks.py run as mcv_core::BLOCKS, so id
+ * order/flags/tile layers match the Rust registry by construction (tiles[]
+ * are texture-array layer indices from tiles_manifest.json). Non-cube blocks
+ * (stairs/slabs/fences/crosses, model_kind=1) are placeholder-rendered as
+ * full cubes until the shape system lands. ids >= kBlocksCount fall back to
+ * kUnknown. */
 constexpr BlockInfo kBlocks[] = {
-    /* air */ {false, false, false, {0, 0, 0, 0, 0, 0}},
-    /* stone */ {true, false, true, {707, 707, 707, 707, 707, 707}},
-    /* dirt */ {true, false, true, {274, 274, 274, 274, 274, 274}},
-    /* grass */ {true, false, true, {333, 333, 336, 274, 333, 333}},
-    /* sand */ {true, false, true, {645, 645, 645, 645, 645, 645}},
-    /* water */ {false, true, false, {789, 789, 789, 789, 789, 789}},
-    /* log */ {true, false, true, {490, 490, 491, 491, 490, 490}},
-    /* leaves */ {false, false, true, {489, 489, 489, 489, 489, 489}},
-    /* planks */ {true, false, true, {492, 492, 492, 492, 492, 492}},
-    /* cobble */ {true, false, true, {168, 168, 168, 168, 168, 168}},
-    /* bedrock */ {true, false, true, {41, 41, 41, 41, 41, 41}},
-    /* snow_grass */ {true, false, true, {335, 335, 336, 274, 335, 335}},
-    /* flower_red */ {false, false, false, {574, 574, 574, 574, 574, 574}},
-    /* flower_yellow */ {false, false, false, {230, 230, 230, 230, 230, 230}},
+#include "blocks_gen.inc"
 };
 constexpr uint16_t kBlocksCount = sizeof(kBlocks) / sizeof(kBlocks[0]);
 

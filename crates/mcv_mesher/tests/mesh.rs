@@ -89,14 +89,17 @@ fn single_block_six_faces() {
 
 #[test]
 fn block_table_tex_parity_with_mcv_core() {
+    // 生成表（cpp/src/blocks_gen.inc）与 mcv_core::BLOCKS 必须逐 id 一致：
+    // 对每个 id 悬空放一块，不透明 pass 应产出 6 面、逐面 tile 层相同。
+    // 水走水 pass 除外；非立方（楼梯/板/cross…）占位渲染为全立方，同样入检。
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
-    for id in 1u16..14 {
-        // water belongs to the water pass; flowers emit no geometry
-        if id == 5 || id == 12 || id == 13 {
+    let mut c = chunk(0, 0xF0);
+    for id in 1u16..mcv_core::BLOCKS.len() as u16 {
+        if id == 5 {
+            // water belongs to the water pass
             continue;
         }
-        let mut c = chunk(0, 0xF0);
         put(&mut c.0, 8, 8, 8, id);
         let buf = mesher.build(&full9(&c, &side), 0).unwrap();
         assert_eq!(buf.counts(), (24, 36), "block {id} face count");
@@ -108,6 +111,7 @@ fn block_table_tex_parity_with_mcv_core() {
                 "block {id} face {face} tex layer"
             );
         }
+        put(&mut c.0, 8, 8, 8, 0);
     }
 }
 
