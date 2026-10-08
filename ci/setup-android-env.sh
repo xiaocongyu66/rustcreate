@@ -10,15 +10,15 @@ if [ -z "$NDK" ]; then
 fi
 
 TOOLBIN="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
-if [ ! -x "$TOOLBIN/aarch64-linux-android24-clang" ]; then
+if [ ! -x "$TOOLBIN/aarch64-linux-android26-clang" ]; then
     echo "error: NDK toolchain not found under $TOOLBIN" >&2
     exit 1
 fi
 
-export CC_aarch64_linux_android="$TOOLBIN/aarch64-linux-android24-clang"
-export CXX_aarch64_linux_android="$TOOLBIN/aarch64-linux-android24-clang++"
+export CC_aarch64_linux_android="$TOOLBIN/aarch64-linux-android26-clang"
+export CXX_aarch64_linux_android="$TOOLBIN/aarch64-linux-android26-clang++"
 export AR_aarch64_linux_android="$TOOLBIN/llvm-ar"
-export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLBIN/aarch64-linux-android24-clang"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLBIN/aarch64-linux-android26-clang"
 # cc crate: C++ standard library for the android target; both spellings for
 # compatibility across cc versions.
 export CXXSTLD_aarch64_linux_android="c++_static"
