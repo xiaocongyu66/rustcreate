@@ -29,11 +29,14 @@ bytemuck.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }
+android_logger = "0.14"
 
 [package.metadata.android]
 package = "win.rustcreate.mcv"
 apk_name = "mcv"
 build_targets = ["aarch64-linux-android"]
+# GL 3.0 保证无 Vulkan 的设备也能走 wgpu 的 GLES 后端
+opengles_version = [3, 0]
 
 [package.metadata.android.sdk]
 min_sdk_version = 24

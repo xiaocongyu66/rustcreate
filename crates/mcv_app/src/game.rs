@@ -164,6 +164,7 @@ pub struct GameRuntime {
     spawn_cooldown: u32,
     pub player_xp: u32,
     pub hotbar_slot: Option<mcv_item::ItemStack>,
+    pub touch: crate::touch::TouchState,
 }
 
 impl GameRuntime {
@@ -205,6 +206,7 @@ impl GameRuntime {
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar_slot: Some(mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
+            touch: crate::touch::TouchState::default(),
         }
     }
 
@@ -545,7 +547,47 @@ impl GameRuntime {
         true
     }
 
+    /// 触控效果注入：视角、槽位、放置、移动方向、跳跃、挖掘。
+    /// 仅在收到过触摸事件后生效，桌面键盘行为不受影响。
+    fn apply_touch_input(&mut self) {
+        if !self.touch.enabled {
+            return;
+        }
+        let fx = self.touch.consume();
+        self.look(fx.look.0 as f64 * 0.4, fx.look.1 as f64 * 0.4);
+        if let Some(slot) = fx.slot {
+            self.player.sel_slot = slot;
+        }
+        if fx.place {
+            self.interact(true);
+        }
+        // 摇杆 → 移动方向
+        if let Some((dx, dy)) = self.touch.stick_direction() {
+            // 摇杆向上推 = 前进
+            self.input.forward = dy < -0.3;
+            self.input.back = dy > 0.3;
+            self.input.left = dx < -0.3;
+            self.input.right = dx > 0.3;
+            let len = (dx * dx + dy * dy).sqrt();
+            self.input.sprint = len > 0.85;
+        } else if self.touch.stick_vec == (0.0, 0.0) {
+            self.input.forward = false;
+            self.input.back = false;
+            self.input.left = false;
+            self.input.right = false;
+            self.input.sprint = false;
+        }
+        if self.touch.jump_held {
+            self.input.jump = true;
+        }
+        if self.touch.mine_held {
+            self.input.mining = true;
+            self.interact(false); // 挖掘 / 攻击（含跨帧冷却逻辑）
+        }
+    }
+
     pub fn fixed_step(&mut self, dt: f32) {
+        self.apply_touch_input();
         self.attack_ticker = (self.attack_ticker + dt).min(20.0);
         self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
 
@@ -851,6 +893,117 @@ impl GameRuntime {
                 ));
             }
         }
+        // 触屏控件（仅在收到过触摸事件后显示）
+        if self.touch.enabled {
+            use crate::touch::{BTN_R, STICK_R};
+            let stick_c = crate::touch::TouchState::stick_center(width, height);
+            // 摇杆底盘 + 滑块
+            quads.push(text::rect(
+                stick_c.0 - STICK_R,
+                stick_c.1 - STICK_R,
+                STICK_R * 2.0,
+                STICK_R * 2.0,
+                [1.0, 1.0, 1.0, 0.10],
+            ));
+            let (ox, oy) = self.touch.stick_vec;
+            quads.push(text::rect(
+                stick_c.0 + ox - STICK_R * 0.4,
+                stick_c.1 + oy - STICK_R * 0.4,
+                STICK_R * 0.8,
+                STICK_R * 0.8,
+                [1.0, 1.0, 1.0, 0.35],
+            ));
+            // 动作按钮（跳 / 挖 / 放）
+            let jump_c = crate::touch::TouchState::jump_center(width, height);
+            let mine_c = crate::touch::TouchState::mine_center(width, height);
+            let place_c = crate::touch::TouchState::place_center(width, height);
+            let alpha = 0.18;
+            quads.push(text::rect(
+                jump_c.0 - BTN_R,
+                jump_c.1 - BTN_R,
+                BTN_R * 2.0,
+                BTN_R * 2.0,
+                [
+                    0.4,
+                    0.9,
+                    0.4,
+                    alpha + if self.touch.jump_held { 0.15 } else { 0.0 },
+                ],
+            ));
+            quads.push(text::rect(
+                mine_c.0 - BTN_R,
+                mine_c.1 - BTN_R,
+                BTN_R * 2.0,
+                BTN_R * 2.0,
+                [
+                    0.9,
+                    0.5,
+                    0.3,
+                    alpha + if self.touch.mine_held { 0.15 } else { 0.0 },
+                ],
+            ));
+            quads.push(text::rect(
+                place_c.0 - BTN_R,
+                place_c.1 - BTN_R,
+                BTN_R * 2.0,
+                BTN_R * 2.0,
+                [0.4, 0.6, 0.9, alpha],
+            ));
+            // 按钮符号（程序化）
+            // 跳跃: 上箭头杆
+            quads.push(text::rect(
+                jump_c.0 - 3.0,
+                jump_c.1 - 12.0,
+                6.0,
+                22.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            quads.push(text::rect(
+                jump_c.0 - 10.0,
+                jump_c.1 - 6.0,
+                8.0,
+                6.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            quads.push(text::rect(
+                jump_c.0 + 2.0,
+                jump_c.1 - 6.0,
+                8.0,
+                6.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            // 挖掘: 竖柄 + 斜头（近似镐）
+            quads.push(text::rect(
+                mine_c.0 - 2.0,
+                mine_c.1 - 14.0,
+                5.0,
+                26.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            quads.push(text::rect(
+                mine_c.0 - 14.0,
+                mine_c.1 - 16.0,
+                28.0,
+                5.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            // 放置: 加号
+            quads.push(text::rect(
+                place_c.0 - 3.0,
+                place_c.1 - 13.0,
+                6.0,
+                26.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+            quads.push(text::rect(
+                place_c.0 - 13.0,
+                place_c.1 - 3.0,
+                26.0,
+                6.0,
+                [1.0, 1.0, 1.0, 0.8],
+            ));
+        }
+
         // debug line
         let p = &self.player.pos;
         let line = format!(

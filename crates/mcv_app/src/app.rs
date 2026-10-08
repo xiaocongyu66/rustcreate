@@ -22,12 +22,21 @@ type AndroidApp = ();
 pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = EventLoop::<()>::with_user_event();
     #[cfg(target_os = "android")]
-    if let Some(app) = android {
-        builder.with_android_app(app);
+    {
+        if let Some(app) = android {
+            builder.with_android_app(app);
+        }
     }
     let _ = android;
     let event_loop = builder.build()?;
     let mut state = AppState::default();
+    #[cfg(target_os = "android")]
+    {
+        state.android_data = event_loop
+            .android_app()
+            .and_then(|a| a.internal_data_path().map(std::path::PathBuf::from));
+        log::info!("android internal data: {:?}", state.android_data);
+    }
     event_loop.run_app(&mut state)?;
     Ok(())
 }
@@ -41,6 +50,9 @@ struct AppState {
     step_accum: f32,
     last_time: Option<std::time::Instant>,
     save_timer: Option<std::time::Instant>,
+    /// Android 应用私有目录（internal_data_path），存档放这里
+    #[cfg(target_os = "android")]
+    android_data: Option<std::path::PathBuf>,
 }
 
 struct SurfacePair {
@@ -71,6 +83,16 @@ impl ApplicationHandler for AppState {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(42);
+                // Android 上 current_exe() 指向 APK（不可写），用应用私有目录
+                #[cfg(target_os = "android")]
+                let save_dir = {
+                    let base = self
+                        .android_data
+                        .clone()
+                        .unwrap_or_else(|| std::path::PathBuf::from("/data/local/tmp"));
+                    base.join("saves/world")
+                };
+                #[cfg(not(target_os = "android"))]
                 let save_dir = std::env::current_exe()
                     .ok()
                     .and_then(|p| p.parent().map(|d| d.join("saves/world")))
@@ -185,6 +207,13 @@ impl ApplicationHandler for AppState {
                 }
                 self.last_cursor = Some((position.x, position.y));
             }
+            WindowEvent::Touch { .. } => {
+                if let (Some(runtime), Some(sp)) = (self.runtime.as_mut(), self.surface.as_ref()) {
+                    runtime
+                        .touch
+                        .on_event(&event, sp.config.width as f32, sp.config.height as f32);
+                }
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 let Some(runtime) = self.runtime.as_mut() else {
                     return;
@@ -227,7 +256,16 @@ type GpuInit = (
 
 impl AppState {
     fn init_gpu(window: Arc<Window>) -> Result<GpuInit, Box<dyn std::error::Error>> {
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        // Android: 默认 PRIMARY 不含 GL —— 无 Vulkan 的设备会直接拿不到
+        // adapter 然后被当作闪退退出。显式加入 GLES。
+        #[cfg(target_os = "android")]
+        let backends = wgpu::Backends::VULKAN | wgpu::Backends::GL;
+        #[cfg(not(target_os = "android"))]
+        let backends = wgpu::Backends::PRIMARY;
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends,
+            ..wgpu::InstanceDescriptor::new_without_display_handle()
+        });
         let surface = instance.create_surface(window.clone())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -252,7 +290,11 @@ impl AppState {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            alpha_mode: caps.alpha_modes[0],
+            alpha_mode: caps
+                .alpha_modes
+                .first()
+                .copied()
+                .unwrap_or(wgpu::CompositeAlphaMode::Auto),
             color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
