@@ -6,6 +6,7 @@ pub mod font;
 pub mod frustum;
 pub mod gpu;
 pub mod offscreen;
+pub mod text;
 
 pub use camera::Camera;
 pub use gpu::{FrameUniforms, HudQuad, RenderChunk, Renderer, Scene};
