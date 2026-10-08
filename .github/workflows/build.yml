@@ -68,7 +68,8 @@ jobs:
             -dname "CN=mcv, OU=mcv, O=mcv, L=mcv, S=mcv, C=CN"
       - name: Build (android apk)
         if: matrix.android
-        run: cargo apk build -p mcv_app --release
+        working-directory: crates/mcv_app
+        run: cargo apk build --release
 
       - name: Package (windows)
         if: runner.os == 'Windows'
