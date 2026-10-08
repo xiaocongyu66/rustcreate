@@ -53,6 +53,19 @@ pub struct Entity {
     gen: u32,
 }
 
+impl Entity {
+    /// 槽位下标(渲染/外部索引用途;校验存活仍须走 [`World::is_alive`])。
+    #[inline]
+    pub fn idx(&self) -> u32 {
+        self.idx
+    }
+    /// 世代号。
+    #[inline]
+    pub fn gen(&self) -> u32 {
+        self.gen
+    }
+}
+
 /// 组件约束:`'static` 即可。泛型存储靠 TypeId 分表。
 pub trait Component: 'static {}
 impl<T: 'static> Component for T {}
@@ -307,27 +320,39 @@ impl World {
         Ref::filter_map(set, |s| s.get(e)).ok()
     }
 
-    /// 整表只读视图。从未注册过该组件类型时返回空表视图(非 panic)。
-    /// 同一张表的冲突借用(如两次 `write`)panic——运行时互斥,等同
-    /// Bevy 的 query 冲突。视图持有期间禁止再调 `&mut self` 的 World 方法
-    /// (despawn 级联清表需要独占);系统函数请成对使用:先取全部所需表
-    /// 视图跑循环,结束后再动 World 生命周期。
-    pub fn read<T: Component>(&mut self) -> Ref<'_, SparseSet<T>> {
+    /// 预注册组件表(可选)。`insert` 会自动注册;但若某类型可能**从未被
+    /// 插入**就要被 `read`/`write`(如零怪时系统仍要取 `MobKind` 视图),
+    /// 必须在建 World 后显式注册一次,否则 `read`/`write` panic。
+    pub fn register<T: Component>(&mut self) {
         self.ensure_store::<T>();
+    }
+
+    /// 整表只读视图。同一张表的冲突借用(如两次 `write`)panic——运行时
+    /// 互斥,等同 Bevy 的 query 冲突;不同表可自由并行取(借用都是 `&self`,
+    /// `(w.write::<A>(), w.read::<B>())` 元组模式合法)。
+    /// 视图持有期间禁止再调 `&mut self` 的 World 方法(despawn 级联清表
+    /// 需要独占);系统函数请成对使用:先取全部所需表视图跑循环,结束后
+    /// 再动 World 生命周期。未注册类型 panic(见 [`World::register`])。
+    pub fn read<T: Component>(&self) -> Ref<'_, SparseSet<T>> {
         // Ref 不实现 Debug,expect 不可用;downcast 失败是内部不变式破坏。
-        Ref::filter_map(self.stores[&TypeId::of::<T>()].borrow(), |s| {
+        Ref::filter_map(self.table::<T>().borrow(), |s| {
             s.as_any().downcast_ref::<SparseSet<T>>()
         })
         .unwrap_or_else(|_| panic!("TypeId→表类型映射被破坏"))
     }
 
     /// 整表可变视图,约束同 [`World::read`]。
-    pub fn write<T: Component>(&mut self) -> RefMut<'_, SparseSet<T>> {
-        self.ensure_store::<T>();
-        RefMut::filter_map(self.stores[&TypeId::of::<T>()].borrow_mut(), |s| {
+    pub fn write<T: Component>(&self) -> RefMut<'_, SparseSet<T>> {
+        RefMut::filter_map(self.table::<T>().borrow_mut(), |s| {
             s.as_any_mut().downcast_mut::<SparseSet<T>>()
         })
         .unwrap_or_else(|_| panic!("TypeId→表类型映射被破坏"))
+    }
+
+    fn table<T: Component>(&self) -> &RefCell<Box<dyn Store>> {
+        self.stores
+            .get(&TypeId::of::<T>())
+            .unwrap_or_else(|| panic!("组件类型未注册:先 register::<T>() 或 insert"))
     }
 
     /// 该组件类型的全表实体数(调试/测试)。

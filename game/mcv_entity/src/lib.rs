@@ -11,7 +11,9 @@ pub mod drops;
 pub mod spawner;
 
 pub use ai::{ai_table, AiAction, Brain, MobAiTable, MobState, Percept};
-pub use components::{spawn_mob, Health, LastHurt, MobKind, MobTicks, PhysBody, Yaw};
+pub use components::{
+    register_mob_components, spawn_mob, Health, LastHurt, MobKind, MobTicks, PhysBody, Yaw,
+};
 pub use defs::{MobDef, MobId, MOBS};
 pub use drops::{death_drops, DropEvent};
 pub use spawner::{SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned, SPAWN_CAPS};

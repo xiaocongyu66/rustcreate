@@ -39,8 +39,8 @@ fn despawn_invalidates_handle_and_reuses_slot_with_new_gen() {
 
     // 槽位复用:新实体落在同一 idx,但 gen +1,旧句柄仍无效。
     let c = w.spawn();
-    assert_eq!(c.idx, a.idx);
-    assert_ne!(c.gen, a.gen);
+    assert_eq!(c.idx(), a.idx());
+    assert_ne!(c.gen(), a.gen());
     w.insert(c, Pos(9.0));
     assert!(w.get_ref::<Pos>(a).is_none());
     assert_eq!(w.get_ref::<Pos>(c).unwrap().0, 9.0);
@@ -140,11 +140,13 @@ fn multi_table_system_pattern() {
 #[test]
 fn iteration_skips_holes_after_despawn() {
     let mut w = World::new();
-    let ids: Vec<Entity> = (0..5).map(|i| {
-        let e = w.spawn();
-        w.insert(e, Pos(i as f32));
-        e
-    });
+    let ids: Vec<Entity> = (0..5)
+        .map(|i| {
+            let e = w.spawn();
+            w.insert(e, Pos(i as f32));
+            e
+        })
+        .collect();
     w.despawn(ids[1]);
     w.despawn(ids[3]);
     let vals: Vec<f32> = w.read::<Pos>().iter().map(|(_, p)| p.0).collect();
@@ -161,23 +163,35 @@ fn remove_returns_component() {
     assert_eq!(w.remove::<Hp>(e).unwrap().0, 7);
     assert!(w.remove::<Hp>(e).is_none(), "二次移除 None");
     assert!(w.get_ref::<Hp>(e).is_none());
-    // 死句柄 remove 也返回 None 且不动表。
-    let ghost = Entity { idx: 999, gen: 0 };
+    // 死句柄 remove 也返回 None 且不动表(本世界 spawn+despawn 得到
+    // 世代已作废的合法构造句柄)。
+    let ghost = w.spawn();
+    w.despawn(ghost);
     assert!(w.remove::<Hp>(ghost).is_none());
+    assert_eq!(w.component_count::<Hp>(), 0);
 }
 
-/// read 未注册类型 = 空表视图而非 panic;read/write 混用不同表合法。
+/// 已注册但从未插入的类型 = 空表视图;read/write 混用不同表合法。
 #[test]
-fn unregistered_type_reads_empty_and_mixed_borrows_ok() {
+fn registered_empty_read_and_mixed_borrows_ok() {
     let mut w = World::new();
     let e = w.spawn();
     w.insert(e, Pos(1.0));
-    // Vel 从未插入过:read 得空表。
+    w.register::<Vel>();
+    // Vel 注册了但从未插入:read 得空表。
     assert!(w.read::<Vel>().is_empty());
-    // 同时持 Pos 写视图 + Vel 读视图(不同 RefCell,合法)。
+    // 同时持 Pos 写视图 + Vel 读视图(都是 &self 借用、不同 RefCell,合法)。
     {
         let (mut pos, _vel) = (w.write::<Pos>(), w.read::<Vel>());
         pos.for_each(|_, p| p.0 += 100.0);
     }
     assert_eq!(w.get_ref::<Pos>(e).unwrap().0, 101.0);
+}
+
+/// 未注册类型 read/write panic(契约:防静默读空表掩盖漏注册)。
+#[test]
+#[should_panic(expected = "未注册")]
+fn reading_unregistered_panics() {
+    let w = World::new();
+    drop(w.read::<Vel>());
 }

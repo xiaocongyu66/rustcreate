@@ -196,7 +196,7 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
-        Self {
+        let mut rt = Self {
             seed,
             chunks: HashMap::new(),
             scheduler: mcv_worldgen::TerrainScheduler::new(seed, mcv_core::world_worker_count()),
@@ -223,7 +223,9 @@ impl GameRuntime {
             step_dist: 0.0,
             dead: false,
             fall_y: None,
-        }
+        };
+        mcv_entity::register_mob_components(&mut rt.mobs);
+        rt
     }
 
     /// 玩家受伤（26.1 LivingEntity.hurt 简化）：无敌帧拒绝、击退、受伤音、

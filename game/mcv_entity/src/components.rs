@@ -59,6 +59,17 @@ pub struct MobTicks {
 #[derive(Clone, Copy, Debug)]
 pub struct LastHurt(pub f32);
 
+/// 预注册全部 mob 组件表：`GameRuntime` 建 World 后调一次——零怪时
+/// AI tick 仍会 `read::<MobKind>()` 等视图，未注册类型 read 会 panic。
+pub fn register_mob_components(world: &mut World) {
+    world.register::<MobKind>();
+    world.register::<PhysBody>();
+    world.register::<Health>();
+    world.register::<Yaw>();
+    world.register::<MobTicks>();
+    world.register::<LastHurt>();
+}
+
 /// 集中装配一只怪（原 `Mob::new` 的组件化等价），避免散点漏插。
 pub fn spawn_mob(world: &mut World, id: MobId, pos: Vec3) -> Entity {
     let e = world.spawn();
