@@ -23,7 +23,7 @@ pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::
     let mut builder = EventLoop::<()>::with_user_event();
     #[cfg(target_os = "android")]
     if let Some(app) = android {
-        builder = builder.with_android_app(app);
+        builder.with_android_app(app);
     }
     let _ = android;
     let event_loop = builder.build()?;
