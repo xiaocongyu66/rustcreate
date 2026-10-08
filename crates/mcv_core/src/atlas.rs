@@ -18,14 +18,14 @@ fn hash01(seed: u64, x: u32, y: u32) -> f32 {
     (h >> 40) as f32 / 16_777_216.0
 }
 
-struct Painter {
+struct Painter<'a> {
     data: &'a mut [u8],
     layer: usize,
 }
 
-impl Painter {
+impl Painter<'_> {
     fn set(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8, a: u8) {
-        let off = self.layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+        let off = self.layer * TILE_PX * TILE_PX * 4 + ((y as usize * TILE_PX + x as usize) * 4);
         self.data[off] = r;
         self.data[off + 1] = g;
         self.data[off + 2] = b;
@@ -52,7 +52,8 @@ impl Painter {
         for y in 0..TILE_PX as u32 {
             for x in 0..TILE_PX as u32 {
                 if hash01(seed ^ 0x51, x, y) < threshold {
-                    let off = self.layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                    let off = self.layer * TILE_PX * TILE_PX * 4
+                        + ((y as usize * TILE_PX + x as usize) * 4);
                     for c in 0..3 {
                         self.data[off + c] = clamp8(self.data[off + c] as i32 - dark);
                     }
@@ -123,8 +124,8 @@ pub fn generate_layers(data: &mut [u8]) {
                     if (y + 2) % 7 < 2 {
                         for x in 0..TILE_PX as u32 {
                             let n = hash01(0xA00C, x, y) * 24.0;
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((y as usize * TILE_PX + x as usize) * 4);
                             p.data[off] = clamp8(56 + 24 + n as i32);
                             p.data[off + 1] = clamp8(108 + 26 + n as i32);
                             p.data[off + 2] = clamp8(214 + 20 + n as i32);
@@ -137,8 +138,8 @@ pub fn generate_layers(data: &mut [u8]) {
                 for x in 0..TILE_PX as u32 {
                     if x % 5 < 2 {
                         for y in 0..TILE_PX as u32 {
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((y as usize * TILE_PX + x as usize) * 4);
                             for c in 0..3 {
                                 p.data[off + c] = clamp8(p.data[off + c] as i32 - 18);
                             }
@@ -152,8 +153,8 @@ pub fn generate_layers(data: &mut [u8]) {
                     for x in 0..TILE_PX as u32 {
                         let d = (x.max(15 - x)).max(y.max(15 - y));
                         if d % 3 == 0 {
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((y as usize * TILE_PX + x as usize) * 4);
                             for c in 0..3 {
                                 p.data[off + c] = clamp8(p.data[off + c] as i32 - 24);
                             }
@@ -170,8 +171,8 @@ pub fn generate_layers(data: &mut [u8]) {
                 for y in 0..TILE_PX as u32 {
                     if y % 4 == 3 {
                         for x in 0..TILE_PX as u32 {
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((y as usize * TILE_PX + x as usize) * 4);
                             for c in 0..3 {
                                 p.data[off + c] = clamp8(p.data[off + c] as i32 - 30);
                             }
@@ -188,8 +189,8 @@ pub fn generate_layers(data: &mut [u8]) {
                         let cy = y / 5;
                         let edge = (x % 5 == 0) || (y % 5 == 0);
                         if edge {
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((y * TILE_PX + x) * 4) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((y as usize * TILE_PX + x as usize) * 4);
                             for c in 0..3 {
                                 p.data[off + c] = clamp8(p.data[off + c] as i32 - 26);
                             }
