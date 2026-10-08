@@ -49,8 +49,8 @@ fn close(a: f32, b: f32) -> bool {
 }
 
 /// 1. 表驱动：各方块 × {空手, 木镐} 的耗时与公式值一致。
-/// 用 mcv_core 现硬度：stone 1.5 → 空手 7.5 s / 木镐 1.125 s；
-/// dirt 0.5 → 空手 0.75 s；log/planks 2.0 → 空手 3.0 s。
+///    用 mcv_core 现硬度：stone 1.5 → 空手 7.5 s / 木镐 1.125 s；
+///    dirt 0.5 → 空手 0.75 s；log/planks 2.0 → 空手 3.0 s。
 #[test]
 fn break_time_matches_formula_table() {
     let ids = [STONE, DIRT, LOG, PLANKS, COBBLE, BEDROCK, FLOWER_RED];
@@ -102,7 +102,7 @@ fn bare_hand_time_order_stone_wood_dirt() {
 }
 
 /// 3. 空手惩罚与工具倍率：空手/木镐 = (100/30) × (2.0/1.0) = 20/3。
-/// 正确工具还须走 30 档（MC hasCorrectToolForDrops 语义）。
+///    正确工具还须走 30 档（MC hasCorrectToolForDrops 语义）。
 #[test]
 fn bare_hand_penalty_and_tool_multiplier() {
     let t_stone_bare = break_seconds(bid(STONE), &HeldTool::BARE_HAND, true, false);
@@ -192,7 +192,7 @@ fn bedrock_unbreakable_and_flower_instant() {
 }
 
 /// 6. DigState 逐帧累积：stone 空手 ≈ 7.5 s → 约 450 个 1/60 步后破坏
-/// （容差 ±3 步，避开 f32 舍入翻转），且前期不提前破坏、破坏后状态自动清空。
+///    （容差 ±3 步，避开 f32 舍入翻转），且前期不提前破坏、破坏后状态自动清空。
 #[test]
 fn dig_state_accumulates_to_break() {
     let total = break_seconds(bid(STONE), &HeldTool::BARE_HAND, true, false);

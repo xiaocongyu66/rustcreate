@@ -122,7 +122,8 @@ impl Unifont {
         let total = count + 1;
         let cols = ATLAS_COLS;
         let rows = total.div_ceil(cols);
-        let mut atlas = vec![0u8; cols * rows * 16 * 4];
+        // 尺寸 = (cols×16 px 宽) × (rows×16 px 高) × RGBA
+        let mut atlas = vec![0u8; cols * 16 * rows * 16 * 4];
         for g in map.values() {
             Self::paint_cell(&mut atlas, cols, g.cell, &g.rows, g.half);
         }
