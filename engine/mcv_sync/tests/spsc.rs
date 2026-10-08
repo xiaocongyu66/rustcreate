@@ -54,7 +54,7 @@ fn cross_thread_million_increments() {
                 assert_eq!(v, expect, "乱序/丢失：期望 {expect} 得 {v}");
                 expect += 1;
                 seen += 1;
-                if seen % 100_000 == 0 {
+                if seen.is_multiple_of(100_000) {
                     std::hint::spin_loop();
                 }
             }

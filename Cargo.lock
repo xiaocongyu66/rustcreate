@@ -1424,6 +1424,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcv_ecs"
+version = "0.1.0"
+
+[[package]]
 name = "mcv_entity"
 version = "0.1.0"
 dependencies = [

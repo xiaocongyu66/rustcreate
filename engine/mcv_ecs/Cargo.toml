@@ -1,0 +1,8 @@
+[package]
+name = "mcv_ecs"
+description = "极简 ECS 底座:实体生命周期 + sparse-set 组件存储 + 分表借用查询(无调度器/无插件/无事件总线)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
