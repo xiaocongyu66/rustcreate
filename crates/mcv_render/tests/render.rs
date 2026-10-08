@@ -70,10 +70,14 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
         apply_limit_buckets: false,
     }))
     .expect("no adapter: install mesa-vulkan-drivers for lavapipe");
+    // 与 app.rs 同款：方块图集 831 层 > downlevel 256，向 adapter 要实际上限
+    // （lavapipe 3907 / Metal 2048 / D3D 2048），否则草地层 336 被 gpu.rs 截尾。
+    let mut limits = wgpu::Limits::downlevel_defaults();
+    limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("test"),
         required_features: wgpu::Features::empty(),
-        required_limits: wgpu::Limits::downlevel_defaults(),
+        required_limits: limits,
         experimental_features: wgpu::ExperimentalFeatures::disabled(),
         memory_hints: wgpu::MemoryHints::default(),
         trace: wgpu::Trace::Off,
