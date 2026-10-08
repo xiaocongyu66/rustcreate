@@ -38,6 +38,30 @@ fn pack_override() {
     assert_eq!(layers[stone_off + 1], 10);
     // corner resample covers the whole tile
     assert_eq!(layers[stone_off + (16 * 15 + 15) * 4], 200);
+}
+
+#[test]
+fn mc_resource_pack_layout() {
+    // Standard MC pack tree: assets/minecraft/textures/block/<mc_name>.png
+    let mut img = image::RgbaImage::new(32, 32);
+    for px in img.pixels_mut() {
+        *px = image::Rgba([10, 200, 10, 255]);
+    }
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+
+    let dir = std::env::temp_dir().join("mcv_pack_mc_test");
+    let block_dir = dir.join("assets/minecraft/textures/block");
+    std::fs::create_dir_all(&block_dir).unwrap();
+    std::fs::write(block_dir.join("grass_block_top.png"), &png).unwrap();
+
+    let mut layers = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
+    let n = atlas::load_pack_over(&dir, &mut layers);
+    assert_eq!(n, 1, "grass_top picked from the MC pack tree");
+    let off = atlas::TILE_PX * atlas::TILE_PX * 4; // layer 1 = grass_top
+    assert_eq!(layers[off + 1], 200);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

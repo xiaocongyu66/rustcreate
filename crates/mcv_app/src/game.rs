@@ -174,7 +174,19 @@ impl GameRuntime {
         color_format: wgpu::TextureFormat,
         save_dir: std::path::PathBuf,
     ) -> Self {
-        let renderer = mcv_render::Renderer::new(device.clone(), queue.clone(), color_format, None);
+        // Texture pack: <exe dir>/texturepack/ (siblings of saves/)
+        let pack_dir = save_dir
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.join("texturepack"))
+            .unwrap_or_else(|| std::path::PathBuf::from("texturepack"));
+        let pack = if pack_dir.is_dir() {
+            Some(pack_dir)
+        } else {
+            None
+        };
+        let renderer =
+            mcv_render::Renderer::new(device.clone(), queue.clone(), color_format, pack.as_deref());
         Self {
             seed,
             chunks: HashMap::new(),

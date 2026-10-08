@@ -344,14 +344,51 @@ fn resample_to_tile(src: &[u8], sw: u32, sh: u32, dst: &mut [u8]) {
 ///
 /// Returns the number of layers overridden.
 pub fn load_pack_over(dir: &std::path::Path, layers: &mut [u8]) -> u32 {
+    /// Engine tile -> candidate file names inside a standard MC resource pack
+    /// (`assets/minecraft/textures/block/`). Flat packs just use the engine
+    /// name directly, e.g. `stone.png`.
+    const MC_NAMES: [(&str, &str); 16] = [
+        ("grass_top", "grass_block_top"),
+        ("grass_side", "grass_block_side"),
+        ("dirt", "dirt"),
+        ("stone", "stone"),
+        ("sand", "sand"),
+        ("water", "water_still"),
+        ("log_side", "oak_log"),
+        ("log_top", "oak_log_top"),
+        ("leaves", "oak_leaves"),
+        ("planks", "oak_planks"),
+        ("cobble", "cobblestone"),
+        ("bedrock", "bedrock"),
+        ("snow", "snow"),
+        ("snow_side", "grass_block_snow"),
+        ("flower_red", "poppy"),
+        ("flower_yellow", "dandelion"),
+    ];
+    const MC_DIRS: [&str; 2] = ["assets/minecraft/textures/block", "textures/block"];
+
     let mut count = 0u32;
     for (idx, name) in PACK_TILE_NAMES.iter().enumerate() {
-        let path = dir.join(format!("{name}.png"));
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
+        // Candidate order: flat engine name, MC-style names in the standard
+        // pack tree. First hit wins.
+        let candidates: Vec<std::path::PathBuf> = {
+            let mut v = vec![dir.join(format!("{name}.png"))];
+            if let Some((_, mc)) = MC_NAMES.iter().find(|(e, _)| *e == *name) {
+                for d in MC_DIRS {
+                    v.push(dir.join(d).join(format!("{mc}.png")));
+                }
+            }
+            v
         };
+        let (bytes, src_path) = candidates
+            .iter()
+            .find_map(|p| std::fs::read(p).ok().map(|b| (b, p.clone())))
+            .unwrap_or((Vec::new(), std::path::PathBuf::new()));
+        if bytes.is_empty() {
+            continue;
+        }
         let Ok(img) = image::load_from_memory(&bytes) else {
-            log::warn!("texture pack: failed to decode {}", path.display());
+            log::warn!("texture pack: failed to decode {}", src_path.display());
             continue;
         };
         let rgba = img.to_rgba8();
