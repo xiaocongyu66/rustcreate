@@ -1379,21 +1379,15 @@ version = "0.1.0"
 dependencies = [
  "android-activity",
  "android_logger",
- "bytemuck",
  "env_logger",
  "glam",
  "log",
  "mcv_audio",
  "mcv_core",
- "mcv_entity",
- "mcv_ffi",
  "mcv_game",
- "mcv_item",
- "mcv_light",
- "mcv_mesher",
+ "mcv_logic",
  "mcv_render",
  "mcv_save",
- "mcv_worldgen",
  "pollster",
  "wgpu",
  "winit",
@@ -1467,6 +1461,28 @@ name = "mcv_light"
 version = "0.1.0"
 dependencies = [
  "mcv_core",
+]
+
+[[package]]
+name = "mcv_logic"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "glam",
+ "log",
+ "mcv_audio",
+ "mcv_core",
+ "mcv_entity",
+ "mcv_ffi",
+ "mcv_game",
+ "mcv_item",
+ "mcv_light",
+ "mcv_mesher",
+ "mcv_render",
+ "mcv_save",
+ "mcv_worldgen",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -3007,9 +3023,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.53.2"
+version = "1.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044"
+checksum = "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed"
 dependencies = [
  "pin-project-lite",
 ]

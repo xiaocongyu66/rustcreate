@@ -18,7 +18,7 @@ const MISSING: u32 = b'?' as u32;
 pub fn unifont_shared() -> Option<&'static Unifont> {
     static U: OnceLock<Option<Unifont>> = OnceLock::new();
     U.get_or_init(|| {
-        let data = include_bytes!("../../mcv_app/data/font/cjk.f16");
+        let data = include_bytes!("../data/font/cjk.f16");
         Unifont::from_bytes(data)
     })
     .as_ref()

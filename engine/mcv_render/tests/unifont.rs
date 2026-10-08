@@ -3,7 +3,7 @@
 use mcv_render::unifont::{Unifont, DEFAULT_ATLAS_TEX, FULL_ADVANCE, HALF_ADVANCE};
 
 fn load() -> Unifont {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../mcv_app/data/font/cjk.f16");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/font/cjk.f16");
     let bytes = std::fs::read(path).expect("cjk.f16 缺失:先跑 python3 ci/gen-unifont.py");
     Unifont::from_bytes(&bytes).expect("cjk.f16 解析失败")
 }

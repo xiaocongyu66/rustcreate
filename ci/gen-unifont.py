@@ -2,7 +2,7 @@
 # DEVELOP_ONLY 数据管道（同 texturepack / data/lang 素材政策）：
 #   下载 Unifont（https://unifoundry.com/ ，SIL OFL 1.1 授权开源字体，
 #   允许再分发，非 Mojang 版权内容），提取中文渲染所需字形，生成引擎
-#   运行时位图字体数据 game/mcv_app/data/font/cjk.f16。
+#   运行时位图字体数据 engine/mcv_render/data/font/cjk.f16。
 #   发布前按 DEVELOP_ONLY 政策删除或替换（见 data/font/DEVELOP_ONLY.md）。
 #
 # 用法（仓库根目录）:  python3 ci/gen-unifont.py [unifont_all.hex]
@@ -34,7 +34,7 @@ import urllib.request
 import gzip
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "game/mcv_app/data/font/cjk.f16"
+OUT = ROOT / "engine/mcv_render/data/font/cjk.f16"
 CACHE = pathlib.Path(__file__).resolve().parent / ".cache"
 
 VERSION = "16.0.04"
