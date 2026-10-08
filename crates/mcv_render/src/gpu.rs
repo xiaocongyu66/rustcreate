@@ -32,6 +32,8 @@ pub struct RenderChunk {
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,
     pub opaque_range: Range<u32>,
+    /// Water geometry is meshed into its own index buffer (separate pass).
+    pub water_index_buf: Option<wgpu::Buffer>,
     pub water_range: Range<u32>,
     pub aabb: (Vec3, Vec3),
 }
@@ -70,9 +72,6 @@ pub struct Renderer {
     water_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     hud_pipeline: wgpu::RenderPipeline,
-    frame_bind_layout: wgpu::BindGroupLayout,
-    sky_bind_layout: wgpu::BindGroupLayout,
-    hud_bind_layout: wgpu::BindGroupLayout,
     frame_buf: wgpu::Buffer,
     origins_buf: wgpu::Buffer,
     sky_buf: wgpu::Buffer,
@@ -643,9 +642,6 @@ impl Renderer {
             water_pipeline,
             sky_pipeline,
             hud_pipeline,
-            frame_bind_layout,
-            sky_bind_layout,
-            hud_bind_layout,
             frame_buf,
             origins_buf,
             sky_buf,
@@ -777,7 +773,7 @@ impl Renderer {
             pass.set_pipeline(&self.water_pipeline);
             let mut water: Vec<(f32, u32, &RenderChunk)> = visible
                 .iter()
-                .filter(|(_, rc)| !rc.water_range.is_empty())
+                .filter(|(_, rc)| rc.water_index_buf.is_some() && !rc.water_range.is_empty())
                 .map(|(slot, rc)| {
                     let c = Vec3::from(rc.origin) + Vec3::new(8.0, 0.0, 8.0);
                     (c.distance_squared(eye), *slot, *rc)
@@ -787,7 +783,10 @@ impl Renderer {
             for (_, slot, rc) in water {
                 pass.set_bind_group(0, &self.frame_bind, &[slot * 256]);
                 pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
-                pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.set_index_buffer(
+                    rc.water_index_buf.as_ref().unwrap().slice(..),
+                    wgpu::IndexFormat::Uint32,
+                );
                 pass.draw_indexed(rc.water_range.clone(), 0, 0..1);
             }
         }

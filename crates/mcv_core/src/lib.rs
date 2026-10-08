@@ -60,7 +60,7 @@ impl BlockPos {
 }
 
 #[repr(transparent)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BlockId(pub u8);
 
 pub const AIR: BlockId = BlockId(0);

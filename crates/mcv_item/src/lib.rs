@@ -292,13 +292,13 @@ impl ItemStack {
             // (NOTES-2 §4, RemoveBinomial).
             let mut taken = 0u32;
             for _ in 0..pending {
-                if rng() % (l + 1) == 0 {
+                if rng().is_multiple_of(l + 1) {
                     taken += 1;
                 }
             }
             pending = taken as u16;
         }
-        self.damage = self.damage.saturating_add(pending as u16);
+        self.damage = self.damage.saturating_add(pending);
         self.damage >= self.max_damage()
     }
 

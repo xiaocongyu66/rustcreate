@@ -1247,12 +1247,16 @@ name = "mcv_app"
 version = "0.1.0"
 dependencies = [
  "android-activity",
+ "bytemuck",
  "env_logger",
  "glam",
  "log",
  "mcv_core",
  "mcv_entity",
+ "mcv_ffi",
  "mcv_game",
+ "mcv_light",
+ "mcv_mesher",
  "mcv_render",
  "mcv_save",
  "mcv_worldgen",
@@ -1265,6 +1269,7 @@ dependencies = [
 name = "mcv_core"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "image",
  "log",
 ]

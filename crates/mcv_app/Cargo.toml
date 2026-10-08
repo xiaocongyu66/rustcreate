@@ -22,8 +22,12 @@ mcv_worldgen.workspace = true
 mcv_game.workspace = true
 mcv_render.workspace = true
 mcv_save.workspace = true
+mcv_ffi.workspace = true
+mcv_light.workspace = true
+mcv_mesher.workspace = true
 mcv_entity.workspace = true
 glam.workspace = true
+bytemuck.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }

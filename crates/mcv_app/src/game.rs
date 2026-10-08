@@ -21,20 +21,85 @@ pub struct MeshGpu {
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,
     pub opaque_range: std::ops::Range<u32>,
-    pub water_range: std::ops::Range<u32>,
+    /// Separate water index buffer + range (water is meshed per pass).
+    pub water: Option<(wgpu::Buffer, std::ops::Range<u32>)>,
 }
 
 /// Abstraction over the C++ mesher so the runtime wiring can land before
 /// the mesher itself merges.
 pub trait ChunkMesher: Send {
-    fn build(&mut self, center: &Arc<ChunkHandle>) -> Option<MeshGpu>;
+    /// `handles` = 3x3 neighbourhood, row-major (dz outer), center = [4].
+    fn build(&mut self, handles: &[Arc<ChunkHandle>; 9]) -> Option<MeshGpu>;
 }
 
-/// Placeholder until the C++ mesher merges (renders nothing).
-pub struct NoopMesher;
-impl ChunkMesher for NoopMesher {
-    fn build(&mut self, _center: &Arc<ChunkHandle>) -> Option<MeshGpu> {
-        None
+/// Real mesher: C++ greedy mesh via mcv_mesher + GPU upload.
+pub struct CxxMesher {
+    mesher: mcv_mesher::Mesher,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+}
+
+impl CxxMesher {
+    pub fn new(budget: u64, device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        Self {
+            mesher: mcv_mesher::Mesher::new(budget).expect("mesh pool"),
+            device,
+            queue,
+        }
+    }
+}
+
+impl ChunkMesher for CxxMesher {
+    fn build(&mut self, handles: &[Arc<ChunkHandle>; 9]) -> Option<MeshGpu> {
+        // Copy the 9 neighbourhoods out (locks taken one at a time).
+        let mut voxels = vec![0u8; 9 * 65536];
+        let mut lights = vec![0xF0; 9 * 65536]; // sky=15 until light wires in
+        for (i, h) in handles.iter().enumerate() {
+            voxels[i * 65536..(i + 1) * 65536]
+                .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
+            lights[i * 65536..(i + 1) * 65536].copy_from_slice(&h.light.read().unwrap()[..]);
+        }
+        let slots: [Option<mcv_mesher::Slot>; 9] = std::array::from_fn(|i| {
+            Some(mcv_mesher::Slot {
+                voxels: &voxels[i * 65536..(i + 1) * 65536],
+                light: &lights[i * 65536..(i + 1) * 65536],
+            })
+        });
+        let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
+        let water = self.mesher.build(&slots, mcv_mesher::MESH_WATER).ok();
+        let to_gpu =
+            |buf: &mcv_ffi::CxxMeshBuffer| -> (wgpu::Buffer, wgpu::Buffer, std::ops::Range<u32>) {
+                let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: (buf.vertex_data().len() as u64).max(1),
+                    usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: true,
+                });
+                self.queue.write_buffer(&vb, 0, buf.vertex_data());
+                vb.unmap();
+                let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: None,
+                    size: (buf.indices().len() as u64 * 4).max(4),
+                    usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: true,
+                });
+                self.queue
+                    .write_buffer(&ib, 0, bytemuck::cast_slice(buf.indices()));
+                ib.unmap();
+                let n = buf.indices().len() as u32;
+                (vb, ib, 0..n)
+            };
+        let (vertex_buf, index_buf, opaque_range) = to_gpu(&opaque);
+        let water = water.map(|w| {
+            let (vb, ib, range) = to_gpu(&w);
+            (vb, ib, range)
+        });
+        Some(MeshGpu {
+            vertex_buf,
+            index_buf,
+            opaque_range,
+            water: water.map(|(_, ib, r)| (ib, r)),
+        })
     }
 }
 
@@ -104,6 +169,7 @@ pub struct GameRuntime {
     renderer: mcv_render::Renderer,
     render_chunks: Vec<RenderChunk>,
     spawned: bool,
+    border_synced: HashMap<ChunkPos, u8>,
 }
 
 impl GameRuntime {
@@ -122,11 +188,12 @@ impl GameRuntime {
             player: Player::default(),
             input: InputState::default(),
             time_ticks: 6_000, // noon start
-            mesher: Box::new(NoopMesher),
+            mesher: Box::new(CxxMesher::new(256 << 20, device.clone(), queue.clone())),
             save_dir,
             renderer,
             render_chunks: Vec::new(),
             spawned: false,
+            border_synced: HashMap::new(),
         }
     }
 
@@ -306,7 +373,63 @@ impl GameRuntime {
                 }
             }
         }
-        // mesh chunks that are ready (center + 8 neighbours loaded)
+        // light init on newly-terrain-ready chunks (budgeted, main thread)
+        let mut light_budget = 2;
+        let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
+        for pos in &keys {
+            if light_budget == 0 {
+                break;
+            }
+            let handle = self.chunks[pos].clone();
+            if handle.stage() != Stage::TerrainReady {
+                continue;
+            }
+            {
+                let voxels_locked = handle.voxels.read().unwrap();
+                let mut light_locked = handle.light.write().unwrap();
+                let hm_locked = handle.heightmap.read().unwrap();
+                let voxels: Vec<u8> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
+                let hm: Vec<u8> = hm_locked.to_vec();
+                let mut view = mcv_light::LightChunk {
+                    voxels: &voxels,
+                    light: &mut light_locked[..],
+                    heightmap: &hm,
+                };
+                mcv_light::init(&mut view);
+            }
+            handle.advance_to(Stage::LightLocalReady);
+            light_budget -= 1;
+        }
+
+        // border sync: mark pairs once both ends are LightLocalReady
+        for pos in &keys {
+            let handle = self.chunks[pos].clone();
+            if handle.stage() != Stage::LightLocalReady {
+                continue;
+            }
+            let mut cur = *self.border_synced.entry(*pos).or_insert(0u8);
+            let mut marks: Vec<(ChunkPos, u8)> = Vec::new();
+            for (bit, (dx, dz)) in [(0u8, (1i32, 0i32)), (1, (-1, 0)), (2, (0, 1)), (3, (0, -1))] {
+                if cur & (1 << bit) == 0 {
+                    let npos = ChunkPos::new(pos.x + dx, pos.z + dz);
+                    let ready = self
+                        .chunks
+                        .get(&npos)
+                        .is_some_and(|n| (n.stage() as u8) >= (Stage::LightLocalReady as u8));
+                    if ready {
+                        cur |= 1 << bit;
+                        marks.push((npos, Self::opposite_side(bit)));
+                    }
+                }
+            }
+            self.border_synced.insert(*pos, cur);
+            for (npos, obit) in marks {
+                let ns = self.border_synced.entry(npos).or_insert(0u8);
+                *ns |= 1 << obit;
+            }
+        }
+
+        // mesh chunks: 3x3 loaded, center lit, dirty or missing
         let mut remesh_budget = 2;
         let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
         for pos in keys {
@@ -314,21 +437,40 @@ impl GameRuntime {
                 break;
             }
             let handle = self.chunks[&pos].clone();
-            if (handle.stage() as u8) < (Stage::TerrainReady as u8) {
+            if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
                 continue;
             }
             if !self.neighbors_ready(pos) {
                 continue;
             }
-            // TODO(m4): gate on Lit stage; for now mesh right after terrain
-            if let Some(mesh) = self.mesher.build(&handle) {
+            let already = self
+                .render_chunks
+                .iter()
+                .any(|r| r.origin[0] == 16.0 * pos.x as f32 && r.origin[2] == 16.0 * pos.z as f32);
+            let dirty_mesh = handle.dirty() & mcv_core::dirty::MESH != 0;
+            if already && !dirty_mesh {
+                continue;
+            }
+            let mut handles: [Arc<ChunkHandle>; 9] = core::array::from_fn(|_| handle.clone());
+            for dz in -1i32..=1 {
+                for dx in -1i32..=1 {
+                    let idx = ((dz + 1) * 3 + (dx + 1)) as usize;
+                    handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
+                }
+            }
+            if let Some(mesh) = self.mesher.build(&handles) {
                 let origin = [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32];
+                let (water_index_buf, water_range) = match mesh.water {
+                    Some((ib, r)) => (Some(ib), r),
+                    None => (None, 0..0),
+                };
                 let rc = RenderChunk {
                     origin,
                     vertex_buf: mesh.vertex_buf,
                     index_buf: mesh.index_buf,
                     opaque_range: mesh.opaque_range,
-                    water_range: mesh.water_range,
+                    water_index_buf,
+                    water_range,
                     aabb: (
                         Vec3::new(origin[0], 0.0, origin[2]),
                         Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),
@@ -337,8 +479,18 @@ impl GameRuntime {
                 self.render_chunks
                     .retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
                 self.render_chunks.push(rc);
+                handle.clear_dirty(mcv_core::dirty::MESH);
                 remesh_budget -= 1;
             }
+        }
+    }
+
+    pub(crate) fn opposite_side(bit: u8) -> u8 {
+        match bit {
+            0 => 1,
+            1 => 0,
+            2 => 3,
+            _ => 2,
         }
     }
 
