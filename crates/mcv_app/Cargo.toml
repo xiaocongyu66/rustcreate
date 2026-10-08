@@ -17,6 +17,11 @@ env_logger.workspace = true
 pollster.workspace = true
 wgpu.workspace = true
 winit.workspace = true
+mcv_core.workspace = true
+mcv_worldgen.workspace = true
+mcv_game.workspace = true
+mcv_render.workspace = true
+mcv_save.workspace = true
 
 [target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }

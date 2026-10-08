@@ -42,6 +42,29 @@ pub fn generate_into(handle: &Arc<ChunkHandle>, seed: u64) -> Result<(), i32> {
     Ok(())
 }
 
+/// Rebuilds the heightmap from voxel data (saves don't store it; sky light
+/// derivation needs it identical to the terrain kernel's pass 3).
+pub fn recompute_heightmap(voxels: &[u8]) -> Box<[u8; 256]> {
+    let mut hm = Box::new([0u8; 256]);
+    for z in 0..16usize {
+        for x in 0..16usize {
+            let mut y = 255usize;
+            let mut found = false;
+            while y > 0 {
+                let id = voxels[(y << 8) | (z << 4) | x];
+                // air / water / flowers do not block direct sky light
+                if id != 0 && id != 5 && id != 12 && id != 13 {
+                    found = true;
+                    break;
+                }
+                y -= 1;
+            }
+            hm[(z << 4) | x] = if found { y as u8 + 1 } else { 1 };
+        }
+    }
+    hm
+}
+
 pub enum GenResult {
     Terrain(Result<TerrainOutput, (ChunkPos, i32)>),
 }

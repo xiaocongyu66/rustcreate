@@ -99,6 +99,7 @@ pub struct GameRuntime {
     pub input: InputState,
     pub time_ticks: u64,
     pub mesher: Box<dyn ChunkMesher>,
+    pub save_dir: std::path::PathBuf,
     renderer: mcv_render::Renderer,
     render_chunks: Vec<RenderChunk>,
     stream_cursor: u32,
@@ -110,6 +111,7 @@ impl GameRuntime {
         device: wgpu::Device,
         queue: wgpu::Queue,
         color_format: wgpu::TextureFormat,
+        save_dir: std::path::PathBuf,
     ) -> Self {
         let renderer = mcv_render::Renderer::new(device.clone(), queue.clone(), color_format, None);
         Self {
@@ -120,6 +122,7 @@ impl GameRuntime {
             input: InputState::default(),
             time_ticks: 6_000, // noon start
             mesher: Box::new(NoopMesher),
+            save_dir,
             renderer,
             render_chunks: Vec::new(),
             stream_cursor: 0,
@@ -128,6 +131,89 @@ impl GameRuntime {
 
     pub fn renderer(&mut self) -> &mut mcv_render::Renderer {
         &mut self.renderer
+    }
+
+    /// Loads player state + world time from level.meta (if present).
+    pub fn load_meta(&mut self) {
+        let path = self.save_dir.join("level.meta");
+        let Ok(bytes) = std::fs::read(&path) else {
+            return;
+        };
+        match mcv_save::LevelMeta::decode(&bytes) {
+            Ok(meta) => {
+                self.seed = meta.seed;
+                self.time_ticks = meta.day_time;
+                if let Some(p) = meta.player {
+                    self.player.pos = Vec3::new(p.x, p.y, p.z);
+                    self.player.yaw = p.yaw;
+                    self.player.pitch = p.pitch;
+                    self.player.flying = p.flying;
+                    self.player.sel_slot = p.sel_slot as usize;
+                }
+                log::info!("loaded world meta: seed={} time={}", self.seed, self.time_ticks);
+            }
+            Err(e) => log::warn!("level.meta unreadable, fresh world: {e}"),
+        }
+    }
+
+    /// Writes level.meta (player + time). Call on exit and periodically.
+    pub fn save_meta(&self) {
+        let meta = mcv_save::LevelMeta {
+            seed: self.seed,
+            name: "world".into(),
+            day_time: self.time_ticks,
+            player: Some(mcv_save::PlayerMeta {
+                x: self.player.pos.x,
+                y: self.player.pos.y,
+                z: self.player.pos.z,
+                yaw: self.player.yaw,
+                pitch: self.player.pitch,
+                flying: self.player.flying,
+                sel_slot: self.player.sel_slot as u8,
+            }),
+        };
+        let tmp = self.save_dir.join("level.meta.tmp");
+        if std::fs::create_dir_all(&self.save_dir).is_ok()
+            && std::fs::write(&tmp, meta.encode()).is_ok()
+        {
+            let _ = std::fs::rename(&tmp, self.save_dir.join("level.meta"));
+        }
+    }
+
+    /// Persists chunks with the SAVE dirty bit (region files), clearing the
+    /// bit. Called periodically and before unload.
+    pub fn save_dirty(&mut self, only: Option<ChunkPos>) {
+        let keys: Vec<ChunkPos> = match only {
+            Some(p) => vec![p],
+            None => self.chunks.keys().copied().collect(),
+        };
+        for pos in keys {
+            let Some(handle) = self.chunks.get(&pos) else {
+                continue;
+            };
+            if handle.dirty() & mcv_core::dirty::SAVE == 0 {
+                continue;
+            }
+            if handle.stage() < Stage::TerrainReady {
+                continue;
+            }
+            let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
+            let local = mcv_save::chunk_local(pos.x, pos.z);
+            let mut region = match mcv_save::RegionFile::open(&self.save_dir, rx, rz) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::error!("region open failed {rx},{rz}: {e}");
+                    continue;
+                }
+            };
+            let voxels = handle.voxels.read().unwrap();
+            let bytes = unsafe { std::slice::from_raw_parts(voxels.as_ptr().cast(), 65536) };
+            if let Err(e) = region.save_chunk(local, bytes) {
+                log::error!("chunk save failed {pos:?}: {e}");
+            } else {
+                handle.clear_dirty(mcv_core::dirty::SAVE);
+            }
+        }
     }
 
     pub fn camera(&self, aspect: f32) -> Camera {
@@ -146,7 +232,7 @@ impl GameRuntime {
     /// unload far ones.
     pub fn stream(&mut self) {
         let center = self.player.pos.chunk();
-        // unload
+        // unload (saving dirty chunks first)
         let far: Vec<ChunkPos> = self
             .chunks
             .keys()
@@ -156,7 +242,10 @@ impl GameRuntime {
             .copied()
             .collect();
         for c in far {
+            self.save_dirty(Some(c));
             self.chunks.remove(&c);
+            self.render_chunks
+                .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
         }
         // request in ring order; bounded per frame
         let mut budget = 4;
@@ -168,8 +257,13 @@ impl GameRuntime {
                     }
                     let pos = ChunkPos::new(center.x + dx, center.z + dz);
                     if !self.chunks.contains_key(&pos) {
-                        self.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
-                        self.scheduler.request(pos);
+                        let handle = Arc::new(ChunkHandle::new(pos));
+                        if self.try_load_saved(&handle) {
+                            self.chunks.insert(pos, handle);
+                        } else {
+                            self.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
+                            self.scheduler.request(pos);
+                        }
                         budget -= 1;
                         if budget == 0 {
                             break 'outer;
@@ -225,6 +319,28 @@ impl GameRuntime {
             }
         }
         let _ = self.stream_cursor;
+    }
+
+    /// Tries to load a chunk from its region file (skip if absent/corrupt).
+    fn try_load_saved(&self, handle: &Arc<ChunkHandle>) -> bool {
+        let pos = handle.pos;
+        let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
+        let region_path = self.save_dir.join(format!("region/r.{rx}.{rz}.mcrv"));
+        if !region_path.exists() {
+            return false;
+        }
+        let mut region = match mcv_save::RegionFile::open(&self.save_dir, rx, rz) {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let mut bytes = vec![0u8; 65536];
+        if region.load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut bytes).is_err() {
+            return false;
+        }
+        *handle.voxels.write().unwrap() = load_voxels(&bytes);
+        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&bytes);
+        handle.advance_to(Stage::TerrainReady);
+        true
     }
 
     fn neighbors_ready(&self, pos: ChunkPos) -> bool {
@@ -354,6 +470,14 @@ fn player_aabb(pos: &Vec3) -> (Vec3, Vec3) {
         Vec3::new(pos.x - h[0], pos.y, pos.z - h[2]),
         Vec3::new(pos.x + h[0], pos.y + h[1] * 2.0, pos.z + h[2]),
     )
+}
+
+fn load_voxels(bytes: &[u8]) -> Box<[BlockId; 65536]> {
+    let mut out = Box::new([BlockId(0); 65536]);
+    for (i, &b) in bytes.iter().enumerate() {
+        out[i] = BlockId(b);
+    }
+    out
 }
 
 /// Temporary inline Amanatides-Woo DDA; replaced by mcv_game::raycast when

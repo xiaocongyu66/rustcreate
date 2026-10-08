@@ -37,6 +37,7 @@ struct AppState {
     last_cursor: Option<(f64, f64)>,
     step_accum: f32,
     last_time: Option<std::time::Instant>,
+    save_timer: Option<std::time::Instant>,
 }
 
 struct SurfacePair {
@@ -67,7 +68,14 @@ impl ApplicationHandler for AppState {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(42);
-                self.runtime = Some(GameRuntime::new(seed, device, queue, config.format));
+                let save_dir = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|d| d.join("saves/world")))
+                    .unwrap_or_else(|| std::path::PathBuf::from("saves/world"));
+                let mut runtime = GameRuntime::new(seed, device, queue, config.format, save_dir);
+                runtime.load_meta();
+                self.save_timer = Some(std::time::Instant::now());
+                self.runtime = Some(runtime);
                 let _ = window.set_cursor_grab(winit::window::CursorGrabMode::Confined);
                 window.set_cursor_visible(false);
                 self.surface = Some(SurfacePair {
@@ -99,7 +107,13 @@ impl ApplicationHandler for AppState {
         event: WindowEvent,
     ) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if let Some(runtime) = self.runtime.as_mut() {
+                    runtime.save_dirty(None);
+                    runtime.save_meta();
+                }
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 if let (Some(sp), Some(_)) = (self.surface.as_mut(), self.runtime.as_ref()) {
                     if size.width > 0 && size.height > 0 {
@@ -298,6 +312,13 @@ impl AppState {
         }
         runtime.time_ticks += (dt * 20.0) as u64; // 20 ticks/s
         runtime.stream();
+
+        // periodic world save (30 s)
+        if self.save_timer.is_some_and(|t| t.elapsed().as_secs() >= 30) {
+            self.save_timer = Some(std::time::Instant::now());
+            runtime.save_dirty(None);
+            runtime.save_meta();
+        }
 
         use wgpu::CurrentSurfaceTexture as Tex;
         let frame = match sp.surface.get_current_texture() {
