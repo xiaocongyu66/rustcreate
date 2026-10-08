@@ -7,3 +7,6 @@ build = "build.rs"
 
 [dependencies]
 mcv_core.workspace = true
+
+[build-dependencies]
+cc.workspace = true
