@@ -30,15 +30,16 @@ constexpr int kNumClasses = 5;
 constexpr uint64_t kClassBytes[kNumClasses] = {
     16384, 65536, 262144, 1048576, 4194304};
 
-struct FreeNode {
-    FreeNode* next;
-};
-
 struct BlockHeader {
     uint32_t magic;
     uint32_t cls;
     uint64_t payload_size;
     struct Pool* owner;
+};
+
+/* Intrusive LIFO node living in the block payload. */
+struct FreeNode {
+    BlockHeader* next;
 };
 
 struct ClassStack {
