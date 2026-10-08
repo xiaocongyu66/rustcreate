@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkHandle, ChunkPos, BlockPos, Stage};
+use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
 use mcv_game::{Player, VoxelAccess};
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{text, Camera, HudQuad};
@@ -45,10 +45,11 @@ pub struct WorldView<'a> {
 
 impl VoxelAccess for WorldView<'_> {
     fn block(&self, p: BlockPos) -> BlockId {
-        let chunk = self.chunks.get(&p.chunk())?;
-        let stage = chunk.stage();
-        if stage == Stage::Empty {
-            return BlockId(1); // treat unloaded as solid stone for physics safety
+        let Some(chunk) = self.chunks.get(&p.chunk()) else {
+            return BlockId(1); // unloaded = solid stone (physics safety)
+        };
+        if chunk.stage() == Stage::Empty {
+            return BlockId(1);
         }
         let [lx, ly, lz] = p.local();
         chunk.voxels.read().unwrap()[ly << 8 | lz << 4 | lx]
@@ -150,7 +151,11 @@ impl GameRuntime {
                     self.player.flying = p.flying;
                     self.player.sel_slot = p.sel_slot as usize;
                 }
-                log::info!("loaded world meta: seed={} time={}", self.seed, self.time_ticks);
+                log::info!(
+                    "loaded world meta: seed={} time={}",
+                    self.seed,
+                    self.time_ticks
+                );
             }
             Err(e) => log::warn!("level.meta unreadable, fresh world: {e}"),
         }
@@ -194,7 +199,7 @@ impl GameRuntime {
             if handle.dirty() & mcv_core::dirty::SAVE == 0 {
                 continue;
             }
-            if handle.stage() < Stage::TerrainReady {
+            if (handle.stage() as u8) < (Stage::TerrainReady as u8) {
                 continue;
             }
             let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
@@ -231,7 +236,10 @@ impl GameRuntime {
     /// Request missing chunks in a spiral around the player (a few per call),
     /// unload far ones.
     pub fn stream(&mut self) {
-        let center = self.player.pos.chunk();
+        let center = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
         // unload (saving dirty chunks first)
         let far: Vec<ChunkPos> = self
             .chunks
@@ -290,7 +298,7 @@ impl GameRuntime {
         // the surface (unless a saved position was loaded)
         if !self.spawned && self.player.pos == Vec3::ZERO {
             if let Some(handle) = self.chunks.get(&ChunkPos::new(0, 0)) {
-                if handle.stage() >= Stage::TerrainReady {
+                if (handle.stage() as u8) >= (Stage::TerrainReady as u8) {
                     let hm = handle.heightmap.read().unwrap();
                     let y = hm[(8 << 4) | 8];
                     self.player.pos = Vec3::new(8.5, f32::from(y) + 1.0, 8.5);
@@ -306,7 +314,7 @@ impl GameRuntime {
                 break;
             }
             let handle = self.chunks[&pos].clone();
-            if handle.stage() < Stage::TerrainReady {
+            if (handle.stage() as u8) < (Stage::TerrainReady as u8) {
                 continue;
             }
             if !self.neighbors_ready(pos) {
@@ -326,7 +334,8 @@ impl GameRuntime {
                         Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),
                     ),
                 };
-                self.render_chunks.retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
+                self.render_chunks
+                    .retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
                 self.render_chunks.push(rc);
                 remesh_budget -= 1;
             }
@@ -346,7 +355,10 @@ impl GameRuntime {
             Err(_) => return false,
         };
         let mut bytes = vec![0u8; 65536];
-        if region.load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut bytes).is_err() {
+        if region
+            .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut bytes)
+            .is_err()
+        {
             return false;
         }
         *handle.voxels.write().unwrap() = load_voxels(&bytes);
@@ -359,7 +371,7 @@ impl GameRuntime {
         for dx in -1..=1 {
             for dz in -1..=1 {
                 if let Some(h) = self.chunks.get(&ChunkPos::new(pos.x + dx, pos.z + dz)) {
-                    if h.stage() < Stage::TerrainReady {
+                    if (h.stage() as u8) < (Stage::TerrainReady as u8) {
                         return false;
                     }
                 } else {
@@ -376,6 +388,7 @@ impl GameRuntime {
         let _ = dt;
     }
 
+    #[allow(dead_code)] // wired into physics once mcv_game::step merges
     #[allow(dead_code)] // wired into physics once mcv_game::step merges
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
@@ -423,7 +436,11 @@ impl GameRuntime {
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
-            let new_id = BlockId(if place { HOTBAR[self.player.sel_slot % 9] } else { 0 });
+            let new_id = BlockId(if place {
+                HOTBAR[self.player.sel_slot % 9]
+            } else {
+                0
+            });
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
         }
@@ -439,16 +456,34 @@ impl GameRuntime {
         // crosshair
         let (cx, cy) = (width * 0.5 - 1.0, height * 0.5 - 8.0);
         quads.push(text::rect(cx, cy, 2.0, 16.0, [1.0, 1.0, 1.0, 0.75]));
-        quads.push(text::rect(width * 0.5 - 8.0, height * 0.5 - 1.0, 16.0, 2.0, [1.0, 1.0, 1.0, 0.75]));
+        quads.push(text::rect(
+            width * 0.5 - 8.0,
+            height * 0.5 - 1.0,
+            16.0,
+            2.0,
+            [1.0, 1.0, 1.0, 0.75],
+        ));
         // hotbar
         let slot = 40.0;
         let total = slot * 9.0;
         let x0 = width * 0.5 - total * 0.5;
         let y0 = height - slot - 8.0;
-        quads.push(text::rect(x0 - 2.0, y0 - 2.0, total + 4.0, slot + 4.0, [0.1, 0.1, 0.1, 0.6]));
+        quads.push(text::rect(
+            x0 - 2.0,
+            y0 - 2.0,
+            total + 4.0,
+            slot + 4.0,
+            [0.1, 0.1, 0.1, 0.6],
+        ));
         for (i, &id) in HOTBAR.iter().enumerate() {
             let x = x0 + i as f32 * slot;
-            quads.push(text::rect(x + 1.0, y0 + 1.0, slot - 2.0, slot - 2.0, [0.25, 0.25, 0.28, 0.8]));
+            quads.push(text::rect(
+                x + 1.0,
+                y0 + 1.0,
+                slot - 2.0,
+                slot - 2.0,
+                [0.25, 0.25, 0.28, 0.8],
+            ));
             if id != 0 {
                 quads.push(text::tile_icon(
                     mcv_core::BLOCKS[id as usize].tiles[2],
@@ -458,7 +493,13 @@ impl GameRuntime {
                 ));
             }
             if i == self.player.sel_slot % 9 {
-                quads.push(text::rect(x - 1.0, y0 - 1.0, slot + 2.0, 2.0, [1.0, 1.0, 1.0, 0.9]));
+                quads.push(text::rect(
+                    x - 1.0,
+                    y0 - 1.0,
+                    slot + 2.0,
+                    2.0,
+                    [1.0, 1.0, 1.0, 0.9],
+                ));
             }
         }
         // debug line
@@ -506,7 +547,7 @@ fn dda_hit(
     }
     let mut pos = origin.floor().as_ivec3();
     let step = dir.signum().as_ivec3();
-    let t_max = Vec3::new(
+    let mut t_max = Vec3::new(
         if dir.x > 0.0 {
             (pos.x as f32 + 1.0 - origin.x) / dir.x
         } else if dir.x < 0.0 {
@@ -529,11 +570,7 @@ fn dda_hit(
             f32::INFINITY
         },
     );
-    let t_delta = Vec3::new(
-        1.0 / dir.x.abs(),
-        1.0 / dir.y.abs(),
-        1.0 / dir.z.abs(),
-    );
+    let t_delta = Vec3::new(1.0 / dir.x.abs(), 1.0 / dir.y.abs(), 1.0 / dir.z.abs());
     let mut normal = [0i32; 3];
     for _ in 0..64 {
         let bp = BlockPos::new(pos.x, pos.y, pos.z);

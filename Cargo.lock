@@ -1248,8 +1248,10 @@ version = "0.1.0"
 dependencies = [
  "android-activity",
  "env_logger",
+ "glam",
  "log",
  "mcv_core",
+ "mcv_entity",
  "mcv_game",
  "mcv_render",
  "mcv_save",

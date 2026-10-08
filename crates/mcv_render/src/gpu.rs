@@ -4,6 +4,7 @@ use std::ops::Range;
 
 use bytemuck::{Pod, Zeroable};
 use glam::Vec3;
+use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
 use crate::font;
@@ -25,6 +26,7 @@ pub struct FrameUniforms {
 const _: () = assert!(size_of::<FrameUniforms>() == 112);
 
 /// One draw per loaded chunk. Buffers are uploaded once per remesh.
+#[derive(Clone)]
 pub struct RenderChunk {
     pub origin: [f32; 3],
     pub vertex_buf: wgpu::Buffer,
@@ -228,29 +230,45 @@ impl Renderer {
 
         // ---- font texture ---------------------------------------------
         let font_data = font::build_texture_data();
-        let font_tex = device.create_texture_with_data(
-            &queue,
-            &wgpu::TextureDescriptor {
-                label: Some("font"),
-                size: wgpu::Extent3d {
+        let font_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("font"),
+            size: wgpu::Extent3d {
+                width: font::TEX_W as u32,
+                height: font::TEX_H as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        {
+            let staging = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("font-staging"),
+                contents: &font_data,
+                usage: wgpu::BufferUsages::COPY_SRC,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_texture(
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some((font::TEX_W * 4) as u32),
+                        rows_per_image: Some(font::TEX_H as u32),
+                    },
+                },
+                font_tex.as_image_copy(),
+                wgpu::Extent3d {
                     width: font::TEX_W as u32,
                     height: font::TEX_H as u32,
                     depth_or_array_layers: 1,
                 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            },
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((font::TEX_W * 4) as u32),
-                rows_per_image: Some(font::TEX_H as u32),
-            },
-            &font_data,
-        );
+            );
+            queue.submit([enc.finish()]);
+        }
         let font_view = font_tex.create_view(&wgpu::TextureViewDescriptor::default());
         let hud_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("hud-sampler"),
@@ -410,7 +428,7 @@ impl Renderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &origins_buf,
                         offset: 0,
-                        size: Some(16),
+                        size: std::num::NonZeroU64::new(16),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -470,43 +488,43 @@ impl Renderer {
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("world-layout"),
-            bind_group_layouts: &[&frame_bind_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&frame_bind_layout)],
+            immediate_size: 0,
         });
         let sky_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("sky-pipeline-layout"),
-            bind_group_layouts: &[&sky_bind_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&sky_bind_layout)],
+            immediate_size: 0,
         });
         let hud_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("hud-pipeline-layout"),
-            bind_group_layouts: &[&hud_bind_layout],
-            push_constant_ranges: &[],
+            bind_group_layouts: &[Some(&hud_bind_layout)],
+            immediate_size: 0,
         });
 
         let depth_stencil = Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         });
         let depth_read_only = Some(wgpu::DepthStencilState {
             format: wgpu::TextureFormat::Depth24Plus,
-            depth_write_enabled: false,
-            depth_compare: wgpu::CompareFunction::LessEqual,
+            depth_write_enabled: Some(false),
+            depth_compare: Some(wgpu::CompareFunction::LessEqual),
             stencil: wgpu::StencilState::default(),
             bias: wgpu::DepthBiasState::default(),
         });
 
         let terrain_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("terrain"),
-            layout: &pipeline_layout,
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &frame_mod,
                 entry_point: Some("vs_terrain"),
                 compilation_options: Default::default(),
-                buffers: &[terrain_vertex_layout()],
+                buffers: &[Some(terrain_vertex_layout())],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &frame_mod,
@@ -524,17 +542,17 @@ impl Renderer {
             },
             depth_stencil,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let water_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("water"),
-            layout: &pipeline_layout,
+            layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &frame_mod,
                 entry_point: Some("vs_water"),
                 compilation_options: Default::default(),
-                buffers: &[terrain_vertex_layout()],
+                buffers: &[Some(terrain_vertex_layout())],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &frame_mod,
@@ -552,12 +570,12 @@ impl Renderer {
             },
             depth_stencil: depth_read_only,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
-            layout: &sky_layout,
+            layout: Some(&sky_layout),
             vertex: wgpu::VertexState {
                 module: &sky_mod,
                 entry_point: Some("vs_sky"),
@@ -580,23 +598,23 @@ impl Renderer {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24Plus,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::Always),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
         let hud_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("hud"),
-            layout: &hud_layout,
+            layout: Some(&hud_layout),
             vertex: wgpu::VertexState {
                 module: &hud_mod,
                 entry_point: Some("vs_hud"),
                 compilation_options: Default::default(),
-                buffers: &[hud_vertex_layout()],
+                buffers: &[Some(hud_vertex_layout())],
             },
             fragment: Some(wgpu::FragmentState {
                 module: &hud_mod,
@@ -614,7 +632,7 @@ impl Renderer {
             },
             depth_stencil: None,
             multisample: Default::default(),
-            multiview: None,
+            multiview_mask: None,
             cache: None,
         });
 
@@ -718,6 +736,7 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
@@ -733,6 +752,7 @@ impl Renderer {
                 }),
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             // sky first: writes no depth, terrain overdraws it
@@ -787,6 +807,7 @@ impl Renderer {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: color,
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
@@ -795,12 +816,13 @@ impl Renderer {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&self.hud_pipeline);
             pass.set_bind_group(0, &self.hud_bind, &[]);
-            pass.set_vertex_buffer(0, self.hud_vbuf.slice(..verts.len() * HUD_STRIDE));
+            pass.set_vertex_buffer(0, self.hud_vbuf.slice(..(verts.len() * HUD_STRIDE) as u64));
             pass.set_index_buffer(
-                self.hud_ibuf.slice(..indices.len() * 4),
+                self.hud_ibuf.slice(..(indices.len() * 4) as u64),
                 wgpu::IndexFormat::Uint32,
             );
             pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);

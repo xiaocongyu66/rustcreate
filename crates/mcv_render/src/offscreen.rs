@@ -81,9 +81,9 @@ impl OffscreenTarget {
         slice.map_async(wgpu::MapMode::Read, move |r| {
             let _ = tx.send(r);
         });
-        let _ = device.poll(wgpu::PollType::Wait);
+        let _ = device.poll(wgpu::PollType::wait_indefinitely());
         rx.recv().expect("map result").expect("map ok");
-        let data = slice.get_mapped_range();
+        let data = slice.get_mapped_range().expect("map view");
         let mut out = Vec::with_capacity((self.extent.width * self.extent.height * 4) as usize);
         for row in 0..self.extent.height {
             let start = (row * self.pitch) as usize;

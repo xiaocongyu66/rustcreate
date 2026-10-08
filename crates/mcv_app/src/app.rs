@@ -83,7 +83,7 @@ impl ApplicationHandler for AppState {
                     config,
                     depth,
                 });
-                self.window = Some(window);
+                self.window = Some(window.clone());
                 window.request_redraw();
             }
             Err(e) => {
@@ -234,6 +234,7 @@ impl AppState {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))?;
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -253,6 +254,7 @@ impl AppState {
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: caps.alpha_modes[0],
+            color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
@@ -295,8 +297,9 @@ impl AppState {
         {
             sp.config.width = size.width;
             sp.config.height = size.height;
-            sp.surface.configure(&runtime.device, &sp.config);
-            sp.depth = Self::depth_view(&runtime.device, size.width, size.height);
+            sp.surface
+                .configure(runtime.renderer().device(), &sp.config);
+            sp.depth = Self::depth_view(runtime.renderer().device(), size.width, size.height);
         }
 
         // simulation ticks
@@ -336,17 +339,18 @@ impl AppState {
         let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
         let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
         let hud = runtime.build_hud(sp.config.width as f32, sp.config.height as f32);
+        let chunks: Vec<mcv_render::RenderChunk> = runtime.render_chunks().to_vec();
         let scene = mcv_render::Scene {
             camera: &camera,
-            time: dt as f32 * 0.0 + (runtime.time_ticks % 24_000) as f32 / 20.0,
+            time: (runtime.time_ticks % 24_000) as f32 / 20.0,
             day_factor: day,
             sun_dir: sun,
             width: sp.config.width as f32,
             height: sp.config.height as f32,
-            chunks: runtime.render_chunks(),
+            chunks: &chunks,
             hud: &hud,
         };
         runtime.renderer().draw_frame(&view, &sp.depth, &scene);
-        frame.present();
+        runtime.renderer().queue().present(frame);
     }
 }
