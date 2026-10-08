@@ -51,22 +51,19 @@ type AndroidApp = ();
 
 pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::Error>> {
     let mut builder = EventLoop::<()>::with_user_event();
+    let mut state = AppState::default();
     #[cfg(target_os = "android")]
     {
+        state.android_data = android
+            .as_ref()
+            .and_then(|a| a.internal_data_path().map(std::path::PathBuf::from));
+        log::info!("android internal data: {:?}", state.android_data);
         if let Some(app) = android {
             builder.with_android_app(app);
         }
     }
     let _ = android;
     let event_loop = builder.build()?;
-    let mut state = AppState::default();
-    #[cfg(target_os = "android")]
-    {
-        state.android_data = event_loop
-            .android_app()
-            .and_then(|a| a.internal_data_path().map(std::path::PathBuf::from));
-        log::info!("android internal data: {:?}", state.android_data);
-    }
     event_loop.run_app(&mut state)?;
     Ok(())
 }
