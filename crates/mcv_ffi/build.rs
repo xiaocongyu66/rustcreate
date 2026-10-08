@@ -10,6 +10,7 @@ fn main() {
         .include(cpp_dir.join("include"))
         .file(cpp_dir.join("src/mempool.cpp"))
         .file(cpp_dir.join("src/terrain.cpp"))
+        .file(cpp_dir.join("src/mesher.cpp"))
         .file(cpp_dir.join("src/stubs.cpp"))
         .flag_if_supported("-fno-exceptions")
         .flag_if_supported("-fno-rtti")
