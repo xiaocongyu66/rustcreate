@@ -13,6 +13,9 @@ pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SY: usize = 256;
 pub const CHUNK_SZ: usize = 16;
 pub const CHUNK_VOL: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ; // 65536
+/// One chunk's voxel storage in bytes: BlockId is u16 since the block-id
+/// widening (registry grows toward ~1000 blocks). 128 KiB per chunk.
+pub const CHUNK_VOXEL_BYTES: usize = CHUNK_VOL * std::mem::size_of::<BlockId>(); // 131072
 pub const SEA_LEVEL: i32 = 96;
 
 /// Chunk-local voxel index: `(y<<8) | (z<<4) | x`.
@@ -61,28 +64,31 @@ impl BlockPos {
 
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct BlockId(pub u8);
+pub struct BlockId(pub u16);
+
+const _: () = assert!(std::mem::size_of::<BlockId>() == 2);
 
 pub const AIR: BlockId = BlockId(0);
 
-/// Texture array layer indices (see mcv_core::atlas in M3).
+/// Texture array layer indices (see mcv_core::atlas in M3). u16 to match
+/// `BlockDef::tiles` / the mesher vertex `tex_layer` field.
 pub mod tiles {
-    pub const GRASS_TOP: u8 = 1;
-    pub const GRASS_SIDE: u8 = 2;
-    pub const DIRT: u8 = 3;
-    pub const STONE: u8 = 4;
-    pub const SAND: u8 = 5;
-    pub const WATER: u8 = 6;
-    pub const LOG_SIDE: u8 = 7;
-    pub const LOG_TOP: u8 = 8;
-    pub const LEAVES: u8 = 9;
-    pub const PLANKS: u8 = 10;
-    pub const COBBLE: u8 = 11;
-    pub const BEDROCK: u8 = 12;
-    pub const SNOW: u8 = 13;
-    pub const SNOW_SIDE: u8 = 14;
-    pub const FLOWER_RED: u8 = 15;
-    pub const FLOWER_YELLOW: u8 = 16;
+    pub const GRASS_TOP: u16 = 1;
+    pub const GRASS_SIDE: u16 = 2;
+    pub const DIRT: u16 = 3;
+    pub const STONE: u16 = 4;
+    pub const SAND: u16 = 5;
+    pub const WATER: u16 = 6;
+    pub const LOG_SIDE: u16 = 7;
+    pub const LOG_TOP: u16 = 8;
+    pub const LEAVES: u16 = 9;
+    pub const PLANKS: u16 = 10;
+    pub const COBBLE: u16 = 11;
+    pub const BEDROCK: u16 = 12;
+    pub const SNOW: u16 = 13;
+    pub const SNOW_SIDE: u16 = 14;
+    pub const FLOWER_RED: u16 = 15;
+    pub const FLOWER_YELLOW: u16 = 16;
 }
 
 pub struct BlockDef {
@@ -92,7 +98,7 @@ pub struct BlockDef {
     pub liquid: bool,
     pub light_emit: u8,
     /// Texture array layer per face: [+X, -X, +Y, -Y, +Z, -Z].
-    pub tiles: [u8; 6],
+    pub tiles: [u16; 6],
     /// Seconds to mine; 0 = instant (creative).
     pub hardness: f32,
 }
@@ -168,6 +174,10 @@ impl BlockId {
 }
 
 /// Chunk voxel storage owned by Rust; C++ borrows per call.
+///
+/// 内存预算（u16 加宽后）：体素 128 KiB/区块 + 光照 64 KiB + 高度图 256 B。
+/// 视距 8（17×17 = 289 区块）≈ 289 × 192 KiB ≈ 54 MiB 体素+光照常驻。
+/// mesh 池（CxxMesher 256 MiB）只存网格不存体素，预算不变。
 pub struct ChunkVoxels(pub Box<[BlockId; CHUNK_VOL]>);
 
 /// Chunk light storage: low nibble = block light, high nibble = sky light.
@@ -178,18 +188,34 @@ impl ChunkVoxels {
         Self(Box::new([id; CHUNK_VOL]))
     }
 
-    /// Raw byte view for FFI (BlockId is repr(transparent) over u8).
-    pub fn as_bytes_mut(&mut self) -> &mut [u8] {
-        unsafe { std::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast(), CHUNK_VOL) }
+    /// Raw u16 id view for FFI (BlockId is repr(transparent) over u16).
+    pub fn as_u16_slice_mut(&mut self) -> &mut [u16] {
+        bytemuck::cast_slice_mut(self.0.as_mut_slice())
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        unsafe { std::slice::from_raw_parts(self.0.as_ptr().cast(), CHUNK_VOL) }
+    pub fn as_u16_slice(&self) -> &[u16] {
+        bytemuck::cast_slice(self.0.as_slice())
     }
 }
 
 impl ChunkLight {
     pub fn zeroed() -> Self {
         Self(Box::new([0; CHUNK_VOL]))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// u16 加宽锁定：id 必须 2 字节，区块体素存储必须 128 KiB。
+    #[test]
+    fn block_id_widened_to_u16() {
+        assert!(
+            std::mem::size_of::<BlockId>() == 2 && CHUNK_VOXEL_BYTES == 131072,
+            "size_of::<BlockId>()={}, CHUNK_VOXEL_BYTES={}",
+            std::mem::size_of::<BlockId>(),
+            CHUNK_VOXEL_BYTES
+        );
     }
 }

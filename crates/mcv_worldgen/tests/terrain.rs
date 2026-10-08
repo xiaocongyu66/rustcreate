@@ -3,25 +3,25 @@
 use mcv_core::{BlockId, ChunkPos, CHUNK_VOL};
 use mcv_worldgen::generate_terrain;
 
-const AIR: u8 = 0;
-const STONE: u8 = 1;
-const DIRT: u8 = 2;
-const GRASS: u8 = 3;
-const SAND: u8 = 4;
-const WATER: u8 = 5;
-const LOG: u8 = 6;
-const LEAVES: u8 = 7;
-const BEDROCK: u8 = 10;
-const SNOW_GRASS: u8 = 11;
-const FLOWER_RED: u8 = 12;
-const FLOWER_YELLOW: u8 = 13;
+const AIR: u16 = 0;
+const STONE: u16 = 1;
+const DIRT: u16 = 2;
+const GRASS: u16 = 3;
+const SAND: u16 = 4;
+const WATER: u16 = 5;
+const LOG: u16 = 6;
+const LEAVES: u16 = 7;
+const BEDROCK: u16 = 10;
+const SNOW_GRASS: u16 = 11;
+const FLOWER_RED: u16 = 12;
+const FLOWER_YELLOW: u16 = 13;
 
 fn vidx(x: usize, y: usize, z: usize) -> usize {
     (y << 8) | (z << 4) | x
 }
 
-fn voxels_of(t: &mcv_worldgen::TerrainOutput) -> &[u8] {
-    t.voxels.as_bytes()
+fn voxels_of(t: &mcv_worldgen::TerrainOutput) -> &[u16] {
+    t.voxels.as_u16_slice()
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn cave_rate_in_band() {
 }
 
 /// 地面表层块：从柱顶向下跳过空气/水/树/花后的第一个实心块。
-fn ground_surface(vox: &[u8], x: usize, z: usize) -> (u8, usize) {
+fn ground_surface(vox: &[u16], x: usize, z: usize) -> (u16, usize) {
     for y in (0..256usize).rev() {
         let id = vox[vidx(x, y, z)];
         if id != AIR

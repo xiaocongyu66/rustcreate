@@ -115,6 +115,6 @@ fn flags_match_mc_26_1() {
 fn block_id_indices_stable() {
     assert_eq!(mcv_core::AIR.def().name, "air");
     for (i, def) in mcv_core::BLOCKS.iter().enumerate() {
-        assert_eq!(mcv_core::BlockId(i as u8).def().name, def.name);
+        assert_eq!(mcv_core::BlockId(i as u16).def().name, def.name);
     }
 }

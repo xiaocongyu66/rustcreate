@@ -21,18 +21,18 @@ constexpr int kSY = 256;
 constexpr int kSEA = 96;
 
 // Block ids (mcv_core BLOCKS order).
-constexpr uint8_t AIR = 0;
-constexpr uint8_t STONE = 1;
-constexpr uint8_t DIRT = 2;
-constexpr uint8_t GRASS = 3;
-constexpr uint8_t SAND = 4;
-constexpr uint8_t WATER = 5;
-constexpr uint8_t LOG = 6;
-constexpr uint8_t LEAVES = 7;
-constexpr uint8_t BEDROCK = 10;
-constexpr uint8_t SNOW_GRASS = 11;
-constexpr uint8_t FLOWER_RED = 12;
-constexpr uint8_t FLOWER_YELLOW = 13;
+constexpr uint16_t AIR = 0;
+constexpr uint16_t STONE = 1;
+constexpr uint16_t DIRT = 2;
+constexpr uint16_t GRASS = 3;
+constexpr uint16_t SAND = 4;
+constexpr uint16_t WATER = 5;
+constexpr uint16_t LOG = 6;
+constexpr uint16_t LEAVES = 7;
+constexpr uint16_t BEDROCK = 10;
+constexpr uint16_t SNOW_GRASS = 11;
+constexpr uint16_t FLOWER_RED = 12;
+constexpr uint16_t FLOWER_YELLOW = 13;
 
 // ---- 通道波长（格）。括号内为 MC 26.1 原始波长，见 NOTES §1/§7 映射表 ----
 constexpr float kWavelengthCont = 256.0f;    // continentalness 2048 ÷8（封顶）
@@ -234,7 +234,7 @@ bool tree_in_cell(uint64_t seed, int cell_x, int cell_z, TreeInfo* out) {
 
 // Writes canopy + trunk cells that fall inside this chunk (world->local
 // clipping makes cross-chunk projection implicit).
-void stamp_tree(uint64_t seed, uint8_t* voxels, const TreeInfo& t, int base_x,
+void stamp_tree(uint64_t seed, uint16_t* voxels, const TreeInfo& t, int base_x,
                 int base_z) {
     const int top = t.base_y + t.height;
     for (int dy = -2; dy <= 1; ++dy) {
@@ -258,7 +258,7 @@ void stamp_tree(uint64_t seed, uint8_t* voxels, const TreeInfo& t, int base_x,
                 if (lx < 0 || lx > 15 || lz < 0 || lz > 15) {
                     continue;
                 }
-                uint8_t& cell = voxels[vidx(lx, y, lz)];
+                uint16_t& cell = voxels[vidx(lx, y, lz)];
                 if (cell == AIR) {
                     cell = LEAVES;
                 }
@@ -277,7 +277,7 @@ void stamp_tree(uint64_t seed, uint8_t* voxels, const TreeInfo& t, int base_x,
 }  // namespace
 
 extern "C" int32_t mcv_terrain_generate(uint64_t seed, int32_t chunk_x,
-                                        int32_t chunk_z, uint8_t* out_voxels,
+                                        int32_t chunk_z, uint16_t* out_voxels,
                                         uint8_t* out_heightmap) {
     if (out_voxels == nullptr || out_heightmap == nullptr) {
         return MCV_ERR_NULL_ARG;
@@ -300,7 +300,7 @@ extern "C" int32_t mcv_terrain_generate(uint64_t seed, int32_t chunk_x,
             const int top = std::max(surface, kSEA);
 
             for (int y = 0; y <= top; ++y) {
-                uint8_t id;
+                uint16_t id;
                 if (y == 0 ||
                     (y <= 2 &&
                      mcvnoise::hash01(seed ^ kSeedMisc, wx, y, wz) < 0.5f)) {
@@ -356,7 +356,7 @@ extern "C" int32_t mcv_terrain_generate(uint64_t seed, int32_t chunk_x,
         for (int x = 0; x < 16; ++x) {
             int y = kSY - 1;
             for (; y > 0; --y) {
-                const uint8_t id = out_voxels[vidx(x, y, z)];
+                const uint16_t id = out_voxels[vidx(x, y, z)];
                 if (id != AIR && id != WATER && id != FLOWER_RED &&
                     id != FLOWER_YELLOW) {
                     break;

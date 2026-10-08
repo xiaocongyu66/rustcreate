@@ -24,6 +24,8 @@ enum Screen {
     Settings,
     InGame,
     Paused,
+    /// 死亡界面（26.1 deathScreen）：游戏画面 + 红罩 + 重生/标题按钮。
+    Death,
 }
 
 /// 菜单按钮：命中测试用。
@@ -278,8 +280,8 @@ impl AppState {
             .map(|t0| t0.elapsed().as_secs_f32())
             .unwrap_or(0.0);
 
-        // 背景：dirt 平铺 × 0.4 亮度（暂停界面保留游戏画面 + 遮罩）
-        if self.screen != Screen::Paused {
+        // 背景：dirt 平铺 × 0.4 亮度（暂停/死亡界面保留游戏画面 + 遮罩）
+        if !matches!(self.screen, Screen::Paused | Screen::Death) {
             let tile = 16.0 * s;
             let mut y = 0.0;
             let mut n = 0u32;
@@ -732,6 +734,67 @@ impl AppState {
                     false,
                 );
             }
+            Screen::Death => {
+                let lang = self.lang();
+                // 26.1 deathScreen：红罩 + 大字标题（2x）+ 重生/标题屏按钮；
+                // 极限模式隐藏重生（世界删除提示）。
+                q.push(text::rect(0.0, 0.0, w, h, [0.45, 0.0, 0.0, 0.45]));
+                q.extend(text::text_quads_centered(
+                    crate::i18n::t(lang, "deathScreen.title"),
+                    w * 0.5,
+                    h * 0.22,
+                    s * 2.0,
+                    [1.0, 1.0, 1.0, 1.0],
+                ));
+                let hardcore = self
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|r| r.mode == GameMode::Hardcore);
+                if hardcore {
+                    q.extend(text::text_quads_centered(
+                        crate::i18n::t(lang, "mcv.death.hardcoreInfo"),
+                        w * 0.5,
+                        h * 0.22 + 28.0 * s,
+                        s,
+                        [1.0, 0.6, 0.6, 1.0],
+                    ));
+                }
+                let y0 = h * 0.45;
+                let mut y = y0;
+                if !hardcore {
+                    Self::mc_button(
+                        &mut q,
+                        &mut self.menu_hot,
+                        gui,
+                        hover,
+                        "respawn",
+                        x,
+                        y,
+                        btn_w,
+                        btn_h,
+                        crate::i18n::t(lang, "deathScreen.respawn"),
+                        s,
+                        [0.13, 0.3, 0.16, 0.85],
+                        false,
+                    );
+                    y += btn_h + gap;
+                }
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "death_title",
+                    x,
+                    y,
+                    btn_w,
+                    btn_h,
+                    crate::i18n::t(lang, "deathScreen.titleScreen"),
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
+            }
             Screen::InGame => {}
         }
         q
@@ -977,6 +1040,17 @@ impl AppState {
             (Screen::Settings, "back") => self.screen = Screen::Main,
             (Screen::Paused, "resume") => self.screen = Screen::InGame,
             (Screen::Paused, "savequit") => self.quit_to_menu(false),
+            (Screen::Death, "respawn") => {
+                if let Some(rt) = self.runtime.as_mut() {
+                    rt.respawn();
+                }
+                self.screen = Screen::InGame;
+                if let Some(w) = self.window.clone() {
+                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::Confined);
+                    w.set_cursor_visible(false);
+                }
+            }
+            (Screen::Death, "death_title") => self.quit_to_menu(false),
             _ => {}
         }
         if let Some(w) = self.window.as_ref() {
@@ -1155,6 +1229,7 @@ impl ApplicationHandler for AppState {
                         Screen::Worlds | Screen::Create | Screen::Settings => {
                             self.screen = Screen::Main
                         }
+                        Screen::Death => {} // MC：死亡界面 Esc 无效
                         Screen::Main => event_loop.exit(),
                     },
                     code @ (KeyCode::Digit1
@@ -1412,12 +1487,12 @@ impl AppState {
         if self.quit_requested {
             return; // window_event 在 RedrawRequested 后处理退出
         }
-        if self.screen != Screen::InGame && self.screen != Screen::Paused {
+        if !matches!(self.screen, Screen::InGame | Screen::Paused | Screen::Death) {
             self.redraw_menu();
             return;
         }
-        // 暂停：先构建 MC 风格菜单 quad(借用 self，须在 runtime 借用之前)
-        let pause_menu = if self.screen == Screen::Paused {
+        // 暂停/死亡：先构建 MC 风格菜单 quad(借用 self，须在 runtime 借用之前)
+        let pause_menu = if matches!(self.screen, Screen::Paused | Screen::Death) {
             match self.surface.as_ref() {
                 Some(sp) => self.menu_ui(sp.config.width as f32, sp.config.height as f32),
                 None => Vec::new(),
@@ -1455,6 +1530,14 @@ impl AppState {
             runtime.fixed_step(1.0 / 60.0);
             self.step_accum -= 1.0 / 60.0;
         }
+        // 死亡 → 切死亡界面（显示 26.1 deathScreen，需鼠标点按钮）
+        if runtime.dead && self.screen == Screen::InGame {
+            self.screen = Screen::Death;
+            if let Some(w) = self.window.as_ref() {
+                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                w.set_cursor_visible(true);
+            }
+        }
         runtime.time_ticks += (dt * 20.0) as u64; // 20 ticks/s
         runtime.stream();
 
@@ -1484,9 +1567,10 @@ impl AppState {
             sp.config.width as f32,
             sp.config.height as f32,
             self.renderer.as_ref().and_then(|r| r.gui()),
+            self.screen != Screen::Death,
         );
-        if self.screen == Screen::Paused {
-            // 暂停：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
+        if matches!(self.screen, Screen::Paused | Screen::Death) {
+            // 暂停/死亡：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
             hud.extend(pause_menu);
         }
         let chunks: Vec<mcv_render::RenderChunk> = runtime.render_chunks().to_vec();

@@ -18,7 +18,13 @@ pub struct TerrainOutput {
 pub fn generate_terrain(seed: u64, pos: ChunkPos) -> Result<TerrainOutput, i32> {
     let mut voxels = ChunkVoxels::filled(mcv_core::BlockId(0));
     let mut heightmap = vec![0u8; 256];
-    terrain_generate_raw(seed, pos.x, pos.z, voxels.as_bytes_mut(), &mut heightmap)?;
+    terrain_generate_raw(
+        seed,
+        pos.x,
+        pos.z,
+        voxels.as_u16_slice_mut(),
+        &mut heightmap,
+    )?;
     Ok(TerrainOutput {
         pos,
         voxels,
@@ -44,7 +50,7 @@ pub fn generate_into(handle: &Arc<ChunkHandle>, seed: u64) -> Result<(), i32> {
 
 /// Rebuilds the heightmap from voxel data (saves don't store it; sky light
 /// derivation needs it identical to the terrain kernel's pass 3).
-pub fn recompute_heightmap(voxels: &[u8]) -> Box<[u8; 256]> {
+pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
     let mut hm = Box::new([0u8; 256]);
     for z in 0..16usize {
         for x in 0..16usize {

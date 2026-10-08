@@ -26,7 +26,7 @@ pub const SIDE_MINUS_Z: u8 = 3;
 
 /// Borrowed views over one chunk's voxel, light and heightmap storage.
 pub struct LightChunk<'a> {
-    pub voxels: &'a [u8],
+    pub voxels: &'a [u16],
     pub light: &'a mut [u8],
     pub heightmap: &'a [u8],
 }
@@ -67,7 +67,7 @@ pub const fn opacity(id: BlockId) -> u8 {
 }
 
 /// Cached `light_emit` mirror of `mcv_core::BLOCKS` so seeding can index raw
-/// voxel bytes without bounds concerns.
+/// voxel id slices without bounds concerns.
 static BLOCKS_EMIT: [u8; 14] = {
     let mut t = [0u8; 14];
     let mut i = 0;
@@ -161,7 +161,7 @@ fn spread_target(shift: u32, level: u8, down: bool, nopacity: u8) -> u8 {
 /// Increase-only BFS over one channel. The queue holds `(idx, level)` pairs
 /// written just before enqueueing; stale entries (storage moved on) are
 /// skipped by re-reading the stored level, like the vanilla queue.
-fn propagate_channel(voxels: &[u8], light: &mut [u8], shift: u32, queue: &mut Vec<(u16, u8)>) {
+fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut Vec<(u16, u8)>) {
     let mut head = 0usize;
     while head < queue.len() {
         let (idx, level) = queue[head];
@@ -231,7 +231,7 @@ fn removal_channel(
 /// Highest light-blocking y in a column, or -1 for an open column.
 /// `subst` overrides one cell (reconstructs the pre-edit column top, because
 /// `LightChunk.voxels` is already written with the new block).
-fn column_top(voxels: &[u8], x: usize, z: usize, subst: Option<(usize, u8)>) -> i32 {
+fn column_top(voxels: &[u16], x: usize, z: usize, subst: Option<(usize, u16)>) -> i32 {
     for y in (0..256).rev() {
         let id = match subst {
             Some((sy, sid)) if sy == y => sid,
@@ -472,8 +472,8 @@ pub fn update_block(
     x: u32,
     y: u32,
     z: u32,
-    old_block: u8,
-    new_block: u8,
+    old_block: u16,
+    new_block: u16,
     out_seeds: &mut Vec<BorderSeed>,
 ) -> u8 {
     if x > 15 || y > 255 || z > 15 || old_block == new_block {

@@ -30,17 +30,18 @@ enum {
     MCV_ERR_NOT_IMPLEMENTED = -7,
 };
 
-#define MCV_ABI_VERSION 0x52554331u /* "RUC1" */
+#define MCV_ABI_VERSION 0x52554332u /* "RUC2" — u16 block ids */
 
 uint32_t mcv_api_version(void);
 
 /* ---- terrain ---------------------------------------------------------- */
 
-/* Fills out_voxels[65536] (layout (y<<8)|(z<<4)|x) and out_heightmap[256]
- * (index (z<<4)|x, value = topmost opaque y + 1). Trees near chunk borders
- * are placed deterministically from neighbour chunk coordinates. */
+/* Fills out_voxels[65536] of uint16_t block ids (layout (y<<8)|(z<<4)|x)
+ * and out_heightmap[256] (uint8_t, index (z<<4)|x, value = topmost opaque
+ * y + 1). Trees near chunk borders are placed deterministically from
+ * neighbour chunk coordinates. */
 int32_t mcv_terrain_generate(uint64_t seed, int32_t chunk_x, int32_t chunk_z,
-                             uint8_t* out_voxels, uint8_t* out_heightmap);
+                             uint16_t* out_voxels, uint8_t* out_heightmap);
 
 /* ---- light (pure Rust in mcv_light; no C++ ABI) ----------------------- */
 
@@ -56,11 +57,12 @@ typedef struct McvMeshBuffer {
     uint32_t pool_class;
 } McvMeshBuffer;
 
-/* voxels[i]/light[i]: 3x3 neighbourhood, order (dz+1)*3+(dx+1), [4] = center;
- * NULL = neighbour not loaded (treated as opaque boundary).
+/* voxels[i]: uint16_t block ids; light[i]: uint8_t packed nibbles. 3x3
+ * neighbourhood, order (dz+1)*3+(dx+1), [4] = center; NULL = neighbour not
+ * loaded (treated as opaque boundary).
  * mesh_kind: 0 = opaque pass, 1 = water pass. Memory comes from the active
  * pool (see mcv_set_active_pool). */
-int32_t mcv_mesh_build(const uint8_t* const voxels[9],
+int32_t mcv_mesh_build(const uint16_t* const voxels[9],
                        const uint8_t* const light[9], uint32_t mesh_kind,
                        McvMeshBuffer* out);
 

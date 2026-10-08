@@ -96,7 +96,7 @@ pub fn generate_layers(data: &mut [u8]) {
 
     for layer in 0..LAYERS {
         p.layer = layer;
-        match layer as u8 {
+        match layer as u16 {
             tiles::GRASS_TOP => {
                 p.fill_noise(0xA001, [104, 168, 62], 20, 255);
                 p.speckle(0xA002, 0.18, 22);
@@ -216,7 +216,7 @@ pub fn generate_layers(data: &mut [u8]) {
                         p.set(x, y, 0, 0, 0, 0);
                     }
                 }
-                let petal = if layer as u8 == tiles::FLOWER_RED {
+                let petal = if layer as u16 == tiles::FLOWER_RED {
                     [200, 40, 40]
                 } else {
                     [220, 200, 40]

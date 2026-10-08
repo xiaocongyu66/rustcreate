@@ -20,8 +20,10 @@
 namespace {
 
 /* Sentinel block id: unloaded neighbour chunk or below-world cell. Treated
- * as opaque, so faces pointing at it are never generated. */
-constexpr uint16_t kBarrier = 0x100;
+ * as opaque, so faces pointing at it are never generated. Sits at the top
+ * of the u16 id space so it cannot collide with real ids once the registry
+ * grows toward ~1000 blocks. */
+constexpr uint16_t kBarrier = 0xFFFF;
 
 /* UV units per block edge: 65535 / 16, so a full 16-block quad fills the
  * u16 range exactly (repeat wrap comes from the sampler, values & 0xFFFF). */
@@ -59,11 +61,11 @@ struct BlockInfo {
     bool opaque;
     bool liquid;
     bool geom; /* emits geometry in the opaque pass */
-    uint8_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
+    uint16_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
 };
 
 /* Must stay strictly in sync with mcv_core::BLOCKS. */
-constexpr BlockInfo kBlocks[14] = {
+constexpr BlockInfo kBlocks[] = {
     /* air */ {false, false, false, {0, 0, 0, 0, 0, 0}},
     /* stone */ {true, false, true, {4, 4, 4, 4, 4, 4}},
     /* dirt */ {true, false, true, {3, 3, 3, 3, 3, 3}},
@@ -79,6 +81,7 @@ constexpr BlockInfo kBlocks[14] = {
     /* flower_red */ {false, false, false, {15, 15, 15, 15, 15, 15}},
     /* flower_yellow */ {false, false, false, {16, 16, 16, 16, 16, 16}},
 };
+constexpr uint16_t kBlocksCount = sizeof(kBlocks) / sizeof(kBlocks[0]);
 
 /* Per emitted corner (quad-local): fraction of quad width along the slice
  * grid u axis and height along the v axis. Orders are chosen so
@@ -93,7 +96,7 @@ constexpr int kCornerOrder[6][4][2] = {
 };
 
 struct Neighborhood {
-    const uint8_t* voxels[9];
+    const uint16_t* voxels[9];
     const uint8_t* light[9];
 };
 
@@ -112,8 +115,8 @@ static_assert(sizeof(QuadVertex) == 24, "vertex stride must be 24 bytes");
 /* One slice-grid cell. `ao4` packs 4 corners x 2 bits, corner index
  * (b*2 + a) where a/b in {0,1} are the corner offsets toward +u/+v. */
 struct Cell {
-    uint8_t id;
-    uint8_t tex;
+    uint16_t id;
+    uint16_t tex;
     uint8_t sky;
     uint8_t blk;
     uint8_t ao4;
@@ -121,7 +124,7 @@ struct Cell {
     uint8_t visible;
 };
 
-void neighborhood_init(const uint8_t* const voxels[9],
+void neighborhood_init(const uint16_t* const voxels[9],
                        const uint8_t* const light[9], Neighborhood* out) {
     for (int i = 0; i < 9; ++i) {
         out->voxels[i] = voxels[i];
@@ -154,7 +157,7 @@ uint16_t block_at(const Neighborhood& n, int x, int y, int z) {
         cz = 1;
         z -= 16;
     }
-    const uint8_t* arr = n.voxels[(cz + 1) * 3 + (cx + 1)];
+    const uint16_t* arr = n.voxels[(cz + 1) * 3 + (cx + 1)];
     if (arr == nullptr) {
         return kBarrier;
     }
@@ -162,8 +165,16 @@ uint16_t block_at(const Neighborhood& n, int x, int y, int z) {
                static_cast<size_t>(x)];
 }
 
+/* Bounds-checked registry access for the (now u16-wide) id space: unknown
+ * ids are treated as fully opaque, mirroring mcv_light::opacity. */
+constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}};
+
+const BlockInfo& block_info(uint16_t id) {
+    return id < kBlocksCount ? kBlocks[id] : kUnknown;
+}
+
 bool is_opaque(uint16_t id) {
-    return id >= kBarrier || kBlocks[id].opaque;
+    return id >= kBarrier || block_info(id).opaque;
 }
 
 /* Low nibble = block light, high nibble = sky light (mcv_core::ChunkLight).
@@ -402,7 +413,7 @@ void build_pass(const Neighborhood& n, bool water_pass,
                                 }
                             }
                         } else {
-                            visible = kBlocks[id].geom && !is_opaque(nb);
+                            visible = block_info(id).geom && !is_opaque(nb);
                         }
                         if (!visible) {
                             continue;
@@ -410,8 +421,8 @@ void build_pass(const Neighborhood& n, bool water_pass,
 
                         Cell c;
                         std::memset(&c, 0, sizeof(Cell));
-                        c.id = static_cast<uint8_t>(id);
-                        c.tex = kBlocks[id].tiles[face];
+                        c.id = id;
+                        c.tex = block_info(id).tiles[face];
                         c.wave = wave;
                         c.visible = 1;
                         light_at(n, nx, ny, nz, &c.sky, &c.blk);
@@ -493,7 +504,7 @@ extern "C" McvPool* mcv_active_pool(void);
 
 extern "C" {
 
-int32_t mcv_mesh_build(const uint8_t* const voxels[9],
+int32_t mcv_mesh_build(const uint16_t* const voxels[9],
                        const uint8_t* const light[9], uint32_t mesh_kind,
                        McvMeshBuffer* out) {
     if (out == nullptr || voxels == nullptr || light == nullptr) {

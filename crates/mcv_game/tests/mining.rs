@@ -11,20 +11,20 @@ use mcv_game::mining::{
 
 // 与 mcv_core::BLOCKS 注册顺序一致（硬度已由 BLOCKS 校准代理按 26.1 对齐，
 // 因此期望值一律由硬度现值反推，硬度再调也不会脆断）。
-const STONE: u8 = 1;
-const DIRT: u8 = 2;
-const LOG: u8 = 6;
-const PLANKS: u8 = 8;
-const COBBLE: u8 = 9;
-const BEDROCK: u8 = 10;
-const FLOWER_RED: u8 = 12;
+const STONE: u16 = 1;
+const DIRT: u16 = 2;
+const LOG: u16 = 6;
+const PLANKS: u16 = 8;
+const COBBLE: u16 = 9;
+const BEDROCK: u16 = 10;
+const FLOWER_RED: u16 = 12;
 
-fn bid(id: u8) -> BlockId {
+fn bid(id: u16) -> BlockId {
     BlockId(id)
 }
 
 /// 按公式独立重算期望时长（秒）：h × modifier × MC_TICK / speed。
-fn expect_seconds(id: u8, speed: f32, correct_for_drops: bool) -> f32 {
+fn expect_seconds(id: u16, speed: f32, correct_for_drops: bool) -> f32 {
     let h = hardness(bid(id));
     if h.is_infinite() {
         return f32::INFINITY;
@@ -143,7 +143,7 @@ fn bare_hand_penalty_and_tool_multiplier() {
 #[test]
 fn air_and_water_penalties_table() {
     let bare = HeldTool::BARE_HAND;
-    let t = |on_ground: bool, submerged: bool, id: u8| {
+    let t = |on_ground: bool, submerged: bool, id: u16| {
         break_seconds(bid(id), &bare, on_ground, submerged)
     };
     assert!(close(t(false, false, STONE), 5.0 * t(true, false, STONE)));

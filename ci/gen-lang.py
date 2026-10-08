@@ -45,6 +45,9 @@ UI_KEYS = [
     "options.renderClouds",       # 设置：渲染云（Options.java cloudStatus）
     "options.clouds.fast",        # 云：流畅
     "options.clouds.fancy",       # 云：高品质
+    "deathScreen.title",          # 死亡界面标题
+    "deathScreen.respawn",        # 死亡界面：重生
+    "deathScreen.titleScreen",    # 死亡界面：回标题屏
 ]
 
 # extra.json 中实际用到的自维护 key
@@ -61,6 +64,7 @@ EXTRA_KEYS = [
     "mcv.createWorld.survivalDesc",     # 生存模式说明
     "mcv.createWorld.creativeDesc",     # 创造模式说明
     "mcv.options.languageTitle",        # 语言（无省略号短标签）
+    "mcv.death.hardcoreInfo",           # 极限模式：世界将被删除提示
 ]
 
 

@@ -1,9 +1,10 @@
 use mcv_save::{chunk_local, chunk_region, rle_decode, rle_encode, LevelMeta, RegionFile};
 
 /// Deterministic pseudo-random voxel buffer with mixed run lengths
-/// (including >255 runs to exercise the escape path).
-fn sample_voxels(seed: u8) -> Vec<u8> {
-    let mut v = vec![0u8; 65536];
+/// (including >255 runs to exercise the escape path). Uses u16 ids beyond
+/// 255 (900/1000) to pin the widened little-endian id encoding.
+fn sample_voxels(seed: u8) -> Vec<u16> {
+    let mut v = vec![0u16; 65536];
     let mut s = seed as u32 | 1;
     let mut i = 0;
     while i < v.len() {
@@ -11,7 +12,8 @@ fn sample_voxels(seed: u8) -> Vec<u8> {
             *s = s.wrapping_mul(1664525).wrapping_add(1013904223);
             *s
         };
-        let id = (lcg(&mut s) % 4) as u8;
+        let table: [u16; 4] = [0, 3, 900, 1000];
+        let id = table[(lcg(&mut s) % 4) as usize];
         let run = 1 + (lcg(&mut s) % 600) as usize; // up to 600 > 255
         let end = (i + run).min(v.len());
         for b in v[i..end].iter_mut() {
@@ -27,18 +29,38 @@ fn rle_roundtrip_mixed_runs() {
     for seed in 0..8u8 {
         let vox = sample_voxels(seed);
         let enc = rle_encode(&vox);
-        assert!(enc.len() < vox.len(), "rle must compress this data");
-        let mut dec = vec![0u8; 65536];
+        assert!(enc.len() < vox.len() * 2, "rle must compress this data");
+        let mut dec = vec![0u16; 65536];
         rle_decode(&enc, &mut dec).expect("decode");
         assert_eq!(dec, vox);
     }
 }
 
+/// u16 边界：id = 1000（>255，锁死 LE 两字节编码）的 >255 长跑转义往返。
+#[test]
+fn rle_u16_escape_run_boundary_id() {
+    let mut vox = vec![0u16; 1024];
+    vox[..600].fill(1000); // escaped run, id beyond the old u8 range
+    vox[600..].fill(258); // short run, also >255
+    let enc = rle_encode(&vox);
+    // escape: 0 + len(2) + id(2) = 5 bytes; short run: 1 + id(2) = 3 bytes
+    assert_eq!(&enc[..5], &[0, 88, 2, 232, 3]); // len 600 LE (0x0258), id 1000 LE (0x03E8)
+    let mut dec = vec![0u16; 1024];
+    rle_decode(&enc, &mut dec).expect("decode");
+    assert_eq!(dec, vox);
+}
+
 #[test]
 fn rle_rejects_truncated() {
-    let mut dec = vec![0u8; 16];
+    let mut dec = vec![0u16; 16];
+    // truncated escape run (needs count + len2 + id2)
     assert!(rle_decode(&[0, 5, 0], &mut dec).is_err());
+    // truncated short run (needs count + id2)
     assert!(rle_decode(&[5], &mut dec).is_err());
+    // short run missing the high id byte
+    assert!(rle_decode(&[5, 1], &mut dec).is_err());
+    // decoded length mismatch: one complete 5x-256 run != 16 output cells
+    assert!(rle_decode(&[5, 1, 0], &mut dec).is_err());
 }
 
 #[test]
@@ -54,7 +76,7 @@ fn region_roundtrip() {
     assert!(region.has_chunk(chunk_local(0, 0)).unwrap());
     assert!(!region.has_chunk(chunk_local(1, 1)).unwrap());
 
-    let mut out = vec![0u8; 65536];
+    let mut out = vec![0u16; 65536];
     region
         .load_chunk(chunk_local(0, 0), &mut out)
         .expect("load a");
@@ -65,7 +87,7 @@ fn region_roundtrip() {
     assert_eq!(out, b);
 
     // Overwrite: smaller record reuses the slot.
-    let small = vec![1u8; 65536];
+    let small = vec![1u16; 65536];
     region
         .save_chunk(chunk_local(0, 0), &small)
         .expect("resave");
@@ -73,6 +95,44 @@ fn region_roundtrip() {
         .load_chunk(chunk_local(0, 0), &mut out)
         .expect("reload");
     assert_eq!(out, small);
+}
+
+#[test]
+fn region_rejects_old_version() {
+    // v1 (u8-id) records must be rejected outright: dev format, no compat.
+    let dir = std::env::temp_dir().join("mcv_region_test_ver");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut region = RegionFile::open(&dir, 0, 0).expect("open");
+    let mut out = vec![0u16; 65536];
+    // Hand-write a fake v1 record and point the header at it.
+    use std::io::{Seek, SeekFrom, Write};
+    let off = region.path().clone();
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&off)
+        .expect("reopen");
+    file.seek(SeekFrom::Start(512 * 8)).expect("seek body");
+    let mut record: Vec<u8> = Vec::new();
+    record.extend_from_slice(&0u16.to_le_bytes()); // local
+    record.push(1u8); // stale v1 version byte
+    record.extend_from_slice(&3u32.to_le_bytes()); // rle_len (v1 encoding)
+    record.extend_from_slice(&[10, 3, 10]); // 10x id 3, v1 style
+    let len = record.len() as u32;
+    file.write_all(&record).expect("write v1");
+    // header slot 0: offset + len
+    file.seek(SeekFrom::Start(0)).expect("seek head");
+    file.write_all(&(512u32 * 8u32).to_le_bytes()).expect("off");
+    file.write_all(&len.to_le_bytes()).expect("len");
+    drop(file);
+
+    let mut region = RegionFile::open(&dir, 0, 0).expect("reopen");
+    let err = region
+        .load_chunk(chunk_local(0, 0), &mut out)
+        .expect_err("v1 must be rejected");
+    assert!(
+        err.to_string().contains("version"),
+        "expected a version error, got: {err}"
+    );
 }
 
 #[test]

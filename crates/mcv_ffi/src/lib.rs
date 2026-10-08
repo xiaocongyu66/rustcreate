@@ -21,8 +21,9 @@ pub mod err {
     pub const NOT_IMPLEMENTED: i32 = -7;
 }
 
-/// ABI hash agreed by mcv.h (`#define MCV_ABI_VERSION`).
-pub const ABI_VERSION: u32 = 0x5255_4331;
+/// ABI hash agreed by mcv.h (`#define MCV_ABI_VERSION`). Bumped +1 with the
+/// u8 -> u16 block-id widening (voxel buffers crossing the FFI are u16).
+pub const ABI_VERSION: u32 = 0x5255_4332;
 
 /// Mesh buffer memory owned by the C++ pool. See cpp/include/mcv.h for the
 /// vertex layout (stride 24).
@@ -51,11 +52,11 @@ extern "C" {
         seed: u64,
         chunk_x: i32,
         chunk_z: i32,
-        out_voxels: *mut u8,
+        out_voxels: *mut u16,
         out_heightmap: *mut u8,
     ) -> i32;
     fn mcv_mesh_build(
-        voxels: *const *const u8,
+        voxels: *const *const u16,
         light: *const *const u8,
         mesh_kind: u32,
         out: *mut McvMeshBuffer,
@@ -218,13 +219,13 @@ pub struct ActivePool<'a> {
     _lifetime: PhantomData<&'a MemPool>,
 }
 
-/// Raw terrain generation. `out_voxels` must hold 65536 bytes, `out_heightmap`
-/// 256 bytes.
+/// Raw terrain generation. `out_voxels` must hold 65536 u16 ids
+/// (`mcv_core::CHUNK_VOXEL_BYTES` bytes), `out_heightmap` 256 bytes.
 pub fn terrain_generate_raw(
     seed: u64,
     chunk_x: i32,
     chunk_z: i32,
-    out_voxels: &mut [u8],
+    out_voxels: &mut [u16],
     out_heightmap: &mut [u8],
 ) -> Result<(), i32> {
     debug_assert!(out_voxels.len() >= mcv_core::CHUNK_VOL);
@@ -249,13 +250,13 @@ pub fn terrain_generate_raw(
 /// index = (dz+1)*3 + (dx+1); center = 4). `None` neighbours are treated by
 /// C++ as opaque boundaries. Voxels and light arrays are passed separately.
 pub fn mesh_build_raw(
-    voxels: &[Option<&[u8]>; 9],
+    voxels: &[Option<&[u16]>; 9],
     lights: &[Option<&[u8]>; 9],
     mesh_kind: u32,
     pool: &MemPool,
 ) -> Result<CxxMeshBuffer, i32> {
     let _active = pool.activate();
-    let mut voxel_ptrs: [*const u8; 9] = [std::ptr::null(); 9];
+    let mut voxel_ptrs: [*const u16; 9] = [std::ptr::null(); 9];
     let mut light_ptrs: [*const u8; 9] = [std::ptr::null(); 9];
     for (i, slot) in voxels.iter().enumerate() {
         if let Some(bytes) = slot {

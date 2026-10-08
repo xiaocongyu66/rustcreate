@@ -21,6 +21,9 @@
  "options.renderClouds": "Clouds",
  "options.clouds.fast": "Fast",
  "options.clouds.fancy": "Fancy",
+ "deathScreen.title": "You Died!",
+ "deathScreen.respawn": "Respawn",
+ "deathScreen.titleScreen": "Title Screen",
  "mcv.selectWorld.title": "Select World",
  "mcv.createWorld.create": "Create World",
  "mcv.mode.survival": "Survival",
@@ -32,5 +35,6 @@
  "mcv.options.sensitivityScale": "Sensitivity: %sx",
  "mcv.createWorld.survivalDesc": "Gather resources, build, explore",
  "mcv.createWorld.creativeDesc": "Fly, instant mining, invincible",
- "mcv.options.languageTitle": "Language"
+ "mcv.options.languageTitle": "Language",
+ "mcv.death.hardcoreInfo": "This world will be deleted"
 }

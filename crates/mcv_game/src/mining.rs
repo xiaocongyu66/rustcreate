@@ -26,8 +26,8 @@ use mcv_core::{BlockId, BlockPos};
 
 /// 与 `mcv_core::BLOCKS` 注册顺序一致的方块 id。
 /// 待 mcv_core 导出命名 id 常量后迁移（另一代理正在校准 BLOCKS）。
-const STONE: u8 = 1;
-const COBBLE: u8 = 9;
+const STONE: u16 = 1;
+const COBBLE: u16 = 9;
 
 /// MC tick 长度（秒）：挖掘进度按 tick 制定义，连续帧按 `dt / MC_TICK` 折算。
 pub const MC_TICK: f32 = 1.0 / 20.0;

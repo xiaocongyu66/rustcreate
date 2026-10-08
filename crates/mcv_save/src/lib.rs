@@ -6,8 +6,12 @@
 //! - body records, appended: { u16 chunk_local, u8 version, u32 rle_len,
 //!   rle bytes }
 //!
-//! RLE: sequence of (count u8, id u8); count 0 escapes to
-//! (0, len_lo, len_hi, id) supporting runs up to 65535.
+//! RLE (u16 block ids, v2+): sequence of (count u8, id u16 LE) for runs
+//! 1..=255; count 0 escapes to (0, len_lo, len_hi, id_lo, id_hi) supporting
+//! runs up to 65535. `id` is a little-endian u16 `BlockId`.
+//!
+//! v1 (u8 ids) is *not* readable: development format, old regions are
+//! discarded and `load_chunk` reports a version error.
 
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -16,7 +20,9 @@ use std::path::{Path, PathBuf};
 pub const REGION_CHUNKS: usize = 16 * 16;
 pub const HEADER_SIZE: usize = REGION_CHUNKS * 8;
 const RECORD_HEADER: usize = 2 + 1 + 4;
-pub const CHUNK_VERSION: u8 = 1;
+/// Region record format version. v2 = u16 block ids (RLE widened with the
+/// block-id u8 -> u16 migration); v1 files are rejected, not migrated.
+pub const CHUNK_VERSION: u8 = 2;
 
 #[derive(Debug)]
 pub enum SaveError {
@@ -41,8 +47,8 @@ impl std::fmt::Display for SaveError {
 
 impl std::error::Error for SaveError {}
 
-pub fn rle_encode(data: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(data.len() / 2 + 16);
+pub fn rle_encode(data: &[u16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 16);
     let mut i = 0;
     while i < data.len() {
         let id = data[i];
@@ -52,46 +58,46 @@ pub fn rle_encode(data: &[u8]) -> Vec<u8> {
         }
         if run < 256 {
             out.push(run as u8);
-            out.push(id);
+            out.extend_from_slice(&id.to_le_bytes());
         } else {
             out.push(0);
             out.push((run & 0xFF) as u8);
             out.push((run >> 8) as u8);
-            out.push(id);
+            out.extend_from_slice(&id.to_le_bytes());
         }
         i += run;
     }
     out
 }
 
-pub fn rle_decode(data: &[u8], out: &mut [u8]) -> Result<(), SaveError> {
+pub fn rle_decode(data: &[u8], out: &mut [u16]) -> Result<(), SaveError> {
     let mut i = 0;
     let mut pos = 0;
     while i < data.len() {
         let count = data[i];
         if count == 0 {
-            if i + 3 >= data.len() {
+            if i + 4 >= data.len() {
                 return Err(SaveError::Corrupt("truncated escape run"));
             }
             let run = data[i + 1] as usize | ((data[i + 2] as usize) << 8);
-            let id = data[i + 3];
+            let id = u16::from_le_bytes([data[i + 3], data[i + 4]]);
             if pos + run > out.len() {
                 return Err(SaveError::Corrupt("escape run overruns output"));
             }
             out[pos..pos + run].fill(id);
             pos += run;
-            i += 4;
+            i += 5;
         } else {
-            if i + 1 >= data.len() {
+            if i + 2 >= data.len() {
                 return Err(SaveError::Corrupt("truncated run"));
             }
-            let id = data[i + 1];
+            let id = u16::from_le_bytes([data[i + 1], data[i + 2]]);
             if pos + count as usize > out.len() {
                 return Err(SaveError::Corrupt("run overruns output"));
             }
             out[pos..pos + count as usize].fill(id);
             pos += count as usize;
-            i += 2;
+            i += 3;
         }
     }
     if pos != out.len() {
@@ -262,8 +268,8 @@ impl RegionFile {
     /// Saves one chunk (local index 0..255, (z<<4)|x within the region).
     /// Reuses the old slot when the compressed record still fits, else
     /// appends. Writes tmp + rename is unnecessary here (record granularity).
-    pub fn save_chunk(&mut self, local: u16, voxels: &[u8]) -> io::Result<()> {
-        debug_assert!(voxels.len() == 65536);
+    pub fn save_chunk(&mut self, local: u16, voxels: &[u16]) -> io::Result<()> {
+        debug_assert!(voxels.len() == mcv_core::CHUNK_VOL);
         let rle = rle_encode(voxels);
         let record_len = RECORD_HEADER + rle.len();
         let header = self.read_header()?;
@@ -296,8 +302,8 @@ impl RegionFile {
         Ok(())
     }
 
-    pub fn load_chunk(&mut self, local: u16, out: &mut [u8]) -> Result<(), SaveError> {
-        debug_assert!(out.len() == 65536);
+    pub fn load_chunk(&mut self, local: u16, out: &mut [u16]) -> Result<(), SaveError> {
+        debug_assert!(out.len() == mcv_core::CHUNK_VOL);
         let header = self.read_header()?;
         let s = self.slot(local);
         let off = u32::from_le_bytes(header[s..s + 4].try_into().unwrap());
@@ -315,7 +321,11 @@ impl RegionFile {
         if stored_local != local {
             return Err(SaveError::Corrupt("chunk local mismatch"));
         }
-        let _version = record[2];
+        let version = record[2];
+        if version != CHUNK_VERSION {
+            // Dev-format break: u8-id (v1) regions are not migrated.
+            return Err(SaveError::Corrupt("unsupported region chunk version"));
+        }
         let rle_len = u32::from_le_bytes(record[3..7].try_into().unwrap()) as usize;
         if record.len() < RECORD_HEADER + rle_len {
             return Err(SaveError::Corrupt("short rle"));

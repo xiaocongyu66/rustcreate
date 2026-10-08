@@ -18,7 +18,7 @@ use mcv_render::gpu::RenderChunk;
 use mcv_render::{text, Camera, HudQuad};
 
 pub const RENDER_DIST: i32 = 8;
-pub const HOTBAR: [u8; 9] = [1, 2, 3, 4, 8, 6, 7, 5, 10];
+pub const HOTBAR: [u16; 9] = [1, 2, 3, 4, 8, 6, 7, 5, 10];
 
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -82,7 +82,7 @@ impl CxxMesher {
 impl ChunkMesher for CxxMesher {
     fn build(&mut self, handles: &[Arc<ChunkHandle>; 9]) -> Option<MeshGpu> {
         // Copy the 9 neighbourhoods out (locks taken one at a time).
-        let mut voxels = vec![0u8; 9 * 65536];
+        let mut voxels = vec![0u16; 9 * 65536];
         let mut lights = vec![0xF0; 9 * 65536]; // sky=15 until light wires in
         for (i, h) in handles.iter().enumerate() {
             voxels[i * 65536..(i + 1) * 65536]
@@ -203,6 +203,10 @@ pub struct GameRuntime {
     pub audio: mcv_audio::AudioManager,
     /// 脚步触发：自上次音效以来水平移动距离（格）。
     step_dist: f32,
+    /// 死亡中（health 归零）：app 层画死亡界面，respawn() 复活。
+    pub dead: bool,
+    /// 离地时的 y（落地按 26.1 规则算摔落伤害：floor(高度−3)）。
+    fall_y: Option<f32>,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -250,7 +254,51 @@ impl GameRuntime {
             cam_type: CameraType::default(),
             audio: mcv_audio::AudioManager::silent(mcv_audio::default_sounds_dir()),
             step_dist: 0.0,
+            dead: false,
+            fall_y: None,
         }
+    }
+
+    /// 玩家受伤（26.1 LivingEntity.hurt 简化）：无敌帧拒绝、击退、受伤音、
+    /// 死亡置位。`from`=伤害来源（None = 环境伤害，不击退）。
+    pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
+        let p = &mut self.player;
+        if p.invulnerable > 0 || p.health <= 0.0 || self.mode == GameMode::Creative {
+            return;
+        }
+        p.health -= amount;
+        p.invulnerable = 10;
+        if let Some(src) = from {
+            let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
+            let kb = mcv_entity::combat::knockback_velocity(p.vel, p.on_ground, 0.0, 0.5, push);
+            p.vel = kb;
+        }
+        if p.health <= 0.0 {
+            p.health = 0.0;
+            self.dead = true;
+            if self.mode == GameMode::Hardcore {
+                self.hardcore_death = true;
+            }
+        }
+        let pos = [p.pos.x, p.pos.y, p.pos.z];
+        let id = [
+            mcv_audio::SoundId::PlayerHurt1,
+            mcv_audio::SoundId::PlayerHurt2,
+        ][fast_rand() as usize & 1];
+        self.audio.play_at(id, pos, pos, 1.0);
+    }
+
+    /// 死亡界面「重生」：满状态回出生点上方。
+    pub fn respawn(&mut self) {
+        self.player.health = 20.0;
+        self.player.hunger = 20.0;
+        self.player.exhaustion = 0.0;
+        self.player.invulnerable = 20;
+        self.player.pos = Vec3::new(8.5, 200.0, 8.5);
+        self.player.vel = Vec3::ZERO;
+        self.player.flying = self.mode == GameMode::Creative;
+        self.dead = false;
+        self.fall_y = None;
     }
 
     /// 装配真实音频后端（app 层 open 成功后注入；失败保持 silent 降级）。
@@ -347,8 +395,8 @@ impl GameRuntime {
                 }
             };
             let voxels = handle.voxels.read().unwrap();
-            let bytes = unsafe { std::slice::from_raw_parts(voxels.as_ptr().cast(), 65536) };
-            if let Err(e) = region.save_chunk(local, bytes) {
+            let ids = bytemuck::cast_slice(voxels.as_slice());
+            if let Err(e) = region.save_chunk(local, ids) {
                 log::error!("chunk save failed {pos:?}: {e}");
             } else {
                 handle.clear_dirty(mcv_core::dirty::SAVE);
@@ -480,7 +528,7 @@ impl GameRuntime {
                 let voxels_locked = handle.voxels.read().unwrap();
                 let mut light_locked = handle.light.write().unwrap();
                 let hm_locked = handle.heightmap.read().unwrap();
-                let voxels: Vec<u8> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
+                let voxels: Vec<u16> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
                 let hm: Vec<u8> = hm_locked.to_vec();
                 let mut view = mcv_light::LightChunk {
                     voxels: &voxels,
@@ -598,15 +646,15 @@ impl GameRuntime {
             Ok(r) => r,
             Err(_) => return false,
         };
-        let mut bytes = vec![0u8; 65536];
+        let mut ids = vec![0u16; 65536];
         if region
-            .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut bytes)
+            .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut ids)
             .is_err()
         {
             return false;
         }
-        *handle.voxels.write().unwrap() = load_voxels(&bytes);
-        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&bytes);
+        *handle.voxels.write().unwrap() = load_voxels(&ids);
+        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
         handle.advance_to(Stage::TerrainReady);
         true
     }
@@ -667,6 +715,10 @@ impl GameRuntime {
 
     pub fn fixed_step(&mut self, dt: f32) {
         self.apply_touch_input();
+        if self.dead {
+            // 死亡界面：尸体不响应输入，仅重力继续
+            self.input = Default::default();
+        }
         self.attack_ticker = (self.attack_ticker + dt).min(20.0);
         self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
 
@@ -682,6 +734,7 @@ impl GameRuntime {
         };
         let player_pos = self.player.pos;
         let day = self.day_factor();
+        let mut melee_hits: Vec<(Vec3, f32)> = Vec::new();
         for mob in self.mobs.iter_mut() {
             mob.invulnerable = mob.invulnerable.saturating_sub(1);
             let def = mob.def();
@@ -717,11 +770,16 @@ impl GameRuntime {
             mob.vel = body.vel;
             mob.on_ground = body.on_ground;
             mob.idle_ticks += 1;
+            // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
             if melee && mob.invulnerable == 0 {
-                // monster melee lands in player damage routing (M7 wiring)
+                mob.invulnerable = 20;
+                melee_hits.push((mob.pos, def.attack_damage));
             }
         }
         self.mobs.retain(|m| m.health > 0.0);
+        for (src, dmg) in melee_hits {
+            self.hurt_player(dmg.max(1.0), Some(src));
+        }
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
         {
@@ -747,8 +805,20 @@ impl GameRuntime {
             let wish_dir = wish.normalize_or_zero();
             let was_air = !self.player.on_ground;
             let fall_v = self.player.vel.y.min(0.0);
+            let jumped_off = i.jump && self.player.on_ground;
             let before = self.player.pos;
             let in_water = self.in_water(&view);
+            // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
+            if !self.player.flying && !in_water {
+                if self.player.on_ground {
+                    self.fall_y = None;
+                } else {
+                    let y = self.player.pos.y;
+                    self.fall_y = Some(self.fall_y.map_or(y, |f| f.max(y)));
+                }
+            } else {
+                self.fall_y = None; // 飞行/游泳免疫摔落
+            }
             let step_input = mcv_game::StepInput {
                 wish_dir,
                 jump: i.jump,
@@ -759,14 +829,25 @@ impl GameRuntime {
             // ---- 行为音效：脚步 / 落地 ----
             let moved = (self.player.pos - before).length();
             self.step_dist += moved;
-            if self.player.on_ground && was_air && fall_v < -3.0 {
-                let p = self.player.pos;
-                self.audio.play_at(
-                    mcv_audio::SoundId::LandFall,
-                    [p.x, p.y, p.z],
-                    [p.x, p.y, p.z],
-                    0.5,
-                );
+            if self.player.on_ground && was_air {
+                if fall_v < -3.0 {
+                    let p = self.player.pos;
+                    self.audio.play_at(
+                        mcv_audio::SoundId::LandFall,
+                        [p.x, p.y, p.z],
+                        [p.x, p.y, p.z],
+                        0.5,
+                    );
+                }
+                // 摔落伤害（MC: damage = floor(fallDistance - 3)）
+                if let Some(top) = self.fall_y.take() {
+                    let dmg = (top - self.player.pos.y - 3.0).floor().max(0.0);
+                    if dmg > 0.0 {
+                        self.hurt_player(dmg, None);
+                    }
+                }
+            } else if self.player.on_ground {
+                self.fall_y = None;
             }
             if self.player.on_ground && self.step_dist > 2.2 {
                 self.step_dist = 0.0;
@@ -779,18 +860,36 @@ impl GameRuntime {
                         .play_at(sid, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
                 }
             }
+            // ---- 生存统计（26.1 和平难度规则，粗化 exhaustion）----
+            self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
+            if self.mode != GameMode::Creative {
+                let p = &mut self.player;
+                p.exhaustion += moved * if self.input.sprint { 0.02 } else { 0.01 };
+                if jumped_off {
+                    p.exhaustion += 0.2;
+                }
+                if p.exhaustion >= 4.0 {
+                    p.exhaustion -= 4.0;
+                    p.hunger = (p.hunger - 1.0).max(0.0);
+                }
+                // 饱和回血：hunger>17 每 4s 回 1 心（MC naturalRegeneration）
+                if p.hunger > 17.0 && p.health > 0.0 && p.health < 20.0 {
+                    p.health = (p.health + dt * 0.25).min(20.0);
+                }
+                // 饥饿掉血：hunger=0 掉至 10 为止（和平难度下限）
+                if p.hunger <= 0.0 && p.health > 10.0 {
+                    p.health = (p.health - dt * 0.25).max(10.0);
+                }
+            }
         }
 
-        // ---- 虚空死亡（y < -10）----
+        // ---- 虚空伤害（y < -10）：无视无敌帧的重击，死亡后传送回出生点上方 ----
         if self.player.pos.y < -10.0 {
-            if self.mode == GameMode::Hardcore {
-                self.hardcore_death = true;
-            } else {
-                // 重生到出生点上方
-                let (sx, sz) = (8.5f32, 8.5f32);
-                self.player.pos = Vec3::new(sx, 200.0, sz);
+            self.player.invulnerable = 0;
+            self.hurt_player(40.0, None);
+            if self.dead {
+                self.player.pos = Vec3::new(8.5, 200.0, 8.5);
                 self.player.vel = Vec3::ZERO;
-                // 落地前给飞行防摔（创造保持飞行，生存直接掉落）
                 self.player.flying = self.mode == GameMode::Creative;
             }
         }
@@ -991,10 +1090,10 @@ impl GameRuntime {
             });
             let old = handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx];
             // 破坏按原方块发声，放置按新方块发声（26.1 GameRenderer 行为音）
-            let snd_vid = if place { new_id.0 } else { old };
+            let snd_vid = if place { new_id.0 } else { old.0 };
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-            if old != 0 || place {
+            if old.0 != 0 || place {
                 if let Some(sid) = dig_sound(snd_vid) {
                     let p = [
                         target.x as f32 + 0.5,
@@ -1012,12 +1111,14 @@ impl GameRuntime {
     }
 
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），
-    /// `gui` 为 None 时整体回退旧程序化绘制；触屏摇杆始终程序化。
+    /// `gui` 为 None 时整体回退旧程序化绘制；触屏摇杆程序化，
+    /// `show_touch`（死亡界面等场景传 false 隐藏摇杆）。
     pub fn build_hud(
         &self,
         width: f32,
         height: f32,
         gui: Option<&mcv_render::gui::SpriteSheet>,
+        show_touch: bool,
     ) -> Vec<HudQuad> {
         let mut quads = Vec::new();
         let s = mcv_render::gui_scale(height);
@@ -1062,18 +1163,31 @@ impl GameRuntime {
                     ));
                 }
             }
-            // 心（左上）与饥饿（右上镜像）：Player 尚无血量/饥饿字段，
-            // 按任务要求以满值 20 占位；行距/间距见 NOTES-ui.md。
+            // 心（左上）与饥饿（右上镜像）：Gui.renderHealth/renderFood 规则，
+            // 整心/半心/空槽三态，右侧先耗尽；无敌帧期间闪烁。
             let x_left = width * 0.5 - 91.0 * s;
             let x_right = width * 0.5 + 91.0 * s;
             let y_base = height - 39.0 * s;
+            let blink = self.player.invulnerable > 0 && (self.player.invulnerable / 2) % 2 == 0;
+            let bar_a = if blink { 0.4 } else { 1.0 };
+            let tint = [1.0, 1.0, 1.0, bar_a];
+            let health = self.player.health.max(0.0);
+            let food = self.player.hunger.max(0.0);
             for i in 0..10 {
                 let hx = x_left + i as f32 * 8.0 * s;
                 let fx = x_right - i as f32 * 8.0 * s - 9.0 * s;
-                quads.extend(g.sprite_full("heart_container", hx, y_base, 9.0 * s, 9.0 * s, white));
-                quads.extend(g.sprite_full("heart_full", hx, y_base, 9.0 * s, 9.0 * s, white));
-                quads.extend(g.sprite_full("food_empty", fx, y_base, 9.0 * s, 9.0 * s, white));
-                quads.extend(g.sprite_full("food_full", fx, y_base, 9.0 * s, 9.0 * s, white));
+                quads.extend(g.sprite_full("heart_container", hx, y_base, 9.0 * s, 9.0 * s, tint));
+                if health >= (i as f32 + 1.0) * 2.0 {
+                    quads.extend(g.sprite_full("heart_full", hx, y_base, 9.0 * s, 9.0 * s, tint));
+                } else if health >= i as f32 * 2.0 + 1.0 {
+                    quads.extend(g.sprite_full("heart_half", hx, y_base, 9.0 * s, 9.0 * s, tint));
+                }
+                quads.extend(g.sprite_full("food_empty", fx, y_base, 9.0 * s, 9.0 * s, tint));
+                if food >= (i as f32 + 1.0) * 2.0 {
+                    quads.extend(g.sprite_full("food_full", fx, y_base, 9.0 * s, 9.0 * s, tint));
+                } else if food >= i as f32 * 2.0 + 1.0 {
+                    quads.extend(g.sprite_full("food_half", fx, y_base, 9.0 * s, 9.0 * s, tint));
+                }
             }
         } else {
             // 回退：旧程序化准星 + 快捷栏
@@ -1125,8 +1239,8 @@ impl GameRuntime {
                 }
             }
         }
-        // 触屏控件（仅在收到过触摸事件后显示）
-        if self.touch.enabled {
+        // 触屏控件（仅在收到过触摸事件后显示；死亡界面隐藏）
+        if self.touch.enabled && show_touch {
             use crate::touch::{BTN_R, STICK_R};
             let stick_c = crate::touch::TouchState::stick_center(width, height);
             // 摇杆底盘 + 滑块
@@ -1278,12 +1392,13 @@ fn player_aabb(pos: &Vec3) -> (Vec3, Vec3) {
     )
 }
 
-fn load_voxels(bytes: &[u8]) -> Box<[BlockId; 65536]> {
-    let mut out = Box::new([BlockId(0); 65536]);
-    for (i, &b) in bytes.iter().enumerate() {
-        out[i] = BlockId(b);
-    }
-    out
+fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
+    debug_assert_eq!(ids.len(), 65536);
+    bytemuck::cast_slice::<u16, BlockId>(ids)
+        .to_vec()
+        .into_boxed_slice()
+        .try_into()
+        .unwrap_or_else(|_| panic!("wrong voxel slice length"))
 }
 
 /// Temporary inline Amanatides-Woo DDA; replaced by mcv_game::raycast when
@@ -1359,7 +1474,7 @@ fn dda_hit(
 /// 挖掘/放置音效材质映射（BLOCKS 表序：0air 1stone 2dirt 3grass 4sand 5water
 /// 6log 7leaves 8planks 9cobble 10bedrock 11snow_grass 12/13花）。
 /// 26.1 素材库无 dig/dirt 组，泥土/草/沙共用 grass 音组（见 mcv_audio 注释）。
-fn dig_sound(vid: u8) -> Option<mcv_audio::SoundId> {
+fn dig_sound(vid: u16) -> Option<mcv_audio::SoundId> {
     use mcv_audio::SoundId as S;
     match vid {
         1 | 9 | 10 => Some(S::DigStone),
@@ -1370,7 +1485,7 @@ fn dig_sound(vid: u8) -> Option<mcv_audio::SoundId> {
 }
 
 /// 脚步材质映射：草方块踩草地音，沙/石踩石头音，木板/原木踩木头音。
-fn step_sound(vid: u8) -> Option<mcv_audio::SoundId> {
+fn step_sound(vid: u16) -> Option<mcv_audio::SoundId> {
     use mcv_audio::SoundId as S;
     match vid {
         1 | 4 | 9 | 10 => Some(S::StepStone),

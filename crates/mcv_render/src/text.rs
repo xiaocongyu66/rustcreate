@@ -137,7 +137,7 @@ pub fn rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> HudQuad {
 }
 
 /// 地形贴图图标(快捷栏槽位)。
-pub fn tile_icon(layer: u8, x: f32, y: f32, size: f32) -> HudQuad {
+pub fn tile_icon(layer: u16, x: f32, y: f32, size: f32) -> HudQuad {
     HudQuad {
         x,
         y,

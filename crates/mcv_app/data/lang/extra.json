@@ -12,5 +12,6 @@
   "mcv.createWorld.survivalDesc":    { "en": "Gather resources, build, explore", "zh": "收集资源、建造、冒险" },
   "mcv.createWorld.creativeDesc":    { "en": "Fly, instant mining, invincible", "zh": "飞行、瞬间挖掘、不受伤害" },
   "mcv.options.clouds":              { "en": "Clouds", "zh": "云朵" },
-  "mcv.options.languageTitle":       { "en": "Language", "zh": "语言" }
+  "mcv.options.languageTitle":       { "en": "Language", "zh": "语言" },
+  "mcv.death.hardcoreInfo":          { "en": "This world will be deleted", "zh": "该世界将被删除" }
 }

@@ -10,11 +10,11 @@ use mcv_core::{BlockId, BlockPos, ChunkPos};
 use mcv_game::physics::{step, Aabb, StepInput};
 use mcv_game::{raycast, Player, VoxelAccess, REACH};
 
-const STONE: u8 = 1;
+const STONE: u16 = 1;
 
 /// 基于 HashMap 的测试世界：缺省 AIR，光照恒 15，chunk 恒已加载。
 struct TestWorld {
-    blocks: HashMap<(i32, i32, i32), u8>,
+    blocks: HashMap<(i32, i32, i32), u16>,
 }
 
 impl TestWorld {
@@ -24,12 +24,12 @@ impl TestWorld {
         }
     }
 
-    fn set(&mut self, x: i32, y: i32, z: i32, id: u8) {
+    fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
         self.blocks.insert((x, y, z), id);
     }
 
     /// 铺一整层 y（x/z 取 ±15 覆盖测试范围）。
-    fn fill_layer(&mut self, y: i32, id: u8) {
+    fn fill_layer(&mut self, y: i32, id: u16) {
         for x in -16..16 {
             for z in -16..16 {
                 self.set(x, y, z, id);

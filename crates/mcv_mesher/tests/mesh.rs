@@ -5,13 +5,13 @@ use mcv_mesher::{CxxMeshBuffer, Mesher, Slot};
 
 const VOL: usize = 65536;
 
-type Chunk = (Box<[u8; VOL]>, Box<[u8; VOL]>);
+type Chunk = (Box<[u16; VOL]>, Box<[u8; VOL]>);
 
-fn chunk(id: u8, light: u8) -> Chunk {
+fn chunk(id: u16, light: u8) -> Chunk {
     (Box::new([id; VOL]), Box::new([light; VOL]))
 }
 
-fn put(vox: &mut [u8; VOL], x: usize, y: usize, z: usize, id: u8) {
+fn put(vox: &mut [u16; VOL], x: usize, y: usize, z: usize, id: u16) {
     vox[(y << 8) | (z << 4) | x] = id;
 }
 
@@ -91,7 +91,7 @@ fn single_block_six_faces() {
 fn block_table_tex_parity_with_mcv_core() {
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
-    for id in 1u8..14 {
+    for id in 1u16..14 {
         // water belongs to the water pass; flowers emit no geometry
         if id == 5 || id == 12 || id == 13 {
             continue;

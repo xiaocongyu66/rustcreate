@@ -33,6 +33,14 @@ pub struct Player {
     pub flying: bool,
     pub on_ground: bool,
     pub sel_slot: usize,
+    /// 生命值（MC 满值 20 = 10 心；0 死亡）。
+    pub health: f32,
+    /// 饥饿值（满值 20；饥饿>17 缓慢回血，0 时掉血至 10 为止，和平难度规则）。
+    pub hunger: f32,
+    /// 受伤无敌帧（tick，MC hurtTime=10；受击方向击退 + 闪烁）。
+    pub invulnerable: i32,
+    /// 饥饿消耗累计（步行距离，MC exhaustion 机制的粗化）。
+    pub exhaustion: f32,
 }
 
 impl Player {
@@ -52,6 +60,10 @@ impl Default for Player {
             flying: false,
             on_ground: false,
             sel_slot: 0,
+            health: 20.0,
+            hunger: 20.0,
+            invulnerable: 0,
+            exhaustion: 0.0,
         }
     }
 }

@@ -21,6 +21,9 @@
  "options.renderClouds": "云",
  "options.clouds.fast": "流畅",
  "options.clouds.fancy": "高品质",
+ "deathScreen.title": "你死了！",
+ "deathScreen.respawn": "重生",
+ "deathScreen.titleScreen": "标题屏幕",
  "mcv.selectWorld.title": "选择世界",
  "mcv.createWorld.create": "创建世界",
  "mcv.mode.survival": "生存",
@@ -32,5 +35,6 @@
  "mcv.options.sensitivityScale": "灵敏度：%sx",
  "mcv.createWorld.survivalDesc": "收集资源、建造、冒险",
  "mcv.createWorld.creativeDesc": "飞行、瞬间挖掘、不受伤害",
- "mcv.options.languageTitle": "语言"
+ "mcv.options.languageTitle": "语言",
+ "mcv.death.hardcoreInfo": "该世界将被删除"
 }

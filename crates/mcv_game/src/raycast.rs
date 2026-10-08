@@ -6,8 +6,8 @@ use mcv_core::{BlockId, BlockPos};
 use crate::VoxelAccess;
 
 /// 花的 BlockId（非固体，但可被射线命中/选中）。见 mcv_core::BLOCKS。
-const FLOWER_RED: u8 = 12;
-const FLOWER_YELLOW: u8 = 13;
+const FLOWER_RED: u16 = 12;
+const FLOWER_YELLOW: u16 = 13;
 
 /// 生存模式交互到达距离（米），挖掘 / 放置射线应传本值。
 ///

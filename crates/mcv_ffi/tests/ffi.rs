@@ -6,7 +6,7 @@ use mcv_ffi::{err, MemPool, ABI_VERSION};
 #[test]
 fn version_matches() {
     mcv_ffi::check_abi();
-    assert_eq!(ABI_VERSION, 0x5255_4331);
+    assert_eq!(ABI_VERSION, 0x5255_4332);
 }
 
 #[test]

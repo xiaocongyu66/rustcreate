@@ -3,11 +3,11 @@
 
 pub use mcv_ffi::CxxMeshBuffer;
 
-/// One loaded chunk slot: voxel and light bytes (65536 each, layout
-/// `(y<<8)|(z<<4)|x`; light low nibble = block, high nibble = sky).
+/// One loaded chunk slot: voxel ids (65536 u16) and light bytes (65536),
+/// layout `(y<<8)|(z<<4)|x`; light low nibble = block, high nibble = sky.
 #[derive(Clone, Copy)]
 pub struct Slot<'a> {
-    pub voxels: &'a [u8],
+    pub voxels: &'a [u16],
     pub light: &'a [u8],
 }
 
@@ -37,7 +37,7 @@ impl Mesher {
         neighborhood: &[Option<Slot<'_>>; 9],
         kind: u32,
     ) -> Result<CxxMeshBuffer, i32> {
-        let mut voxels: [Option<&[u8]>; 9] = [None; 9];
+        let mut voxels: [Option<&[u16]>; 9] = [None; 9];
         let mut lights: [Option<&[u8]>; 9] = [None; 9];
         for (i, slot) in neighborhood.iter().enumerate() {
             if let Some(s) = slot {

@@ -12,15 +12,15 @@ use mcv_light::{
     apply_edge, extract_edge, init, opacity, propagate, update_block, BorderSeed, LightChunk,
 };
 
-const AIR: u8 = 0;
-const STONE: u8 = 1;
+const AIR: u16 = 0;
+const STONE: u16 = 1;
 // 与 mcv_core::BLOCKS 顺序一致的 id 常量（黄金用例引用）。
-const WATER: u8 = 5;
-const LEAVES: u8 = 7;
-const FLOWER_RED: u8 = 12;
+const WATER: u16 = 5;
+const LEAVES: u16 = 7;
+const FLOWER_RED: u16 = 12;
 
 struct World {
-    voxels: Vec<u8>,
+    voxels: Vec<u16>,
     light: Vec<u8>,
     hm: Vec<u8>,
 }
@@ -51,7 +51,7 @@ impl World {
         y1: usize,
         z0: usize,
         z1: usize,
-        id: u8,
+        id: u16,
     ) {
         for y in y0..=y1 {
             for z in z0..=z1 {
@@ -106,8 +106,8 @@ fn edit(
     x: usize,
     y: usize,
     z: usize,
-    old_block: u8,
-    new_block: u8,
+    old_block: u16,
+    new_block: u16,
 ) -> (u8, Vec<BorderSeed>) {
     w.voxels[vidx(x, y, z)] = new_block;
     let mut seeds = Vec::new();
@@ -406,7 +406,7 @@ fn golden_sky_source_column_transmission() {
 fn golden_sky_through_material_columns() {
     // (材料, 期望的天光序列 [(y, level)])：y=51 为板上方，50 为材料
     // 格本身，49..46 为板下洞窟中的柱内序列。
-    const CASES: [(u8, [(u32, u8); 6]); 4] = [
+    const CASES: [(u16, [(u32, u8); 6]); 4] = [
         // 石头：板上方 15，材料格及其下全挡（15-15=0）。
         (
             STONE,
@@ -468,7 +468,7 @@ fn golden_sky_through_material_columns() {
 fn golden_light_constants_match_26_1() {
     // ---- 透光（lightDampening → mcv_light::opacity 查表）----
     let opaque = [
-        1u8, 2, 3, 4, 6, 8, 9, 10,
+        1u16, 2, 3, 4, 6, 8, 9, 10,
         11, // stone dirt grass sand log planks cobble bedrock snow_grass
     ];
     for id in opaque {
