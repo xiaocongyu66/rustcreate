@@ -1,6 +1,7 @@
 //! Shared foundation: chunk layout, block registry, positions, task pool,
 //! chunk state machine.
 
+pub mod atlas;
 pub mod chunk;
 pub mod pool;
 

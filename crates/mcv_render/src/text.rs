@@ -15,7 +15,11 @@ pub fn text_quads(s: &str, x: f32, y: f32, scale: f32, color: [f32; 4]) -> Vec<H
             continue;
         }
         let code = ch as u32;
-        let glyph = if (32..127).contains(&code) { code as u8 } else { b'?' };
+        let glyph = if (32..127).contains(&code) {
+            code as u8
+        } else {
+            b'?'
+        };
         out.push(HudQuad {
             x: cx,
             y,

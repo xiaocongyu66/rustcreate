@@ -8,9 +8,8 @@ pub const LAYERS: usize = 32;
 pub const MIP_LEVELS: u32 = 2;
 
 fn hash01(seed: u64, x: u32, y: u32) -> f32 {
-    let mut h = seed
-        ^ (u64::from(x).wrapping_mul(0x9E3779B1))
-        ^ (u64::from(y).wrapping_mul(0x85EBCA77));
+    let mut h =
+        seed ^ (u64::from(x).wrapping_mul(0x9E3779B1)) ^ (u64::from(y).wrapping_mul(0x85EBCA77));
     h ^= h >> 30;
     h = h.wrapping_mul(0xBF58476D1CE4E5B9);
     h ^= h >> 27;
@@ -225,7 +224,18 @@ pub fn generate_layers(data: &mut [u8]) {
                     p.set(7, y, 40, 120, 40, 255);
                     p.set(8, y, 50, 130, 45, 255);
                 }
-                let head = [(6u32, 3u32), (7, 2), (8, 2), (9, 3), (6, 4), (7, 3), (8, 3), (9, 4), (7, 4), (8, 4)];
+                let head = [
+                    (6u32, 3u32),
+                    (7, 2),
+                    (8, 2),
+                    (9, 3),
+                    (6, 4),
+                    (7, 3),
+                    (8, 3),
+                    (9, 4),
+                    (7, 4),
+                    (8, 4),
+                ];
                 for (x, y) in head {
                     p.set(x, y, petal[0], petal[1], petal[2], 255);
                 }
@@ -269,8 +279,8 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
                         for dx in 0..2u32 {
                             let sx = x * 2 + dx;
                             let sy = y * 2 + dy;
-                            let off =
-                                layer * TILE_PX * TILE_PX * 4 + ((sy * TILE_PX + sx) * 4 + c) as usize;
+                            let off = layer * TILE_PX * TILE_PX * 4
+                                + ((sy * TILE_PX + sx) * 4 + c) as usize;
                             sum += u32::from(mip0[off]);
                         }
                     }

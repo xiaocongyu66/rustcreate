@@ -13,7 +13,7 @@ wgpu.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 log.workspace = true
+image.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
-image.workspace = true

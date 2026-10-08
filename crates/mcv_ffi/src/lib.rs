@@ -92,6 +92,11 @@ struct PoolInner {
     raw: *mut McvPool,
 }
 
+// The C++ pool is internally synchronized (atomic free lists); the raw
+// pointer is only used through the FFI, never dereferenced from Rust.
+unsafe impl Send for PoolInner {}
+unsafe impl Sync for PoolInner {}
+
 impl Drop for PoolInner {
     fn drop(&mut self) {
         unsafe { mcv_pool_destroy(self.raw) };
