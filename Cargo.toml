@@ -9,6 +9,7 @@ license = "MIT"
 
 [workspace.dependencies]
 mcv_core = { path = "crates/mcv_core" }
+mcv_app = { path = "crates/mcv_app" }
 mcv_ffi = { path = "crates/mcv_ffi" }
 mcv_worldgen = { path = "crates/mcv_worldgen" }
 mcv_light = { path = "crates/mcv_light" }
