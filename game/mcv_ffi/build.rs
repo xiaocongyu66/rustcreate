@@ -16,8 +16,10 @@ fn main() {
         .flag_if_supported("-fno-rtti")
         .warnings(true);
 
-    // 严格诊断全开、警告即错:GCC/Clang(含 NDK)一组,MSVC 一组;
-    // flag_if_supported 探测保证跨编译器不误伤。
+    // 严格诊断全开、警告即错:GCC/Clang(含 NDK)一组,MSVC 一组(warnings(true)
+    // 已含 /W4);flag_if_supported 探测保证跨编译器不误伤。
+    // /wd4530:MSVC STL 内部 function-try-block 提示——我们刻意不启用异常
+    // (-fno-exceptions 的 MSVC 语义),该告警正是对这一选择的描述,定点豁免。
     for f in [
         "-Wextra",
         "-Wpedantic",
@@ -25,8 +27,8 @@ fn main() {
         "-Wconversion",
         "-Werror",
         "/permissive-",
-        "/W4",
         "/WX",
+        "/wd4530",
     ] {
         build.flag_if_supported(f);
     }
