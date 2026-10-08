@@ -704,7 +704,7 @@ impl GameRuntime {
                 continue;
             }
             let cos = to.normalize_or_zero().dot(dir);
-            if cos > 0.92 && best.map_or(true, |(_, d)| dist < d) {
+            if cos > 0.92 && best.is_none_or(|(_, d)| dist < d) {
                 best = Some((i, dist));
             }
         }
