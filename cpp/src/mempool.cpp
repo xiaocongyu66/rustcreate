@@ -81,7 +81,7 @@ void fill_canaries(BlockHeader* h) {
     std::memset(block_tail_canary(h), kCanaryByte, kCanarySize);
 }
 
-bool canaries_intact(BlockHeader* h) {
+[[maybe_unused]] bool canaries_intact(BlockHeader* h) {  // release 下仅 #if MCV_DEBUG 引用
     uint8_t lead[kCanarySize];
     uint8_t tail[kCanarySize];
     std::memcpy(lead, block_lead_canary(h), kCanarySize);
@@ -204,7 +204,7 @@ int32_t mcv_meshbuf_acquire(McvPool* opaque, uint32_t vertex_cap,
     if (cls < 0) {
         return MCV_ERR_OOM;
     }
-    size_t total = block_total_size(cls);
+    size_t total = block_total_size(static_cast<uint32_t>(cls));
 
     BlockHeader* h = pop_from_stack(p, cls);
     if (h != nullptr) {

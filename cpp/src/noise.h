@@ -86,7 +86,7 @@ inline float fbm2(uint64_t seed, float x, float y, int octaves) {
     float amp = 1.0f;
     float norm = 0.0f;
     for (int i = 0; i < octaves; ++i) {
-        sum += value2(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y) * amp;
+        sum += value2(seed + static_cast<uint64_t>(i) * static_cast<uint64_t>(0x1000'0000), x, y) * amp;
         norm += amp;
         amp *= kAmpDecay;
         x *= kFreqRatio;
@@ -101,7 +101,7 @@ inline float fbm3(uint64_t seed, float x, float y, float z, int octaves) {
     float amp = 1.0f;
     float norm = 0.0f;
     for (int i = 0; i < octaves; ++i) {
-        sum += value3(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y, z) * amp;
+        sum += value3(seed + static_cast<uint64_t>(i) * static_cast<uint64_t>(0x1000'0000), x, y, z) * amp;
         norm += amp;
         amp *= kAmpDecay;
         x *= kFreqRatio;
@@ -122,7 +122,7 @@ inline float fbm2_w(uint64_t seed, float x, float y, const float* amps,
     float amp = 1.0f;
     for (int i = 0; i < count; ++i) {
         const float w = amps[i] * amp;
-        sum += value2(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y) * w;
+        sum += value2(seed + static_cast<uint64_t>(i) * static_cast<uint64_t>(0x1000'0000), x, y) * w;
         norm += w;
         amp *= kAmpDecay;
         x *= kFreqRatio;
@@ -138,7 +138,7 @@ inline float fbm3_w(uint64_t seed, float x, float y, float z, const float* amps,
     float amp = 1.0f;
     for (int i = 0; i < count; ++i) {
         const float w = amps[i] * amp;
-        sum += value3(seed + static_cast<uint64_t>(i) * 0x1000'0000ull, x, y, z) * w;
+        sum += value3(seed + static_cast<uint64_t>(i) * static_cast<uint64_t>(0x1000'0000), x, y, z) * w;
         norm += w;
         amp *= kAmpDecay;
         x *= kFreqRatio;

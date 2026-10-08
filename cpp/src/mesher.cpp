@@ -366,7 +366,12 @@ void build_pass(const Neighborhood& n, bool water_pass,
                 std::vector<uint32_t>& indices) {
     for (int axis = 0; axis < 3; ++axis) {
         const SliceGeom g = slice_geom(axis);
-        const size_t grid_len = static_cast<size_t>(g.gu) * g.gv;
+        const size_t gu = static_cast<size_t>(g.gu), gv = static_cast<size_t>(g.gv);
+        const size_t grid_len = gu * gv;
+        // 统一格子索引:符号循环变量 → 无符号显式换算一次到位。
+        auto cell_idx = [gu](int vv, int uu) {
+            return static_cast<size_t>(vv) * gu + static_cast<size_t>(uu);
+        };
         std::vector<Cell> cells(grid_len);
         std::vector<uint8_t> visited(grid_len);
         int ux, uy, uz, vx, vy, vz;
@@ -431,15 +436,14 @@ void build_pass(const Neighborhood& n, bool water_pass,
                                 }
                             }
                         }
-                        cells[static_cast<size_t>(v) * g.gu + u] = c;
+                        cells[cell_idx(v, u)] = c;
                     }
                 }
 
                 std::memset(visited.data(), 0, grid_len);
                 for (int v = 0; v < g.gv; ++v) {
                     for (int u = 0; u < g.gu; ++u) {
-                        const size_t i =
-                            static_cast<size_t>(v) * g.gu + u;
+                        const size_t i = cell_idx(v, u);
                         if (visited[i] || !cells[i].visible) {
                             continue;
                         }
@@ -447,8 +451,7 @@ void build_pass(const Neighborhood& n, bool water_pass,
 
                         int wq = 1;
                         while (u + wq < g.gu) {
-                            const size_t j =
-                                static_cast<size_t>(v) * g.gu + u + wq;
+                            const size_t j = cell_idx(v, u + wq);
                             if (visited[j] || !same_key(key, cells[j])) {
                                 break;
                             }
@@ -459,9 +462,7 @@ void build_pass(const Neighborhood& n, bool water_pass,
                         bool grew = true;
                         while (v + hq < g.gv && grew) {
                             for (int k = 0; k < wq; ++k) {
-                                const size_t j = static_cast<size_t>(v + hq) *
-                                                     g.gu +
-                                                 u + k;
+                                const size_t j = cell_idx(v + hq, u + k);
                                 if (visited[j] || !same_key(key, cells[j])) {
                                     grew = false;
                                     break;
@@ -474,8 +475,7 @@ void build_pass(const Neighborhood& n, bool water_pass,
 
                         for (int dv = 0; dv < hq; ++dv) {
                             for (int du = 0; du < wq; ++du) {
-                                visited[static_cast<size_t>(v + dv) * g.gu +
-                                        u + du] = 1;
+                                visited[cell_idx(v + dv, u + du)] = 1;
                             }
                         }
                         emit_quad(verts, indices, water_pass, axis, dir, layer,

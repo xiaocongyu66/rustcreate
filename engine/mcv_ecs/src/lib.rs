@@ -98,15 +98,16 @@ impl<T: 'static> SparseSet<T> {
 
 impl<T: 'static> Store for SparseSet<T> {
     fn remove_at(&mut self, idx: u32) {
-        if let Some(slot) = self.sparse.get_mut(idx as usize) {
-            if slot.take().is_some() {
-                let d = self
-                    .dense
-                    .iter()
-                    .position(|e| e.idx == idx)
-                    .expect("sparse/dense 不变式破坏:dense 含该槽位");
-                self.dense.swap_remove(d);
-            }
+        // edition 2024 let-chain。
+        if let Some(slot) = self.sparse.get_mut(idx as usize)
+            && slot.take().is_some()
+        {
+            let d = self
+                .dense
+                .iter()
+                .position(|e| e.idx == idx)
+                .expect("sparse/dense 不变式破坏:dense 含该槽位");
+            self.dense.swap_remove(d);
         }
     }
     fn count(&self) -> usize {
