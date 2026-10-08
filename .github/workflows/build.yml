@@ -36,6 +36,9 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      - name: Install ALSA dev headers (tinyaudio Linux backend)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - name: Set up Android NDK
         if: matrix.android
         uses: nttld/setup-ndk@v1
