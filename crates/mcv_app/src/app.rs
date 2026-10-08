@@ -58,6 +58,11 @@ pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::
             .as_ref()
             .and_then(|a| a.internal_data_path().map(std::path::PathBuf::from));
         log::info!("android internal data: {:?}", state.android_data);
+        if let Some(app) = android.as_ref() {
+            if let Some(data) = state.android_data.as_ref() {
+                crate::android_assets::extract_assets(app, data);
+            }
+        }
         if let Some(app) = android {
             builder.with_android_app(app);
         }

@@ -35,6 +35,9 @@ android_logger = "0.14"
 package = "win.rustcreate.mcv"
 apk_name = "mcv"
 build_targets = ["aarch64-linux-android"]
+# CI 打 APK 前把 texturepack/ 拷入 assets/ 并生成 manifest.txt，
+# 首启由 android_assets::extract_assets 解到 internal data。
+assets = "assets"
 # GL 3.0 保证无 Vulkan 的设备也能走 wgpu 的 GLES 后端
 opengles_version = [3, 0]
 

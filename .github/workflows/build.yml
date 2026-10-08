@@ -64,6 +64,12 @@ jobs:
         working-directory: crates/mcv_app
         run: |
           export PATH="$JAVA_HOME/bin:$PATH"
+          # 素材进 APK assets/：texturepack/ (+sounds/ 若存在) + manifest.txt
+          rm -rf assets/texturepack assets/sounds
+          cp -r "$GITHUB_WORKSPACE/texturepack" assets/texturepack
+          if [ -d "$GITHUB_WORKSPACE/sounds" ]; then cp -r "$GITHUB_WORKSPACE/sounds" assets/sounds; fi
+          (cd assets && find texturepack sounds -type f 2>/dev/null | sort > manifest.txt)
+          echo "manifest: $(wc -l < assets/manifest.txt) files"
           keytool -genkeypair -v -keystore release.keystore -alias mcv \
             -keyalg RSA -keysize 2048 -validity 10000 \
             -storepass mcvpass -keypass mcvpass \

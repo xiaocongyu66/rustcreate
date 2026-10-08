@@ -5,6 +5,9 @@ pub mod game;
 pub mod touch;
 
 #[cfg(target_os = "android")]
+pub mod android_assets;
+
+#[cfg(target_os = "android")]
 #[no_mangle]
 fn android_main(app: android_activity::AndroidApp) {
     // 日志进 logcat（tag RustMcv）：adb logcat -s RustMcv
