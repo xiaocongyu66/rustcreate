@@ -99,6 +99,7 @@ fn interleaved_stress_no_loss_or_reorder() {
 #[test]
 fn drop_drains_pending_items() {
     static LIVE: AtomicUsize = AtomicUsize::new(0);
+    #[derive(Debug)]
     struct Probe;
     impl Probe {
         fn new() -> Self {
