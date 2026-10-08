@@ -417,6 +417,7 @@ impl AppState {
     /// 纹理包目录（texturepack/）：Android 优先 internal 数据目录下的
     /// texturepack/（仅当目录存在），否则退回 <exe 目录>/texturepack/。
     fn texture_pack_dir(&self) -> Option<std::path::PathBuf> {
+        #[cfg(target_os = "android")]
         if let Some(data) = &self.android_data {
             let dir = data.join("texturepack");
             if dir.is_dir() {
