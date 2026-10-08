@@ -124,6 +124,8 @@ struct AppState {
     clouds: Option<mcv_render::Clouds>,
     /// 走路动画状态：(相位, 幅值)
     walk_anim: (f32, f32),
+    /// 键位映射（MC KeyBindingRegistry 对应物；重映射 UI 属波4）
+    keymap: mcv_game::keymap::KeyMap,
     /// Android 应用私有目录（internal_data_path），存档放这里
     #[cfg(target_os = "android")]
     android_data: Option<std::path::PathBuf>,
@@ -1199,63 +1201,48 @@ impl ApplicationHandler for AppState {
                     return;
                 };
                 let pressed = state == ElementState::Pressed;
-                match code {
-                    KeyCode::KeyW => runtime.input.forward = pressed,
-                    KeyCode::KeyS => runtime.input.back = pressed,
-                    KeyCode::KeyA => runtime.input.left = pressed,
-                    KeyCode::KeyD => runtime.input.right = pressed,
-                    KeyCode::Space => runtime.input.jump = pressed,
-                    KeyCode::ShiftLeft => runtime.input.sneak = pressed,
-                    KeyCode::ControlLeft | KeyCode::ShiftRight => runtime.input.sprint = pressed,
-                    KeyCode::KeyF => {
-                        if pressed {
+                use mcv_game::keymap::Action;
+                // 快捷栏：MC 是 9 个独立键位，本引擎键位表单动作单键，暂直绑
+                if pressed {
+                    if let Some(slot) = crate::keybind::hotbar_slot(code) {
+                        runtime.player.sel_slot = slot;
+                    }
+                }
+                // F5 切视角不在 MC 键位表内（本引擎扩展），保持硬编码
+                if pressed && code == KeyCode::F5 {
+                    runtime.cycle_camera();
+                }
+                if let Some(vk) = crate::keybind::vkey_of(code) {
+                    match self.keymap.action_for(vk) {
+                        Some(Action::Forward) => runtime.input.forward = pressed,
+                        Some(Action::Back) => runtime.input.back = pressed,
+                        Some(Action::Left) => runtime.input.left = pressed,
+                        Some(Action::Right) => runtime.input.right = pressed,
+                        Some(Action::Jump) => runtime.input.jump = pressed,
+                        Some(Action::Sneak) => runtime.input.sneak = pressed,
+                        Some(Action::Sprint) => runtime.input.sprint = pressed,
+                        Some(Action::FlyToggle) if pressed => {
                             runtime.player.flying = !runtime.player.flying;
                         }
-                    }
-                    KeyCode::F5 => {
-                        if pressed {
-                            runtime.cycle_camera();
-                        }
-                    }
-                    KeyCode::Escape => match self.screen {
-                        Screen::InGame => {
-                            self.screen = Screen::Paused;
-                            if let Some(w) = self.window.as_ref() {
-                                let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                w.set_cursor_visible(true);
+                        Some(Action::Pause) if pressed => match self.screen {
+                            Screen::InGame => {
+                                self.screen = Screen::Paused;
+                                if let Some(w) = self.window.as_ref() {
+                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
+                                    w.set_cursor_visible(true);
+                                }
                             }
-                        }
-                        Screen::Paused => self.screen = Screen::InGame,
-                        Screen::Worlds | Screen::Create | Screen::Settings => {
-                            self.screen = Screen::Main
-                        }
-                        Screen::Death => {} // MC：死亡界面 Esc 无效
-                        Screen::Main => event_loop.exit(),
-                    },
-                    code @ (KeyCode::Digit1
-                    | KeyCode::Digit2
-                    | KeyCode::Digit3
-                    | KeyCode::Digit4
-                    | KeyCode::Digit5
-                    | KeyCode::Digit6
-                    | KeyCode::Digit7
-                    | KeyCode::Digit8
-                    | KeyCode::Digit9)
-                        if pressed =>
-                    {
-                        runtime.player.sel_slot = match code {
-                            KeyCode::Digit1 => 0,
-                            KeyCode::Digit2 => 1,
-                            KeyCode::Digit3 => 2,
-                            KeyCode::Digit4 => 3,
-                            KeyCode::Digit5 => 4,
-                            KeyCode::Digit6 => 5,
-                            KeyCode::Digit7 => 6,
-                            KeyCode::Digit8 => 7,
-                            _ => 8,
-                        };
+                            Screen::Paused => self.screen = Screen::InGame,
+                            Screen::Worlds | Screen::Create | Screen::Settings => {
+                                self.screen = Screen::Main
+                            }
+                            Screen::Death => {} // MC：死亡界面 Esc 无效
+                            Screen::Main => event_loop.exit(),
+                        },
+                        // Inventory(F)/Debug(F3)/Screenshot(F2)/PickBlock：
+                        // 引擎侧功能属波4（背包/F3/截图），先接分发留位
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

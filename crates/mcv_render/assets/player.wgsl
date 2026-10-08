@@ -15,7 +15,7 @@ struct PlayerUniforms {
 struct VtxIn {
     @location(0) pos: vec3<f32>,
     @location(1) uv: vec2<f32>,      // unorm8x2
-    @location(2) meta: vec2<u32>,    // x = 皮肤层, y = 部位索引
+    @location(2) pmeta: vec2<u32>,   // x = 皮肤层, y = 部位索引（meta 是 WGSL 保留字）
 };
 
 struct VtxOut {
@@ -27,10 +27,10 @@ struct VtxOut {
 @vertex
 fn vs_player(v: VtxIn) -> VtxOut {
     var out: VtxOut;
-    let model = pu.models[v.meta.y];
+    let model = pu.models[v.pmeta.y];
     out.clip = pu.view_proj * model * vec4<f32>(v.pos, 1.0);
     out.uv = v.uv;
-    out.layer = v.meta.x;
+    out.layer = v.pmeta.x;
     return out;
 }
 

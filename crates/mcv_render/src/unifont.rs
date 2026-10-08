@@ -79,7 +79,10 @@ impl Unifont {
             return None;
         }
         let mut map = HashMap::with_capacity(count);
-        let mut prev = None::<u32>;
+        // 两段各自严格升序（半宽段在前、全宽段在后是格式约定；
+        // 段间不要求整体有序——半宽字形码位(U+FF61…)排在全宽(U+3000…)前）
+        let mut prev_half = None::<u32>;
+        let mut prev_full = None::<u32>;
         for i in 0..count {
             let at = 16 + i * 5;
             let cp = u32le(data, at);
@@ -87,10 +90,11 @@ impl Unifont {
             if half != (i < half_count) {
                 return None; // 半宽段必须整体在前
             }
+            let prev = if half { &mut prev_half } else { &mut prev_full };
             if prev.is_some_and(|p| cp <= p) {
-                return None; // 必须严格升序(二分前提)
+                return None; // 段内严格升序(二分前提)
             }
-            prev = Some(cp);
+            *prev = Some(cp);
             let mut rows = [0u16; 16];
             if half {
                 let b = idx_end + i * 16;

@@ -403,8 +403,7 @@ fn zombie_burns_in_daylight() {
     let mut brain = Brain::new();
     let acts = brain.tick(def, &p, &mut rng);
     assert!(
-        acts.iter()
-            .any(|a| *a == AiAction::SetOnFire { ticks: 160 }),
+        acts.contains(&AiAction::SetOnFire { ticks: 160 }),
         "白天直晒 → 点燃 8s"
     );
     // 夜晚 / 入水 / 头盔 / 亮度不足 → 不燃。
