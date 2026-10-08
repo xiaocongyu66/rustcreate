@@ -95,6 +95,7 @@ pub mod tiles {
     const _: () = assert!(super::atlas::MANIFEST_LAYERS as u16 > STONE);
 }
 
+#[derive(Clone, Copy)]
 pub struct BlockDef {
     pub name: &'static str,
     pub solid: bool,
@@ -129,17 +130,22 @@ const fn gen_def(t: &GenBlock) -> BlockDef {
 }
 
 const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
-    // const 循环需要 while + MaybeUninit 填充（std 替代 unstable 常量技巧）
-    let mut out: [std::mem::MaybeUninit<BlockDef>; GEN_BLOCKS.len()] =
-        unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+    // BlockDef: Copy → 数组重复式可用，const while 逐位覆盖零值
+    let mut out = [BlockDef {
+        name: "",
+        solid: false,
+        opaque: false,
+        liquid: false,
+        light_emit: 0,
+        tiles: [0; 6],
+        hardness: 0.0,
+    }; GEN_BLOCKS.len()];
     let mut i = 0;
     while i < GEN_BLOCKS.len() {
-        out[i] = std::mem::MaybeUninit::new(gen_def(&GEN_BLOCKS[i]));
+        out[i] = gen_def(&GEN_BLOCKS[i]);
         i += 1;
     }
-    // 安全：上面填满了每个元素。BlockDef 非 Copy，const 里不能 *ptr 移出
-    // 数组（E0508），MaybeUninit 整包 assume_init 是 const 正典写法
-    unsafe { std::mem::MaybeUninit::new(out).assume_init() }
+    out
 }
 
 /// 硬度与发光对照反编译 Minecraft 26.1 `Blocks.java`（数值来源见仓库外笔记
@@ -351,7 +357,6 @@ mod tests {
                 n.hardness.to_bits(),
                 o.hardness.to_bits(),
                 "id {i} {} 硬度逐位不一致: 新 {} vs 旧 {}",
-                i,
                 n.name,
                 n.hardness,
                 o.hardness
