@@ -12,7 +12,7 @@ use winit::window::{Window, WindowId};
 #[cfg(target_os = "android")]
 use winit::platform::android::EventLoopBuilderExtAndroid;
 
-use crate::game::{GameMode, GameRuntime};
+use mcv_logic::game::{GameMode, GameRuntime};
 
 /// 应用界面状态机。
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -1575,7 +1575,7 @@ impl AppState {
         };
         let clouds = self.clouds.as_ref();
         // 第三人称玩家：走路动画推进 + 12 部位矩阵
-        let third_person = runtime.cam_type != crate::game::CameraType::FirstPerson;
+        let third_person = runtime.cam_type != mcv_logic::game::CameraType::FirstPerson;
         let has_player = third_person
             && self.renderer.as_ref().is_some_and(|r| r.has_skins())
             && !runtime.hardcore_death;

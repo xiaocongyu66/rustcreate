@@ -1,0 +1,23 @@
+[package]
+name = "mcv_logic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+log.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+mcv_core.workspace = true
+mcv_ffi.workspace = true
+mcv_worldgen.workspace = true
+mcv_light.workspace = true
+mcv_mesher.workspace = true
+mcv_render.workspace = true
+mcv_game.workspace = true
+mcv_save.workspace = true
+mcv_entity.workspace = true
+mcv_item.workspace = true
+mcv_audio.workspace = true
