@@ -18,5 +18,11 @@ fn android_main(app: android_activity::AndroidApp) {
         log::error!("PANIC: {info}");
     }));
     log::info!("mcv starting (android)");
-    let _ = pollster::block_on(app::run(Some(app)));
+    if let Err(e) = pollster::block_on(app::run(Some(app))) {
+        log::error!("mcv run failed: {e}");
+    }
+    // winit 的 EVENT_LOOP_CREATED 是进程级 flag：run 返回后进程若驻留，
+    // 再次启动 activity 会复用进程并拿不到 event loop（表现为秒退）。
+    // 因此 run 返回即退出，让下次启动是干净的进程。
+    std::process::exit(0);
 }

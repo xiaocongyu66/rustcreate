@@ -93,10 +93,22 @@ struct AppState {
     android_data: Option<std::path::PathBuf>,
 }
 
+/// 将 surface 尺寸等比缩进设备纹理上限（GLES 常见 2048），present 时自动拉伸。
+fn fit_surface_size(w: u32, h: u32, max: u32) -> (u32, u32) {
+    let m = w.max(h);
+    if max == 0 || m <= max || m == 0 {
+        (w.max(1), h.max(1))
+    } else {
+        let k = max as f64 / m as f64;
+        (((w as f64 * k) as u32).max(1), ((h as f64 * k) as u32).max(1))
+    }
+}
+
 struct SurfacePair {
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
+    max_extent: u32,
 }
 
 impl AppState {
@@ -644,7 +656,7 @@ impl ApplicationHandler for AppState {
             }
         };
         match Self::init_gpu(window.clone()) {
-            Ok((surface, config, depth, device, queue)) => {
+            Ok((surface, config, depth, device, queue, max_extent)) => {
                 // 纹理包目录：<exe>/texturepack/（桌面）
                 let pack_dir = std::env::current_exe()
                     .ok()
@@ -666,6 +678,7 @@ impl ApplicationHandler for AppState {
                     surface,
                     config,
                     depth,
+                    max_extent,
                 });
                 self.window = Some(window.clone());
                 window.request_redraw();
@@ -701,8 +714,9 @@ impl ApplicationHandler for AppState {
             WindowEvent::Resized(size) => {
                 if let (Some(sp), Some(_)) = (self.surface.as_mut(), self.runtime.as_ref()) {
                     if size.width > 0 && size.height > 0 {
-                        sp.config.width = size.width;
-                        sp.config.height = size.height;
+                        let (cw, ch) = fit_surface_size(size.width, size.height, sp.max_extent);
+                        sp.config.width = cw;
+                        sp.config.height = ch;
                         // reconfigure happens lazily in redraw
                     }
                 }
@@ -843,6 +857,7 @@ type GpuInit = (
     wgpu::TextureView,
     wgpu::Device,
     wgpu::Queue,
+    u32,
 );
 
 impl AppState {
@@ -857,19 +872,19 @@ impl AppState {
                 .as_ref()
                 .map(|w| w.inner_size())
                 .unwrap_or(winit::dpi::PhysicalSize::new(0, 0));
-            if size.width > 0
-                && size.height > 0
-                && (sp.config.width != size.width || sp.config.height != size.height)
-            {
-                sp.config.width = size.width;
-                sp.config.height = size.height;
-                sp.surface
-                    .configure(self.cached_device.as_ref().unwrap(), &sp.config);
-                sp.depth = Self::depth_view(
-                    self.cached_device.as_ref().unwrap(),
-                    size.width,
-                    size.height,
-                );
+            if size.width > 0 && size.height > 0 {
+                let (cw, ch) = fit_surface_size(size.width, size.height, sp.max_extent);
+                if sp.config.width != cw || sp.config.height != ch {
+                    sp.config.width = cw;
+                    sp.config.height = ch;
+                    sp.surface
+                        .configure(self.cached_device.as_ref().unwrap(), &sp.config);
+                    sp.depth = Self::depth_view(
+                        self.cached_device.as_ref().unwrap(),
+                        sp.config.width,
+                        sp.config.height,
+                    );
+                }
             }
         }
         let (mw, mh) = {
@@ -937,22 +952,30 @@ impl AppState {
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))?;
+        // downlevel_defaults 把 max_texture_dimension_2d 限到 2048；高刷屏
+        // （如 2640 宽）configure 会直接验证失败 panic，这里放开到设备实际上限。
+        let mut limits = wgpu::Limits::downlevel_defaults();
+        limits.max_texture_dimension_2d = limits
+            .max_texture_dimension_2d
+            .max(adapter.limits().max_texture_dimension_2d);
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("mcv-device"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
+                required_limits: limits,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
             }))?;
         let caps = surface.get_capabilities(&adapter);
         let size = window.inner_size();
+        let max_extent = device.limits().max_texture_dimension_2d;
+        let (sw, sh) = fit_surface_size(size.width, size.height, max_extent);
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            format: caps.formats[0],
-            width: size.width.max(1),
-            height: size.height.max(1),
+            format: *caps.formats.first().ok_or("no surface formats")?,
+            width: sw,
+            height: sh,
             present_mode: wgpu::PresentMode::Fifo,
             alpha_mode: caps
                 .alpha_modes
@@ -965,7 +988,7 @@ impl AppState {
         };
         surface.configure(&device, &config);
         let depth = Self::depth_view(&device, config.width, config.height);
-        Ok((surface, config, depth, device, queue))
+        Ok((surface, config, depth, device, queue, max_extent))
     }
 
     fn depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
@@ -1003,15 +1026,15 @@ impl AppState {
             return;
         };
         let size = window.inner_size();
-        if size.width > 0
-            && size.height > 0
-            && (sp.config.width != size.width || sp.config.height != size.height)
-        {
-            sp.config.width = size.width;
-            sp.config.height = size.height;
-            let device = self.cached_device.clone().unwrap();
-            sp.surface.configure(&device, &sp.config);
-            sp.depth = Self::depth_view(&device, size.width, size.height);
+        if size.width > 0 && size.height > 0 {
+            let (cw, ch) = fit_surface_size(size.width, size.height, sp.max_extent);
+            if sp.config.width != cw || sp.config.height != ch {
+                sp.config.width = cw;
+                sp.config.height = ch;
+                let device = self.cached_device.clone().unwrap();
+                sp.surface.configure(&device, &sp.config);
+                sp.depth = Self::depth_view(&device, sp.config.width, sp.config.height);
+            }
         }
 
         // simulation ticks
