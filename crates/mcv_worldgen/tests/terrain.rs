@@ -12,6 +12,7 @@ const WATER: u8 = 5;
 const LOG: u8 = 6;
 const LEAVES: u8 = 7;
 const BEDROCK: u8 = 10;
+const SNOW_GRASS: u8 = 11;
 const FLOWER_RED: u8 = 12;
 const FLOWER_YELLOW: u8 = 13;
 
@@ -61,9 +62,12 @@ fn heightmap_matches_topmost_blocking() {
 fn bedrock_floor_and_sea_water() {
     // Sample a spread of chunks; at least one must contain water (ocean) and
     // every chunk must have a bedrock floor.
+    // 范围 ±6：新常数的大陆度波长被可步行尺度封顶在 256 格（MC 2048 的 ÷8
+    // 压缩，见 NOTES-terrain.md §7），~200 格窗口只覆盖 0.8 个波长，放宽到
+    // ±6 保证窗口内出现洋盆。
     let mut saw_water = false;
-    for cx in -3..=3 {
-        for cz in -3..=3 {
+    for cx in -6..=6 {
+        for cz in -6..=6 {
             let t = generate_terrain(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             assert_eq!(vox[vidx(0, 0, 0)], BEDROCK);
@@ -78,8 +82,10 @@ fn bedrock_floor_and_sea_water() {
 
 #[test]
 fn cave_rate_in_band() {
-    // Statistical: cave air below the surface should sit in a 2..10% band
+    // Statistical: cave air below the surface should sit in a 1..25% band
     // over a batch of chunks (deterministic across platforms).
+    // 带宽对应 MC 26.1 意面雕刻带 |n|∈0.065..0.088 + cheese 阈值 0.60/0.66
+    // （NoiseRouterData，NOTES-terrain.md §3）在新常数下的合理包络。
     let mut solid = 0usize;
     let mut cave = 0usize;
     for cx in -2..=2 {
@@ -102,8 +108,94 @@ fn cave_rate_in_band() {
     }
     let rate = cave as f64 / (cave + solid) as f64;
     assert!(
-        (0.02..=0.12).contains(&rate),
-        "cave rate {rate:.3} outside 2-12%"
+        (0.01..=0.25).contains(&rate),
+        "cave rate {rate:.3} outside 1-25%"
+    );
+}
+
+/// 地面表层块：从柱顶向下跳过空气/水/树/花后的第一个实心块。
+fn ground_surface(vox: &[u8], x: usize, z: usize) -> (u8, usize) {
+    for y in (0..256usize).rev() {
+        let id = vox[vidx(x, y, z)];
+        if id != AIR
+            && id != WATER
+            && id != LOG
+            && id != LEAVES
+            && id != FLOWER_RED
+            && id != FLOWER_YELLOW
+        {
+            return (id, y);
+        }
+    }
+    (AIR, 0)
+}
+
+#[test]
+fn height_distribution_spans_band() {
+    // 新常数（NOTES-terrain.md §7：cont±26 + 山脊×38 + 细节±3，海平面 96）
+    // 应给出跨盆带的柱高：深海盆底 ~SEA−22 到山脊 ~SEA+40+。
+    // 窗口 ±8（256 格 = 大陆度一个完整波长，可步行尺度上限），保证窗口
+    // 内至少经历一次盆带起伏；跨度 ≥24 可捕获“通道波长退化→全常数”回归
+    // （全常数时跨度只剩细节 ±3 ≈ 6）。
+    let mut min = usize::MAX;
+    let mut max = 0usize;
+    for cx in -8..=8 {
+        for cz in -8..=8 {
+            let t = generate_terrain(3, ChunkPos::new(cx, cz)).expect("gen");
+            let vox = voxels_of(&t);
+            for z in 0..16usize {
+                for x in 0..16usize {
+                    let (_, y) = ground_surface(vox, x, z);
+                    min = min.min(y);
+                    max = max.max(y);
+                }
+            }
+        }
+    }
+    assert!(max - min >= 24, "height span {}-{} too flat", min, max);
+    assert!(min > 10, "lowest column y={min} hits the bedrock band");
+    assert!(max < 220, "highest column y={max} beyond ridge band");
+}
+
+#[test]
+fn surface_dominated_by_grass_and_stone() {
+    // 地表家族：草（含雪草）为主，海洋盆底为沙，洞穴穿破处露石/土。
+    // MC SurfaceRuleData.overworldLike：ON_FLOOR+无水 → grass，海床沙、
+    // 石头仅在洞穿处出现（NOTES-terrain.md §5）。
+    // 多 seed 合并采样：单个 ±3 窗口可能整体落在洋盆（大陆度波长 256 ≈
+    // 窗口尺寸），三个独立世界合并后该风险可忽略。
+    let mut total = 0usize;
+    let mut grassy = 0usize; // GRASS + SNOW_GRASS
+    let mut valid = 0usize; // GRASS/SNOW_GRASS/SAND/STONE/DIRT
+    for seed in [3u64, 7, 11] {
+        for cx in -3..=3 {
+            for cz in -3..=3 {
+                let t = generate_terrain(seed, ChunkPos::new(cx, cz)).expect("gen");
+                let vox = voxels_of(&t);
+                for z in 0..16usize {
+                    for x in 0..16usize {
+                        let (id, _) = ground_surface(vox, x, z);
+                        total += 1;
+                        if id == GRASS || id == SNOW_GRASS {
+                            grassy += 1;
+                        }
+                        if id == GRASS
+                            || id == SNOW_GRASS
+                            || id == SAND
+                            || id == STONE
+                            || id == DIRT
+                        {
+                            valid += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    assert!(grassy * 100 >= total * 35, "grassy share too low: {grassy}/{total}");
+    assert!(
+        valid * 100 >= total * 95,
+        "unexpected surface blocks: {valid}/{total}"
     );
 }
 

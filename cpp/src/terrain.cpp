@@ -1,8 +1,11 @@
 // Terrain kernel: three-layer noise heightmap + dual-threshold 3D caves +
 // deterministic cross-chunk tree projection.
 //
-// Constants follow /root/mc-ref/NOTES.md (decompiled MC 26.1 mechanisms,
-// simplified to the bloomcraft baseline: world 0..255, sea level 96).
+// 常数按 /root/mc-ref/NOTES-terrain.md 从 MC 26.1 反编译源提取校准
+// （NoiseRouterData / TerrainProvider / PerlinNoise / noise JSON /
+// SurfaceRuleData），机制简化到 bloomcraft 基准：世界 0..255、海平面 96。
+// 可步行尺度约束：波长 > ~300 格的通道一律 ÷8 压到 ≤256，保持相对比例
+// （NOTES §7），否则小测试区（±6 chunk < 320 格）内通道近似常数、地形全平。
 //
 // Block ids mirror crates/mcv_core/src/lib.rs BLOCKS.
 
@@ -31,7 +34,38 @@ constexpr uint8_t SNOW_GRASS = 11;
 constexpr uint8_t FLOWER_RED = 12;
 constexpr uint8_t FLOWER_YELLOW = 13;
 
+// ---- 通道波长（格）。括号内为 MC 26.1 原始波长，见 NOTES §1/§7 映射表 ----
+constexpr float kWavelengthCont = 256.0f;    // continentalness 2048 ÷8（封顶）
+constexpr float kWavelengthErosion = 256.0f; // erosion 2048 ÷8
+constexpr float kWavelengthRidge = 64.0f;    // ridges 512 ÷8（保持 4:1 比例）
+constexpr float kWavelengthDetail = 48.0f;   // jagged 基波 ≈43.7（1:1 可步行）
+constexpr float kSpagXZ = 128.0f;            // spaghetti_3d_* 单倍频 128（1:1）
+constexpr float kSpagY = 128.0f;
+constexpr float kCheeseXZ = 256.0f;          // cave_cheese 384 → 封顶 256
+constexpr float kCheeseY = 160.0f;           // 世界高 384→256，纵向再压缩
+
+// ---- 倍频振幅序列：noise/*.json amplitudes 前缀（权重 ∝ amp/2^i，
+// 截断项权重 <4%，见 NOTES §1）。0 表示跳过该倍频（erosion 原生置 0）。----
+constexpr float kAmpCont[6] = {1.0f, 1.0f, 2.0f, 2.0f, 2.0f, 1.0f};  // 9→6 倍频
+constexpr float kAmpErosion[5] = {1.0f, 1.0f, 0.0f, 1.0f, 1.0f};     // 5 倍频
+constexpr float kAmpRidge[3] = {1.0f, 2.0f, 1.0f};                   // [1,2,1,0,0,0]
+constexpr float kAmpCheese[5] = {0.5f, 1.0f, 2.0f, 1.0f, 2.0f};      // 9→5 倍频
+
+// ---- 洞穴阈值（NOTES §3：NoiseRouterData spaghetti/cheese 公式）----
+// 意面：MC max(|w1|,|w2|)+thickness<0，thickness=mappedNoise[-0.065,-0.088]
+// → 雕刻带 |n| ∈ 0.065..0.088；深度线性替代 rarity 量化（简化）。
+constexpr float kSpagThickMin = 0.065f;
+constexpr float kSpagThickDeep = 0.023f;   // = 0.088 − 0.065，深处更宽
+constexpr float kSpagDeepRefY = 40.0f;     // 深度基准（MC 深部洞穴集中带）
+// 奶酪：MC 有效雕刻阈值 ≈ −0.27 + slide 正项 clamp(1.5−0.64·sloped,0,0.5)
+// （均值 ≈0.33，浅部最大 0.5）→ 对称坐标下 0.60 / 浅部 0.66。
+constexpr float kCheeseThresh = 0.60f;
+constexpr float kCheeseThreshShallow = 0.66f;
+// 洞口渐隐：analogue yClampedGradient(−10,30,+0.3,0) + 顶部 slide 封 −0.078125。
+constexpr int kEntranceFade = 14;
+
 constexpr uint64_t kSeedCont = 0x1111222233334444ull;
+constexpr uint64_t kSeedErosion = 0x2468ACE013579BDFull;
 constexpr uint64_t kSeedRidge = 0x5555666677778888ull;
 constexpr uint64_t kSeedDetail = 0x9999AAAABBBBCCCCull;
 constexpr uint64_t kSeedSpag1 = 0x5EED0000C0DE0001ull;
@@ -55,22 +89,44 @@ inline int floor_div(int v, int d) {
     return q;
 }
 
-// Surface height: continents + folded ridges + detail (NOTES: 26.1
-// peaks_valleys fold applied to the ridge channel).
+// Surface height: continentalness + erosion-gated folded ridges + jagged
+// detail. 三通道与振幅序列对应 MC 26.1 TerrainProvider.overworldOffset 的
+// 样条输入轴（continents/erosion/ridges_folded，NOTES §2）；peaks_valleys
+// 折叠逐系数等于 NoiseRouterData.peaksAndValleys。
 float base_height(uint64_t seed, float wx, float wz) {
+    // 大陆度：continentalness 振幅序列，波长 2048→256（÷8 封顶）。
     const float cont =
-        mcvnoise::fbm2(seed ^ kSeedCont, wx / 256.0f, wz / 256.0f, 3) * 2.0f -
+        mcvnoise::fbm2_w(seed ^ kSeedCont, wx / kWavelengthCont,
+                         wz / kWavelengthCont, kAmpCont, 6) *
+            2.0f -
         1.0f;  // [-1, 1]
+    // 侵蚀度：erosion 振幅序列 [1,1,0,1,1]（第 3 倍频原生置 0）。
+    const float ero =
+        mcvnoise::fbm2_w(seed ^ kSeedErosion, wx / kWavelengthErosion,
+                         wz / kWavelengthErosion, kAmpErosion, 5) *
+            2.0f -
+        1.0f;
+    // 山脊：ridges 序列 [1,2,1]，波长 512→64（与大陆度保持 4:1）。
     const float r =
-        mcvnoise::fbm2(seed ^ kSeedRidge, wx / 110.0f, wz / 110.0f, 4) * 2.0f -
+        mcvnoise::fbm2_w(seed ^ kSeedRidge, wx / kWavelengthRidge,
+                         wz / kWavelengthRidge, kAmpRidge, 3) *
+            2.0f -
         1.0f;
     const float ridge = std::max(0.0f, mcvnoise::peaks_valleys(r));
-    const float inland = std::clamp(cont * 1.6f + 0.15f, 0.0f, 1.0f);
+    // 门控 = 大陆度盆带（offset 样条 beach→high 档）× 低侵蚀档
+    // （样条“低侵蚀→高 inland 偏移 0→0.7/1.0”，高侵蚀=平原压平山脊）。
+    const float inland =
+        std::clamp(cont * 1.6f + 0.15f, 0.0f, 1.0f) *
+        (1.0f - 0.6f * std::max(0.0f, ero));
+    // 锯齿细节：jagged 基波 ≈43.7 格 → 48，±3 格（等幅序列=fbm2 语义）。
     const float det =
-        (mcvnoise::fbm2(seed ^ kSeedDetail, wx / 24.0f, wz / 24.0f, 3) * 2.0f -
+        (mcvnoise::fbm2(seed ^ kSeedDetail, wx / kWavelengthDetail,
+                        wz / kWavelengthDetail, 3) *
+             2.0f -
          1.0f) *
         3.0f;
-    // 基准抬高 +4：均值柱面 ~SEA+17，平原为主、湖泊为辅
+    // 盆带映射（NOTES §7）：深海盆底 ≈ SEA−22、平原均值 SEA+4（+4 与
+    // GLOBAL_OFFSET=-0.50375 同向的简化抬高），山脊 inland 门控内最高 +38。
     return static_cast<float>(kSEA) + 4.0f + cont * 26.0f +
            ridge * inland * 38.0f + det;
 }
@@ -80,10 +136,11 @@ float forest_mask(uint64_t seed, float wx, float wz) {
     return mcvnoise::fbm2(seed ^ kSeedForest, wx / 300.0f, wz / 300.0f, 2);
 }
 
-// Dual-threshold cave test (world coords): spaghetti tunnels (two-noise max,
-// abs minus thickness — the MC 26.1 spaghetti recipe) + cheese caverns
-// (large-scale threshold); entrances fade near the surface, ocean floors
-// stay watertight.
+// Dual-threshold cave test (world coords)：spaghetti 管道（两路噪声取 max、
+// |n| < thickness —— MC 26.1 NoiseRouterData entrances() 的 spaghetti3D 配方）
+// + cheese 大洞（大尺度阈值，underground() 的 solidifiedCheese 折算）；
+// 洞口随深度渐隐（entrances yClampedGradient 同构），海底保持水密
+// （aquifer barrier 的简化）。见 /root/mc-ref/NOTES-terrain.md §3/§7。
 bool carve_cave(uint64_t seed, int x, int y, int z, int surface, bool ocean) {
     if (y <= 2 || y > surface) {
         return false;
@@ -92,40 +149,47 @@ bool carve_cave(uint64_t seed, int x, int y, int z, int surface, bool ocean) {
         return false;
     }
 
+    // spaghetti：MC 为单倍频 128 格噪声按 rarity(0.75..2) 缩放坐标取
+    // max(|w1|,|w2|)；我们以 2 倍频近似 rarity 量化 + roughness 抖动。
     const float a =
-        mcvnoise::fbm3(seed ^ kSeedSpag1, static_cast<float>(x) / 110.0f,
-                       static_cast<float>(y) / 70.0f,
-                       static_cast<float>(z) / 110.0f, 2) *
+        mcvnoise::fbm3(seed ^ kSeedSpag1, static_cast<float>(x) / kSpagXZ,
+                       static_cast<float>(y) / kSpagY,
+                       static_cast<float>(z) / kSpagXZ, 2) *
             2.0f -
         1.0f;
     const float b =
-        mcvnoise::fbm3(seed ^ kSeedSpag2, static_cast<float>(x) / 110.0f,
-                       static_cast<float>(y) / 70.0f,
-                       static_cast<float>(z) / 110.0f, 2) *
+        mcvnoise::fbm3(seed ^ kSeedSpag2, static_cast<float>(x) / kSpagXZ,
+                       static_cast<float>(y) / kSpagY,
+                       static_cast<float>(z) / kSpagXZ, 2) *
             2.0f -
         1.0f;
-    const float deep = std::clamp((40.0f - static_cast<float>(y)) / 40.0f, 0.0f, 1.0f);
-    const float thick = 0.055f + 0.02f * deep;
+    const float deep =
+        std::clamp((kSpagDeepRefY - static_cast<float>(y)) / kSpagDeepRefY,
+                   0.0f, 1.0f);
+    // 厚度带 = MC mappedNoise(SPAGHETTI_3D_THICKNESS, −0.065, −0.088) 幅值。
+    const float thick = kSpagThickMin + kSpagThickDeep * deep;
     const float m = std::max(std::fabs(a), std::fabs(b));
     const bool tunnel = m < thick;
 
+    // cheese：cave_cheese 振幅序列（前 3 倍频主导），xz 384→256 封顶。
     const float c =
-        mcvnoise::fbm3(seed ^ kSeedCheese, static_cast<float>(x) / 280.0f,
-                       static_cast<float>(y) / 160.0f,
-                       static_cast<float>(z) / 280.0f, 2) *
+        mcvnoise::fbm3_w(seed ^ kSeedCheese, static_cast<float>(x) / kCheeseXZ,
+                         static_cast<float>(y) / kCheeseY,
+                         static_cast<float>(z) / kCheeseXZ, kAmpCheese, 5) *
             2.0f -
         1.0f;
-    const bool cavern = c > (y < 40 ? 0.60f : 0.66f);
+    // 浅部更难雕：对应 slide 正项 clamp(1.5−0.64·slopedCheese, 0, 0.5)。
+    const bool cavern = c > (y < 40 ? kCheeseThresh : kCheeseThreshShallow);
 
     if (!tunnel && !cavern) {
         return false;
     }
 
-    // Entrance gradient: carve-outs fade within 14 blocks under the surface
-    // (tunnels break through more often than caverns).
+    // 洞口渐隐：地表下 kEntranceFade 格内按深度收紧（tunnels 比 caverns 更易
+    // 开口），替代 MC entrances 的 yClampedGradient(−10,30,+0.3,0) 平滑门。
     const int depth_below = surface - y;
-    if (depth_below < 14) {
-        const float t = static_cast<float>(depth_below) / 14.0f;
+    if (depth_below < kEntranceFade) {
+        const float t = static_cast<float>(depth_below) / kEntranceFade;
         const float gate = mcvnoise::hash01(seed ^ kSeedMisc, x, y, z);
         const float keep = tunnel ? (0.35f + 0.65f * t) : (0.75f * t);
         if (gate > keep) {
