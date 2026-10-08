@@ -28,7 +28,7 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
         uv,
-        layer: 1, // GRASS_TOP
+        layer: mcv_core::tiles::GRASS_TOP,
         block_light: 0,
         sky_light: 15,
         ao: 3,

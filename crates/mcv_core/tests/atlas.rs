@@ -34,7 +34,7 @@ fn clamped_payload() {
     assert_eq!(small.len(), 64 * (16 * 16 + 8 * 8) * 4);
     assert_eq!(&small[..64 * 16 * 16 * 4], &full[..64 * 16 * 16 * 4]);
     // 钳制只截尾，不动头部真实贴图区
-    assert!(atlas::CRACK_BASE > 64);
+    const { assert!(atlas::CRACK_BASE > 64) };
 }
 
 #[test]
