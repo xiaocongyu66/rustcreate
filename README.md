@@ -2,18 +2,39 @@
 
 Minecraft 类体素沙盒，自研引擎重写：**wgpu 30 引擎核心 + Rust 主体 + C++17 热路径**。
 
-| 层 | 语言 | crate / 目录 | 职责 |
-|---|---|---|---|
-| 公共底座 | Rust | `crates/mcv_core` | 区块布局(16x256x16)、方块注册表、任务池 |
-| FFI 边界 | Rust+cc | `crates/mcv_ffi` | 唯一 C ABI：repr(C) 镜像、静态断言、RAII 内存契约 |
-| 复杂地形算法 | **C++17** | `cpp/src/terrain.cpp` | 三层噪声、双阈值 3D 洞穴、树投影 |
-| 自定义渲染后端 | **C++17** | `cpp/src/mesher.cpp` | 贪心网格化 + 逐顶点 AO + 顶点打包（wgpu 直读） |
-| 内存回收 | Rust+C++ | `cpp/src/mempool.cpp` | 尺寸分级 freelist 池 + canary，Rust RAII Drop 归还 |
-| 光照引擎 | Rust | `crates/mcv_light` | 双通道 BFS（sky/block）、removal、跨区块同步 |
-| 渲染器 | Rust | `crates/mcv_render` | wgpu 30 管线、WGSL、昼夜雾、视锥剔除 |
-| 游戏逻辑 | Rust | `crates/mcv_game` | AABB 扫掠物理、DDA 射线、输入 |
-| 存档 | Rust | `crates/mcv_save` | region 文件 + RLE |
-| 平台壳 | Rust | `crates/mcv_app` | winit 0.30（桌面三平台 + Android NativeActivity） |
+分层原则：**引擎提供能力，游戏提供规则**。`engine/` 不知道方块/物品/MC 语义，
+`game/` 不直接使用 wgpu / winit；依赖只允许 game → engine，反向由编译期阻断。
+
+## 引擎层 `engine/`（可复用能力，无 MC 语义）
+
+| 语言 | crate | 职责 |
+|---|---|---|
+| Rust | `engine/mcv_render` | wgpu 30 管线、WGSL、昼夜雾、视锥剔除、HUD/字体图集 |
+| Rust | `engine/mcv_game` | 体素运行时能力：AABB 扫掠物理、DDA 射线、键位表 |
+| Rust | `engine/mcv_save` | 通用体素存档：region 文件 + RLE |
+| Rust | `engine/mcv_audio` | 音频混音与解码，按句柄播放 |
+
+## 游戏层 `game/`（MC 规则，含方块/物品/世界语义）
+
+| 语言 | crate | 职责 |
+|---|---|---|
+| Rust | `game/mcv_core` | 区块布局(16x256x16)、方块注册表、任务池 |
+| Rust+cc | `game/mcv_ffi` | 唯一 C ABI：repr(C) 镜像、静态断言、RAII 内存契约 |
+| Rust | `game/mcv_worldgen` | 地形编排（调 C++ terrain） |
+| Rust | `game/mcv_light` | 双通道 BFS（sky/block）、removal、跨区块同步 |
+| Rust | `game/mcv_mesher` | 网格化编排（调 C++ mesher）+ 缓冲句柄 |
+| Rust | `game/mcv_entity` / `game/mcv_item` | 生物 AI、战斗、掉落；物品与快捷栏 |
+| Rust | `game/mcv_logic` | 游戏运行时编排：区块流式调度、玩家、实体、HUD 装配 |
+| Rust | `game/mcv_app` | 平台壳：winit 0.30 窗口/输入/surface + 菜单 UI + 触屏 |
+| Rust | `game/mcv_desktop` | 桌面入口 `mcv` 二进制 |
+
+## C++17 热路径 `cpp/`
+
+| 语言 | 文件 | 职责 |
+|---|---|---|
+| **C++17** | `cpp/src/terrain.cpp` | 三层噪声、双阈值 3D 洞穴、树投影 |
+| **C++17** | `cpp/src/mesher.cpp` | 贪心网格化 + 逐顶点 AO + 顶点打包（wgpu 直读） |
+| Rust+C++ | `cpp/src/mempool.cpp` | 尺寸分级 freelist 池 + canary，Rust RAII Drop 归还 |
 
 ## 云端构建（无本地工具链要求）
 
