@@ -83,7 +83,12 @@ jobs:
       - name: Rename apk
         if: matrix.android
         run: |
-          find target -name "*.apk" -exec cp {} ${{ matrix.artifact }}.apk \;
+          # 只取 cargo-apk 最终签名产物：target 下还有 *.unsigned.apk 中间物，
+          # find+cp 通配会按目录序覆盖成未签名版（装机报 INSTALL_PARSE_FAILED_NO_CERTIFICATES）
+          APK=$(find target -path "*/release/apk/mcv-android-arm64.apk")
+          echo "picked: $APK"
+          unzip -l "$APK" | grep -q "META-INF/" || { echo "APK unsigned!"; exit 1; }
+          cp "$APK" ${{ matrix.artifact }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
