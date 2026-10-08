@@ -30,7 +30,7 @@ fn mesh_counts_and_uv_bounds() {
         let mut prev = 0;
         for p in 0..PART_COUNT {
             let r = &m.slices[s][p];
-            assert_eq!(r.len(), PART_INDEXES as u32);
+            assert_eq!(r.len(), PART_INDEXES);
             assert_eq!(r.start, prev, "slice 应连续");
             prev = r.end;
         }

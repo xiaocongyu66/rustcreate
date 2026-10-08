@@ -63,7 +63,7 @@ pub fn decode_to_stereo(bytes: Vec<u8>) -> Result<SoundData, AudioError> {
             // EndOfStream(IoError) 或其它容器级错误:停止读取,保留已解出的部分。
             Err(_) => break,
         };
-        if packet.track_id != track_id {
+        if packet.track_id() != track_id {
             continue;
         }
         match decoder.decode(&packet) {

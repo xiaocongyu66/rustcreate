@@ -27,7 +27,11 @@ fn loads_and_common_glyphs_have_ink() {
     for ch in ['游', '戏', '设', '置'] {
         assert!(f.has(ch as u32), "缺字形 {ch}");
         assert!(ink_pixels(&f, ch as u32) > 0, "{ch} 位图为空");
-        assert_eq!(f.quads(ch, 0.0, 0.0, 1.0, [1.0; 4]).len(), 1);
+        assert_eq!(
+            f.quads(ch.encode_utf8(&mut [0u8; 4]), 0.0, 0.0, 1.0, [1.0; 4])
+                .len(),
+            1
+        );
     }
 }
 

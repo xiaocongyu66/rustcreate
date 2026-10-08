@@ -186,8 +186,9 @@ impl Mixer {
     /// 缓存命中直接返回;未命中读文件+解码;缺失/失败记入 missing 集合永久 no-op。
     fn get_or_load(&mut self, id: SoundId) -> Option<Arc<SoundData>> {
         if let Some(a) = self.cache.get(&id) {
+            let a = a.clone();
             self.touch_lru(id);
-            return Some(a.clone());
+            return Some(a);
         }
         if self.missing.contains(&id) {
             return None;

@@ -107,15 +107,13 @@ impl SpriteSheet {
 
     fn uv_px(&self, x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 2] {
         [
-            [x as f32 / self.w as f32, y as f32 / self.h as f32],
-            [
-                (x + w) as f32 / self.w as f32,
-                (y + h) as f32 / self.h as f32,
-            ],
+            [x / self.w, y / self.h],
+            [(x + w) / self.w, (y + h) / self.h],
         ]
     }
 
     /// 整枚精灵贴图四边形(源矩形按比例取子区域,frac ∈ 0..1)。
+    #[allow(clippy::too_many_arguments)] // 精灵绘制参数天然多（源矩形+目标矩形+着色）
     pub fn sprite(
         &self,
         name: &str,
@@ -162,6 +160,7 @@ impl SpriteSheet {
 
     /// 九宫格拉伸(button.png 的 mcmeta:nine_slice border=3 源像素)。
     /// `scale` 为 GUI 整数缩放:目标圆角块取 border*scale,其余拉伸。
+    #[allow(clippy::too_many_arguments)]
     pub fn nine_slice(
         &self,
         name: &str,

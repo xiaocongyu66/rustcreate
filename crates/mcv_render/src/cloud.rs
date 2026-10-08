@@ -394,6 +394,7 @@ impl Clouds {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn try_build_cell(
         &self,
         rel: RelCamPos,

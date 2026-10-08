@@ -26,8 +26,8 @@ pub fn unifont_shared() -> Option<&'static Unifont> {
 
 enum Cell {
     Ascii(u32),
-    /// unifont 图集格号
-    Uni(u32),
+    /// unifont 命中（push_quads 自行按 codepoint 查格）
+    Uni,
 }
 
 fn unifont() -> Option<&'static Unifont> {
@@ -45,7 +45,7 @@ fn cell_for(ch: char) -> Option<Cell> {
     }
     if let Some(u) = unifont() {
         if u.covers(ch) {
-            return Some(Cell::Uni(u.cell_of(cp)));
+            return Some(Cell::Uni);
         }
     }
     Some(Cell::Ascii(MISSING))
@@ -95,7 +95,7 @@ pub fn text_quads(s: &str, x: f32, y: f32, scale: f32, color: [f32; 4]) -> Vec<H
                     layer: 0,
                     rot: 0.0,
                 }),
-                Some(Cell::Uni(_)) => {
+                Some(Cell::Uni) => {
                     // unifont 自行处理半/全角宽与图集 UV（tex=3）
                     if let Some(u) = unifont() {
                         u.push_quads(

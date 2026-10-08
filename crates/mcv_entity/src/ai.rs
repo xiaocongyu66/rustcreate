@@ -364,7 +364,8 @@ impl Brain {
                 self.unseen += 1;
             }
             // 超跟丢半径 / 断视线 60 tick / spider 亮处 1/100（Spider.java:192-199）。
-            let spider_blind = def.kind == MobKind::Spider && p.br >= 0.5 && rng() % 100 == 0;
+            let spider_blind =
+                def.kind == MobKind::Spider && p.br >= 0.5 && rng().is_multiple_of(100);
             if dist > def.follow_range || self.unseen > LOSE_SIGHT_TICKS || spider_blind {
                 self.clear_target();
             }
@@ -496,7 +497,7 @@ impl Brain {
             }
             let mut dir = flat_perp(t - p.pos) * if self.strafe_clockwise { 1.0 } else { -1.0 };
             if dist < KITE_RETREAT_DIST {
-                dir = dir + flat_dir(p.pos - t); // 后撤分量
+                dir += flat_dir(p.pos - t); // 后撤分量
             }
             acts.push(AiAction::Walk {
                 dir: normalize_or_zero(dir),
@@ -630,7 +631,7 @@ impl Brain {
             }
             _ => {
                 self.state = MobState::Idle;
-                if rng() % WANDER_INTERVAL_AVG == 0 {
+                if rng().is_multiple_of(WANDER_INTERVAL_AVG) {
                     self.wander_target = random_point_around(p.pos, rng);
                     self.state = MobState::Wander;
                 }

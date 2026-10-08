@@ -328,7 +328,7 @@ impl Renderer {
 
         // ---- GUI 精灵表(texturepack/gui/)-----------------------------
         // 缺素材时建 1x1 占位纹理,gui 字段为 None → 上层回退程序化绘制。
-        let gui = texture_pack_dir.and_then(|dir| SpriteSheet::load(dir));
+        let gui = texture_pack_dir.and_then(SpriteSheet::load);
         let (gui_rgba, gui_w, gui_h) = match &gui {
             Some(s) => (s.rgba.clone(), s.w, s.h),
             None => (vec![0u8; 4], 1, 1),
