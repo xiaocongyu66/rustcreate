@@ -8,5 +8,5 @@ pub mod game;
 fn android_main(app: android_activity::AndroidApp) {
     env_logger::init();
     log::info!("mcv starting (android)");
-    pollster::block_on(app::run(Some(app)));
+    let _ = pollster::block_on(app::run(Some(app)));
 }
