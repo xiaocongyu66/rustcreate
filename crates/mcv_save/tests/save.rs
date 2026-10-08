@@ -15,7 +15,8 @@ fn sample_voxels(seed: u8) -> Vec<u8> {
         };
         let id = (lcg(&mut s) % 4) as u8;
         let run = 1 + (lcg(&mut s) % 600) as usize; // up to 600 > 255
-        for b in v[i..(i + run).min(v.len())].iter_mut() {
+        let end = (i + run).min(v.len());
+        for b in v[i..end].iter_mut() {
             *b = id;
         }
         i += run;

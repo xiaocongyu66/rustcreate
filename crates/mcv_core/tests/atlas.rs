@@ -47,18 +47,17 @@ fn mip_downsample() {
     atlas::generate_layers(&mut mip0);
     let mut mip1 = vec![0u8; atlas::LAYERS * 8 * 8 * 4];
     atlas::generate_mip1(&mip0, &mut mip1);
-    // average of the four top-left pixels of layer 1
-    let l1 = 1 * atlas::TILE_PX * atlas::TILE_PX * 4;
-    let exp: u32 = (0..4)
-        .map(|i| {
-            let o = l1 + i * 4;
-            u32::from(mip0[o])
-                + u32::from(mip0[o + 1])
-                + u32::from(mip0[o + 2])
-                + u32::from(mip0[o + 3])
-        })
-        .sum::<u32>()
-        / 4;
-    let got = mip1[4] as u32 + mip1[5] as u32 + mip1[6] as u32 + mip1[7] as u32;
-    assert_eq!(exp, got);
+    // per-channel average of the four top-left pixels of layer 1
+    let src = 1 * atlas::TILE_PX * atlas::TILE_PX * 4;
+    let dst = 1 * 8 * 8 * 4; // layer 1 base in the downsampled buffer
+    for c in 0..4 {
+        // 2x2 block: (0,0),(1,0),(0,1),(1,1) — row stride is TILE_PX*4 bytes
+        let offs = [0usize, 4, atlas::TILE_PX * 4, atlas::TILE_PX * 4 + 4];
+        let exp: u32 = offs
+            .iter()
+            .map(|&o| u32::from(mip0[src + o + c]))
+            .sum::<u32>()
+            / 4;
+        assert_eq!(mip1[dst + c] as u32, exp, "channel {c}");
+    }
 }
