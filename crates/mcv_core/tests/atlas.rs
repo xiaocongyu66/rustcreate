@@ -3,6 +3,12 @@
 use mcv_core::atlas;
 
 #[test]
+fn manifest_json_wellformed() {
+    let s = include_str!("../tiles_manifest.json");
+    assert!(s.contains("\"tile_index_to_file\""), "manifest key missing");
+}
+
+#[test]
 fn payload_layout() {
     let p = atlas::generate_payload();
     let mip0 = atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4;

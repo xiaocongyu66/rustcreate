@@ -137,9 +137,9 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
         out[i] = std::mem::MaybeUninit::new(gen_def(&GEN_BLOCKS[i]));
         i += 1;
     }
-    // 安全：上面填满了每个元素；两个数组布局相同（const 可用裸指针解引用，
-    // ptr::read 不是 const fn）
-    unsafe { *(&out as *const _ as *const [BlockDef; GEN_BLOCKS.len()]) }
+    // 安全：上面填满了每个元素。BlockDef 非 Copy，const 里不能 *ptr 移出
+    // 数组（E0508），MaybeUninit 整包 assume_init 是 const 正典写法
+    unsafe { std::mem::MaybeUninit::new(out).assume_init() }
 }
 
 /// 硬度与发光对照反编译 Minecraft 26.1 `Blocks.java`（数值来源见仓库外笔记

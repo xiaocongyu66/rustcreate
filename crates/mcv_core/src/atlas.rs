@@ -115,7 +115,7 @@ enum Recipe {
 
 /// 旧程序化贴图 → manifest 贴图名（同图异名，回退配方按新层号落位；
 /// 旧 "snow" 并入 grass_block_top/grass_block_snow，故 15 项）。
-const LEGACY_RECIPES: [(&'static str, Recipe); 15] = [
+const LEGACY_RECIPES: [(&str, Recipe); 15] = [
     (
         "grass_block_top",
         Recipe::Noise {
@@ -419,8 +419,7 @@ pub fn generate_payload_clamped(pack_dir: Option<&Path>, max_layers: usize) -> (
 
 const MANIFEST_JSON: &str = include_str!("../tiles_manifest.json");
 const BLOCKS_SUBDIR: &str = "blocks";
-// str::find 是 const fn（contains 不是），断言 manifest 键存在
-const _: () = assert!(MANIFEST_JSON.find("\"tile_index_to_file\"").is_some());
+// manifest 键存在性由 tests::parse_manifest_names 运行期锁（str::find 非 const）
 
 /// 从嵌入的 tiles_manifest.json 抠出 `tile_index_to_file` 数组的文件名词表。
 /// 手写极简解析（该数组在 JSON 中最靠前，取首个 `[...]` 内的全部引号串；
@@ -572,7 +571,7 @@ pub fn load_pack_over(dir: &std::path::Path, mip0: &mut [u8]) -> u32 {
 const _: () = {
     // 解析在 const 里做不了（需要 OnceLock），退化为范围断言 + 运行期
     // tests::gen_table_layer_indices_in_real_region 双重锁。
-    assert!(tiles::GRASS_TOP as usize > 0 && tiles::GRASS_TOP as usize < MANIFEST_LAYERS);
-    assert!(tiles::STONE as usize < MANIFEST_LAYERS);
-    assert!(tiles::FLOWER_YELLOW as usize < MANIFEST_LAYERS);
+    assert!(tiles::GRASS_TOP as usize > 0 && (tiles::GRASS_TOP as usize) < MANIFEST_LAYERS);
+    assert!((tiles::STONE as usize) < MANIFEST_LAYERS);
+    assert!((tiles::FLOWER_YELLOW as usize) < MANIFEST_LAYERS);
 };
