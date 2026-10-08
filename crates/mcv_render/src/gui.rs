@@ -107,8 +107,8 @@ impl SpriteSheet {
 
     fn uv_px(&self, x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 2] {
         [
-            [x / self.w, y / self.h],
-            [(x + w) / self.w, (y + h) / self.h],
+            [x / self.w as f32, y / self.h as f32],
+            [(x + w) / self.w as f32, (y + h) / self.h as f32],
         ]
     }
 

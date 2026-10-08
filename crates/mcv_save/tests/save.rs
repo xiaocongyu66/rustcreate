@@ -67,7 +67,7 @@ fn rle_rejects_truncated() {
 fn region_roundtrip() {
     let dir = std::env::temp_dir().join("mcv_region_test");
     let _ = std::fs::remove_dir_all(&dir);
-    let region = RegionFile::open(&dir, 0, 0).expect("open");
+    let mut region = RegionFile::open(&dir, 0, 0).expect("open");
 
     let a = sample_voxels(3);
     let b = sample_voxels(9);
@@ -102,7 +102,7 @@ fn region_rejects_old_version() {
     // v1 (u8-id) records must be rejected outright: dev format, no compat.
     let dir = std::env::temp_dir().join("mcv_region_test_ver");
     let _ = std::fs::remove_dir_all(&dir);
-    let mut region = RegionFile::open(&dir, 0, 0).expect("open");
+    let region = RegionFile::open(&dir, 0, 0).expect("open");
     let mut out = vec![0u16; 65536];
     // Hand-write a fake v1 record and point the header at it.
     use std::io::{Seek, SeekFrom, Write};
