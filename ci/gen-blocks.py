@@ -14,8 +14,8 @@
 #   按虚拟路径加载；tiles_manifest.json 存 tile_index(字典序) → 贴图名/虚拟路径。
 #
 # 产物:
-#   crates/mcv_core/tiles_manifest.json   —— 层索引(字典序) → 贴图名 + 虚拟路径
-#   crates/mcv_core/src/blocks_gen.inc.rs —— GEN_BLOCKS 静态表（不改动 lib.rs，主控合并）
+#   game/mcv_core/tiles_manifest.json   —— 层索引(字典序) → 贴图名 + 虚拟路径
+#   game/mcv_core/src/blocks_gen.inc.rs —— GEN_BLOCKS 静态表（不改动 lib.rs，主控合并）
 #
 # id 兼容硬约束：现表 14 方块 id 0..13 保持不变（地形生成器依赖这些 id 产出）；
 #   snow_grass 为独立 id 11（官方是 grass_block 的 snowy 状态，本引擎单方块模型，

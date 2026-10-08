@@ -64,7 +64,7 @@ jobs:
 
       - name: Build (android apk)
         if: matrix.android
-        working-directory: crates/mcv_app
+        working-directory: game/mcv_app
         run: |
           export PATH="$JAVA_HOME/bin:$PATH"
           # 素材进 APK assets/：texturepack/ (+sounds/ 若存在) + manifest.txt

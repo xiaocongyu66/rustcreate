@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/*"]
+members = ["engine/*", "game/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,19 +8,19 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-mcv_core = { path = "crates/mcv_core" }
-mcv_app = { path = "crates/mcv_app" }
-mcv_logic = { path = "crates/mcv_logic" }
-mcv_ffi = { path = "crates/mcv_ffi" }
-mcv_worldgen = { path = "crates/mcv_worldgen" }
-mcv_light = { path = "crates/mcv_light" }
-mcv_mesher = { path = "crates/mcv_mesher" }
-mcv_render = { path = "crates/mcv_render" }
-mcv_game = { path = "crates/mcv_game" }
-mcv_save = { path = "crates/mcv_save" }
-mcv_entity = { path = "crates/mcv_entity" }
-mcv_item = { path = "crates/mcv_item" }
-mcv_audio = { path = "crates/mcv_audio" }
+mcv_core = { path = "game/mcv_core" }
+mcv_app = { path = "game/mcv_app" }
+mcv_logic = { path = "game/mcv_logic" }
+mcv_ffi = { path = "game/mcv_ffi" }
+mcv_worldgen = { path = "game/mcv_worldgen" }
+mcv_light = { path = "game/mcv_light" }
+mcv_mesher = { path = "game/mcv_mesher" }
+mcv_render = { path = "engine/mcv_render" }
+mcv_game = { path = "engine/mcv_game" }
+mcv_save = { path = "engine/mcv_save" }
+mcv_entity = { path = "game/mcv_entity" }
+mcv_item = { path = "game/mcv_item" }
+mcv_audio = { path = "engine/mcv_audio" }
 
 wgpu = "=30.0.1"
 winit = { version = "=0.30.13", features = ["android-native-activity"] }

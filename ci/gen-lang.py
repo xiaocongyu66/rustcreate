@@ -17,7 +17,7 @@ import pathlib
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-LANG_DIR = ROOT / "crates/mcv_app/data/lang"
+LANG_DIR = ROOT / "game/mcv_app/data/lang"
 OUT_DIR = LANG_DIR / "compact"
 
 # 引擎 UI 实际用到的官方 key（对照 app.rs 菜单文案）。

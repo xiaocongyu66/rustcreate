@@ -6,8 +6,8 @@
 
 可重复运行：任何时刻 `python3 ci/check-blocks.py` 都会重读两侧清单并
 覆盖生成报告（开头带时间戳）。对并行的扩表代理保持防御式解析：
-  - 我方现表：正则扫 crates/mcv_core/src/lib.rs 里的 block!("name", ...)；
-  - 生成表：若 crates/mcv_core/src/blocks_gen.inc.rs 存在，正则扫其中
+  - 我方现表：正则扫 game/mcv_core/src/lib.rs 里的 block!("name", ...)；
+  - 生成表：若 game/mcv_core/src/blocks_gen.inc.rs 存在，正则扫其中
     ("name", ...) 元组首字段；文件不存在/格式变化都不报错，只降级为
     14 块基线。绝不编译 Rust、不跑 cargo/git。
 
@@ -259,9 +259,9 @@ def main():
     ap.add_argument("--official-dir", default=OFFICIAL_DEFAULT,
                     help="官方 assets/minecraft 目录（仅本机路径）")
     ap.add_argument("--blocks-rs",
-                    default=os.path.join(REPO, "crates/mcv_core/src/lib.rs"))
+                    default=os.path.join(REPO, "game/mcv_core/src/lib.rs"))
     ap.add_argument("--gen-file",
-                    default=os.path.join(REPO, "crates/mcv_core/src/blocks_gen.inc.rs"))
+                    default=os.path.join(REPO, "game/mcv_core/src/blocks_gen.inc.rs"))
     ap.add_argument("--local-tiles",
                     default=os.path.join(REPO, "texturepack"))
     ap.add_argument("--out", default=os.path.join(REPO, "docs/missing-blocks.md"))
