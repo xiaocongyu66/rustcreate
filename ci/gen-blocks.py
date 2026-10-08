@@ -485,7 +485,8 @@ def main():
         "// snow_grass(id 11): 官方是 grass_block 的 snowy 状态；本引擎单方块模型，独立 id，取 snow 模型贴图。",
         "// 已知限制：tintindex 生物群系染色（草侧面 overlay/叶）未由渲染管线实现，贴图按原样入表；",
         "// cross/非立方暂渲染为全方块（网格器未实现 model_kind），六面给代表贴图。",
-        f"const GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); {total}] = [",
+        "#[allow(clippy::type_complexity)]",
+        f"static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); {total}] = [",
     ]
     idx = 0
     for lname, _off, tiles in LEGACY:

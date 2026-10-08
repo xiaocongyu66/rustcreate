@@ -1433,9 +1433,9 @@ impl AppState {
             .max(adapter.limits().max_texture_dimension_2d);
         // 方块图集 831 层：Vulkan 桌面（≥2048）吃满，GLES 保持 256 由
         // gpu.rs 钳制兜底（ lavapipe 3907 / Metal 2048 / D3D 2048 均抬升 ）。
-        limits.max_texture_2d_array_layers = limits
-            .max_texture_2d_array_layers
-            .max(adapter.limits().max_texture_2d_array_layers);
+        limits.max_texture_array_layers = limits
+            .max_texture_array_layers
+            .max(adapter.limits().max_texture_array_layers);
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
                 label: Some("mcv-device"),
