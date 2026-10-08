@@ -9,6 +9,9 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
 
+#[cfg(target_os = "android")]
+use winit::platform::android::EventLoopBuilderExtAndroid;
+
 use crate::game::GameRuntime;
 
 #[cfg(target_os = "android")]
