@@ -1,4 +1,4 @@
-use mcv_save::{chunk_local, chunk_region, rle_decode, rle_encode, LevelMeta, RegionFile};
+use mcv_save::{LevelMeta, RegionFile, chunk_local, chunk_region, rle_decode, rle_encode};
 
 /// Deterministic pseudo-random voxel buffer with mixed run lengths
 /// (including >255 runs to exercise the escape path). Uses u16 ids beyond

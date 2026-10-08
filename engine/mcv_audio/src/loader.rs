@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::decode::{decode_to_stereo, SoundData};
+use crate::decode::{SoundData, decode_to_stereo};
 use crate::{AudioCmd, AudioError, SoundId};
 
 /// 常驻解码缓存上限(条)。

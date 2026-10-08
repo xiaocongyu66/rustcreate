@@ -7,9 +7,9 @@
 //!   （damp=1）截断源柱并逐格 -1；
 //! - 方块光火把参照值 14，每格 -1。
 
-use mcv_core::{vidx, BlockId, CHUNK_VOL};
+use mcv_core::{BlockId, CHUNK_VOL, vidx};
 use mcv_light::{
-    apply_edge, extract_edge, init, opacity, propagate, update_block, BorderSeed, LightChunk,
+    BorderSeed, LightChunk, apply_edge, extract_edge, init, opacity, propagate, update_block,
 };
 
 const AIR: u16 = 0;

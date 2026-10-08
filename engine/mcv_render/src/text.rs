@@ -4,7 +4,7 @@
 
 use std::sync::OnceLock;
 
-use crate::font::{advance, glyph_uv, SOLID_CELL};
+use crate::font::{SOLID_CELL, advance, glyph_uv};
 use crate::gpu::HudQuad;
 use crate::unifont::Unifont;
 

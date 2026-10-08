@@ -48,9 +48,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-pub use decode::{decode_to_stereo, SoundData};
-pub use loader::{SoundLoader, CACHE_MAX, SAME_ID_MIN_INTERVAL};
-pub use mixer::{Mixer, MAX_VOICES};
+pub use decode::{SoundData, decode_to_stereo};
+pub use loader::{CACHE_MAX, SAME_ID_MIN_INTERVAL, SoundLoader};
+pub use mixer::{MAX_VOICES, Mixer};
 
 /// 3D 音效线性衰减半径(格)。距离 ≥ 该值时衰减为 0。与原版线性滚存一致。
 pub const DEFAULT_ATTENUATION_RADIUS: f32 = 16.0;

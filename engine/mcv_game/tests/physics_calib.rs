@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkPos};
-use mcv_game::physics::{step, Aabb, StepInput};
-use mcv_game::{raycast, Player, VoxelAccess, REACH};
+use mcv_game::physics::{Aabb, StepInput, step};
+use mcv_game::{Player, REACH, VoxelAccess, raycast};
 
 const STONE: u16 = 1;
 

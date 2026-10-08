@@ -1,8 +1,8 @@
 //! Combat math tests — formulas verified against NOTES-2 §3 (26.1 source).
 
 use glam::Vec3;
-use mcv_entity::combat::*;
 use mcv_entity::MobId;
+use mcv_entity::combat::*;
 use mcv_item::ItemStack;
 
 #[test]
@@ -101,15 +101,17 @@ fn zombie_hurt_iframes() {
         "zombie armor 2 with floor"
     );
     // within i-frames (>10 ticks), weaker hit ignored
-    assert!(apply_hurt(
-        &mut health,
-        &mut invulnerable,
-        &mut last_hurt,
-        def.armor,
-        1.0,
-        0
-    )
-    .is_none());
+    assert!(
+        apply_hurt(
+            &mut health,
+            &mut invulnerable,
+            &mut last_hurt,
+            def.armor,
+            1.0,
+            0
+        )
+        .is_none()
+    );
     // stronger hit only applies the difference
     let d2 = apply_hurt(
         &mut health,

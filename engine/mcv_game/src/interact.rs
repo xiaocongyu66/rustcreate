@@ -2,9 +2,9 @@
 
 use mcv_core::{BlockId, BlockPos};
 
-use crate::physics::Aabb;
 use crate::Player;
 use crate::VoxelAccess;
+use crate::physics::Aabb;
 
 /// 判断能否在 `pos` 放置方块：
 /// 目标格必须是空气或液体（可替换），且候选格的单位立方体

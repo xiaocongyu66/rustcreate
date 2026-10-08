@@ -17,7 +17,7 @@ pub use cloud::{CloudSettings, Clouds};
 pub use gpu::{FrameUniforms, HudQuad, PlayerUniforms, RenderChunk, Renderer, Scene};
 pub use offscreen::OffscreenTarget;
 pub use player_mesh::{
-    model_matrices, update_walk_animation, PlayerPose, PlayerVertex, SKIN_LAYERS,
+    PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };
 
 use glam::Vec3;

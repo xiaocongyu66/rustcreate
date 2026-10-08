@@ -1,5 +1,5 @@
 //! 开发期素材完整性:`sounds/` 下每个 SoundId 对应的 ogg 文件必须存在。
-use mcv_audio::{default_sounds_dir, SoundId};
+use mcv_audio::{SoundId, default_sounds_dir};
 
 #[test]
 fn every_sound_id_has_a_file() {

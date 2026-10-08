@@ -1,6 +1,6 @@
 //! Unifont 位图字体(cjk.f16)加载与排版测试。纯 CPU,无需 GPU。
 
-use mcv_render::unifont::{Unifont, DEFAULT_ATLAS_TEX, FULL_ADVANCE, HALF_ADVANCE};
+use mcv_render::unifont::{DEFAULT_ATLAS_TEX, FULL_ADVANCE, HALF_ADVANCE, Unifont};
 
 fn load() -> Unifont {
     let path = concat!(env!("CARGO_MANIFEST_DIR"), "/data/font/cjk.f16");

@@ -2,8 +2,8 @@
 //! commits results into chunk handles. Pure-function entry point is
 //! testable; [`TerrainScheduler`] adds background execution.
 
-use std::sync::mpsc::{Receiver, Sender};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender};
 
 use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
 use mcv_ffi::terrain_generate_raw;

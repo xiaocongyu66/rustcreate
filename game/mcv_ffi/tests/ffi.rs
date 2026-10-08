@@ -1,7 +1,7 @@
 //! FFI memory contract tests: version handshake, canary guards, double-free
 //! detection, budget enforcement.
 
-use mcv_ffi::{err, MemPool, ABI_VERSION};
+use mcv_ffi::{ABI_VERSION, MemPool, err};
 
 #[test]
 fn version_matches() {

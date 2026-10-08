@@ -681,11 +681,7 @@ fn flat_perp(v: Vec3) -> Vec3 {
 
 fn normalize_or_zero(v: Vec3) -> Vec3 {
     let len = v.length();
-    if len < 1e-6 {
-        Vec3::ZERO
-    } else {
-        v / len
-    }
+    if len < 1e-6 { Vec3::ZERO } else { v / len }
 }
 
 fn flat_dist(a: Vec3, b: Vec3) -> f32 {

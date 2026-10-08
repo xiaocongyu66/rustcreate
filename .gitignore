@@ -7,3 +7,6 @@ crates/mcv_app/assets/sounds/
 crates/mcv_app/assets/manifest.txt
 ci/.cache/
 __pycache__/
+# 全量原版音效树:构建时 ci/fetch-sounds.sh 从 Mojang CDN 现拉,不入 git。
+/sounds/*/
+/sounds/sounds.json

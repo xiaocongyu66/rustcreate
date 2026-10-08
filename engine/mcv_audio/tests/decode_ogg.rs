@@ -1,6 +1,6 @@
 //! 解码链路:每个素材 ogg 必须能解出**非零** PCM(验证 symphonia feature 组合
 //! 与真实 Mojang ogg 的兼容性,即"首包非零 PCM")。
-use mcv_audio::{decode_to_stereo, default_sounds_dir, SoundId};
+use mcv_audio::{SoundId, decode_to_stereo, default_sounds_dir};
 
 #[test]
 fn all_oggs_decode_to_nonzero_pcm() {

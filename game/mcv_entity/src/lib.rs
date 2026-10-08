@@ -10,10 +10,10 @@ pub mod defs;
 pub mod drops;
 pub mod spawner;
 
-pub use ai::{ai_table, AiAction, Brain, MobAiTable, MobState, Percept};
+pub use ai::{AiAction, Brain, MobAiTable, MobState, Percept, ai_table};
 pub use components::{
-    register_mob_components, spawn_mob, Health, LastHurt, MobKind, MobTicks, PhysBody, Yaw,
+    Health, LastHurt, MobKind, MobTicks, PhysBody, Yaw, register_mob_components, spawn_mob,
 };
-pub use defs::{MobDef, MobId, MOBS};
-pub use drops::{death_drops, DropEvent};
-pub use spawner::{SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned, SPAWN_CAPS};
+pub use defs::{MOBS, MobDef, MobId};
+pub use drops::{DropEvent, death_drops};
+pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};

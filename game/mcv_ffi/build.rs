@@ -6,7 +6,7 @@ fn main() {
     let mut build = cc::Build::new();
     build
         .cpp(true)
-        .std("c++17")
+        .std("c++20")
         .include(cpp_dir.join("include"))
         .file(cpp_dir.join("src/mempool.cpp"))
         .file(cpp_dir.join("src/terrain.cpp"))
@@ -15,6 +15,21 @@ fn main() {
         .flag_if_supported("-fno-exceptions")
         .flag_if_supported("-fno-rtti")
         .warnings(true);
+
+    // 严格诊断全开、警告即错:GCC/Clang(含 NDK)一组,MSVC 一组;
+    // flag_if_supported 探测保证跨编译器不误伤。
+    for f in [
+        "-Wextra",
+        "-Wpedantic",
+        "-Wshadow",
+        "-Wconversion",
+        "-Werror",
+        "/permissive-",
+        "/W4",
+        "/WX",
+    ] {
+        build.flag_if_supported(f);
+    }
 
     if std::env::var("PROFILE").as_deref() == Ok("debug") {
         build.define("MCV_DEBUG", "1");

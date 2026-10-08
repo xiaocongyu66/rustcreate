@@ -6,7 +6,7 @@
 //! - history tax: REPAIR_COST = min(old * 2 + 1, MAX)
 
 use crate::enchant;
-use crate::{ItemStack, ENCHANTED_BOOK, ITEMS};
+use crate::{ENCHANTED_BOOK, ITEMS, ItemStack};
 
 pub const TOO_EXPENSIVE: u32 = 40;
 

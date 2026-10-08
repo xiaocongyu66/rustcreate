@@ -62,20 +62,22 @@ impl TaskPool {
         let mut handles = Vec::with_capacity(n);
         for _ in 0..n {
             let shared = Arc::clone(&shared);
-            handles.push(std::thread::spawn(move || loop {
-                let job = {
-                    let mut q = shared.queue.lock().unwrap();
-                    loop {
-                        if shared.shutdown.load(Ordering::Acquire) {
-                            return;
+            handles.push(std::thread::spawn(move || {
+                loop {
+                    let job = {
+                        let mut q = shared.queue.lock().unwrap();
+                        loop {
+                            if shared.shutdown.load(Ordering::Acquire) {
+                                return;
+                            }
+                            if let Some(job) = q.pop() {
+                                break job;
+                            }
+                            q = shared.signal.wait(q).unwrap();
                         }
-                        if let Some(job) = q.pop() {
-                            break job;
-                        }
-                        q = shared.signal.wait(q).unwrap();
-                    }
-                };
-                job();
+                    };
+                    job();
+                }
             }));
         }
         Self {

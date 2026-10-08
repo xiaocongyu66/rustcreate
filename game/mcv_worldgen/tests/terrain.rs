@@ -1,6 +1,6 @@
 //! Terrain kernel behavior tests against the C++ implementation.
 
-use mcv_core::{BlockId, ChunkPos, CHUNK_VOL};
+use mcv_core::{BlockId, CHUNK_VOL, ChunkPos};
 use mcv_worldgen::generate_terrain;
 
 const AIR: u16 = 0;

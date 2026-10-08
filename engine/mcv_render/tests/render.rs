@@ -6,7 +6,7 @@
 
 use glam::{Vec3, Vec4};
 use mcv_render::gpu::{HudQuad, RenderChunk, Scene, TERRAIN_STRIDE};
-use mcv_render::{font, Camera, OffscreenTarget};
+use mcv_render::{Camera, OffscreenTarget, font};
 use wgpu::util::DeviceExt;
 
 #[repr(C)]

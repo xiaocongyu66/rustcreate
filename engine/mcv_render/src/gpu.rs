@@ -10,7 +10,7 @@ use crate::camera::Camera;
 use crate::font;
 use crate::frustum::Frustum;
 use crate::gui::SpriteSheet;
-use crate::player_mesh::{self, PlayerVertex, PART_COUNT, PLAYER_STRIDE, SKIN_LAYERS};
+use crate::player_mesh::{self, PART_COUNT, PLAYER_STRIDE, PlayerVertex, SKIN_LAYERS};
 use mcv_core::atlas;
 
 pub const TERRAIN_STRIDE: usize = 24;

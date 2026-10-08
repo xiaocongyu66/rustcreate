@@ -29,6 +29,11 @@ jobs:
       CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v4
+      # dev 构建才拉全量原版音效（release 经 workflow_call 进入，event 不同，
+      # 不跑此步 → 产物不含 Mojang 资产，DEVELOP_ONLY 约定）。
+      - name: Fetch vanilla sounds from Mojang CDN (dev builds only)
+        if: github.event_name == 'push'
+        run: bash ci/fetch-sounds.sh sounds
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}

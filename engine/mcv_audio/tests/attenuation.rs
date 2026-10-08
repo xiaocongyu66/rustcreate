@@ -1,10 +1,10 @@
 //! 衰减公式边界表:线性滚存,16 格截止。
-use mcv_audio::{distance3, distance_attenuation, DEFAULT_ATTENUATION_RADIUS};
+use mcv_audio::{DEFAULT_ATTENUATION_RADIUS, distance_attenuation, distance3};
 
 #[test]
 fn attenuation_boundary_table() {
     let r = DEFAULT_ATTENUATION_RADIUS; // 16.0
-                                        // (距离, 期望衰减) —— 全部取二进制精确值,可用同一容差。
+    // (距离, 期望衰减) —— 全部取二进制精确值,可用同一容差。
     let table: [(f32, f32); 8] = [
         (0.0, 1.0),    // 同点:满增益
         (1.0, 0.9375), // 1/16

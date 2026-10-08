@@ -7,7 +7,7 @@ pub mod pool;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};
-pub use pool::{world_worker_count, TaskPool};
+pub use pool::{TaskPool, world_worker_count};
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SY: usize = 256;

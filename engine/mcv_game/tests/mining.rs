@@ -5,8 +5,8 @@
 use mcv_core::{BlockId, BlockPos};
 use mcv_game::consts::FIXED_DT;
 use mcv_game::mining::{
-    break_seconds, hardness, has_correct_tool_for_drops, progress_per_tick, requires_correct_tool,
     DigState, HeldTool, MC_TICK, MODIFIER_CORRECT, MODIFIER_INCORRECT, TOOL_SPEED_WOOD,
+    break_seconds, hardness, has_correct_tool_for_drops, progress_per_tick, requires_correct_tool,
 };
 
 // 与 mcv_core::BLOCKS 注册顺序一致（硬度已由 BLOCKS 校准代理按 26.1 对齐，

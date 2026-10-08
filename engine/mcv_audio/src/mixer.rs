@@ -12,8 +12,8 @@
 //! - 混音为 f32 线性叠加,输出前统一限幅到 [-1.0, 1.0];
 //!   tinyaudio 后端按 PCM_Float(IEEE float)直接吃 f32,无需 u16 转换;
 //! - 超出 [`MAX_VOICES`] 时淘汰最早建立的声部(FIFO)。
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use mcv_sync::Consumer;
 

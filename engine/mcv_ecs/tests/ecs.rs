@@ -40,7 +40,7 @@ fn despawn_invalidates_handle_and_reuses_slot_with_new_gen() {
     // 槽位复用:新实体落在同一 idx,但 gen +1,旧句柄仍无效。
     let c = w.spawn();
     assert_eq!(c.idx(), a.idx());
-    assert_ne!(c.gen(), a.gen());
+    assert_ne!(c.generation(), a.generation());
     w.insert(c, Pos(9.0));
     assert!(w.get_ref::<Pos>(a).is_none());
     assert_eq!(w.get_ref::<Pos>(c).unwrap().0, 9.0);

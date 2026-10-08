@@ -4,13 +4,13 @@
 //!
 //! 本文件**不创建音频后端设备**(无头环境可跑):按真实数据流驱动
 //! [`SoundLoader`] → [`AudioCmd`] → [`Mixer`]。
-use std::sync::atomic::AtomicU32;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU32;
 use std::time::{Duration, Instant};
 
 use mcv_audio::{
-    default_sounds_dir, AudioCmd, Mixer, SoundId, SoundLoader, DEFAULT_ATTENUATION_RADIUS,
-    SAME_ID_MIN_INTERVAL,
+    AudioCmd, DEFAULT_ATTENUATION_RADIUS, Mixer, SAME_ID_MIN_INTERVAL, SoundId, SoundLoader,
+    default_sounds_dir,
 };
 
 const ORIGIN: [f32; 3] = [0.0; 3];
@@ -47,19 +47,23 @@ fn same_id_one_shots_are_throttled() {
     }
     // 窗口结束后恢复。
     let t_after = t0 + SAME_ID_MIN_INTERVAL + Duration::from_millis(10);
-    assert!(loader
-        .play_at(SoundId::DigStone, ORIGIN, ORIGIN, 1.0, t_after)
-        .is_some());
+    assert!(
+        loader
+            .play_at(SoundId::DigStone, ORIGIN, ORIGIN, 1.0, t_after)
+            .is_some()
+    );
     // 不同 id 互不影响。
-    assert!(loader
-        .play_at(
-            SoundId::StepGrass,
-            ORIGIN,
-            ORIGIN,
-            1.0,
-            t0 + Duration::from_millis(20)
-        )
-        .is_some());
+    assert!(
+        loader
+            .play_at(
+                SoundId::StepGrass,
+                ORIGIN,
+                ORIGIN,
+                1.0,
+                t0 + Duration::from_millis(20)
+            )
+            .is_some()
+    );
 }
 
 #[test]
@@ -68,47 +72,57 @@ fn far_away_sounds_are_dropped_and_radius_is_inclusive() {
     let t0 = Instant::now();
     // 超出 16 格:衰减为 0,不起播(且不占用节流窗口:衰减检查在节流之前)。
     let far = [DEFAULT_ATTENUATION_RADIUS + 1.0, 0.0, 0.0];
-    assert!(loader
-        .play_at(SoundId::StepStone, far, ORIGIN, 1.0, t0)
-        .is_none());
-    assert!(loader
-        .play_at(
-            SoundId::StepStone,
-            [16.0, 0.0, 0.0],
-            ORIGIN,
-            1.0,
-            t0 + Duration::from_millis(200)
-        )
-        .is_none());
+    assert!(
+        loader
+            .play_at(SoundId::StepStone, far, ORIGIN, 1.0, t0)
+            .is_none()
+    );
+    assert!(
+        loader
+            .play_at(
+                SoundId::StepStone,
+                [16.0, 0.0, 0.0],
+                ORIGIN,
+                1.0,
+                t0 + Duration::from_millis(200)
+            )
+            .is_none()
+    );
     // 恰好在半径边缘之内 → 起播。
-    assert!(loader
-        .play_at(
-            SoundId::StepStone,
-            [15.0, 0.0, 0.0],
-            ORIGIN,
-            1.0,
-            t0 + Duration::from_millis(400)
-        )
-        .is_some());
+    assert!(
+        loader
+            .play_at(
+                SoundId::StepStone,
+                [15.0, 0.0, 0.0],
+                ORIGIN,
+                1.0,
+                t0 + Duration::from_millis(400)
+            )
+            .is_some()
+    );
     // 非法增益不起播。
-    assert!(loader
-        .play_at(
-            SoundId::StepWood,
-            ORIGIN,
-            ORIGIN,
-            0.0,
-            t0 + Duration::from_secs(10)
-        )
-        .is_none());
-    assert!(loader
-        .play_at(
-            SoundId::StepWood,
-            ORIGIN,
-            ORIGIN,
-            f32::NAN,
-            t0 + Duration::from_secs(10)
-        )
-        .is_none());
+    assert!(
+        loader
+            .play_at(
+                SoundId::StepWood,
+                ORIGIN,
+                ORIGIN,
+                0.0,
+                t0 + Duration::from_secs(10)
+            )
+            .is_none()
+    );
+    assert!(
+        loader
+            .play_at(
+                SoundId::StepWood,
+                ORIGIN,
+                ORIGIN,
+                f32::NAN,
+                t0 + Duration::from_secs(10)
+            )
+            .is_none()
+    );
 }
 
 #[test]
@@ -175,9 +189,11 @@ fn missing_assets_are_silent_noop() {
     let mut loader = SoundLoader::new("/nonexistent/mcv-audio-test-dir");
     let mut m = mixer();
     let t0 = Instant::now();
-    assert!(loader
-        .play_at(SoundId::DigStone, ORIGIN, ORIGIN, 1.0, t0)
-        .is_none());
+    assert!(
+        loader
+            .play_at(SoundId::DigStone, ORIGIN, ORIGIN, 1.0, t0)
+            .is_none()
+    );
     assert!(loader.play_ui(SoundId::XpOrb, 1.0, t0).is_none());
     assert!(loader.loop_start(SoundId::DigStone, 1.0, t0).is_none());
     m.apply(AudioCmd::StopLoop {
@@ -187,15 +203,17 @@ fn missing_assets_are_silent_noop() {
     m.mix(&mut out);
     assert!(out.iter().all(|s| *s == 0.0));
     // 缺失记录后二次调用仍安静(无重复解码重试)。
-    assert!(loader
-        .play_at(
-            SoundId::DigStone,
-            ORIGIN,
-            ORIGIN,
-            1.0,
-            t0 + Duration::from_secs(5)
-        )
-        .is_none());
+    assert!(
+        loader
+            .play_at(
+                SoundId::DigStone,
+                ORIGIN,
+                ORIGIN,
+                1.0,
+                t0 + Duration::from_secs(5)
+            )
+            .is_none()
+    );
 }
 
 #[test]

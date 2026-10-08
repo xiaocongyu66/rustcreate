@@ -50,7 +50,8 @@ use std::collections::HashMap;
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Entity {
     idx: u32,
-    gen: u32,
+    // Rust 2024 起 `gen` 是保留关键字,字段/方法名避开(Bevy 同名迁移)。
+    generation: u32,
 }
 
 impl Entity {
@@ -61,8 +62,8 @@ impl Entity {
     }
     /// 世代号。
     #[inline]
-    pub fn gen(&self) -> u32 {
-        self.gen
+    pub fn generation(&self) -> u32 {
+        self.generation
     }
 }
 
@@ -234,7 +235,7 @@ impl World {
         self.occupied[idx] = true;
         let e = Entity {
             idx: idx as u32,
-            gen: self.gens[idx],
+            generation: self.gens[idx],
         };
         self.alive.push(e);
         e
@@ -265,7 +266,7 @@ impl World {
     pub fn is_alive(&self, e: Entity) -> bool {
         self.occupied
             .get(e.idx as usize)
-            .is_some_and(|&o| o && self.gens[e.idx as usize] == e.gen)
+            .is_some_and(|&o| o && self.gens[e.idx as usize] == e.generation)
     }
 
     /// 全部活实体(含世代)。

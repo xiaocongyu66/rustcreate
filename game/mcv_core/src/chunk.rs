@@ -3,10 +3,10 @@
 //! Stages advance one way; corrections only flip dirty bits.
 //! Empty -> TerrainReady -> LightLocalReady -> Lit -> MeshReady -> Uploaded.
 
-use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::RwLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::{BlockId, ChunkPos, CHUNK_VOL};
+use crate::{BlockId, CHUNK_VOL, ChunkPos};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]

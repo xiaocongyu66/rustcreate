@@ -2,8 +2,8 @@
 
 use mcv_item::crafting::EMPTY_SLOT;
 use mcv_item::{
-    anvil, crafting, enchant, ItemStack, COBBLESTONE, DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX,
-    IRON_SWORD_INDEX, PLANKS, STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX,
+    COBBLESTONE, DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS,
+    STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u32 {
@@ -119,8 +119,8 @@ fn shaped_pickaxe_and_mirror() {
     grid2[1] = PLANKS;
     grid2[2] = PLANKS;
     grid2[3] = PLANKS; // row 2 start = wrapped? no: [3] is row1col0
-                       // use proper shifted placement: cols 1..=3 of top row is impossible in 3
-                       // wide; instead shift down one row
+    // use proper shifted placement: cols 1..=3 of top row is impossible in 3
+    // wide; instead shift down one row
     let mut grid3 = [EMPTY_SLOT; 9];
     grid3[3] = PLANKS;
     grid3[4] = PLANKS;

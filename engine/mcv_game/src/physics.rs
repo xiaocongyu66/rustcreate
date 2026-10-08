@@ -13,9 +13,9 @@
 use glam::Vec3;
 use mcv_core::BlockPos;
 
-use crate::consts;
 use crate::Player;
 use crate::VoxelAccess;
+use crate::consts;
 
 /// 单轴扫掠的子步上限（米），防止高速穿墙。
 const MAX_SUBSTEP: f32 = 0.5;

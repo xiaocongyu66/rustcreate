@@ -12,7 +12,7 @@
 //! skipped by re-reading the stored level, and removal waves feeding
 //! re-light sources into the increase queue.
 
-use mcv_core::{vidx, BlockId, CHUNK_VOL};
+use mcv_core::{BlockId, CHUNK_VOL, vidx};
 
 /// Channel selector for the packed light byte.
 const SKY_SHIFT: u32 = 4;
@@ -99,11 +99,7 @@ fn set_ch(light: &mut [u8], idx: usize, shift: u32, v: u8) {
 
 #[inline]
 fn clamp_hm(h: usize) -> usize {
-    if h > 256 {
-        256
-    } else {
-        h
-    }
+    if h > 256 { 256 } else { h }
 }
 
 /// Neighbour offsets: (dx, dy, dz).

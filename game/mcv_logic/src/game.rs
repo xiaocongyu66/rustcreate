@@ -12,11 +12,11 @@ use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
-use mcv_entity::{spawn_mob, Health, LastHurt, MobId, MobKind, MobTicks, PhysBody, Yaw};
-use mcv_game::{step_entity, Player, VoxelAccess};
+use mcv_entity::{Health, LastHurt, MobId, MobKind, MobTicks, PhysBody, Yaw, spawn_mob};
+use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
-use mcv_render::{text, Camera, HudQuad};
+use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
 pub const HOTBAR: [u16; 9] = [1, 2, 3, 4, 8, 6, 7, 5, 10];
@@ -690,7 +690,7 @@ impl GameRuntime {
         let day = self.day_factor();
         let mut melee_hits: Vec<(Vec3, f32)> = Vec::new();
         {
-            let w = &mut self.mobs;
+            let w = &self.mobs;
             let (mut phys, kind, mut ticks, mut yaw) = (
                 w.write::<PhysBody>(),
                 w.read::<MobKind>(),

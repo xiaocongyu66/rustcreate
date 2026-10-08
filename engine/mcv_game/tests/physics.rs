@@ -4,8 +4,8 @@ use std::collections::HashMap;
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkPos};
-use mcv_game::physics::{step, Aabb, StepInput};
-use mcv_game::{interact, raycast, Player, VoxelAccess};
+use mcv_game::physics::{Aabb, StepInput, step};
+use mcv_game::{Player, VoxelAccess, interact, raycast};
 
 const STONE: u16 = 1;
 const WATER: u16 = 5;

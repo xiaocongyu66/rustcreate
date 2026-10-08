@@ -46,7 +46,8 @@ pub const MESH_WATER: u32 = 1;
 
 const _: () = assert!(size_of::<usize>() == 8);
 
-extern "C" {
+// edition 2024:extern 块必须 unsafe extern(声明缺省即信任边界)。
+unsafe extern "C" {
     fn mcv_api_version() -> u32;
     fn mcv_terrain_generate(
         seed: u64,
@@ -239,11 +240,7 @@ pub fn terrain_generate_raw(
             out_heightmap.as_mut_ptr(),
         )
     };
-    if rc == err::OK {
-        Ok(())
-    } else {
-        Err(rc)
-    }
+    if rc == err::OK { Ok(()) } else { Err(rc) }
 }
 
 /// Raw mesh build over a 3x3 neighbourhood (row-major, dz outer, dx inner;

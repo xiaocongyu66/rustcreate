@@ -96,7 +96,7 @@ fn ai_constants_match_reference() {
     assert!((SWELL_BREAK_DIST - 7.0).abs() < 1e-6);
     assert!((EXPLOSION_RADIUS - 3.0).abs() < 1e-6);
     assert_eq!(BURN_TICKS, 160); // igniteForSeconds(8)
-                                 // 风筝阈值 = sqrt(225×0.75) / sqrt(225×0.25)
+    // 风筝阈值 = sqrt(225×0.75) / sqrt(225×0.25)
     assert!((KITE_STOP_DIST - (225.0f32 * 0.75).sqrt()).abs() < 0.01);
     assert!((KITE_RETREAT_DIST - (225.0f32 * 0.25).sqrt()).abs() < 1e-6);
     // AI 表
@@ -125,7 +125,7 @@ fn zombie_seek_and_lose_target() {
     let def = MobId::ZOMBIE.def();
     let mut brain = Brain::new();
     let mut rng = || 121u32; // 121%120=1：不触发游走；121%32=25
-                             // 30 格 + 视线 → 索敌（≤35）。
+    // 30 格 + 视线 → 索敌（≤35）。
     let p = percept(Vec3::ZERO, Some(Vec3::new(30.0, 0.0, 0.0)));
     brain.tick(def, &p, &mut rng);
     assert!(brain.has_target && matches!(brain.state, MobState::Seek));
