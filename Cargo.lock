@@ -1434,6 +1434,7 @@ dependencies = [
  "glam",
  "log",
  "mcv_core",
+ "mcv_ecs",
  "mcv_game",
  "mcv_item",
 ]
@@ -1478,6 +1479,7 @@ dependencies = [
  "log",
  "mcv_audio",
  "mcv_core",
+ "mcv_ecs",
  "mcv_entity",
  "mcv_ffi",
  "mcv_game",

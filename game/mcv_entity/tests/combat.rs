@@ -2,7 +2,7 @@
 
 use glam::Vec3;
 use mcv_entity::combat::*;
-use mcv_entity::{Mob, MobId};
+use mcv_entity::MobId;
 use mcv_item::ItemStack;
 
 #[test]
@@ -81,19 +81,51 @@ fn iron_sword_full_hit_on_zombie() {
 
 #[test]
 fn zombie_hurt_iframes() {
-    let mut z = Mob::new(MobId::ZOMBIE, Vec3::ZERO);
-    let d1 = apply_hurt(&mut z, 6.0, 0).expect("first hit lands");
+    // ECS 形状：受击状态 = 散点可变引用（Health/MobTicks::invulnerable/LastHurt）。
+    let def = MobId::ZOMBIE.def();
+    let mut health = def.health;
+    let mut invulnerable = 0u32;
+    let mut last_hurt = 0.0f32;
+    let d1 = apply_hurt(
+        &mut health,
+        &mut invulnerable,
+        &mut last_hurt,
+        def.armor,
+        6.0,
+        0,
+    )
+    .expect("first hit lands");
     // CombatRules: toughness=2, real = clamp(2 - 6/2, 2*0.2, 20) = 0.4 (floor)
     assert!(
         (d1 - 6.0 * (1.0 - 0.4 / 25.0)).abs() < 1e-4,
         "zombie armor 2 with floor"
     );
     // within i-frames (>10 ticks), weaker hit ignored
-    assert!(apply_hurt(&mut z, 1.0, 0).is_none());
+    assert!(apply_hurt(
+        &mut health,
+        &mut invulnerable,
+        &mut last_hurt,
+        def.armor,
+        1.0,
+        0
+    )
+    .is_none());
     // stronger hit only applies the difference
-    let d2 = apply_hurt(&mut z, 10.0, 0).expect("difference lands");
+    let d2 = apply_hurt(
+        &mut health,
+        &mut invulnerable,
+        &mut last_hurt,
+        def.armor,
+        10.0,
+        0,
+    )
+    .expect("difference lands");
     // damage 4: real = clamp(2 - 4/2, 0.4, 20) = 0.4 → 4 * (1-0.4/25)
     assert!((d2 - 4.0 * (1.0 - 0.4 / 25.0)).abs() < 1e-4);
+    // 结算写回：血量扣两次伤害、无敌帧 20、last_hurt 记最大一刀。
+    assert!((health - (20.0 - d1 - d2)).abs() < 1e-4);
+    assert_eq!(invulnerable, 20);
+    assert!((last_hurt - 10.0).abs() < 1e-6);
 }
 
 #[test]

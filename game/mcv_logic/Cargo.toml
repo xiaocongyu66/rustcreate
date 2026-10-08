@@ -18,6 +18,7 @@ mcv_mesher.workspace = true
 mcv_render.workspace = true
 mcv_platform.workspace = true
 mcv_game.workspace = true
+mcv_ecs.workspace = true
 mcv_save.workspace = true
 mcv_entity.workspace = true
 mcv_item.workspace = true

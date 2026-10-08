@@ -12,8 +12,8 @@ use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
-use mcv_entity::{Mob, MobId};
-use mcv_game::{step_entity, Entity, Player, VoxelAccess};
+use mcv_entity::{spawn_mob, Health, LastHurt, MobId, MobKind, MobTicks, PhysBody, Yaw};
+use mcv_game::{step_entity, Player, VoxelAccess};
 use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{text, Camera, HudQuad};
@@ -151,7 +151,8 @@ pub struct GameRuntime {
     render_chunks: Vec<RenderChunk>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
-    pub mobs: Vec<Mob>,
+    /// 运行时 mob 集合（ECS：组件见 mcv_entity::components，装配走 spawn_mob）。
+    pub mobs: mcv_ecs::World,
     pub attack_ticker: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
@@ -207,7 +208,7 @@ impl GameRuntime {
             render_chunks: Vec::new(),
             spawned: false,
             border_synced: HashMap::new(),
-            mobs: Vec::new(),
+            mobs: mcv_ecs::World::new(),
             attack_ticker: 20.0, // ready
             spawn_cooldown: 0,
             player_xp: 0,
@@ -679,60 +680,91 @@ impl GameRuntime {
         }
 
         // ---- mob AI + physics ----
-        // WorldView 内联构造：字段分离借用（&self.chunks 与 &mut self.mobs/
-        // player 无冲突），不持长命 view，中途才能调 &mut self 方法
+        // ECS 系统模式：一次取齐全部表视图跑 for_each，释放后才能动 World
+        // 生命周期（despawn 需独占）。WorldView 内联构造：字段分离借用
+        // （&self.chunks 与 &mut self.mobs/player 无冲突），不持长命 view，
+        // 中途才能调 &mut self 方法
         let player_pos = self.player.pos;
         let day = self.day_factor();
         let mut melee_hits: Vec<(Vec3, f32)> = Vec::new();
-        for mob in self.mobs.iter_mut() {
-            mob.invulnerable = mob.invulnerable.saturating_sub(1);
-            let def = mob.def();
-            let to_player = player_pos - mob.pos;
-            let dist_sqr = to_player.length_squared();
-            let speed = speed_m_s(def.speed_attr);
-            let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
-                // chase
-                let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
-                mob.yaw = dir.z.atan2(dir.x);
-                dir * speed
-            } else {
-                // wander: random direction changes on idle ticks
-                if mob.idle_ticks % 120 == 0 && (fast_rand() & 3) == 0 {
-                    mob.yaw = (mob.idle_ticks as f32 * 0.7) % std::f32::consts::TAU;
-                }
-                Vec3::new(mob.yaw.sin(), 0.0, -mob.yaw.cos()) * speed * 0.3
-            };
-            let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
-            let input = mcv_game::StepInput {
-                wish_dir: if melee { Vec3::ZERO } else { wish },
-                jump: mob.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
-                in_water: false,
-                sneak: false,
-            };
-            let mut body = Entity {
-                pos: mob.pos,
-                vel: mob.vel,
-                on_ground: mob.on_ground,
-            };
-            step_entity(
-                &WorldView {
-                    chunks: &self.chunks,
-                },
-                &mut body,
-                def.half_size,
-                &input,
+        {
+            let w = &mut self.mobs;
+            let (mut phys, kind, mut ticks, mut yaw) = (
+                w.write::<PhysBody>(),
+                w.read::<MobKind>(),
+                w.write::<MobTicks>(),
+                w.write::<Yaw>(),
             );
-            mob.pos = body.pos;
-            mob.vel = body.vel;
-            mob.on_ground = body.on_ground;
-            mob.idle_ticks += 1;
-            // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
-            if melee && mob.invulnerable == 0 {
-                mob.invulnerable = 20;
-                melee_hits.push((mob.pos, def.attack_damage));
-            }
+            phys.for_each(|e, body| {
+                let mut tk = match ticks.get_mut(e) {
+                    Some(t) => t,
+                    None => return,
+                };
+                tk.invulnerable = tk.invulnerable.saturating_sub(1);
+                let Some(&MobKind(id)) = kind.get(e) else {
+                    return;
+                };
+                let def = *id.def();
+                let idle = tk.idle_ticks;
+                let mut pos = body.pos;
+                let to_player = player_pos - pos;
+                let dist_sqr = to_player.length_squared();
+                let speed = speed_m_s(def.speed_attr);
+                let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
+                    // chase
+                    let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
+                    if let Some(y) = yaw.get_mut(e) {
+                        y.0 = dir.z.atan2(dir.x);
+                    }
+                    dir * speed
+                } else {
+                    // wander: random direction changes on idle ticks
+                    if idle % 120 == 0 && (fast_rand() & 3) == 0 {
+                        if let Some(y) = yaw.get_mut(e) {
+                            y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
+                        }
+                    }
+                    let heading = yaw.get(e).map_or(0.0, |y| y.0);
+                    Vec3::new(heading.sin(), 0.0, -heading.cos()) * speed * 0.3
+                };
+                let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
+                let input = mcv_game::StepInput {
+                    wish_dir: if melee { Vec3::ZERO } else { wish },
+                    jump: body.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
+                    in_water: false,
+                    sneak: false,
+                };
+                // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
+                let mut eng = body.body();
+                step_entity(
+                    &WorldView {
+                        chunks: &self.chunks,
+                    },
+                    &mut eng,
+                    def.half_size,
+                    &input,
+                );
+                body.set_body(&eng);
+                pos = body.pos;
+                tk.idle_ticks += 1;
+                // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
+                if melee && tk.invulnerable == 0 {
+                    tk.invulnerable = 20;
+                    melee_hits.push((pos, def.attack_damage));
+                }
+            });
         }
-        self.mobs.retain(|m| m.health > 0.0);
+        // 死亡清理（原 retain 等价）：视图释放后再 despawn（级联清表需独占）。
+        let dead: Vec<mcv_ecs::Entity> = self
+            .mobs
+            .read::<Health>()
+            .iter()
+            .filter(|(_, h)| h.0 <= 0.0)
+            .map(|(e, _)| e)
+            .collect();
+        for e in dead {
+            self.mobs.despawn(e);
+        }
         for (src, dmg) in melee_hits {
             self.hurt_player(dmg.max(1.0), Some(src));
         }
@@ -877,7 +909,12 @@ impl GameRuntime {
             .find(|(c, _, _, _)| *c == spawner::SpawnCategory::Monster)
             .map(|(_, cap, _, _)| *cap)
             .unwrap_or(0);
-        let monsters = self.mobs.iter().filter(|m| m.def().hostile).count() as u32;
+        let monsters = self
+            .mobs
+            .read::<MobKind>()
+            .iter()
+            .filter(|(_, k)| k.0.def().hostile)
+            .count() as u32;
         if monsters >= monster_cap {
             return;
         }
@@ -941,7 +978,7 @@ impl GameRuntime {
                         [MobId::COW, MobId::PIG, MobId::SHEEP][(rng() as usize) % 3]
                     };
                     p.y = y;
-                    self.mobs.push(Mob::new(id, p));
+                    spawn_mob(&mut self.mobs, id, p);
                     break;
                 }
             }
@@ -971,23 +1008,54 @@ impl GameRuntime {
         };
         let out = combat::resolve_attack(&ctx);
         self.attack_ticker = 0.0;
-        let mut best: Option<(usize, f32)> = None;
-        for (i, mob) in self.mobs.iter().enumerate() {
-            let to = mob.pos + glam::Vec3::new(0.0, 1.0, 0.0) - eye;
-            let dist = to.length();
-            if dist > 3.5 {
-                continue;
-            }
-            let cos = to.normalize_or_zero().dot(dir);
-            if cos > 0.92 && best.is_none_or(|(_, d)| dist < d) {
-                best = Some((i, dist));
+        // 准星射线选目标：read 视图迭代，视图释放后才允许 despawn（需独占）。
+        let mut best: Option<(mcv_ecs::Entity, f32)> = None;
+        {
+            let bodies = self.mobs.read::<PhysBody>();
+            for (e, body) in bodies.iter() {
+                let to = body.pos + glam::Vec3::new(0.0, 1.0, 0.0) - eye;
+                let dist = to.length();
+                if dist > 3.5 {
+                    continue;
+                }
+                let cos = to.normalize_or_zero().dot(dir);
+                if cos > 0.92 && best.is_none_or(|(_, d)| dist < d) {
+                    best = Some((e, dist));
+                }
             }
         }
-        if let Some((i, _)) = best {
-            let mob = &mut self.mobs[i];
-            let xp = mob.def().xp;
-            if combat::apply_hurt(mob, out.damage, 0).is_some() && mob.health <= 0.0 {
-                self.mobs.remove(i);
+        let mut slain = None;
+        if let Some((target, _)) = best {
+            {
+                let (kind, mut health, mut ticks, mut last_hurt) = (
+                    self.mobs.read::<MobKind>(),
+                    self.mobs.write::<Health>(),
+                    self.mobs.write::<MobTicks>(),
+                    self.mobs.write::<LastHurt>(),
+                );
+                if let (Some(&MobKind(id)), Some(hp), Some(tk), Some(lh)) = (
+                    kind.get(target),
+                    health.get_mut(target),
+                    ticks.get_mut(target),
+                    last_hurt.get_mut(target),
+                ) {
+                    let def = *id.def();
+                    let hurt = combat::apply_hurt(
+                        &mut hp.0,
+                        &mut tk.invulnerable,
+                        &mut lh.0,
+                        def.armor,
+                        out.damage,
+                        0,
+                    );
+                    // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
+                    if hurt.is_some() && hp.0 <= 0.0 {
+                        slain = Some((target, def.xp));
+                    }
+                }
+            }
+            if let Some((e, xp)) = slain {
+                self.mobs.despawn(e);
                 self.player_xp += xp;
             }
         }

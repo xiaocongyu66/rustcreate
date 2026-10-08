@@ -151,13 +151,22 @@ pub fn resolve_attack(ctx: &AttackContext) -> AttackOutcome {
 }
 
 /// Applies hurt to a target mob (armor + protection + i-frames).
-pub fn apply_hurt(mob: &mut super::Mob, incoming: f32, total_protection: u32) -> Option<f32> {
-    invulnerable_gate(mob.invulnerable, mob.last_hurt, incoming).map(|dmg| {
-        let after_armor = damage_after_armor(dmg, mob.def().armor, 0.0);
+/// ECS 化后收散点可变引用（对应 `Health`/`MobTicks::invulnerable`/`LastHurt`
+/// 组件）+ `MobDef::armor`；结算数学与原 `&mut Mob` 版逐行等价。
+pub fn apply_hurt(
+    health: &mut f32,
+    invulnerable: &mut u32,
+    last_hurt: &mut f32,
+    armor: f32,
+    incoming: f32,
+    total_protection: u32,
+) -> Option<f32> {
+    invulnerable_gate(*invulnerable, *last_hurt, incoming).map(|dmg| {
+        let after_armor = damage_after_armor(dmg, armor, 0.0);
         let after_prot = damage_after_protection(after_armor, total_protection);
-        mob.health -= after_prot;
-        mob.invulnerable = 20;
-        mob.last_hurt = incoming;
+        *health -= after_prot;
+        *invulnerable = 20;
+        *last_hurt = incoming;
         after_prot
     })
 }
