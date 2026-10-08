@@ -129,6 +129,7 @@ impl VoxelAccess for WorldView<'_> {
     }
 }
 
+#[derive(Default)]
 pub struct InputState {
     pub forward: bool,
     pub back: bool,
@@ -139,22 +140,6 @@ pub struct InputState {
     pub sprint: bool,
     pub mining: bool,
     pub placing: bool,
-}
-
-impl Default for InputState {
-    fn default() -> Self {
-        Self {
-            forward: false,
-            back: false,
-            left: false,
-            right: false,
-            jump: false,
-            sneak: false,
-            sprint: false,
-            mining: false,
-            placing: false,
-        }
-    }
 }
 
 pub struct GameRuntime {

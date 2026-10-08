@@ -158,21 +158,20 @@ impl ApplicationHandler for AppState {
                     | KeyCode::Digit6
                     | KeyCode::Digit7
                     | KeyCode::Digit8
-                    | KeyCode::Digit9) => {
-                        if pressed {
-                            let n = match code {
-                                KeyCode::Digit1 => 0,
-                                KeyCode::Digit2 => 1,
-                                KeyCode::Digit3 => 2,
-                                KeyCode::Digit4 => 3,
-                                KeyCode::Digit5 => 4,
-                                KeyCode::Digit6 => 5,
-                                KeyCode::Digit7 => 6,
-                                KeyCode::Digit8 => 7,
-                                _ => 8,
-                            };
-                            runtime.player.sel_slot = n;
-                        }
+                    | KeyCode::Digit9)
+                        if pressed =>
+                    {
+                        runtime.player.sel_slot = match code {
+                            KeyCode::Digit1 => 0,
+                            KeyCode::Digit2 => 1,
+                            KeyCode::Digit3 => 2,
+                            KeyCode::Digit4 => 3,
+                            KeyCode::Digit5 => 4,
+                            KeyCode::Digit6 => 5,
+                            KeyCode::Digit7 => 6,
+                            KeyCode::Digit8 => 7,
+                            _ => 8,
+                        };
                     }
                     _ => {}
                 }
@@ -215,19 +214,16 @@ impl ApplicationHandler for AppState {
     }
 }
 
+type GpuInit = (
+    wgpu::Surface<'static>,
+    wgpu::SurfaceConfiguration,
+    wgpu::TextureView,
+    wgpu::Device,
+    wgpu::Queue,
+);
+
 impl AppState {
-    fn init_gpu(
-        window: Arc<Window>,
-    ) -> Result<
-        (
-            wgpu::Surface<'static>,
-            wgpu::SurfaceConfiguration,
-            wgpu::TextureView,
-            wgpu::Device,
-            wgpu::Queue,
-        ),
-        Box<dyn std::error::Error>,
-    > {
+    fn init_gpu(window: Arc<Window>) -> Result<GpuInit, Box<dyn std::error::Error>> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
         let surface = instance.create_surface(window.clone())?;
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

@@ -36,9 +36,10 @@ pub const SPAWN_RANGE_CHUNKS: i32 = 8;
 /// - sky light > rand(32) → reject (i.e. sky 0 always passes, 15 passes 1/32)
 /// - block light > monster limit → reject
 /// - overall brightness <= rand(8) sampler
+///
 /// 26.1 的 sampler 具体值在 DimensionType JSON（未提取）——按经典语义实现：
 /// block light > 0 拒绝（近似），sky 用 rand(32)，最终 brightness <= rand(8)。
-/// 标注 TODO(research)：DimensionType monsterSettings JSON。
+/// TODO(research)：DimensionType monsterSettings JSON。
 #[derive(Clone, Copy, Debug)]
 pub struct SpawnRule {
     pub category: SpawnCategory,
@@ -78,10 +79,7 @@ pub fn should_despawn(
     if dist_sqr_to_player < nd2 {
         return false;
     }
-    if idle_ticks > 600 {
-        return rng() % 800 == 0;
-    }
-    false
+    idle_ticks > 600 && rng().is_multiple_of(800)
 }
 
 /// 组内候选位置游走：每步 x/z 各 next(6)-next(6)（:164-190）。

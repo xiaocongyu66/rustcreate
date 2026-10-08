@@ -760,7 +760,7 @@ impl Renderer {
             pass.set_pipeline(&self.terrain_pipeline);
             pass.set_bind_group(0, &self.frame_bind, &[]);
             for (slot, rc) in &visible {
-                let off = (*slot as u32) * 256;
+                let off = *slot * 256;
                 pass.set_bind_group(0, &self.frame_bind, &[off]);
                 pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
                 pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);

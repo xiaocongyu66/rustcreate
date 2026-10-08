@@ -117,13 +117,12 @@ pub fn resolve_attack(ctx: &AttackContext) -> AttackOutcome {
 
 /// Applies hurt to a target mob (armor + protection + i-frames).
 pub fn apply_hurt(mob: &mut super::Mob, incoming: f32, total_protection: u32) -> Option<f32> {
-    let Some(dmg) = invulnerable_gate(mob.invulnerable, mob.last_hurt, incoming) else {
-        return None;
-    };
-    let after_armor = damage_after_armor(dmg, mob.def().armor, 0.0);
-    let after_prot = damage_after_protection(after_armor, total_protection);
-    mob.health -= after_prot;
-    mob.invulnerable = 20;
-    mob.last_hurt = incoming;
-    Some(after_prot)
+    invulnerable_gate(mob.invulnerable, mob.last_hurt, incoming).map(|dmg| {
+        let after_armor = damage_after_armor(dmg, mob.def().armor, 0.0);
+        let after_prot = damage_after_protection(after_armor, total_protection);
+        mob.health -= after_prot;
+        mob.invulnerable = 20;
+        mob.last_hurt = incoming;
+        after_prot
+    })
 }
