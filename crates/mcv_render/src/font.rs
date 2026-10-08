@@ -131,3 +131,47 @@ pub const FONT8X8_BASIC: [u8; 1024] = [
     0x6E, 0x3B, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // U+007E
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // U+007F
 ];
+
+pub const TEX_W: usize = 128; // 16 glyphs per row
+pub const TEX_H: usize = 64; // 8 rows
+
+/// Builds the font atlas: 128 glyphs (8x8 each) as white pixels on
+/// transparent; glyph 127 (DEL) is a reserved solid-white cell used by the
+/// HUD for solid rectangles. Rows: bit 0 = leftmost pixel.
+pub fn build_texture_data() -> Vec<u8> {
+    let mut out = vec![0u8; TEX_W * TEX_H * 4];
+    for glyph in 0..128usize {
+        if glyph == 127 {
+            // solid white reserved cell
+            for py in 0..8usize {
+                for px in 0..8usize {
+                    let o = ((glyph % 16) * 8 + px) + (((glyph / 16) * 8 + py) * TEX_W);
+                    out[o * 4..o * 4 + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+            continue;
+        }
+        for row in 0..8usize {
+            let bits = FONT8X8_BASIC[glyph * 8 + row];
+            for px in 0..8usize {
+                if bits & (1 << px) != 0 {
+                    let o = ((glyph % 16) * 8 + px) + (((glyph / 16) * 8 + row) * TEX_W);
+                    out[o * 4..o * 4 + 4].copy_from_slice(&[255, 255, 255, 255]);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// UV rect of a glyph cell (0..1 in font texture space).
+pub fn glyph_uv(glyph: u8) -> [[f32; 2]; 2] {
+    let col = (glyph % 16) as f32;
+    let row = (glyph / 16) as f32;
+    [
+        [col / 16.0, row / 8.0],
+        [(col + 1.0) / 16.0, (row + 1.0) / 8.0],
+    ]
+}
+
+pub const SOLID_CELL: u8 = 127;

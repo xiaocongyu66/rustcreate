@@ -1,0 +1,19 @@
+[package]
+name = "mcv_render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+gpu-tests = []
+
+[dependencies]
+mcv_core.workspace = true
+wgpu.workspace = true
+glam.workspace = true
+bytemuck.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+pollster.workspace = true
+image.workspace = true
