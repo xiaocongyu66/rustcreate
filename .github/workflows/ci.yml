@@ -18,6 +18,24 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Layering guard — game crates must not link wgpu/winit
+        run: |
+          # 引擎提供能力，游戏提供规则：除平台壳（mcv_app/mcv_desktop）外，
+          # game/ 的任何 crate 依赖树里都不许出现 wgpu/winit——GPU/窗口一律
+          # 经 engine/（MeshUploader / mcv_platform）。违反即 CI 红。
+          fail=0
+          for p in mcv_logic mcv_core mcv_worldgen mcv_light mcv_mesher \
+                   mcv_entity mcv_item; do
+            deps=$(cargo tree -p "$p" -e normal,build --prefix none \
+                   | awk '{print $1}' | sort -u)
+            for bad in wgpu winit; do
+              if echo "$deps" | grep -qx "$bad"; then
+                echo "::error::$p 依赖了 $bad（游戏层必须经 engine 抽象）"
+                fail=1
+              fi
+            done
+          done
+          exit $fail
 
   test:
     runs-on: ubuntu-24.04
