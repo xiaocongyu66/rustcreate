@@ -44,7 +44,6 @@
 use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
-use std::rc::Rc;
 
 /// 实体句柄:槽位下标 + 世代号。实体销毁后槽位可复用,但世代号 +1,
 /// 旧句柄经 [`World::is_alive`]/[`World::get_ref`] 校验即失效。
@@ -157,8 +156,9 @@ impl<T: Component> SparseSet<T> {
 
     fn insert_at(&mut self, e: Entity, v: T) {
         let i = e.idx as usize;
-        if i >= self.sparse.len() {
-            self.sparse.resize(i + 1, None);
+        // 不能用 Vec::resize(要求 T: Clone,组件不保证)。
+        while self.sparse.len() <= i {
+            self.sparse.push(None);
         }
         if self.sparse[i].is_none() {
             self.dense.push(e);
@@ -179,7 +179,7 @@ impl<T: Component> SparseSet<T> {
     }
 }
 
-/// 组件世界:实体生命周期 + 按类型分表存储。单线程用途(Rc 非 Sync)。
+/// 组件世界:实体生命周期 + 按类型分表存储。单线程用途(RefCell 非 Sync)。
 pub struct World {
     /// 每槽位当前世代(despawn 时 +1,作废全部旧句柄)。
     gens: Vec<u32>,
@@ -187,7 +187,9 @@ pub struct World {
     occupied: Vec<bool>,
     /// 活实体密集表(句柄含世代,直接切片暴露)。
     alive: Vec<Entity>,
-    stores: HashMap<TypeId, Rc<RefCell<Box<dyn Store>>>>,
+    /// 组件表。值直接是 RefCell(不经 Rc 中转——视图守卫的生命周期必须
+    /// 挂在 `&self` 上才能从 read/write 返回,Rc deref 会断在局部作用域)。
+    stores: HashMap<TypeId, RefCell<Box<dyn Store>>>,
 }
 
 impl Default for World {
@@ -284,8 +286,8 @@ impl World {
         if !self.is_alive(e) {
             return None;
         }
-        let store = self.stores.get(&TypeId::of::<T>())?.clone();
-        store
+        self.stores
+            .get(&TypeId::of::<T>())?
             .borrow_mut()
             .as_any_mut()
             .downcast_mut::<SparseSet<T>>()?
@@ -298,8 +300,7 @@ impl World {
         if !self.is_alive(e) {
             return None;
         }
-        let store = self.stores.get(&TypeId::of::<T>())?;
-        let set = Ref::filter_map(store.borrow(), |s| {
+        let set = Ref::filter_map(self.stores.get(&TypeId::of::<T>())?.borrow(), |s| {
             s.as_any().downcast_ref::<SparseSet<T>>()
         })
         .ok()?;
@@ -313,21 +314,20 @@ impl World {
     /// 视图跑循环,结束后再动 World 生命周期。
     pub fn read<T: Component>(&mut self) -> Ref<'_, SparseSet<T>> {
         self.ensure_store::<T>();
-        let store = &self.stores[&TypeId::of::<T>()];
-        Ref::filter_map(store.borrow(), |s| {
+        // Ref 不实现 Debug,expect 不可用;downcast 失败是内部不变式破坏。
+        Ref::filter_map(self.stores[&TypeId::of::<T>()].borrow(), |s| {
             s.as_any().downcast_ref::<SparseSet<T>>()
         })
-        .expect("TypeId→表类型映射被破坏")
+        .unwrap_or_else(|_| panic!("TypeId→表类型映射被破坏"))
     }
 
     /// 整表可变视图,约束同 [`World::read`]。
     pub fn write<T: Component>(&mut self) -> RefMut<'_, SparseSet<T>> {
         self.ensure_store::<T>();
-        let store = &self.stores[&TypeId::of::<T>()];
-        RefMut::filter_map(store.borrow_mut(), |s| {
+        RefMut::filter_map(self.stores[&TypeId::of::<T>()].borrow_mut(), |s| {
             s.as_any_mut().downcast_mut::<SparseSet<T>>()
         })
-        .expect("TypeId→表类型映射被破坏")
+        .unwrap_or_else(|_| panic!("TypeId→表类型映射被破坏"))
     }
 
     /// 该组件类型的全表实体数(调试/测试)。
@@ -338,10 +338,8 @@ impl World {
     }
 
     fn ensure_store<T: Component>(&mut self) {
-        self.stores.entry(TypeId::of::<T>()).or_insert_with(|| {
-            Rc::new(RefCell::new(
-                Box::new(SparseSet::<T>::new()) as Box<dyn Store>
-            ))
-        });
+        self.stores
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| RefCell::new(Box::new(SparseSet::<T>::new()) as Box<dyn Store>));
     }
 }
