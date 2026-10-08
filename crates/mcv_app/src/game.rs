@@ -102,7 +102,7 @@ pub struct GameRuntime {
     pub save_dir: std::path::PathBuf,
     renderer: mcv_render::Renderer,
     render_chunks: Vec<RenderChunk>,
-    stream_cursor: u32,
+    spawned: bool,
 }
 
 impl GameRuntime {
@@ -125,7 +125,7 @@ impl GameRuntime {
             save_dir,
             renderer,
             render_chunks: Vec::new(),
-            stream_cursor: 0,
+            spawned: false,
         }
     }
 
@@ -285,6 +285,19 @@ impl GameRuntime {
                 }
             }
         }
+
+        // spawn drop: once the spawn chunk has terrain, place the player on
+        // the surface (unless a saved position was loaded)
+        if !self.spawned && self.player.pos == Vec3::ZERO {
+            if let Some(handle) = self.chunks.get(&ChunkPos::new(0, 0)) {
+                if handle.stage() >= Stage::TerrainReady {
+                    let hm = handle.heightmap.read().unwrap();
+                    let y = hm[(8 << 4) | 8];
+                    self.player.pos = Vec3::new(8.5, f32::from(y) + 1.0, 8.5);
+                    self.spawned = true;
+                }
+            }
+        }
         // mesh chunks that are ready (center + 8 neighbours loaded)
         let mut remesh_budget = 2;
         let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
@@ -318,7 +331,6 @@ impl GameRuntime {
                 remesh_budget -= 1;
             }
         }
-        let _ = self.stream_cursor;
     }
 
     /// Tries to load a chunk from its region file (skip if absent/corrupt).
