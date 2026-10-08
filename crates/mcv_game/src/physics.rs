@@ -1,11 +1,14 @@
 //! 玩家物理：AABB、单轴扫掠碰撞与固定步长模拟。
 //!
-//! 出处：`/root/mc-ref/NOTES.md`（Minecraft 26.1 反编译换算）。
+//! 出处：仓库外反编译参照 `/root/mc-ref/src-26.1/`（Minecraft 26.1）；
+//! 常数换算与峰高对照见 `/root/mc-ref/NOTES-physics.md`。
 //!
 //! 积分顺序（显式 Euler）：每步先用当前速度做碰撞位移（X→Z→Y），
-//! 再积分外力更新速度供下一步使用。这样跳跃首步即以完整
-//! [`consts::JUMP_SPEED`] 位移，峰高与 v²/2g 解析值一致
-//! （半隐式 Euler 会低估约 6%，见 tests/physics.rs::jump_peak）。
+//! 再积分外力更新速度供下一步使用。跳跃首步以完整
+//! [`consts::JUMP_SPEED`] 位移，峰值 ≈ v²/2g + v0·dt/2 = 1.173 m
+//! （连续解析 1.1025，MC tick 制离散 1.2522；三者均 > 1.0，
+//! 保证可上一格台阶，见 tests/physics_calib.rs::jump_onto_one_block；
+//! 半隐式 Euler 会低估约 6%，见 tests/physics.rs::jump_peak）。
 
 use glam::Vec3;
 use mcv_core::BlockPos;

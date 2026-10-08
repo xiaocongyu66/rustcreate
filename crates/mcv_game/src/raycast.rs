@@ -9,6 +9,14 @@ use crate::VoxelAccess;
 const FLOWER_RED: u8 = 12;
 const FLOWER_YELLOW: u8 = 13;
 
+/// 生存模式交互到达距离（米），挖掘 / 放置射线应传本值。
+///
+/// 参照 MC 26.1 `Attributes.BLOCK_INTERACTION_RANGE` 基础值 **4.5**
+/// （`world/entity/ai/attributes/Attributes.java:23`；旧版
+/// `GameType#getReachDistance` 生存同为 4.5，创造 5.0 靠属性修饰）。
+/// 替换此前调用方的 5.0 临时值（mcv_app 迁移时改传本常数）。
+pub const REACH: f32 = 4.5;
+
 /// 是否可被射线命中：固体方块或花；水与空气穿透。
 fn hittable(id: BlockId) -> bool {
     let d = id.def();
