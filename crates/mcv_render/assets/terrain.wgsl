@@ -14,6 +14,21 @@ struct ChunkOrigin {
     origin: vec4<f32>, // xyz = chunk world origin, w = free
 };
 
+// Face brightness by face_id: +X,-X,+Y(top),-Y(bottom),+Z,-Z
+fn face_shade(face_id: u32) -> f32 {
+    var table = array<f32, 6>(0.80, 0.80, 1.00, 0.50, 0.65, 0.65);
+    return table[face_id];
+}
+
+fn light_curve(sky: f32, block: f32, day: f32) -> f32 {
+    let l = max(sky / 15.0 * day, block / 15.0);
+    return 0.08 + 0.92 * pow(l, 1.5);
+}
+
+fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
+    return exp2(-dist * fog.x);
+}
+
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
 @group(0) @binding(2) var terrain_tex: texture_2d_array<f32>;
