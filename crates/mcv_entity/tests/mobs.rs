@@ -97,8 +97,8 @@ fn ai_constants_match_reference() {
     assert!((EXPLOSION_RADIUS - 3.0).abs() < 1e-6);
     assert_eq!(BURN_TICKS, 160); // igniteForSeconds(8)
                                  // 风筝阈值 = sqrt(225×0.75) / sqrt(225×0.25)
-    assert!((KITE_STOP_DIST - (225.0 * 0.75).sqrt()).abs() < 0.01);
-    assert!((KITE_RETREAT_DIST - (225.0 * 0.25).sqrt()).abs() < 1e-6);
+    assert!((KITE_STOP_DIST - (225.0f32 * 0.75).sqrt()).abs() < 0.01);
+    assert!((KITE_RETREAT_DIST - (225.0f32 * 0.25).sqrt()).abs() < 1e-6);
     // AI 表
     assert!(ai_table(MobKind::Zombie).burn_sun);
     assert!(ai_table(MobKind::Skeleton).burn_sun);

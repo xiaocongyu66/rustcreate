@@ -53,8 +53,8 @@ pub struct BorderSeed {
 /// - flowers / air = 0 (`CrossCollisionBlock.propagatesSkylightDown` →
 ///   damp 0; glass would land here too once registered);
 /// - unknown ids are treated as fully opaque (15).
-/// `mcv_core::BLOCKS` has no opacity column and must not gain one, so
-/// this table is the single source of truth.
+///   `mcv_core::BLOCKS` has no opacity column and must not gain one, so
+///   this table is the single source of truth.
 #[inline]
 pub const fn opacity(id: BlockId) -> u8 {
     match id.0 {

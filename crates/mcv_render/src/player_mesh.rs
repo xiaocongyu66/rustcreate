@@ -18,7 +18,7 @@
 //! 坐标换算：MC 模型空间 y 向下、正面朝 +z、头顶根 y=0 脚底 y=24；本引擎
 //! 模型正面朝 -z（与 `Camera::dir` yaw=0 视线一致，第三人称后视看到背面）、
 //! y 向上、脚底原点。变换 = 绕 y 转 180°（x→-x, z→-z）+ y 翻转：
-//! `local = (-(px-pivot.x), (pivot.y-py), -(pz-pivot.z)) × PX`，
+//! `local = (-px, -py, -pz) × PX`（box 坐标以 pivot 为原点，pivot 平移在矩阵），
 //! pivot 世界偏移 = `(-p.x, 24-p.y, -p.z) × PX`（再乘身体 yaw 旋转）。
 //! 右手定则：角色右手 = 本空间 +x（steve 右臂 pivot -5·PX→+5·PX? 转 180°
 //! 后右臂落在 +x，与角色右=+x 一致）。
@@ -343,12 +343,10 @@ pub fn build_player_mesh() -> PlayerMesh {
                     let uu = face.uv[0] + (face.uv[2] - face.uv[0]) * su;
                     let vv = face.uv[1] + (face.uv[3] - face.uv[1]) * tv;
                     m.verts.push(PlayerVertex {
-                        pos: [
-                            -(px - def.pivot[0]) * PX,
-                            (def.pivot[1] - py) * PX,
-                            -(pz - def.pivot[2]) * PX,
-                        ],
-                        uv: [(uu * uv_scale) as u8, (vv * uv_scale) as u8],
+                        // box 坐标以 pivot 为原点；pivot 的世界偏移由
+                        // model_matrices 的平移给出，这里只留 -box（180°绕y+y翻转）
+                        pos: [-px * PX, -py * PX, -pz * PX],
+                        uv: [(uu * uv_scale).round() as u8, (vv * uv_scale).round() as u8],
                         _pad: [0; 2],
                         meta: [s as u32, p as u32],
                     });
@@ -488,8 +486,9 @@ mod tests {
 
     #[test]
     fn part_heights_match_mc_layout() {
-        // 静止姿态下各部位的世界 y 范围（对照 MC：头 1.0..1.5、身 0.25..1.25、
-        // 腿 0..0.75、臂 0..1.25）
+        // 静止姿态下各部位的世界 y 范围（对照 MC 26.1 像素表：腿 12px 在下
+        // 0..0.75、身 12px 中 0.75..1.5、头 8px 上 1.5..2.0、臂自颈部下垂
+        // 0.75..1.5，总高 2.0）
         let m = build_player_mesh();
         let pose = PlayerPose {
             pos: Vec3::ZERO,
@@ -518,11 +517,11 @@ mod tests {
         let (ll, lh) = yspan(P_R_LEG);
         let (al, ah) = yspan(P_R_ARM);
         assert!(
-            (hl - 1.0).abs() < 1e-5 && (hh - 1.5).abs() < 1e-5,
+            (hl - 1.5).abs() < 1e-5 && (hh - 2.0).abs() < 1e-5,
             "head {hl}..{hh}"
         );
         assert!(
-            (bl - 0.25).abs() < 1e-5 && (bh - 1.25).abs() < 1e-5,
+            (bl - 0.75).abs() < 1e-5 && (bh - 1.5).abs() < 1e-5,
             "body {bl}..{bh}"
         );
         assert!(
@@ -530,7 +529,7 @@ mod tests {
             "leg {ll}..{lh}"
         );
         assert!(
-            al.abs() < 1e-5 && (ah - 1.25).abs() < 1e-5,
+            (al - 0.75).abs() < 1e-5 && (ah - 1.5).abs() < 1e-5,
             "arm {al}..{ah}"
         );
     }
@@ -542,12 +541,12 @@ mod tests {
         let defs = part_defs(false);
         let face = &defs[P_HEAD].faces[4]; // front
         assert_eq!(face.uv, [8.0, 8.0, 16.0, 16.0]);
-        // 网格中头的 front 顶点（局部 z<0 的一侧）UV 也在该区域
-        for v in m
-            .verts
-            .iter()
-            .filter(|v| v.meta[0] == 0 && v.meta[1] == P_HEAD as u32 && v.pos[2] < 0.0)
-        {
+        // 网格顶点按 (款式, 部位, 面 0..5, 角 0..3) 顺序生成：steve 头
+        // = 前 24 顶点，front 是第 4 面 → [16..20]（不能用 z<0 过滤，
+        // 顶/底面也有 z<0 的角，它们的 UV 在顶/底区域）
+        for v in &m.verts[16..20] {
+            assert_eq!((v.meta[0], v.meta[1]), (0, P_HEAD as u32));
+            assert!(v.pos[2] < 0.0, "front corner must sit at -z");
             let u = v.uv[0] as f32 / 255.0 * SKIN_PX as f32;
             let w = v.uv[1] as f32 / 255.0 * SKIN_PX as f32;
             assert!(
