@@ -64,22 +64,26 @@ struct BlockInfo {
     uint16_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
 };
 
-/* Must stay strictly in sync with mcv_core::BLOCKS. */
+/* Must stay strictly in sync with mcv_core::BLOCKS (id/flags). tiles[] are
+ * texture-array layer indices into the real-tile atlas: values are the
+ * tiles_manifest.json indexes (see mcv_core::tiles), NOT the pre-1171 layout.
+ * ids >= kBlocksCount fall back to kUnknown (opaque, tile 0) until the
+ * registry feed reaches the mesher. */
 constexpr BlockInfo kBlocks[] = {
     /* air */ {false, false, false, {0, 0, 0, 0, 0, 0}},
-    /* stone */ {true, false, true, {4, 4, 4, 4, 4, 4}},
-    /* dirt */ {true, false, true, {3, 3, 3, 3, 3, 3}},
-    /* grass */ {true, false, true, {2, 2, 1, 3, 2, 2}},
-    /* sand */ {true, false, true, {5, 5, 5, 5, 5, 5}},
-    /* water */ {false, true, false, {6, 6, 6, 6, 6, 6}},
-    /* log */ {true, false, true, {7, 7, 8, 8, 7, 7}},
-    /* leaves */ {false, false, true, {9, 9, 9, 9, 9, 9}},
-    /* planks */ {true, false, true, {10, 10, 10, 10, 10, 10}},
-    /* cobble */ {true, false, true, {11, 11, 11, 11, 11, 11}},
-    /* bedrock */ {true, false, true, {12, 12, 12, 12, 12, 12}},
-    /* snow_grass */ {true, false, true, {14, 14, 13, 3, 14, 14}},
-    /* flower_red */ {false, false, false, {15, 15, 15, 15, 15, 15}},
-    /* flower_yellow */ {false, false, false, {16, 16, 16, 16, 16, 16}},
+    /* stone */ {true, false, true, {707, 707, 707, 707, 707, 707}},
+    /* dirt */ {true, false, true, {274, 274, 274, 274, 274, 274}},
+    /* grass */ {true, false, true, {333, 333, 336, 274, 333, 333}},
+    /* sand */ {true, false, true, {645, 645, 645, 645, 645, 645}},
+    /* water */ {false, true, false, {789, 789, 789, 789, 789, 789}},
+    /* log */ {true, false, true, {490, 490, 491, 491, 490, 490}},
+    /* leaves */ {false, false, true, {489, 489, 489, 489, 489, 489}},
+    /* planks */ {true, false, true, {492, 492, 492, 492, 492, 492}},
+    /* cobble */ {true, false, true, {168, 168, 168, 168, 168, 168}},
+    /* bedrock */ {true, false, true, {41, 41, 41, 41, 41, 41}},
+    /* snow_grass */ {true, false, true, {335, 335, 336, 274, 335, 335}},
+    /* flower_red */ {false, false, false, {574, 574, 574, 574, 574, 574}},
+    /* flower_yellow */ {false, false, false, {230, 230, 230, 230, 230, 230}},
 };
 constexpr uint16_t kBlocksCount = sizeof(kBlocks) / sizeof(kBlocks[0]);
 

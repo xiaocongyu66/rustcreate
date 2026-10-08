@@ -213,33 +213,24 @@ impl Renderer {
         let max_hud_quads: u32 = 4096;
 
         // ---- terrain texture array ------------------------------------
-        let payload = {
-            let mut p = atlas::generate_payload();
-            if let Some(dir) = texture_pack_dir {
-                let n = atlas::load_pack_over(
-                    dir,
-                    &mut p[..atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4],
-                );
-                if n > 0 {
-                    log::info!("texture pack: overrode {n} tiles from {}", dir.display());
-                    // rebuild mip1 after override
-                    let mut mip1 = vec![0u8; atlas::LAYERS * 8 * 8 * 4];
-                    atlas::generate_mip1(
-                        &p[..atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4],
-                        &mut mip1,
-                    );
-                    let tail = atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4;
-                    p[tail..].copy_from_slice(&mip1);
-                }
-            }
-            p
-        };
+        // 真实官方贴图 827 层 + 裂纹；GLES downlevel 上限 256 → 按 device
+        // limits 钳制（app.rs 建 device 时已尽量抬到 adapter 上限，Vulkan 桌面
+        // 可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
+        let max_layers = atlas::LAYERS.min(device.limits().max_texture_2d_array_layers as usize);
+        let (payload, n_layers) = atlas::generate_payload_clamped(texture_pack_dir, max_layers);
+        if n_layers < atlas::LAYERS {
+            log::warn!(
+                "texture array clamped {}→{} layers (device limit)",
+                atlas::LAYERS,
+                n_layers
+            );
+        }
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("terrain-array"),
             size: wgpu::Extent3d {
                 width: atlas::TILE_PX as u32,
                 height: atlas::TILE_PX as u32,
-                depth_or_array_layers: atlas::LAYERS as u32,
+                depth_or_array_layers: n_layers as u32,
             },
             mip_level_count: atlas::MIP_LEVELS,
             sample_count: 1,
@@ -264,7 +255,7 @@ impl Renderer {
             wgpu::Extent3d {
                 width: atlas::TILE_PX as u32,
                 height: atlas::TILE_PX as u32,
-                depth_or_array_layers: atlas::LAYERS as u32,
+                depth_or_array_layers: n_layers as u32,
             },
         );
         let terrain_view = tex.create_view(&wgpu::TextureViewDescriptor {

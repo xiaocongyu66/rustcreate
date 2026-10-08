@@ -8,10 +8,27 @@ fn payload_layout() {
     let mip0 = atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4;
     let mip1 = atlas::LAYERS * 8 * 8 * 4;
     assert_eq!(p.len(), mip0 + mip1);
-    // layer 0 is debug magenta placeholder; grass_top (1) must be greenish
-    let g = p[(atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4 + 1];
-    let r = p[(atlas::TILE_PX * atlas::TILE_PX + (8 * 16 + 8)) * 4];
-    assert!(g > r, "grass_top center must be green-dominant");
+    // layer 0 is debug magenta placeholder; grass_top fallback recipe must be
+    // painted at its manifest layer
+    let off = (mcv_core::tiles::GRASS_TOP as usize) * atlas::TILE_PX * atlas::TILE_PX * 4
+        + (8 * 16 + 8) * 4;
+    assert!(
+        p[off + 1] > p[off],
+        "grass_top center must be green-dominant"
+    );
+}
+
+#[test]
+fn clamped_payload() {
+    // GLES 上限模拟：钳到 64 层 = 64×(16×16+8×8)×4 字节，且 mip0 前缀与全量一致
+    let (full, n_full) = atlas::generate_payload_clamped(None, atlas::LAYERS);
+    assert_eq!(n_full, atlas::LAYERS);
+    let (small, n) = atlas::generate_payload_clamped(None, 64);
+    assert_eq!(n, 64);
+    assert_eq!(small.len(), 64 * (16 * 16 + 8 * 8) * 4);
+    assert_eq!(&small[..64 * 16 * 16 * 4], &full[..64 * 16 * 16 * 4]);
+    // 钳制只截尾，不动头部真实贴图区
+    assert!(atlas::CRACK_BASE > 64);
 }
 
 #[test]
@@ -33,11 +50,12 @@ fn pack_override() {
     let mut layers = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
     let n = atlas::load_pack_over(&dir, &mut layers);
     assert_eq!(n, 1, "exactly one tile overridden");
-    let stone_off = 4 * atlas::TILE_PX * atlas::TILE_PX * 4; // layer 4 = stone
+    let stone_off = (mcv_core::tiles::STONE as usize) * atlas::TILE_PX * atlas::TILE_PX * 4;
     assert_eq!(layers[stone_off], 200);
     assert_eq!(layers[stone_off + 1], 10);
     // corner resample covers the whole tile
     assert_eq!(layers[stone_off + (16 * 15 + 15) * 4], 200);
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -60,7 +78,7 @@ fn mc_resource_pack_layout() {
     let mut layers = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
     let n = atlas::load_pack_over(&dir, &mut layers);
     assert_eq!(n, 1, "grass_top picked from the MC pack tree");
-    let off = atlas::TILE_PX * atlas::TILE_PX * 4; // layer 1 = grass_top
+    let off = (mcv_core::tiles::GRASS_TOP as usize) * atlas::TILE_PX * atlas::TILE_PX * 4;
     assert_eq!(layers[off + 1], 200);
     let _ = std::fs::remove_dir_all(&dir);
 }

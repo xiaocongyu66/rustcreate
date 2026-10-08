@@ -103,9 +103,10 @@ pub fn hardness(id: BlockId) -> f32 {
 
 /// 该方块是否"需要正确工具才可掉落"（MC `requiresCorrectToolForDrops`）。
 ///
-/// 临时查表：mcv_core::BlockDef 尚无对应字段（另一代理正在改 BLOCKS），
-/// 先按 MC 26.1 语义覆盖本引擎方块集合 —— 石头/圆石需镐，其余（泥土/沙/
-/// 草/木/木板/叶/花）不需工具。**待 BLOCKS 字段就绪后迁移。**
+/// 千块表（GEN_BLOCKS）未携带该语义字段（只有 hardness），故仍按基线 14
+/// 方块硬覆盖：石头/圆石需镐，其余（泥土/沙/草/木/木板/叶/花）不需工具。
+/// id ≥ 14 一律按"不需工具"（30 档，偏快）。**待 BlockDef 增加
+/// requires_tool 字段（生成器需从 tool tier 判定提取）后迁移为查表。**
 pub fn requires_correct_tool(id: BlockId) -> bool {
     matches!(id.0, STONE | COBBLE)
 }

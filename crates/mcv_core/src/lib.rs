@@ -70,25 +70,29 @@ const _: () = assert!(std::mem::size_of::<BlockId>() == 2);
 
 pub const AIR: BlockId = BlockId(0);
 
-/// Texture array layer indices (see mcv_core::atlas in M3). u16 to match
-/// `BlockDef::tiles` / the mesher vertex `tex_layer` field.
+/// Texture array layer indices into the real-texture atlas region
+/// (layers 0..MANIFEST_LAYERS, 字典序 = tiles_manifest.json 索引)。
+/// 值为 manifest 的真实层号；u16 以匹配 `BlockDef::tiles` / 网格器顶点
+/// `tex_layer`。特殊程序化层（裂纹叠加等）在 827+，见 mcv_core::atlas。
 pub mod tiles {
-    pub const GRASS_TOP: u16 = 1;
-    pub const GRASS_SIDE: u16 = 2;
-    pub const DIRT: u16 = 3;
-    pub const STONE: u16 = 4;
-    pub const SAND: u16 = 5;
-    pub const WATER: u16 = 6;
-    pub const LOG_SIDE: u16 = 7;
-    pub const LOG_TOP: u16 = 8;
-    pub const LEAVES: u16 = 9;
-    pub const PLANKS: u16 = 10;
-    pub const COBBLE: u16 = 11;
-    pub const BEDROCK: u16 = 12;
-    pub const SNOW: u16 = 13;
-    pub const SNOW_SIDE: u16 = 14;
-    pub const FLOWER_RED: u16 = 15;
-    pub const FLOWER_YELLOW: u16 = 16;
+    pub const GRASS_TOP: u16 = 336; // grass_block_top
+    pub const GRASS_SIDE: u16 = 333; // grass_block_side
+    pub const DIRT: u16 = 274;
+    pub const STONE: u16 = 707;
+    pub const SAND: u16 = 645;
+    pub const WATER: u16 = 789; // water_still（动画未实现，取静水帧）
+    pub const LOG_SIDE: u16 = 490; // oak_log
+    pub const LOG_TOP: u16 = 491; // oak_log_top
+    pub const LEAVES: u16 = 489; // oak_leaves
+    pub const PLANKS: u16 = 492; // oak_planks
+    pub const COBBLE: u16 = 168; // cobblestone
+    pub const BEDROCK: u16 = 41;
+    pub const SNOW: u16 = 336; // 官方无独立雪层贴图：+Y 直接用 grass_block_top（snowy 状态）
+    pub const SNOW_SIDE: u16 = 335; // grass_block_snow（雪覆盖侧）
+    pub const FLOWER_RED: u16 = 574; // poppy
+    pub const FLOWER_YELLOW: u16 = 230; // dandelion
+
+    const _: () = assert!(super::atlas::MANIFEST_LAYERS as u16 > STONE);
 }
 
 pub struct BlockDef {
@@ -103,68 +107,46 @@ pub struct BlockDef {
     pub hardness: f32,
 }
 
-macro_rules! block {
-    ($name:literal, solid: $solid:expr, opaque: $opaque:expr,
-     liquid: $liquid:expr, emit: $emit:expr, tiles: $tiles:expr, hardness: $h:expr) => {
-        BlockDef {
-            name: $name,
-            solid: $solid,
-            opaque: $opaque,
-            liquid: $liquid,
-            light_emit: $emit,
-            tiles: $tiles,
-            hardness: $h,
-        }
-    };
+/// `blocks_gen.inc.rs` 中 GEN_BLOCKS 的元组类型（生成文件不导出别名，补一个）。
+type GenBlock = (&'static str, bool, bool, bool, u8, [u16; 6], f32, u8);
+
+// 千块表：1171 方块，id 0..13 与旧 14 方块表逐字段一致（回归锁见 tests），
+// 14+ 按官方名字典序。格式/来源/限制见 blocks_gen.inc.rs 头部注释。
+include!("blocks_gen.inc.rs");
+
+/// 生成表元组 → BlockDef。model_kind（第 8 字段）是网格器未来字段，此处丢弃；
+/// `f32::from_bits` 保证 const 路径与旧表字面量逐位一致（含 INFINITY）。
+const fn gen_def(t: &GenBlock) -> BlockDef {
+    BlockDef {
+        name: t.0,
+        solid: t.1,
+        opaque: t.2,
+        liquid: t.3,
+        light_emit: t.4,
+        tiles: t.5,
+        hardness: f32::from_bits(t.6.to_bits()),
+    }
 }
 
-/// 硬度与发光已对照反编译 Minecraft 26.1 `Blocks.java` 校准，
-/// 数值来源与完整对照表见仓库外笔记 `/root/mc-ref/NOTES-blocks.md`。
-/// 注意：MC 的 `strength(x)` 单参同时设硬度与抗爆值；`strength(-1)`（基岩）
-/// 在此用 `f32::INFINITY` 表示不可挖；水按注册表原值 strength(100)。
-pub static BLOCKS: [BlockDef; 14] = [
-    block!("air", solid: false, opaque: false, liquid: false, emit: 0,
-           tiles: [0; 6], hardness: 0.0),
-    block!("stone", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::STONE; 6], hardness: 1.5),
-    block!("dirt", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::DIRT; 6], hardness: 0.5),
-    block!("grass", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::GRASS_SIDE, tiles::GRASS_SIDE, tiles::GRASS_TOP,
-                   tiles::DIRT, tiles::GRASS_SIDE, tiles::GRASS_SIDE],
-           hardness: 0.6),
-    block!("sand", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::SAND; 6], hardness: 0.5),
-    // MC 26.1 water: strength(100)（原版注册表原值；靠 liquid/replaceable
-    // 判定不可获取，手挖 100 秒等同不可挖。原 0.0 会让水面被瞬间"挖掉"）
-    block!("water", solid: false, opaque: false, liquid: true, emit: 0,
-           tiles: [tiles::WATER; 6], hardness: 100.0),
-    block!("log", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::LOG_SIDE, tiles::LOG_SIDE, tiles::LOG_TOP,
-                   tiles::LOG_TOP, tiles::LOG_SIDE, tiles::LOG_SIDE],
-           // MC 26.1 oak_log: strength(2.0)（原为 1.0）
-           hardness: 2.0),
-    block!("leaves", solid: true, opaque: false, liquid: false, emit: 0,
-           tiles: [tiles::LEAVES; 6], hardness: 0.2),
-    // MC 26.1 oak_planks: strength(2.0, 3.0)（原为 1.0）
-    block!("planks", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::PLANKS; 6], hardness: 2.0),
-    // MC 26.1 cobblestone: strength(2.0, 6.0)（原误用石头的 1.5）
-    block!("cobble", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::COBBLE; 6], hardness: 2.0),
-    // MC 26.1 bedrock: strength(-1, 3600000)→不可破坏,
-    // 沿用本引擎现有不可挖表示法 f32::INFINITY（不引入新字段/新约定）
-    block!("bedrock", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::BEDROCK; 6], hardness: f32::INFINITY),
-    block!("snow_grass", solid: true, opaque: true, liquid: false, emit: 0,
-           tiles: [tiles::SNOW_SIDE, tiles::SNOW_SIDE, tiles::SNOW,
-                   tiles::DIRT, tiles::SNOW_SIDE, tiles::SNOW_SIDE],
-           hardness: 0.6),
-    block!("flower_red", solid: false, opaque: false, liquid: false, emit: 0,
-           tiles: [tiles::FLOWER_RED; 6], hardness: 0.0),
-    block!("flower_yellow", solid: false, opaque: false, liquid: false, emit: 0,
-           tiles: [tiles::FLOWER_YELLOW; 6], hardness: 0.0),
-];
+const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
+    // const 循环需要 while + MaybeUninit 填充（std 替代 unstable 常量技巧）
+    let mut out: [std::mem::MaybeUninit<BlockDef>; GEN_BLOCKS.len()] =
+        unsafe { std::mem::MaybeUninit::uninit().assume_init() };
+    let mut i = 0;
+    while i < GEN_BLOCKS.len() {
+        out[i] = std::mem::MaybeUninit::new(gen_def(&GEN_BLOCKS[i]));
+        i += 1;
+    }
+    // 安全：上面填满了每个元素；两个数组布局相同（const 可用裸指针解引用，
+    // ptr::read 不是 const fn）
+    unsafe { *(&out as *const _ as *const [BlockDef; GEN_BLOCKS.len()]) }
+}
+
+/// 硬度与发光对照反编译 Minecraft 26.1 `Blocks.java`（数值来源见仓库外笔记
+/// `/root/mc-ref/NOTES-blocks.md`）。id 0-13 为地形生成器/网格器硬编码依赖的
+/// 旧 14 方块，字段与旧表逐字节一致；基岩不可挖用 `f32::INFINITY` 表示
+/// （MC strength(-1)），水按注册表原值 strength(100)。
+pub static BLOCKS: [BlockDef; GEN_BLOCKS.len()] = gen_blocks();
 
 impl BlockId {
     #[inline]
@@ -217,5 +199,192 @@ mod tests {
             std::mem::size_of::<BlockId>(),
             CHUNK_VOXEL_BYTES
         );
+    }
+
+    /// 旧 14 方块表（千块表接入前 `BLOCKS` 的原样，含旧 tiles 常量层号）。
+    /// 只保留作回归锁：地形生成器/C++ 网格器硬编码依赖 id 0-13 的行为。
+    static LEGACY_BLOCKS: [BlockDef; 14] = [
+        BlockDef {
+            name: "air",
+            solid: false,
+            opaque: false,
+            liquid: false,
+            light_emit: 0,
+            tiles: [0; 6],
+            hardness: 0.0,
+        },
+        BlockDef {
+            name: "stone",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [4; 6],
+            hardness: 1.5,
+        },
+        BlockDef {
+            name: "dirt",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [3; 6],
+            hardness: 0.5,
+        },
+        BlockDef {
+            name: "grass",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [2, 2, 1, 3, 2, 2],
+            hardness: 0.6,
+        },
+        BlockDef {
+            name: "sand",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [5; 6],
+            hardness: 0.5,
+        },
+        BlockDef {
+            name: "water",
+            solid: false,
+            opaque: false,
+            liquid: true,
+            light_emit: 0,
+            tiles: [6; 6],
+            hardness: 100.0,
+        },
+        BlockDef {
+            name: "log",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [7, 7, 8, 8, 7, 7],
+            hardness: 2.0,
+        },
+        BlockDef {
+            name: "leaves",
+            solid: true,
+            opaque: false,
+            liquid: false,
+            light_emit: 0,
+            tiles: [9; 6],
+            hardness: 0.2,
+        },
+        BlockDef {
+            name: "planks",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [10; 6],
+            hardness: 2.0,
+        },
+        BlockDef {
+            name: "cobble",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [11; 6],
+            hardness: 2.0,
+        },
+        BlockDef {
+            name: "bedrock",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [12; 6],
+            hardness: f32::INFINITY,
+        },
+        BlockDef {
+            name: "snow_grass",
+            solid: true,
+            opaque: true,
+            liquid: false,
+            light_emit: 0,
+            tiles: [14, 14, 13, 3, 14, 14],
+            hardness: 0.6,
+        },
+        BlockDef {
+            name: "flower_red",
+            solid: false,
+            opaque: false,
+            liquid: false,
+            light_emit: 0,
+            tiles: [15; 6],
+            hardness: 0.0,
+        },
+        BlockDef {
+            name: "flower_yellow",
+            solid: false,
+            opaque: false,
+            liquid: false,
+            light_emit: 0,
+            tiles: [16; 6],
+            hardness: 0.0,
+        },
+    ];
+
+    /// 回归锁：GEN_BLOCKS 前 14 项必须与旧表逐字段一致（name/三标志/发光/
+    /// solid/hardness 用 to_bits 逐位比较；tiles 允许换新图集层号，但面间
+    /// 拓扑必须同构——同面同图 ↔ 旧表同面同图）。不一致 = 地形生成器行为漂移。
+    #[test]
+    fn first_14_match_legacy_table() {
+        assert_eq!(BLOCKS.len(), GEN_BLOCKS.len());
+        for i in 0..LEGACY_BLOCKS.len() {
+            let (n, o) = (&BLOCKS[i], &LEGACY_BLOCKS[i]);
+            assert_eq!(n.name, o.name, "id {i} 名字");
+            assert_eq!(
+                (n.solid, n.opaque, n.liquid),
+                (o.solid, o.opaque, o.liquid),
+                "id {i} 标志"
+            );
+            assert_eq!(n.light_emit, o.light_emit, "id {i} 发光");
+            assert_eq!(
+                n.hardness.to_bits(),
+                o.hardness.to_bits(),
+                "id {i} {} 硬度逐位不一致: 新 {} vs 旧 {}",
+                i,
+                n.name,
+                n.hardness,
+                o.hardness
+            );
+            for f in 0..6 {
+                // 新层号 = 旧层号 当且仅当 旧层号在新表同面复用（贴图名换层号，拓扑不变）
+                for g in 0..6 {
+                    assert_eq!(
+                        n.tiles[f] == n.tiles[g],
+                        o.tiles[f] == o.tiles[g],
+                        "id {i} {} 面 {f}/{g} 贴图复用拓扑改变",
+                        n.name
+                    );
+                }
+                if o.tiles[f] != 0 {
+                    assert_ne!(n.tiles[f], 0, "id {i} {} 面 {f} 不应退化为占位层", n.name);
+                }
+            }
+        }
+    }
+
+    /// 千块表完整性：id < 1171（u16 索引安全）由长度断言；所有 tiles 层号
+    /// 必须落在真实贴图区（< MANIFEST_LAYERS+特殊层，且 ≠ 特殊层区间）。
+    #[test]
+    fn gen_table_layer_indices_in_real_region() {
+        for (i, d) in BLOCKS.iter().enumerate() {
+            for &t in &d.tiles {
+                assert!(
+                    (t as usize) < atlas::MANIFEST_LAYERS,
+                    "id {i} {} 层号 {t} 越出真实贴图区",
+                    d.name
+                );
+            }
+        }
     }
 }

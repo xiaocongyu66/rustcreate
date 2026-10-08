@@ -729,9 +729,8 @@ impl GameRuntime {
         }
 
         // ---- mob AI + physics ----
-        let view = WorldView {
-            chunks: &self.chunks,
-        };
+        // WorldView 内联构造：字段分离借用（&self.chunks 与 &mut self.mobs/
+        // player 无冲突），不持长命 view，中途才能调 &mut self 方法
         let player_pos = self.player.pos;
         let day = self.day_factor();
         let mut melee_hits: Vec<(Vec3, f32)> = Vec::new();
@@ -765,7 +764,14 @@ impl GameRuntime {
                 vel: mob.vel,
                 on_ground: mob.on_ground,
             };
-            step_entity(&view, &mut body, def.half_size, &input);
+            step_entity(
+                &WorldView {
+                    chunks: &self.chunks,
+                },
+                &mut body,
+                def.half_size,
+                &input,
+            );
             mob.pos = body.pos;
             mob.vel = body.vel;
             mob.on_ground = body.on_ground;
@@ -807,7 +813,9 @@ impl GameRuntime {
             let fall_v = self.player.vel.y.min(0.0);
             let jumped_off = i.jump && self.player.on_ground;
             let before = self.player.pos;
-            let in_water = self.in_water(&view);
+            let in_water = self.in_water(&WorldView {
+                chunks: &self.chunks,
+            });
             // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
             if !self.player.flying && !in_water {
                 if self.player.on_ground {
@@ -825,7 +833,13 @@ impl GameRuntime {
                 in_water,
                 sneak: i.sneak,
             };
-            mcv_game::step(&view, &mut self.player, &step_input);
+            mcv_game::step(
+                &WorldView {
+                    chunks: &self.chunks,
+                },
+                &mut self.player,
+                &step_input,
+            );
             // ---- 行为音效：脚步 / 落地 ----
             let moved = (self.player.pos - before).length();
             self.step_dist += moved;
@@ -852,9 +866,11 @@ impl GameRuntime {
             if self.player.on_ground && self.step_dist > 2.2 {
                 self.step_dist = 0.0;
                 let p = self.player.pos;
-                let under = view
-                    .block(BlockPos::new(p.x as i32, (p.y - 0.5) as i32, p.z as i32))
-                    .0;
+                let under = WorldView {
+                    chunks: &self.chunks,
+                }
+                .block(BlockPos::new(p.x as i32, (p.y - 0.5) as i32, p.z as i32))
+                .0;
                 if let Some(sid) = step_sound(under) {
                     self.audio
                         .play_at(sid, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);

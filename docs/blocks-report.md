@@ -9,6 +9,13 @@
 - 贴图**不拷贝**：运行时从 `assets_vanilla/textures/block/` 按 manifest 虚拟路径加载（主控指令，
   不访问 Mojang CDN；沙箱内 Mojang CDN 亦实测整体 404）。
 - lib.rs 未改动（等主控合并 BlockId u8→u16 后 `include!` 本表）。
+  - **2026-10-09 更新（接线已完成）**：`mcv_core::BLOCKS` 已改为 `include!`
+    本表（1171 项；前 14 项回归锁 `mcv_core::tests::first_14_match_legacy_table`）。
+    827 张贴图已从 `assets_vanilla/textures/block/` 拷入 `texturepack/blocks/`
+    （DEVELOP_ONLY 体系），atlas 运行时按 manifest 层号读盘（层 0..827 =
+    真实贴图，裂纹特殊层移至 827..831，`atlas::LAYERS = 831`）；缺文件回退
+    程序化噪声。原“贴图不拷贝、运行时读 assets_vanilla”方案已由 texturepack
+    方案替代（assets_vanilla 仍为生成器输入，运行时代码不再读它）。
 
 ## 规模与分类统计
 

@@ -37,10 +37,11 @@ fn hardness_matches_mc_26_1() {
         ("flower_red", "poppy", 0.0),        // instabreak
         ("flower_yellow", "dandelion", 0.0), // instabreak
     ];
-    assert_eq!(
-        table.len(),
-        mcv_core::BLOCKS.len(),
-        "对照表应覆盖全部注册方块"
+    // 千块表（1171 项）接入后，本对照表只覆盖旧 14 方块基线；
+    // 其余条目按字典序随生成表进表（源头见 blocks_gen.inc.rs 注释）。
+    assert!(
+        mcv_core::BLOCKS.len() >= table.len(),
+        "千块表接入后 BLOCKS 应 ≥ 基线对照表"
     );
     for &(ours, mc, h) in table {
         let def = by_name(ours);
@@ -48,11 +49,12 @@ fn hardness_matches_mc_26_1() {
     }
 }
 
-/// 发光等级对照：当前子集在 MC 26.1 中全部 lightLevel=0
-/// （火把 14 / 荧石 15 / 岩浆 15 等发光块尚未进注册表）。
+/// 发光等级对照：旧 14 方块基线在 MC 26.1 中全部 lightLevel=0
+/// （火把 14 / 荧石 15 / 岩浆 15 等发光块由千块表带入，不在本表断言范围）。
 #[test]
 fn light_emit_matches_mc_26_1() {
-    for def in mcv_core::BLOCKS.iter() {
+    // 基线 14 方块 id 0..=13（mcv_core::tests::first_14_match_legacy_table 锁序）
+    for def in mcv_core::BLOCKS[..14].iter() {
         assert_eq!(
             def.light_emit, 0,
             "{} 在 MC 26.1 中不发光，应为 0",
@@ -67,8 +69,9 @@ fn bedrock_is_unbreakable() {
     let bedrock = by_name("bedrock");
     assert_eq!(bedrock.hardness, UNBREAKABLE, "基岩必须用不可挖表示法");
     assert!(bedrock.hardness.is_infinite(), "基岩硬度必须是无穷大");
-    // 反向保护：别把别的方块误标成不可挖
-    for def in mcv_core::BLOCKS.iter() {
+    // 反向保护：基线 14 方块里别把别的方块误标成不可挖
+    // （千块表里屏障/末地门框架等官方也是 -1 硬度，不在本断言范围）
+    for def in mcv_core::BLOCKS[..14].iter() {
         if def.name != "bedrock" {
             assert!(
                 def.hardness.is_finite(),
