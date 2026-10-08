@@ -43,9 +43,18 @@ pub struct BorderSeed {
     pub blk: u8,
 }
 
-/// TODO(research): keep per-block opacity in sync with vanilla light
-/// opacity (state `lightBlockage`). Contract: opaque = 15, water = 1,
-/// leaves = 1, flowers/air = 0; unknown ids are treated as fully opaque.
+/// Per-block light dampening, calibrated against decompiled Minecraft
+/// 26.1 `BlockBehaviour.getLightDampening` (consumed by
+/// `LightEngine.getOpacity` as `max(1, dampening)`):
+/// - solid-render full cubes = 15 (stone, dirt, log, …);
+/// - water = 1 (`LiquidBlock.propagatesSkylightDown == false` → damp 1;
+///   the pre-1.20.5 "water costs 3" rule is *not* 26.1 behaviour);
+/// - leaves = 1 (`LeavesBlock.getLightDampening` override);
+/// - flowers / air = 0 (`CrossCollisionBlock.propagatesSkylightDown` →
+///   damp 0; glass would land here too once registered);
+/// - unknown ids are treated as fully opaque (15).
+/// `mcv_core::BLOCKS` has no opacity column and must not gain one, so
+/// this table is the single source of truth.
 #[inline]
 pub const fn opacity(id: BlockId) -> u8 {
     match id.0 {
@@ -122,10 +131,22 @@ fn out_of_bounds(x: i32, y: i32, z: i32) -> bool {
     !(0..=15).contains(&x) || !(0..=255).contains(&y) || !(0..=15).contains(&z)
 }
 
-/// Vanilla spread rule: attenuate by `max(1, opacity)`, except sky light at
-/// full strength travelling straight down through a transparent cell keeps
-/// flowing at 15 (direct-sunlight columns self-heal after retracts; the
-/// heightmap still seeds them at `init`).
+/// Vanilla spread rule (26.1 `LightEngine.propagateIncrease`): every step
+/// into a cell costs `max(1, opacity)` — in *both* engines and in *all*
+/// six directions; `BlockLightEngine` (torch 14 → 13 → … vertically too)
+/// has no exceptions at all.
+///
+/// The single carve-out here — sky 15 flowing straight down through a
+/// cell whose `opacity == 0`, staying at 15 — mirrors the vanilla sky
+/// *source column* (`ChunkSkyLightSources.lowestSourceY` +
+/// `SkyLightEngine.addSourcesAbove` write 15 down every damp==0 column
+/// until the first damp!=0 block truncates it). In this engine a stored
+/// 15 only ever comes from the heightmap seeds (`init`) or the dug-column
+/// writes (`update_block`), i.e. from exactly those source columns, so
+/// the carve-out reproduces the reference: open-air shafts stay 15 all
+/// the way down, while water/leaves (damp 1) truncate the column and
+/// attenuate 15 → 14 → 13 … vertically as well (there `dec = opacity =
+/// 1`), and opaque blocks (15) clamp straight to 0.
 #[inline]
 fn spread_target(shift: u32, level: u8, down: bool, nopacity: u8) -> u8 {
     let direct_down = shift == SKY_SHIFT && down && level == 15;
