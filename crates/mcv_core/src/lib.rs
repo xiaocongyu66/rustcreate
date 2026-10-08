@@ -4,6 +4,7 @@
 pub mod chunk;
 pub mod pool;
 
+pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};
 pub use pool::TaskPool;
 
