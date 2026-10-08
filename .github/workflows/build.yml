@@ -1,0 +1,88 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2025
+            target: x86_64-pc-windows-msvc
+            artifact: mcv-win-x64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: mcv-linux-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: mcv-macos-arm64
+          - os: ubuntu-24.04
+            target: aarch64-linux-android
+            artifact: mcv-android-arm64
+            android: true
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Set up Android NDK
+        if: matrix.android
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: Set up Android SDK build tools
+        if: matrix.android
+        run: |
+          sdkmanager --install "build-tools;34.0.0" "platforms;android-34" >/dev/null || true
+      - name: Install cargo-apk
+        if: matrix.android
+        run: cargo install cargo-apk --locked
+      - name: Export NDK toolchain env
+        if: matrix.android
+        run: |
+          echo "ANDROID_NDK_HOME=${{ steps.ndk.outputs.ndk-path }}" >> "$GITHUB_ENV" || true
+          source ci/setup-android-env.sh
+          env | grep -E "^(CC|CXX|AR|CXXSTLD|CARGO_TARGET)_aarch64" >> "$GITHUB_ENV"
+
+      - name: Build (desktop)
+        if: ${{ !matrix.android }}
+        run: cargo build --release --locked -p mcv_app --target ${{ matrix.target }}
+
+      - name: Build (android apk)
+        if: matrix.android
+        run: cargo apk build --release
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path target/x86_64-pc-windows-msvc/release/mcv.exe, README.md -DestinationPath ${{ matrix.artifact }}.zip
+      - name: Package (unix)
+        if: runner.os != 'Windows' && !matrix.android
+        run: |
+          tar czf ${{ matrix.artifact }}.tar.gz -C target/${{ matrix.target }}/release mcv -C "$GITHUB_WORKSPACE" README.md
+      - name: Rename apk
+        if: matrix.android
+        run: |
+          find target -name "*.apk" -exec cp {} ${{ matrix.artifact }}.apk \;
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: |
+            mcv-win-x64.zip
+            mcv-linux-x64.tar.gz
+            mcv-macos-arm64.tar.gz
+            mcv-android-arm64.apk
+          if-no-files-found: error

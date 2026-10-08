@@ -1,0 +1,38 @@
+[package]
+name = "mcv_app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "mcv"
+path = "src/main.rs"
+
+[dependencies]
+log.workspace = true
+env_logger.workspace = true
+pollster.workspace = true
+wgpu.workspace = true
+winit.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+
+[package.metadata.android]
+package = "win.rustcreate.mcv"
+apk_name = "mcv"
+build_targets = ["aarch64-linux-android"]
+
+[package.metadata.android.sdk]
+min_sdk_version = 24
+target_sdk_version = 34
+
+[package.metadata.android.application]
+label = "MCV"
+
+[package.metadata.android.application.activity]
+orientation = "sensorLandscape"
+launch_mode = "singleTop"

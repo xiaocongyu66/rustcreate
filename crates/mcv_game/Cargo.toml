@@ -1,0 +1,9 @@
+[package]
+name = "mcv_game"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mcv_core.workspace = true
+glam.workspace = true

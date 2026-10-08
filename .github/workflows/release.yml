@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/mcv-win-x64.zip
+            dist/mcv-linux-x64.tar.gz
+            dist/mcv-macos-arm64.tar.gz
+            dist/mcv-android-arm64.apk
+            dist/checksums.txt
