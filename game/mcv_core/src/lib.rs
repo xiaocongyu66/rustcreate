@@ -4,7 +4,6 @@
 pub mod atlas;
 pub mod chunk;
 pub mod pool;
-pub mod spsc;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};

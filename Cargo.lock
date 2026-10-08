@@ -1399,6 +1399,7 @@ name = "mcv_audio"
 version = "0.1.0"
 dependencies = [
  "log",
+ "mcv_sync",
  "symphonia",
  "tinyaudio",
 ]
@@ -1520,6 +1521,10 @@ version = "0.1.0"
 dependencies = [
  "mcv_core",
 ]
+
+[[package]]
+name = "mcv_sync"
+version = "0.1.0"
 
 [[package]]
 name = "mcv_worldgen"

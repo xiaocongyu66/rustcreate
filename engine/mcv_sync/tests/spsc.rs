@@ -1,6 +1,6 @@
 //! SPSC 环形队列：FIFO、满退避、跨线程搬运、Drop 排空。
 
-use mcv_core::spsc::{Consumer, Producer, Spsc};
+use mcv_sync::{Consumer, Producer, Spsc};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[test]

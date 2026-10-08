@@ -11,6 +11,10 @@
 //!   覆盖开发期素材(ogg)并兼容 wav / mp3(mp3 可按需加 feature)。
 //! - **混音**:简单 f32 叠加 + 主增益 + 输出限幅;同一 id 一次性播放 80ms 节流,
 //!   循环声部按 id 幂等 —— 挖掘持续音不会叠加倍增爆音。
+//! - **线程模型**:游戏线程 [`SoundLoader`] 解析素材(IO/解码/LRU/节流),把
+//!   [`AudioCmd`] 推入 [`mcv_sync::Spsc`] 无锁环;音频回调线程独占 [`Mixer`]
+//!   消费——回调热路径零锁零分配。主增益走 `AtomicU32` 位镜像,音量滑条
+//!   无锁即时生效。
 //!
 //! ## 接线速览(主控)
 //! ```no_run
@@ -36,14 +40,17 @@
 //! 发布前删除)。[`SoundId`] 枚举与文件一一对应;素材缺失时所有播放调用都是 no-op
 //! (仅首次告警),不会 panic。
 pub mod decode;
+pub mod loader;
 pub mod mixer;
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub use decode::{decode_to_stereo, SoundData};
-pub use mixer::{Mixer, CACHE_MAX, MAX_VOICES, SAME_ID_MIN_INTERVAL};
+pub use loader::{SoundLoader, CACHE_MAX, SAME_ID_MIN_INTERVAL};
+pub use mixer::{Mixer, MAX_VOICES};
 
 /// 3D 音效线性衰减半径(格)。距离 ≥ 该值时衰减为 0。与原版线性滚存一致。
 pub const DEFAULT_ATTENUATION_RADIUS: f32 = 16.0;
@@ -222,12 +229,36 @@ pub fn default_sounds_dir() -> PathBuf {
     PathBuf::from("sounds")
 }
 
+/// 跨线程命令:游戏线程产出 → 音频回调线程消费(SPSC 环,非阻塞)。
+#[derive(Debug)]
+pub enum AudioCmd {
+    /// 起声部:PCM 已解码;衰减/增益合法性/一次性节流已在游戏线程
+    /// ([`SoundLoader`])判定完毕,循环幂等由音频线程 ([`Mixer::apply`])把关。
+    Play {
+        id: SoundId,
+        sound: Arc<SoundData>,
+        gain: f32,
+        looping: bool,
+    },
+    /// 停止指定 id 的循环声部。
+    StopLoop { id: SoundId },
+}
+
+/// 命令环容量(向上取 2 的幂):命令频率是人类操作级,256 绰绰有余;
+/// 满时 push 退回、命令丢弃——实时线程永不阻塞。
+const CMD_RING: usize = 256;
+
 /// 音频管理器:后端设备线程 + 软件混音器。**应用生命周期内持有单例即可。**
 ///
-/// 所有播放方法均为 `&self`、内部加锁、永不 panic;设备为 None(静音模式)时
-/// 播放调用是廉价 no-op。
+/// 所有播放方法均为 `&self`、永不 panic;设备为 None(静音模式)时播放调用
+/// 是廉价 no-op(零 IO)。游戏线程调用 `play_*`/`loop_*`/`set_master_gain`
+/// 只经过无锁环与原子镜像,与音频回调线程之间不存在共享锁。
 pub struct AudioManager {
-    mixer: Arc<Mutex<Mixer>>,
+    cmds: mcv_sync::Producer<AudioCmd>,
+    /// 游戏线程侧素材解析;此锁只在游戏线程内部使用,永不与音频回调竞争。
+    loader: Mutex<SoundLoader>,
+    /// 主增益 f32 位镜像:`set_master_gain` 直写,回调 `mix` 每帧读。
+    master: Arc<AtomicU32>,
     device: Option<tinyaudio::OutputDevice>,
 }
 
@@ -237,11 +268,9 @@ impl AudioManager {
     /// 无声卡环境(CI/无头)会返回 [`AudioError::Backend`],调用方应退回
     /// [`AudioManager::silent`](或直接忽略音效)。
     pub fn open(sounds_dir: impl Into<PathBuf>) -> Result<Self, AudioError> {
-        let mixer = Arc::new(Mutex::new(Mixer::new(
-            sounds_dir.into(),
-            OUTPUT_SAMPLE_RATE as u32,
-        )));
-        let cb_mixer = Arc::clone(&mixer);
+        let (cmds, cons) = mcv_sync::Spsc::new(CMD_RING).split();
+        let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let mut mixer = Mixer::new(OUTPUT_SAMPLE_RATE as u32, cons, Arc::clone(&master));
         let device = tinyaudio::run_output_device(
             tinyaudio::OutputDeviceParameters {
                 channels_count: OUTPUT_CHANNELS,
@@ -250,26 +279,28 @@ impl AudioManager {
             },
             move |data| {
                 // data:交错立体声 f32,长度 = OUTPUT_BUFFER_FRAMES * OUTPUT_CHANNELS。
-                // 拿不到锁(游戏线程正持锁解码素材)就输出静音帧,回调不可阻塞。
-                if let Ok(mut m) = cb_mixer.lock() {
-                    m.mix(data);
-                }
+                // 回调线程独占 Mixer:排空命令环 + 混音,全程零锁零分配。
+                mixer.mix(data);
             },
         )
         .map_err(|e| AudioError::Backend(e.to_string()))?;
         Ok(Self {
-            mixer,
+            cmds,
+            loader: Mutex::new(SoundLoader::new(sounds_dir.into())),
+            master,
             device: Some(device),
         })
     }
 
-    /// 静音模式:不建后端设备,播放调用 no-op。适合无头测试或后端失败后的降级。
+    /// 静音模式:不建后端设备,播放调用 no-op(连素材都不解析)。
+    /// 适合无头测试或后端失败后的降级;`master_gain()` 仍可读。
     pub fn silent(sounds_dir: impl Into<PathBuf>) -> Self {
+        // Consumer 就地丢弃:无消费者,而 silent 的播放方法直接 return,永不入环。
+        let (cmds, _unused) = mcv_sync::Spsc::new(CMD_RING).split();
         Self {
-            mixer: Arc::new(Mutex::new(Mixer::new(
-                sounds_dir.into(),
-                OUTPUT_SAMPLE_RATE as u32,
-            ))),
+            cmds,
+            loader: Mutex::new(SoundLoader::new(sounds_dir.into())),
+            master: Arc::new(AtomicU32::new(1.0f32.to_bits())),
             device: None,
         }
     }
@@ -281,44 +312,59 @@ impl AudioManager {
 
     /// 3D 一次性播放:`pos` 处发声,`listener` 处收听,16 格线性衰减。
     ///
-    /// `gain` 为额外增益(1.0 = 原音量)。素材缺失时静默 no-op。
+    /// `gain` 为额外增益(1.0 = 原音量)。素材缺失/被节流时静默 no-op。
     pub fn play_at(&self, id: SoundId, pos: [f32; 3], listener: [f32; 3], gain: f32) {
-        if let Ok(mut m) = self.mixer.lock() {
-            m.play_at(id, pos, listener, gain, Instant::now());
+        if self.device.is_none() {
+            return;
+        }
+        if let Ok(mut l) = self.loader.lock() {
+            if let Some(cmd) = l.play_at(id, pos, listener, gain, Instant::now()) {
+                let _ = self.cmds.push(cmd);
+            }
         }
     }
 
     /// 2D(UI)播放:无距离衰减,用于经验球/升级/按钮音。
     pub fn play_ui(&self, id: SoundId, gain: f32) {
-        if let Ok(mut m) = self.mixer.lock() {
-            m.play_ui(id, gain, Instant::now());
+        if self.device.is_none() {
+            return;
+        }
+        if let Ok(mut l) = self.loader.lock() {
+            if let Some(cmd) = l.play_ui(id, gain, Instant::now()) {
+                let _ = self.cmds.push(cmd);
+            }
         }
     }
 
-    /// 循环播放(挖掘持续音)。同一 id 重复调用幂等,不会叠加声部造成爆音。
+    /// 循环播放(挖掘持续音)。同一 id 重复调用幂等,不会叠加声部造成爆音
+    /// (幂等判定在音频线程)。
     pub fn loop_start(&self, id: SoundId, gain: f32) {
-        if let Ok(mut m) = self.mixer.lock() {
-            m.loop_start(id, gain, Instant::now());
+        if self.device.is_none() {
+            return;
+        }
+        if let Ok(mut l) = self.loader.lock() {
+            if let Some(cmd) = l.loop_start(id, gain, Instant::now()) {
+                let _ = self.cmds.push(cmd);
+            }
         }
     }
 
     /// 停止指定 id 的循环(挖掘完成/中断/方块消失)。
     pub fn loop_stop(&self, id: SoundId) {
-        if let Ok(mut m) = self.mixer.lock() {
-            m.loop_stop(id);
+        if self.device.is_none() {
+            return;
         }
+        let _ = self.cmds.push(AudioCmd::StopLoop { id });
     }
 
-    /// 主音量(音量滑条接线点)。推荐 [0.0, 1.0]。
+    /// 主音量(音量滑条接线点)。推荐 [0.0, 1.0]。原子直写,无锁。
     pub fn set_master_gain(&self, gain: f32) {
-        if let Ok(mut m) = self.mixer.lock() {
-            m.set_master_gain(gain);
-        }
+        self.master.store(gain.to_bits(), Ordering::Relaxed);
     }
 
     /// 当前主音量。
     pub fn master_gain(&self) -> f32 {
-        self.mixer.lock().map(|m| m.master_gain()).unwrap_or(0.0)
+        f32::from_bits(self.master.load(Ordering::Relaxed))
     }
 }
 
