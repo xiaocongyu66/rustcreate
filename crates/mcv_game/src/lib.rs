@@ -1,5 +1,14 @@
 //! Game logic: voxel world access, player, raycasting, input state.
 
+pub mod consts;
+pub mod interact;
+pub mod physics;
+pub mod raycast;
+
+pub use interact::can_place_block;
+pub use physics::{move_axis, step, Aabb, Axis, StepInput};
+pub use raycast::raycast;
+
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkPos};
 
