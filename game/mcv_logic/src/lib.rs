@@ -12,11 +12,11 @@
 //!   mcv_render（纯 wgpu）、mcv_game（物理/输入）、mcv_entity / mcv_item /
 //!   mcv_audio / mcv_save。
 //!
-//! [`touch`]：移动端虚拟摇杆/按钮状态（触屏事件→[`game::InputState`] 的
-//! 翻译表，GameRuntime 持有）。
+//! 移动端触屏事件翻译（winit `WindowEvent::Touch` → 输入意图）属于平台
+//! 能力，已移入引擎层 [`mcv_platform::touch`]；本 crate 的 GameRuntime
+//! 持有其 `TouchState`。
 //!
 //! 将来若上插件化（EnginePlugin/事件总线），注册与路由加在本 crate 边界
 //! 之上即可，子系统 crate 不需感知。
 
 pub mod game;
-pub mod touch;

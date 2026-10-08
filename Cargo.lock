@@ -1386,6 +1386,7 @@ dependencies = [
  "mcv_core",
  "mcv_game",
  "mcv_logic",
+ "mcv_platform",
  "mcv_render",
  "mcv_save",
  "pollster",
@@ -1478,10 +1479,10 @@ dependencies = [
  "mcv_item",
  "mcv_light",
  "mcv_mesher",
+ "mcv_platform",
  "mcv_render",
  "mcv_save",
  "mcv_worldgen",
- "winit",
 ]
 
 [[package]]
@@ -1490,6 +1491,14 @@ version = "0.1.0"
 dependencies = [
  "mcv_core",
  "mcv_ffi",
+]
+
+[[package]]
+name = "mcv_platform"
+version = "0.1.0"
+dependencies = [
+ "mcv_game",
+ "winit",
 ]
 
 [[package]]

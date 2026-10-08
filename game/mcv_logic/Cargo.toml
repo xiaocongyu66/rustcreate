@@ -5,10 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-# 游戏层规则：不依赖 wgpu（GPU 上传经 mcv_render::gpu::MeshUploader）。
-# winit 仍在（touch 事件翻译），#16 会移入 engine/mcv_platform。
+# 游戏层规则：不依赖 wgpu（GPU 上传经 mcv_render::gpu::MeshUploader），
+# 也不依赖 winit（触屏事件翻译在引擎层 mcv_platform）。
 log.workspace = true
-winit.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 mcv_core.workspace = true
@@ -17,6 +16,7 @@ mcv_worldgen.workspace = true
 mcv_light.workspace = true
 mcv_mesher.workspace = true
 mcv_render.workspace = true
+mcv_platform.workspace = true
 mcv_game.workspace = true
 mcv_save.workspace = true
 mcv_entity.workspace = true

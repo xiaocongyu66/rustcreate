@@ -1206,7 +1206,7 @@ impl ApplicationHandler for AppState {
                 use mcv_game::keymap::Action;
                 // 快捷栏：MC 是 9 个独立键位，本引擎键位表单动作单键，暂直绑
                 if pressed {
-                    if let Some(slot) = crate::keybind::hotbar_slot(code) {
+                    if let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
                         runtime.player.sel_slot = slot;
                     }
                 }
@@ -1214,7 +1214,7 @@ impl ApplicationHandler for AppState {
                 if pressed && code == KeyCode::F5 {
                     runtime.cycle_camera();
                 }
-                if let Some(vk) = crate::keybind::vkey_of(code) {
+                if let Some(vk) = mcv_platform::keybind::vkey_of(code) {
                     match self.keymap.action_for(vk) {
                         Some(Action::Forward) => runtime.input.forward = pressed,
                         Some(Action::Back) => runtime.input.back = pressed,

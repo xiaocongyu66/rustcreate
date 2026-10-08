@@ -17,6 +17,7 @@ mcv_light = { path = "game/mcv_light" }
 mcv_mesher = { path = "game/mcv_mesher" }
 mcv_render = { path = "engine/mcv_render" }
 mcv_game = { path = "engine/mcv_game" }
+mcv_platform = { path = "engine/mcv_platform" }
 mcv_save = { path = "engine/mcv_save" }
 mcv_entity = { path = "game/mcv_entity" }
 mcv_item = { path = "game/mcv_item" }

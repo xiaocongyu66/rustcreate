@@ -14,6 +14,7 @@ use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{Mob, MobId};
 use mcv_game::{step_entity, Entity, Player, VoxelAccess};
+use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{text, Camera, HudQuad};
 
@@ -155,7 +156,7 @@ pub struct GameRuntime {
     spawn_cooldown: u32,
     pub player_xp: u32,
     pub hotbar_slot: Option<mcv_item::ItemStack>,
-    pub touch: crate::touch::TouchState,
+    pub touch: TouchState,
     pub mode: GameMode,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
     pub hardcore_death: bool,
@@ -211,7 +212,7 @@ impl GameRuntime {
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar_slot: Some(mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
-            touch: crate::touch::TouchState::default(),
+            touch: TouchState::default(),
             mode,
             hardcore_death: false,
             render_dist: RENDER_DIST,
@@ -1206,8 +1207,8 @@ impl GameRuntime {
         }
         // 触屏控件（仅在收到过触摸事件后显示；死亡界面隐藏）
         if self.touch.enabled && show_touch {
-            use crate::touch::{BTN_R, STICK_R};
-            let stick_c = crate::touch::TouchState::stick_center(width, height);
+            use mcv_platform::touch::{BTN_R, STICK_R};
+            let stick_c = TouchState::stick_center(width, height);
             // 摇杆底盘 + 滑块
             quads.push(text::rect(
                 stick_c.0 - STICK_R,
@@ -1225,9 +1226,9 @@ impl GameRuntime {
                 [1.0, 1.0, 1.0, 0.35],
             ));
             // 动作按钮（跳 / 挖 / 放）
-            let jump_c = crate::touch::TouchState::jump_center(width, height);
-            let mine_c = crate::touch::TouchState::mine_center(width, height);
-            let place_c = crate::touch::TouchState::place_center(width, height);
+            let jump_c = TouchState::jump_center(width, height);
+            let mine_c = TouchState::mine_center(width, height);
+            let place_c = TouchState::place_center(width, height);
             let alpha = 0.18;
             quads.push(text::rect(
                 jump_c.0 - BTN_R,

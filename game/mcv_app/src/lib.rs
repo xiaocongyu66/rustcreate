@@ -2,7 +2,6 @@
 
 pub mod app;
 pub mod i18n;
-pub mod keybind;
 
 #[cfg(target_os = "android")]
 pub mod android_assets;

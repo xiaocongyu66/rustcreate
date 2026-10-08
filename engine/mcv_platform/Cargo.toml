@@ -1,0 +1,11 @@
+[package]
+name = "mcv_platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 引擎的平台输入层：只依赖平台库（winit）与引擎虚拟键定义（mcv_game），
+# 不感知方块/物品/MC 语义（那些是 game/ 层的规则）。
+winit.workspace = true
+mcv_game.workspace = true
