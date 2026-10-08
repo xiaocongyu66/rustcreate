@@ -758,7 +758,6 @@ impl Renderer {
 
             // opaque
             pass.set_pipeline(&self.terrain_pipeline);
-            pass.set_bind_group(0, &self.frame_bind, &[]);
             for (slot, rc) in &visible {
                 let off = *slot * 256;
                 pass.set_bind_group(0, &self.frame_bind, &[off]);
