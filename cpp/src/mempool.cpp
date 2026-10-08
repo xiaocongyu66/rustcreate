@@ -23,7 +23,7 @@
 namespace {
 
 constexpr uint32_t kHeaderMagic = 0x4D435631u; /* "MCV1" */
-constexpr uint32_t kFreeMagic = 0x46724545u;   /* "FrEE" */
+[[maybe_unused]] constexpr uint32_t kFreeMagic = 0x46724545u; /* "FrEE",仅 MCV_DEBUG 引用 */
 constexpr uint8_t kCanaryByte = 0xC7;
 constexpr size_t kCanarySize = 8;
 constexpr int kNumClasses = 5;
