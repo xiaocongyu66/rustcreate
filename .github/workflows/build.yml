@@ -59,6 +59,13 @@ jobs:
         if: ${{ !matrix.android }}
         run: cargo build --release --locked -p mcv_app --target ${{ matrix.target }}
 
+      - name: Generate ephemeral signing keystore
+        if: matrix.android
+        run: |
+          keytool -genkeypair -v -keystore release.keystore -alias mcv \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass mcvpass -keypass mcvpass \
+            -dname "CN=mcv, OU=mcv, O=mcv, L=mcv, S=mcv, C=CN"
       - name: Build (android apk)
         if: matrix.android
         run: cargo apk build -p mcv_app --release
