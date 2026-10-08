@@ -281,7 +281,7 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
                             let sx = x * 2 + dx;
                             let sy = y * 2 + dy;
                             let off = layer * TILE_PX * TILE_PX * 4
-                                + ((sy * TILE_PX + sx) * 4 + c) as usize;
+                                + ((sy * TILE_PX as u32 + sx) * 4 + c) as usize;
                             sum += u32::from(mip0[off]);
                         }
                     }
