@@ -88,8 +88,9 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
     (device, queue, renderer)
 }
 
+/// (green-dominant share of the ground band, blue-dominant share of the sky
+/// band). Bands avoid HUD regions (hotbar at the bottom, text at the top).
 fn sample_stats(rgba: &[u8], w: u32, h: u32) -> (f64, f64) {
-    // Returns (green-dominant share of bottom half, blue-dominant share of top half).
     let mut green = 0u64;
     let mut green_total = 0u64;
     let mut blue = 0u64;
@@ -98,12 +99,12 @@ fn sample_stats(rgba: &[u8], w: u32, h: u32) -> (f64, f64) {
         for x in 0..w {
             let o = ((y * w + x) * 4) as usize;
             let (r, g, b) = (rgba[o] as i32, rgba[o + 1] as i32, rgba[o + 2] as i32);
-            if y > h / 2 {
+            if y > 120 && y < 190 {
                 green_total += 1;
                 if g > r + 10 && g > b + 10 {
                     green += 1;
                 }
-            } else {
+            } else if y < 60 {
                 blue_total += 1;
                 if b > r + 10 && b > g {
                     blue += 1;
@@ -180,6 +181,11 @@ fn terrain_sky_and_hud_render() {
     queue.submit([encoder.finish()]);
     let rgba = target.read_pixels(&device);
 
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("render-test.png"), png);
+    }
+
     let (green_share, blue_share) = sample_stats(&rgba, extent.width, extent.height);
     assert!(
         green_share > 0.25,
@@ -216,11 +222,6 @@ fn terrain_sky_and_hud_render() {
 
     // Water pipeline path: reuse vertex layout sanity (compile-only draw).
     let _ = TERRAIN_STRIDE;
-
-    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
-        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
-        let _ = std::fs::write(std::path::Path::new(&dir).join("render-test.png"), png);
-    }
 }
 
 #[test]
