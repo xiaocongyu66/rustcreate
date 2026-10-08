@@ -9,7 +9,11 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
-use mcv_game::{Player, VoxelAccess};
+use mcv_entity::combat;
+use mcv_entity::defs::speed_m_s;
+use mcv_entity::spawner;
+use mcv_entity::{Mob, MobId};
+use mcv_game::{step_entity, Entity, Player, VoxelAccess};
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{text, Camera, HudQuad};
 
@@ -155,6 +159,11 @@ pub struct GameRuntime {
     render_chunks: Vec<RenderChunk>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
+    pub mobs: Vec<Mob>,
+    pub attack_ticker: f32,
+    spawn_cooldown: u32,
+    pub player_xp: u32,
+    pub hotbar_slot: Option<mcv_item::ItemStack>,
 }
 
 impl GameRuntime {
@@ -179,6 +188,11 @@ impl GameRuntime {
             render_chunks: Vec::new(),
             spawned: false,
             border_synced: HashMap::new(),
+            mobs: Vec::new(),
+            attack_ticker: 20.0, // ready
+            spawn_cooldown: 0,
+            player_xp: 0,
+            hotbar_slot: Some(mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
         }
     }
 
@@ -520,9 +534,195 @@ impl GameRuntime {
     }
 
     pub fn fixed_step(&mut self, dt: f32) {
-        // Physics steps in via mcv_game once the physics module merges;
-        // until then only look/stream are live.
-        let _ = dt;
+        self.attack_ticker = (self.attack_ticker + dt).min(20.0);
+        self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
+
+        // ---- natural spawning (budgeted every 20 ticks) ----
+        if self.spawn_cooldown == 0 {
+            self.spawn_cooldown = 20;
+            self.try_natural_spawn();
+        }
+
+        // ---- mob AI + physics ----
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let player_pos = self.player.pos;
+        let day = self.day_factor();
+        for mob in self.mobs.iter_mut() {
+            mob.invulnerable = mob.invulnerable.saturating_sub(1);
+            let def = mob.def();
+            let to_player = player_pos - mob.pos;
+            let dist_sqr = to_player.length_squared();
+            let speed = speed_m_s(def.speed_attr);
+            let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
+                // chase
+                let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
+                mob.yaw = dir.z.atan2(dir.x);
+                dir * speed
+            } else {
+                // wander: random direction changes on idle ticks
+                if mob.idle_ticks % 120 == 0 && (fast_rand() & 3) == 0 {
+                    mob.yaw = (mob.idle_ticks as f32 * 0.7) % std::f32::consts::TAU;
+                }
+                Vec3::new(mob.yaw.sin(), 0.0, -mob.yaw.cos()) * speed * 0.3
+            };
+            let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
+            let input = mcv_game::StepInput {
+                wish_dir: if melee { Vec3::ZERO } else { wish },
+                jump: mob.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
+                in_water: false,
+                sneak: false,
+            };
+            let mut body = Entity {
+                pos: mob.pos,
+                vel: mob.vel,
+                on_ground: mob.on_ground,
+            };
+            step_entity(&view, &mut body, def.half_size, &input);
+            mob.pos = body.pos;
+            mob.vel = body.vel;
+            mob.on_ground = body.on_ground;
+            mob.idle_ticks += 1;
+            if melee && mob.invulnerable == 0 {
+                // monster melee lands in player damage routing (M7 wiring)
+            }
+        }
+        self.mobs.retain(|m| m.health > 0.0);
+        let _ = day;
+    }
+
+    fn day_factor(&self) -> f32 {
+        mcv_render::sun_state(self.time_ticks).1
+    }
+
+    /// NaturalSpawner-lite: a few random loaded chunks per budget window,
+    /// 3 groups × up to 4 walk positions, cap + distance + light gates.
+    fn try_natural_spawn(&mut self) {
+        if self.chunks.is_empty() {
+            return;
+        }
+        let monster_cap = spawner::SPAWN_CAPS
+            .iter()
+            .find(|(c, _, _, _)| *c == spawner::SpawnCategory::Monster)
+            .map(|(_, cap, _, _)| *cap)
+            .unwrap_or(0);
+        let monsters = self.mobs.iter().filter(|m| m.def().hostile).count() as u32;
+        if monsters >= monster_cap {
+            return;
+        }
+        let center = (
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        for _ in 0..2 {
+            // random loaded chunk within spawn range
+            let dx = (fast_rand() % (2 * spawner::SPAWN_RANGE_CHUNKS as u32 + 1)) as i32
+                - spawner::SPAWN_RANGE_CHUNKS;
+            let dz = (fast_rand() % (2 * spawner::SPAWN_RANGE_CHUNKS as u32 + 1)) as i32
+                - spawner::SPAWN_RANGE_CHUNKS;
+            let pos = ChunkPos::new(center.0 + dx, center.1 + dz);
+            let Some(handle) = self.chunks.get(&pos) else {
+                continue;
+            };
+            if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
+                continue;
+            }
+            let spawn_x = (fast_rand() % 16) as i32 + pos.x * 16;
+            let spawn_z = (fast_rand() % 16) as i32 + pos.z * 16;
+            let mut rng = spawn_rng();
+            for _ in 0..spawner::GROUPS_PER_CHUNK {
+                let mut p = glam::Vec3::new(spawn_x as f32, 0.0, spawn_z as f32);
+                for _ in 0..spawner::ATTEMPTS_PER_GROUP {
+                    p = spawner::group_walk(p, &mut rng);
+                    let dist_sqr = (self.player.pos - p).length_squared();
+                    if dist_sqr < spawner::MIN_PLAYER_DIST_SQR {
+                        continue;
+                    }
+                    let block_pos = BlockPos::new(p.x as i32, 0, p.z as i32);
+                    let cx = block_pos.chunk();
+                    let Some(h) = self.chunks.get(&cx) else {
+                        continue;
+                    };
+                    let [lx, _, lz] = block_pos.local();
+                    let surface = h.heightmap.read().unwrap()[(lz << 4) | lx];
+                    if surface == 0 || surface > 250 {
+                        continue;
+                    }
+                    // find a dark spot near the surface column
+                    let y = f32::from(surface) + 1.0;
+                    let cell = BlockPos::new(p.x as i32, surface as i32, p.z as i32);
+                    let [lxc, lyc, lzc] = cell.local();
+                    let light_byte = h.light.read().unwrap()[lyc << 8 | lzc << 4 | lxc];
+                    let sky = light_byte >> 4;
+                    let blk = light_byte & 0xF;
+                    let night = self.day_factor() < 0.4;
+                    let dark_ok = if night {
+                        spawner::light_allows_hostile(sky.min(4), blk, &mut rng)
+                    } else {
+                        spawner::light_allows_hostile(sky, blk, &mut rng) && surface > 130
+                    };
+                    if !dark_ok {
+                        continue;
+                    }
+                    let id = if night || surface > 130 {
+                        [MobId::ZOMBIE, MobId::SKELETON, MobId::CREEPER][(rng() as usize) % 3]
+                    } else {
+                        [MobId::COW, MobId::PIG, MobId::SHEEP][(rng() as usize) % 3]
+                    };
+                    p.y = y;
+                    self.mobs.push(Mob::new(id, p));
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Left-click attack: crosshair ray over mobs first, else mine block.
+    pub fn attack(&mut self) {
+        self.interact(false);
+        // mob hit: nearest mob within reach along view dir
+        let dir = self.camera(1.0).dir();
+        let eye = self.player.pos + glam::Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let weapon = self.hotbar_item();
+        let ctx = combat::AttackContext {
+            attacker_pos_eye: eye,
+            weapon,
+            cooldown_ticker: self.attack_ticker,
+            fall_distance: 0.0,
+            on_ground: self.player.on_ground,
+            in_water: false,
+            sprinting: false,
+        };
+        let out = combat::resolve_attack(&ctx);
+        self.attack_ticker = 0.0;
+        let mut best: Option<(usize, f32)> = None;
+        for (i, mob) in self.mobs.iter().enumerate() {
+            let to = mob.pos + glam::Vec3::new(0.0, 1.0, 0.0) - eye;
+            let dist = to.length();
+            if dist > 3.5 {
+                continue;
+            }
+            let cos = to.normalize_or_zero().dot(dir);
+            if cos > 0.92 && best.map_or(true, |(_, d)| dist < d) {
+                best = Some((i, dist));
+            }
+        }
+        if let Some((i, _)) = best {
+            let mob = &mut self.mobs[i];
+            let xp = mob.def().xp;
+            if combat::apply_hurt(mob, out.damage, 0).is_some() && mob.health <= 0.0 {
+                self.mobs.remove(i);
+                self.player_xp += xp;
+            }
+        }
+        if let Some(item) = &mut self.hotbar_slot {
+            let _ = item.hurt(1, &mut || 0);
+        }
+    }
+
+    fn hotbar_item(&self) -> Option<mcv_item::ItemStack> {
+        self.hotbar_slot.clone()
     }
 
     #[allow(dead_code)] // wired into physics once mcv_game::step merges
@@ -651,6 +851,25 @@ impl GameRuntime {
         );
         quads.extend(text::text_quads(&line, 8.0, 8.0, 1.5, [1.0, 1.0, 1.0, 0.9]));
         quads
+    }
+}
+
+/// Global XOR-shift rand for spawn jitter (deterministic per sequence).
+fn fast_rand() -> u32 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static C: AtomicU64 = AtomicU64::new(0x243F6A8885A308D3);
+    let v = C.fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed);
+    let z = (v ^ (v >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+    ((z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB) >> 33) as u32
+}
+
+fn spawn_rng() -> impl FnMut() -> u32 {
+    let mut s = u64::from(fast_rand()) | 1;
+    move || {
+        s = s
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (s >> 33) as u32
     }
 }
 

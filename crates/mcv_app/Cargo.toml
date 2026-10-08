@@ -24,6 +24,7 @@ mcv_render.workspace = true
 mcv_save.workspace = true
 mcv_ffi.workspace = true
 mcv_light.workspace = true
+mcv_item.workspace = true
 mcv_mesher.workspace = true
 mcv_entity.workspace = true
 glam.workspace = true

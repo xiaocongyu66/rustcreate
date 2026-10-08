@@ -37,6 +37,15 @@ impl Aabb {
     }
 
     /// 是否与 voxel `(x, y, z)` 的单位立方体相交（严格重叠，贴面不算）。
+    /// 盒体对应的脚底中心点。
+    pub fn feet_center(&self) -> Vec3 {
+        Vec3::new(
+            (self.min.x + self.max.x) * 0.5,
+            self.min.y,
+            (self.min.z + self.max.z) * 0.5,
+        )
+    }
+
     pub fn intersects_voxel(&self, x: i32, y: i32, z: i32) -> bool {
         let (fx, fy, fz) = (x as f32, y as f32, z as f32);
         self.min.x < fx + 1.0
@@ -79,6 +88,86 @@ pub enum Axis {
 /// 位移按 ≤ [`MAX_SUBSTEP`] 子步推进；每个子步对扫掠盒覆盖的 voxel
 /// 区间（`floor(min)-1 ..= floor(max)+1`）一次遍历，取最近的阻挡面。
 /// 返回本步是否发生碰撞。
+/// 单轴扫掠移动的核心实现（与 `Player` 解耦）。
+/// 阻挡时钳位盒体并清零 `vel` 对应分量，返回是否命中。
+pub fn move_box(
+    world: &dyn VoxelAccess,
+    pos: &mut Vec3,
+    vel: &mut Vec3,
+    aabb: &mut Aabb,
+    axis: Axis,
+    dist: f32,
+) -> bool {
+    let mut remaining = dist;
+    while remaining.abs() > 1e-9 {
+        let step = remaining.clamp(-MAX_SUBSTEP, MAX_SUBSTEP);
+        aabb.shift(axis, step);
+
+        let x0 = aabb.min.x.floor() as i32 - 1;
+        let x1 = aabb.max.x.floor() as i32 + 1;
+        let y0 = aabb.min.y.floor() as i32 - 1;
+        let y1 = aabb.max.y.floor() as i32 + 1;
+        let z0 = aabb.min.z.floor() as i32 - 1;
+        let z1 = aabb.max.z.floor() as i32 + 1;
+
+        let mut face: Option<f32> = None;
+        for bx in x0..=x1 {
+            for by in y0..=y1 {
+                for bz in z0..=z1 {
+                    if !world.block(BlockPos::new(bx, by, bz)).def().solid {
+                        continue;
+                    }
+                    if !aabb.intersects_voxel(bx, by, bz) {
+                        continue;
+                    }
+                    let v = match axis {
+                        Axis::X => bx as f32,
+                        Axis::Y => by as f32,
+                        Axis::Z => bz as f32,
+                    };
+                    face = Some(match face {
+                        None => v,
+                        Some(f) => {
+                            if step > 0.0 {
+                                f.min(v)
+                            } else {
+                                f.max(v)
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        if let Some(v) = face {
+            let target = if step > 0.0 { v - SKIN } else { v + 1.0 + SKIN };
+            let delta = match (axis, step > 0.0) {
+                (Axis::X, true) => target - aabb.max.x,
+                (Axis::X, false) => target - aabb.min.x,
+                (Axis::Y, true) => target - aabb.max.y,
+                (Axis::Y, false) => target - aabb.min.y,
+                (Axis::Z, true) => target - aabb.max.z,
+                (Axis::Z, false) => target - aabb.min.z,
+            };
+            let delta = if step > 0.0 {
+                delta.min(0.0)
+            } else {
+                delta.max(0.0)
+            };
+            aabb.shift(axis, delta);
+            match axis {
+                Axis::X => vel.x = 0.0,
+                Axis::Y => vel.y = 0.0,
+                Axis::Z => vel.z = 0.0,
+            }
+            *pos = aabb.feet_center();
+            return true;
+        }
+        remaining -= step;
+    }
+    false
+}
+
 pub fn move_axis(
     world: &dyn VoxelAccess,
     player: &mut Player,
@@ -162,6 +251,14 @@ pub fn move_axis(
 }
 
 /// 一步物理的输入意图。
+/// Generic AABB physics body (mobs, items, projectiles).
+#[derive(Clone, Copy, Debug)]
+pub struct Entity {
+    pub pos: Vec3, // feet-center
+    pub vel: Vec3,
+    pub on_ground: bool,
+}
+
 pub struct StepInput {
     /// 期望水平移动方向（世界坐标，会被归一化；零向量表示无输入）。
     pub wish_dir: Vec3,
@@ -188,6 +285,35 @@ impl Default for StepInput {
 ///
 /// 顺序：碰撞位移（X→Z→Y，-Y 命中且此前下落 → `on_ground`），
 /// 再按 flying / 水 / 空气三种模式积分速度。
+/// 固定步长推进一个通用实体（怪物/掉落物/投射物）。
+pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], input: &StepInput) {
+    let dt = consts::FIXED_DT;
+    let speed = if e.on_ground { 1.0 } else { 0.2 };
+    let target = input.wish_dir * speed;
+    let accel = if e.on_ground { 60.0 } else { 8.0 };
+    e.vel.x += (target.x - e.vel.x).clamp(-accel * dt, accel * dt);
+    e.vel.z += (target.z - e.vel.z).clamp(-accel * dt, accel * dt);
+    e.vel.y -= consts::GRAVITY * dt;
+    e.vel.y *= (-consts::AIR_DRAG_K * dt).exp();
+
+    let mut b = Aabb {
+        min: Vec3::new(e.pos.x - half[0], e.pos.y, e.pos.z - half[2]),
+        max: Vec3::new(
+            e.pos.x + half[0],
+            e.pos.y + half[1] * 2.0,
+            e.pos.z + half[2],
+        ),
+    };
+    let dx = e.vel.x * dt;
+    let dz = e.vel.z * dt;
+    let dy = e.vel.y * dt;
+    move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::X, dx);
+    move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Z, dz);
+    let was_falling = e.vel.y < 0.0;
+    let hit_y = move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Y, dy);
+    e.on_ground = hit_y && was_falling;
+}
+
 pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
     let dt = consts::FIXED_DT;
     let mut aabb = Aabb::from_player(player.pos);

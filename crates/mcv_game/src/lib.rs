@@ -6,7 +6,7 @@ pub mod physics;
 pub mod raycast;
 
 pub use interact::can_place_block;
-pub use physics::{move_axis, step, Aabb, Axis, StepInput};
+pub use physics::{move_axis, step, step_entity, Aabb, Axis, Entity, StepInput};
 pub use raycast::raycast;
 
 use glam::Vec3;

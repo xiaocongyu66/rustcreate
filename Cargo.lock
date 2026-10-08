@@ -1255,6 +1255,7 @@ dependencies = [
  "mcv_entity",
  "mcv_ffi",
  "mcv_game",
+ "mcv_item",
  "mcv_light",
  "mcv_mesher",
  "mcv_render",
