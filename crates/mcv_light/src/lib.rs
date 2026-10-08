@@ -66,12 +66,12 @@ pub const fn opacity(id: BlockId) -> u8 {
     }
 }
 
-/// Cached `light_emit` mirror of `mcv_core::BLOCKS` so seeding can index raw
-/// voxel id slices without bounds concerns.
-static BLOCKS_EMIT: [u8; 14] = {
-    let mut t = [0u8; 14];
+/// Cached `light_emit` mirror of `mcv_core::BLOCKS`（全 1171 块，含官方
+/// 93 个发光方块：火把/萤石/熔岩…id≥14 播种同样生效）。
+static BLOCKS_EMIT: [u8; mcv_core::BLOCKS.len()] = {
+    let mut t = [0u8; mcv_core::BLOCKS.len()];
     let mut i = 0;
-    while i < 14 {
+    while i < t.len() {
         t[i] = mcv_core::BLOCKS[i].light_emit;
         i += 1;
     }

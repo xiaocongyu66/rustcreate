@@ -26,8 +26,9 @@ fn mesh_counts_and_uv_bounds() {
     }
     let max_i = *m.indices.iter().max().unwrap() as usize;
     assert_eq!(max_i, m.verts.len() - 1, "索引应恰好覆盖全部顶点");
+    // 两个款式的切片共用一个索引缓冲：prev 跨款式连续
+    let mut prev = 0;
     for s in 0..SKIN_LAYERS as usize {
-        let mut prev = 0;
         for p in 0..PART_COUNT {
             let r = &m.slices[s][p];
             assert_eq!(r.len(), PART_INDEXES);

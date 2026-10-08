@@ -90,7 +90,6 @@ struct Face {
 /// 盒体定义（像素，MC Box/pivot 约定）。
 #[derive(Clone, Copy)]
 struct PartDef {
-    pivot: [f32; 3],
     box_min: [f32; 3],
     size: [f32; 3],
     faces: [Face; 6],
@@ -197,15 +196,8 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
 
     // uv_w/h/d：UV 展开区域尺寸。MC CubeDeformation 只撑大顶点、UV 区域
     // 仍按原始尺寸 —— overlay 必须传基础层尺寸。
-    let mk = |pivot: [f32; 3],
-              min: [f32; 3],
-              size: [f32; 3],
-              uv_whd: [f32; 3],
-              tu: f32,
-              tv: f32|
-     -> PartDef {
+    let mk = |min: [f32; 3], size: [f32; 3], uv_whd: [f32; 3], tu: f32, tv: f32| -> PartDef {
         PartDef {
-            pivot,
             box_min: min,
             size,
             faces: classic_faces(tu, tv, uv_whd[0], uv_whd[1], uv_whd[2]),
@@ -214,7 +206,6 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
     [
         // head：box(-4,-8,-4,8,8,8) pivot(0,0,0) tex(0,0)
         mk(
-            [0.0, 0.0, 0.0],
             [-4.0, -8.0, -4.0],
             [8.0, 8.0, 8.0],
             [8.0, 8.0, 8.0],
@@ -222,17 +213,9 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
             0.0,
         ),
         // hat：扩张 0.5，tex(32,0)，UV 区域仍是 8x8x8
-        mk(
-            [0.0, 0.0, 0.0],
-            hat_min,
-            hat_size,
-            [8.0, 8.0, 8.0],
-            32.0,
-            0.0,
-        ),
+        mk(hat_min, hat_size, [8.0, 8.0, 8.0], 32.0, 0.0),
         // body：box(-4,0,-2,8,12,4) tex(16,16)
         mk(
-            [0.0, 0.0, 0.0],
             [-4.0, 0.0, -2.0],
             [8.0, 12.0, 4.0],
             [8.0, 12.0, 4.0],
@@ -240,46 +223,17 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
             16.0,
         ),
         // jacket：tex(16,32)
-        mk([0.0, 0.0, 0.0], j_min, j_size, [8.0, 12.0, 4.0], 16.0, 32.0),
+        mk(j_min, j_size, [8.0, 12.0, 4.0], 16.0, 32.0),
         // right_arm：pivot(-5,2,0) tex(40,16)
-        mk(
-            [-5.0, 2.0, 0.0],
-            ra_min,
-            [aw, 12.0, 4.0],
-            [aw, 12.0, 4.0],
-            40.0,
-            16.0,
-        ),
+        mk(ra_min, [aw, 12.0, 4.0], [aw, 12.0, 4.0], 40.0, 16.0),
         // right_sleeve：tex(40,32)
-        mk(
-            [-5.0, 2.0, 0.0],
-            rs_min,
-            rs_size,
-            [aw, 12.0, 4.0],
-            40.0,
-            32.0,
-        ),
+        mk(rs_min, rs_size, [aw, 12.0, 4.0], 40.0, 32.0),
         // left_arm：pivot(5,2,0) tex(32,48)（PlayerModel 64x64 布局）
-        mk(
-            [5.0, 2.0, 0.0],
-            la_min,
-            [aw, 12.0, 4.0],
-            [aw, 12.0, 4.0],
-            32.0,
-            48.0,
-        ),
+        mk(la_min, [aw, 12.0, 4.0], [aw, 12.0, 4.0], 32.0, 48.0),
         // left_sleeve：tex(48,48)
-        mk(
-            [5.0, 2.0, 0.0],
-            ls_min,
-            ls_size,
-            [aw, 12.0, 4.0],
-            48.0,
-            48.0,
-        ),
+        mk(ls_min, ls_size, [aw, 12.0, 4.0], 48.0, 48.0),
         // right_leg：pivot(-1.9,12,0) box(-2,0,-2,4,12,4) tex(0,16)
         mk(
-            [-1.9, 12.0, 0.0],
             [-2.0, 0.0, -2.0],
             [4.0, 12.0, 4.0],
             [4.0, 12.0, 4.0],
@@ -287,17 +241,9 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
             16.0,
         ),
         // right_pants：tex(0,32)
-        mk(
-            [-1.9, 12.0, 0.0],
-            p_min,
-            p_size,
-            [4.0, 12.0, 4.0],
-            0.0,
-            32.0,
-        ),
+        mk(p_min, p_size, [4.0, 12.0, 4.0], 0.0, 32.0),
         // left_leg：pivot(1.9,12,0) tex(16,48)
         mk(
-            [1.9, 12.0, 0.0],
             [-2.0, 0.0, -2.0],
             [4.0, 12.0, 4.0],
             [4.0, 12.0, 4.0],
@@ -305,7 +251,7 @@ fn part_defs(slim: bool) -> [PartDef; PART_COUNT] {
             48.0,
         ),
         // left_pants：tex(0,48)
-        mk([1.9, 12.0, 0.0], p_min, p_size, [4.0, 12.0, 4.0], 0.0, 48.0),
+        mk(p_min, p_size, [4.0, 12.0, 4.0], 0.0, 48.0),
     ]
 }
 

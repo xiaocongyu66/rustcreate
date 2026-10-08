@@ -109,7 +109,7 @@ fn region_rejects_old_version() {
     let off = region.path();
     let mut file = std::fs::OpenOptions::new()
         .write(true)
-        .open(&off)
+        .open(off)
         .expect("reopen");
     file.seek(SeekFrom::Start(512 * 8)).expect("seek body");
     let mut record: Vec<u8> = Vec::new();

@@ -133,10 +133,11 @@ fn greedy_merges_row_of_four() {
 
     let buf = mesher.build(&full9(&c, &side), 0).unwrap();
     let verts = decode(&buf);
-    // stone top face (+Y, tex layer 4): one merged quad -> 4 vertices
+    // stone top face (+Y): one merged quad -> 4 vertices
+    let stone_top = mcv_core::BLOCKS[1].tiles[2];
     let top: Vec<_> = verts
         .iter()
-        .filter(|v| v.flags & 7 == 2 && v.tex == 4)
+        .filter(|v| v.flags & 7 == 2 && v.tex == stone_top)
         .collect();
     assert_eq!(top.len(), 4, "4x1 row top must merge into a single quad");
     for v in &top {

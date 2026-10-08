@@ -5,7 +5,7 @@
 use symphonia::core::audio::{AudioBufferRef, Signal};
 use symphonia::core::codecs::DecoderOptions;
 use symphonia::core::conv::IntoSample;
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -57,12 +57,8 @@ pub fn decode_to_stereo(bytes: Vec<u8>) -> Result<SoundData, AudioError> {
         .map_err(|e| AudioError::Decode(e.to_string()))?;
 
     let mut samples: Vec<f32> = Vec::new();
-    loop {
-        let packet = match format.next_packet() {
-            Ok(p) => p,
-            // EndOfStream(IoError) 或其它容器级错误:停止读取,保留已解出的部分。
-            Err(_) => break,
-        };
+    // EndOfStream(IoError) 或其它容器级错误:停止读取,保留已解出的部分。
+    while let Ok(packet) = format.next_packet() {
         if packet.track_id() != track_id {
             continue;
         }
