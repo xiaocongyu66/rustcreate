@@ -49,7 +49,6 @@ impl Camera {
             self.far * self.near / (self.near - self.far),
             0.0,
         ])
-        .transpose()
     }
 
     pub fn view_proj(&self) -> Mat4 {
