@@ -370,7 +370,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
         far: 512.0,
     };
     let empty_hud: &[HudQuad] = &[];
-    let frame = |cloud_on: bool| -> Vec<u8> {
+    let mut frame = |cloud_on: bool| -> Vec<u8> {
         let scene = Scene {
             camera: &camera,
             time: 0.0,
