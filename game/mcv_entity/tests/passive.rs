@@ -160,10 +160,10 @@ fn hurt_triggers_panic_sprint() {
     let mut panicked = false;
     for _ in 0..20 {
         step(&mut app);
-        if let Some(w) = app.world.read::<mcv_entity::WanderState>().get(e) {
-            if w.mode == PassiveMode::Panic {
-                panicked = true;
-            }
+        if let Some(w) = app.world.read::<mcv_entity::WanderState>().get(e)
+            && w.mode == PassiveMode::Panic
+        {
+            panicked = true;
         }
         let bodies = app.world.read::<mcv_entity::PhysBody>();
         for (_, b) in bodies.iter() {
