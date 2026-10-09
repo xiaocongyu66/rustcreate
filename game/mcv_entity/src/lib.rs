@@ -8,6 +8,7 @@ pub mod combat;
 pub mod components;
 pub mod defs;
 pub mod drops;
+pub mod items;
 pub mod spawner;
 
 pub use ai::{AiAction, Brain, MobAiTable, MobState, Percept, ai_table};
@@ -16,4 +17,8 @@ pub use components::{
 };
 pub use defs::{MOBS, MobDef, MobId};
 pub use drops::{DropEvent, death_drops};
+pub use items::{
+    DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, MERGE_DIST, PICKUP_DELAY, PICKUP_INFLATE,
+    item_physics_system, register_drop_components, spawn_item_drop,
+};
 pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};

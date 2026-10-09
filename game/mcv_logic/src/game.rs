@@ -258,9 +258,17 @@ impl GameRuntime {
             fall_y: None,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
+        mcv_entity::register_drop_components(&mut rt.mobs_app.world);
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
+        // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
+        // mob_ai 按 MobKind 过滤、掉落系统按 ItemDrop 过滤，互不触碰）。
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_physics",
+            mcv_entity::item_physics_system,
+        );
         rt
     }
 
@@ -762,6 +770,10 @@ impl GameRuntime {
             resources.insert(MobServices {
                 chunks: self.chunks.clone(),
                 player_pos: self.player.pos,
+            });
+            // 掉落物系统同快照（Arc 计数级克隆）。
+            resources.insert(mcv_entity::DropWorld {
+                chunks: self.chunks.clone(),
             });
             let mut ctx = mcv_ecs::SysCtx {
                 world,
