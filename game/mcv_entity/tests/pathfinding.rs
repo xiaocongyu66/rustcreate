@@ -35,13 +35,15 @@ impl Grid {
         }
     }
 
-    /// 全宽沟槽：x0..=x1 列的地板往下挖 depth 层（站立面降到 -depth）。
+    /// 沟槽：x0..=x1 列的地板往下挖 depth 层并垫沟底（站立面降到
+    /// -depth，脚下实心在 -depth-1）。
     fn trench(&mut self, x0: i32, x1: i32, depth: i32) {
         for x in x0..=x1 {
             for z in -24..24 {
                 for y in 0..depth {
                     self.solid.remove(&(x, -1 - y, z));
                 }
+                self.solid.insert((x, -depth - 1, z));
             }
         }
     }
