@@ -48,6 +48,17 @@ pub struct SpawnRule {
     pub hostile: bool,
 }
 
+/// MobCategory.java:7 — MONSTER despawnDistance=128（`>128²` 立即移除，
+/// Mob.java:662-666）。
+pub const DESPAWN_DIST: i32 = 128;
+/// MobCategory.java:21/57 — noDespawnDistance=32（`<32²` 清 idle 账本；
+/// idle>600 且 1/800 移除只在 `>32²` 生效，Mob.java:668-674）。
+/// 注意：派单/审计报告写 24..32，源码实况为 32（`getNoDespawnDistance()`
+/// 恒返 32，无 24 一说）。
+pub const NO_DESPAWN_DIST: i32 = 32;
+/// Animal.java:118-120 — 被动 `getRawBrightness(pos, 0) > 8` 才可生成。
+pub const ANIMAL_MIN_RAW_BRIGHTNESS: u8 = 8;
+
 /// 检查一个候选位置能否刷怪（纯函数，便于测试）。
 pub fn light_allows_hostile(sky_light: u8, block_light: u8, rng: &mut impl FnMut() -> u32) -> bool {
     // Monster.java:79-81: if (sky > random.nextInt(32)) return false
@@ -82,6 +93,21 @@ pub fn should_despawn(
         return false;
     }
     idle_ticks > 600 && rng().is_multiple_of(800)
+}
+
+/// noActionTime 每 tick 增量：基础 +1（Mob.java:683 serverAiStep），敌对
+/// 在亮处（magic light br>0.5）额外 +2（Monster.java:50-54
+/// updateNoActionTime，每 tick aiStep 调用）。
+pub fn no_action_inc(hostile: bool, br: f32) -> u64 {
+    if hostile && br > 0.5 { 3 } else { 1 }
+}
+
+/// `getRawBrightness(pos, skyDarken)`（LevelReader.java:167-175）：
+/// `max(sky − skyDarken, block)`。skyDarken 来自 `Level.java:736`
+/// `15 − SKY_LIGHT_LEVEL`（Timelines.java:81-84 白天 15/夜 4 → darken
+/// 0..11；由接线侧按时间提供）。
+pub fn raw_brightness(sky: u8, block: u8, sky_darken: u8) -> u8 {
+    sky.saturating_sub(sky_darken).max(block)
 }
 
 /// 组内候选位置游走：每步 x/z 各 next(6)-next(6)（:164-190）。

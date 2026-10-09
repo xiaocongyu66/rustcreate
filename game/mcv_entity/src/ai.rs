@@ -68,7 +68,7 @@ pub const LEAP_MIN_DIST: f32 = 2.0;
 pub const LEAP_MAX_DIST: f32 = 4.0;
 /// AvoidEntityGoal 距离（猫/豹猫/狼，Creeper.java:67-68、AbstractSkeleton.java:79）。
 pub const AVOID_DIST: f32 = 6.0;
-/// Mob.java:497 — igniteForSeconds(8) = 160 tick 火。
+/// Mob.java:494 — igniteForSeconds(8)；Entity.java:630-632 floor(8×20)=160 tick。
 pub const BURN_TICKS: u32 = 160;
 
 /// 26.1 新爆炸伤害曲线（ExplosionDamageCalculator.getEntityDamageAmount）：
@@ -212,7 +212,7 @@ pub enum AiAction {
     Detonate {
         radius: f32,
     },
-    /// 阳光点燃（ticks=160，Mob.java:497）。
+    /// 阳光点燃（ticks=160，Mob.java:494 → Entity.java:630-632）。
     SetOnFire {
         ticks: u32,
     },

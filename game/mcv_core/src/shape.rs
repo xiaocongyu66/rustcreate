@@ -7,11 +7,14 @@
 
 /// 方块形状（值写入 `BlockDef::shape` / C++ `BlockInfo::shape`）。
 ///
-/// 本枚举的 `shape` 位是遮光判据的输入之一：`mcv_light::opacity` 按
-/// 「opaque 整方块=15 / 形状非整立方=0 / 形状整立方但非实心=1」移植 26.1
-/// `getLightDampening`（`BlockBehaviour.java:305-310`，`shape!=0` 即
-/// `propagatesSkylightDown` 触发条件，形状感知遮光 `useShapeForLightOcclusion`
-/// 的“半影”细节登记于 mcv_light，见该处 KNOWN-DIVERGENCE 注释）。
+/// 本枚举的 `shape` 位与遮光表同源不同用：遮光唯一数据源是
+/// `mcv_core::OPACITY`（`gen_opacity` 三段规则 + 显式例外，见该处
+/// file:line），其规则④按生成表 `model_kind`（非纯立方渲染=1）判 0，
+/// 与本枚举的非立方分类覆盖同一批方块（板/梯/栅栏/火把/花草），但
+/// 玻璃类例外走 `TransparentBlock.java:34-37`（damp=0），与形状位无关。
+/// 改本表不自动改遮光；两侧同改须各自核 `src-26.1`。形状感知遮光
+/// `useShapeForLightOcclusion` 的“半影”细节登记于 mcv_light，见该处
+/// KNOWN-DIVERGENCE 注释。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Shape {

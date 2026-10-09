@@ -12,7 +12,10 @@ use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
-use mcv_entity::{Health, LastHurt, MobId, MobKind, MobTicks, PhysBody, Yaw, spawn_mob};
+use mcv_entity::{
+    AiAction, Health, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobTicks, PhysBody,
+    Yaw, spawn_mob,
+};
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
@@ -122,6 +125,141 @@ impl VoxelAccess for WorldView<'_> {
 
     fn chunk_loaded(&self, c: ChunkPos) -> bool {
         self.chunks.contains_key(&c)
+    }
+}
+
+/// 边号 → 相邻区块方向：0=+X 1=-X 2=+Z 3=-Z（与 mcv_light 的边编码一致）。
+fn side_delta(side: u8) -> (i32, i32) {
+    match side {
+        0 => (1, 0),
+        1 => (-1, 0),
+        2 => (0, 1),
+        _ => (0, -1),
+    }
+}
+
+/// C1 光照接线：place/destroy 共用的方块编辑入口。26.1 参照
+/// `Level.setBlock` → `LevelLightEngine.checkBlock` → `LightEngine.
+/// runLightUpdates`（先 decrease 后 increase 两阶段，LightEngine.java:
+/// 147-148）；调用方必须已经写好体素并标好 MESH/SAVE 脏。步骤：
+/// 1. 重算 heightmap——用 worldgen 唯一生产者 [`mcv_worldgen::
+///    recompute_heightmap`]（对生成期方块与 C++ terrain pass 3 逐列一致，
+///    并推广到玩家放置的透明方块；光照不读 heightmap，见
+///    `mcv_light::init` 文档——它是出生/刷怪用的地表高）。
+/// 2. 区块光照已初始化（≥LightLocalReady）时调 [`mcv_light::update_block`]
+///    做增量重光照；未初始化时直接返回，主循环稍后的 `init` 会全量覆盖。
+/// 3. 光发生变化的边界交给 [`sync_light_edges`] 跨区块派发，光变块的
+///    MESH 脏在派发路径内标好（网格顶点烘焙光照字节）。
+fn relight_block_edit(
+    chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
+    target: BlockPos,
+    old_id: u16,
+    new_id: u16,
+) {
+    let cpos = target.chunk();
+    let Some(handle) = chunks.get(&cpos) else {
+        return;
+    };
+    {
+        let ids: Vec<u16> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
+    }
+    if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
+        return;
+    }
+    let [lx, ly, lz] = target.local();
+    let mut seeds = Vec::new();
+    let mask = {
+        let vg = handle.voxels.read().unwrap();
+        let mut lg = handle.light.write().unwrap();
+        let hg = handle.heightmap.read().unwrap();
+        let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+        let mut view = mcv_light::LightChunk {
+            voxels,
+            light: &mut lg[..],
+            heightmap: &hg[..],
+        };
+        mcv_light::update_block(
+            &mut view, lx as u32, ly as u32, lz as u32, old_id, new_id, &mut seeds,
+        )
+    };
+    // BorderSeed 是格级差分记录；跨区块协议以整条边快照
+    // （extract_edge/apply_edge）为单位，脏面掩码已足够驱动派发。
+    let _ = seeds;
+    let mut queue: Vec<(ChunkPos, u8)> = Vec::new();
+    for side in 0..4u8 {
+        if mask & (1 << side) != 0 {
+            queue.push((cpos, side));
+        }
+    }
+    sync_light_edges(chunks, &mut queue);
+}
+
+/// 跨区块光照边派发队列（C1：原 border_synced 只做记账，光从不真正过界）。
+/// 每步取源区块 `side` 的整条边快照，先 REMOVE（撤回邻块不再被该边证成的
+/// 光）再 ADD（吸收该边新增的光）——等价 vanilla 跨 section 的
+/// decrease→increase 两阶段（LightEngine.java:147-148，由 setBlock 的
+/// checkNode 驱动）。接收块光变 → 标 MESH 脏 + 其另三面新脏回队级联。
+/// `apply_edge` 从不回报刚同步的边（mcv_light::diff_edges 的 exclude 机制），
+/// 光级别有限，级联自然收敛；步数上限只是防御性兜底。
+fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Vec<(ChunkPos, u8)>) {
+    let mut steps = 0usize;
+    while let Some((pos, side)) = queue.pop() {
+        if steps >= 512 {
+            log::warn!(
+                "light edge sync budget exhausted, {} edge task(s) dropped",
+                queue.len()
+            );
+            break;
+        }
+        steps += 1;
+        let (dx, dz) = side_delta(side);
+        let npos = ChunkPos::new(pos.x + dx, pos.z + dz);
+        let (Some(from), Some(to)) = (chunks.get(&pos), chunks.get(&npos)) else {
+            continue;
+        };
+        if (to.stage() as u8) < (Stage::LightLocalReady as u8) {
+            // 未初始化邻块：其 init 会本地播种，就绪时由 border_synced 的
+            // 成对同步补收这条边。
+            continue;
+        }
+        let obit = GameRuntime::opposite_side(side);
+        let edge = {
+            let vg = from.voxels.read().unwrap();
+            let mut lg = from.light.write().unwrap();
+            let hg = from.heightmap.read().unwrap();
+            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let view = mcv_light::LightChunk {
+                voxels,
+                light: &mut lg[..],
+                heightmap: &hg[..],
+            };
+            mcv_light::extract_edge(&view, side)
+        };
+        // REMOVE(1) 先、ADD(0) 后：边变暗时撤无据光、变亮时喂新光；
+        // 混合变化两轮都收敛到"以该边为界的正当亮度"。
+        for op in [1u8, 0u8] {
+            let dirty = {
+                let vg = to.voxels.read().unwrap();
+                let mut lg = to.light.write().unwrap();
+                let hg = to.heightmap.read().unwrap();
+                let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+                let mut view = mcv_light::LightChunk {
+                    voxels,
+                    light: &mut lg[..],
+                    heightmap: &hg[..],
+                };
+                mcv_light::apply_edge(&mut view, &edge, obit, op)
+            };
+            if dirty != 0 {
+                to.mark_dirty(mcv_core::dirty::MESH);
+                for bit in 0..4u8 {
+                    if dirty & (1 << bit) != 0 {
+                        queue.push((npos, bit));
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -442,6 +580,8 @@ impl GameRuntime {
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
+        rt.mobs_app
+            .add_system(mcv_ecs::Stage::Fixed, "mob_arrows", arrow_system);
         // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
         // mob_ai 按 MobKind 过滤、掉落系统按 ItemDrop 过滤，互不触碰）。
         // TODO 渲染：mcv_render Scene 目前只有地形/HUD/玩家模型通路，怪物
@@ -473,10 +613,16 @@ impl GameRuntime {
             return;
         }
         p.health -= amount;
-        p.invulnerable = 10;
+        // 受击无敌帧 20 tick = 1 s（LivingEntity.java:1206 `invulnerableTime
+        // = 20`，每 tick 递减 LivingEntity.java:452-453；>10 时的超额伤害
+        // 差值门 LivingEntity.java:1196-1200 未接 → KNOWN-DIVERGENCE：
+        // 无敌期内后续伤害全拒而非按差值放行）。
+        p.invulnerable = 20;
         if let Some(src) = from {
             let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
-            let kb = mcv_entity::combat::knockback_velocity(p.vel, p.on_ground, 0.0, 0.5, push);
+            // victim 侧受击击退 0.4（LivingEntity.java:1238 `knockback(0.4F,
+            // ...)`；mob 攻方 ATTACK_KNOCKBACK 属性默认 0，无额外加成）。
+            let kb = mcv_entity::combat::knockback_velocity(p.vel, p.on_ground, 0.0, 0.4, push);
             p.vel = kb;
         }
         if p.health <= 0.0 {
@@ -729,6 +875,9 @@ impl GameRuntime {
         for c in far {
             self.save_dirty(Some(c));
             self.chunks.remove(&c);
+            // 卸载即 forget：border_synced 记账必须同步清理，否则区块重进
+            // 视野时会跳过与新邻块的成对边同步（C1 配套清理）。
+            self.border_synced.remove(&c);
             self.render_chunks
                 .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
         }
@@ -811,7 +960,10 @@ impl GameRuntime {
             light_budget -= 1;
         }
 
-        // border sync: mark pairs once both ends are LightLocalReady
+        // border sync: mark pairs once both ends are LightLocalReady。
+        // C1：新成对（两端都已本地布光）时真正交换边快照——init 只做块内
+        // 播种，跨界的火把/阴影在此对齐（双向各发一条边，REMOVE+ADD 两相）。
+        let mut pair_edges: Vec<(ChunkPos, u8)> = Vec::new();
         for pos in &keys {
             let handle = self.chunks[pos].clone();
             if handle.stage() != Stage::LightLocalReady {
@@ -828,7 +980,10 @@ impl GameRuntime {
                         .is_some_and(|n| (n.stage() as u8) >= (Stage::LightLocalReady as u8));
                     if ready {
                         cur |= 1 << bit;
-                        marks.push((npos, Self::opposite_side(bit)));
+                        let obit = Self::opposite_side(bit);
+                        marks.push((npos, obit));
+                        pair_edges.push((*pos, bit));
+                        pair_edges.push((npos, obit));
                     }
                 }
             }
@@ -838,6 +993,7 @@ impl GameRuntime {
                 *ns |= 1 << obit;
             }
         }
+        sync_light_edges(&self.chunks, &mut pair_edges);
 
         // mesh chunks: 3x3 loaded, center lit, dirty or missing
         let mut remesh_budget = 2;
@@ -990,12 +1146,17 @@ impl GameRuntime {
         }
         self.attack_ticker = (self.attack_ticker + dt).min(20.0);
         self.step_mining(dt);
-        self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
 
         // ---- natural spawning (budgeted every 20 ticks) ----
-        if self.spawn_cooldown == 0 {
-            self.spawn_cooldown = 20;
-            self.try_natural_spawn();
+        // 预算按 20 Hz tick 走，不按 60 Hz 步——旧写法每 20 步 = 1/3 s 刷一
+        // 轮，节奏 3× 过快（审计 C-1；轮次密度 vs 原版每 tick 一轮为既有
+        // KNOWN-DIVERGENCE M-3）。
+        if self.on_tick {
+            self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
+            if self.spawn_cooldown == 0 {
+                self.spawn_cooldown = 20;
+                self.try_natural_spawn();
+            }
         }
 
         // ---- mob AI + physics（ECS 调度：固定步驱动一次 Fixed 阶段）----
@@ -1014,6 +1175,10 @@ impl GameRuntime {
             resources.insert(MobServices {
                 chunks: self.chunks.clone(),
                 player_pos: self.player.pos,
+                on_tick: self.on_tick,
+                game_ticks: self.game_ticks,
+                monsters_burn: monsters_burn(self.time_ticks),
+                sky_darken: sky_darken(self.time_ticks),
             });
             // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
@@ -1031,6 +1196,22 @@ impl GameRuntime {
         let hits: Vec<MobMeleeHit> = self.mobs_app.events.channel::<MobMeleeHit>().take();
         for h in hits {
             self.hurt_player(h.damage.max(1.0), Some(h.src));
+        }
+        let arrows: Vec<MobArrowHit> = self.mobs_app.events.channel::<MobArrowHit>().take();
+        for h in arrows {
+            self.hurt_player(h.damage.max(1.0), Some(h.src));
+        }
+        let blasts: Vec<MobExplosionHit> = self.mobs_app.events.channel::<MobExplosionHit>().take();
+        for b in blasts {
+            // ExplosionDamageCalculator 不在反编译树（NOTES-mobs.md:94，无法
+            // 逐值核对）：exposure=1.0（未做方块遮挡逐点采样 →
+            // KNOWN-DIVERGENCE），距离衰减曲线用 ai::explosion_damage
+            // （((p²+p)/2)·7·2R+1，26.1 已知曲线，ai.rs:77-84）。
+            let pc = self.player.pos + Vec3::new(0.0, 1.0, 0.0);
+            let dmg = mcv_entity::ai::explosion_damage((pc - b.center).length(), b.radius, 1.0);
+            if dmg > 0.0 {
+                self.hurt_player(dmg, Some(b.center));
+            }
         }
         // 掉落物拾取结算：入栏走 Hotbar::add（give 路径唯一），满栏剩余留地。
         mcv_entity::settle_pickups(
@@ -1131,7 +1312,12 @@ impl GameRuntime {
                 }
             }
             // ---- 生存统计（26.1 和平难度规则，粗化 exhaustion）----
-            self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
+            // 无敌帧按 20 Hz tick 递减（LivingEntity.java:452-453 每 tick
+            // 减 1，非每渲染步）——旧写法 60 Hz 步减 1 使 10 点无敌只剩
+            // 1/6 s（审计 M-7 的 3× 失真，与怪侧同一 C-1 换算）。
+            if self.on_tick {
+                self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
+            }
             if self.mode != GameMode::Creative {
                 let p = &mut self.player;
                 p.exhaustion += moved * if self.input.sprint { 0.02 } else { 0.01 };
@@ -1165,35 +1351,59 @@ impl GameRuntime {
         }
     }
 
-    fn day_factor(&self) -> f32 {
-        mcv_render::sun_state(self.time_ticks).1
-    }
-
-    /// NaturalSpawner-lite: a few random loaded chunks per budget window,
-    /// 3 groups × up to 4 walk positions, cap + distance + light gates.
+    /// NaturalSpawner-lite（预算密度为既有 KNOWN-DIVERGENCE M-3）：每 20
+    /// tick 抽 2 个已点亮区块，每块 3 组 × ≤4 步游走。审计接线点：
+    /// - 候选 y 在 [0, surface] 均匀随机（NaturalSpawner.java:343-349
+    ///   getRandomPosWithin `randomBetweenInclusive(minY, surface+1)`——
+    ///   洞穴是主怪源，旧版只刷地表 y；审计 N-2）。
+    /// - 亮度三段门 `spawner::is_dark_enough`（Monster.java:78-91）：gate1
+    ///   **原始天光** vs rand(32)；gate2 方块光 > 0 拒（overworld limit=0）；
+    ///   gate3 `max(sky − skyDarken, block)` ≤ rand(8)（LevelReader.java:167
+    ///   -175 + Level.java:736）——旧版 `sky.min(4)` 三道门共用 + gate3 恒
+    ///   拒的通道错误已修（审计 M-2）。
+    /// - 被动走独立通道（Animal.java:111-120）：脚下草地 + `raw(pos,0) > 8`
+    ///   （与敌对暗度门互不复用）+ CREATURE cap 10——旧白天分支恒要求
+    ///   surface>130 的死分支已删（审计 N-4）。
+    /// - 组内成批（NaturalSpawner.java:197-200 `min + next(1+max−min)`）：
+    ///   组类型首只固定，逐只复检；组大小数值在生物群系 spawner JSON（未
+    ///   随反编译提取）→ 用库默认 1..=4，KNOWN-DIVERGENCE（审计 N-3）。
+    /// - 落地 y = 候选格本身（`mob.snapTo(xx, yStart, zz)`，:211；旧版
+    ///   surface+1 悬空 1 格，审计 M-4）。
+    /// - 种类池补 spider（审计 M-5；权重 JSON 未提取 → 均匀，
+    ///   KNOWN-DIVERGENCE）。
     fn try_natural_spawn(&mut self) {
         if self.chunks.is_empty() {
             return;
         }
-        let monster_cap = spawner::SPAWN_CAPS
-            .iter()
-            .find(|(c, _, _, _)| *c == spawner::SpawnCategory::Monster)
-            .map(|(_, cap, _, _)| *cap)
-            .unwrap_or(0);
-        let monsters = self
-            .mobs_app
-            .world
-            .read::<MobKind>()
-            .iter()
-            .filter(|(_, k)| k.0.def().hostile)
-            .count() as u32;
-        if monsters >= monster_cap {
+        let cap_of = |cat| -> u32 {
+            spawner::SPAWN_CAPS
+                .iter()
+                .find(|(c, ..)| *c == cat)
+                .map(|(_, cap, ..)| *cap)
+                .unwrap_or(0)
+        };
+        let (mut monsters, mut animals) = (0u32, 0u32);
+        {
+            let kinds = self.mobs_app.world.read::<MobKind>();
+            for (_, k) in kinds.iter() {
+                if k.0.def().hostile {
+                    monsters += 1;
+                } else {
+                    animals += 1;
+                }
+            }
+        }
+        let monster_cap = cap_of(spawner::SpawnCategory::Monster);
+        let animal_cap = cap_of(spawner::SpawnCategory::Creature);
+        if monsters >= monster_cap && animals >= animal_cap {
             return;
         }
         let center = (
             (self.player.pos.x / 16.0).floor() as i32,
             (self.player.pos.z / 16.0).floor() as i32,
         );
+        let cfg = spawner::SpawnConfig::default();
+        let darken = sky_darken(self.time_ticks);
         for _ in 0..2 {
             // random loaded chunk within spawn range
             let dx = (fast_rand() % (2 * spawner::SPAWN_RANGE_CHUNKS as u32 + 1)) as i32
@@ -1207,54 +1417,126 @@ impl GameRuntime {
             if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
                 continue;
             }
-            let spawn_x = (fast_rand() % 16) as i32 + pos.x * 16;
-            let spawn_z = (fast_rand() % 16) as i32 + pos.z * 16;
+            let start_x = (fast_rand() % 16) as i32 + pos.x * 16;
+            let start_z = (fast_rand() % 16) as i32 + pos.z * 16;
+            // 组起点柱面的地表 y（yStart 上限）——原版 getRandomPosWithin 用
+            // WORLD_SURFACE+1（NaturalSpawner.java:347），此处取起始柱面。
+            let start_surface = self.surface_at(start_x, start_z);
+            if start_surface == 0 || start_surface > 250 {
+                continue;
+            }
             let mut rng = spawn_rng();
             for _ in 0..spawner::GROUPS_PER_CHUNK {
-                let mut p = glam::Vec3::new(spawn_x as f32, 0.0, spawn_z as f32);
+                // yStart 组内固定、每步只抖动 x/z（NaturalSpawner.java:169/180
+                // -182：`int yStart = start.getY()` 于组前，walk 只改 x/z）——
+                // y 均匀 [0, surface]（:343-349 randomBetweenInclusive），多数
+                // 步落不到实心面被拒（原版同款低成功率 = 洞穴/地下主怪源）。
+                let y_start = (rng() % (start_surface as u32 + 1)) as i32;
+                let mut p = glam::Vec3::new(start_x as f32, y_start as f32, start_z as f32);
+                // 组内类型首次成功后固定（NaturalSpawner.java:191-200）。
+                let mut kind: Option<MobId> = None;
+                let mut want = 0usize;
+                let mut got = 0usize;
                 for _ in 0..spawner::ATTEMPTS_PER_GROUP {
+                    if want != 0 && got >= want {
+                        break;
+                    }
                     p = spawner::group_walk(p, &mut rng);
-                    let dist_sqr = (self.player.pos - p).length_squared();
-                    if dist_sqr < spawner::MIN_PLAYER_DIST_SQR {
-                        continue;
-                    }
-                    let block_pos = BlockPos::new(p.x as i32, 0, p.z as i32);
-                    let cx = block_pos.chunk();
-                    let Some(h) = self.chunks.get(&cx) else {
+                    let gx = p.x.floor() as i32;
+                    let gz = p.z.floor() as i32;
+                    let cell = BlockPos::new(gx, y_start, gz);
+                    let Some(h) = self.chunks.get(&cell.chunk()) else {
                         continue;
                     };
-                    let [lx, _, lz] = block_pos.local();
-                    let surface = h.heightmap.read().unwrap()[(lz << 4) | lx];
-                    if surface == 0 || surface > 250 {
+                    if (h.stage() as u8) < (Stage::LightLocalReady as u8) {
                         continue;
                     }
-                    // find a dark spot near the surface column
-                    let y = f32::from(surface) + 1.0;
-                    let cell = BlockPos::new(p.x as i32, surface as i32, p.z as i32);
-                    let [lxc, lyc, lzc] = cell.local();
-                    let light_byte = h.light.read().unwrap()[lyc << 8 | lzc << 4 | lxc];
-                    let sky = light_byte >> 4;
-                    let blk = light_byte & 0xF;
-                    let night = self.day_factor() < 0.4;
-                    let dark_ok = if night {
-                        spawner::light_allows_hostile(sky.min(4), blk, &mut rng)
-                    } else {
-                        spawner::light_allows_hostile(sky, blk, &mut rng) && surface > 130
-                    };
-                    if !dark_ok {
+                    let center = glam::Vec3::new(gx as f32 + 0.5, y_start as f32, gz as f32 + 0.5);
+                    let dist_sqr = (self.player.pos - center).length_squared();
+                    // isRightDistanceToPlayerAndSpawnPoint（NaturalSpawner.java
+                    // :223-237）：24 内 / 128 外拒（出生点 24 内拒 = respawn
+                    // 系统未接线，TODO）。
+                    if dist_sqr <= spawner::MIN_PLAYER_DIST_SQR
+                        || dist_sqr > spawner::MAX_SPAWN_DIST * spawner::MAX_SPAWN_DIST
+                    {
                         continue;
                     }
-                    let id = if night || surface > 130 {
-                        [MobId::ZOMBIE, MobId::SKELETON, MobId::CREEPER][(rng() as usize) % 3]
-                    } else {
-                        [MobId::COW, MobId::PIG, MobId::SHEEP][(rng() as usize) % 3]
-                    };
-                    p.y = y;
-                    spawn_mob(&mut self.mobs_app.world, id, p);
-                    break;
+                    // ON_GROUND：本格 + 头顶非碰撞、下方实心（SpawnPlacements
+                    // .ON_GROUND，isValidEmptySpawnBlock 近似）。不中即拒该步
+                    // （原版不在任意 yStart 上扫描，低命中率是设计）。
+                    if !self.standable(cell) {
+                        continue;
+                    }
+                    let (sky, blk) = chunk_light(&self.chunks, cell);
+                    // 敌对通道：三段暗度门（gate1 原始天光，gate3 扣 skyDarken）。
+                    let raw = spawner::raw_brightness(sky, blk, darken);
+                    if monsters < monster_cap
+                        && spawner::is_dark_enough(sky, blk, raw, &cfg, &mut rng)
+                    {
+                        if kind.is_none() {
+                            kind = Some(
+                                [
+                                    MobId::ZOMBIE,
+                                    MobId::SKELETON,
+                                    MobId::CREEPER,
+                                    MobId::SPIDER,
+                                ][(rng() as usize) % 4],
+                            );
+                            want = cfg.group_min
+                                + (rng() as usize) % (cfg.group_max - cfg.group_min + 1);
+                        }
+                        spawn_mob(&mut self.mobs_app.world, kind.unwrap(), center);
+                        monsters += 1;
+                        got += 1;
+                        continue;
+                    }
+                    // 被动通道（Animal.java:111-120）：地表草地（tag
+                    // ANIMALS_SPAWNABLE_ON 的代表成员 grass_block：本引擎
+                    // id 3，含雪覆形态 id 11；tag JSON 未提取）+ 亮处 raw>8
+                    // （不扣 skyDarken：原版 getRawBrightness(pos, 0)）。
+                    let below = BlockPos::new(cell.x, cell.y - 1, cell.z);
+                    let grass = matches!(self.block_at(below).0, 3 | 11);
+                    if kind.is_none()
+                        && animals < animal_cap
+                        && grass
+                        && spawner::raw_brightness(sky, blk, 0) > spawner::ANIMAL_MIN_RAW_BRIGHTNESS
+                    {
+                        kind = Some([MobId::COW, MobId::PIG, MobId::SHEEP][(rng() as usize) % 3]);
+                        want =
+                            cfg.group_min + (rng() as usize) % (cfg.group_max - cfg.group_min + 1);
+                        spawn_mob(&mut self.mobs_app.world, kind.unwrap(), center);
+                        animals += 1;
+                        got += 1;
+                    }
                 }
             }
         }
+    }
+
+    /// 柱面地表 y（heightmap：首空格 y，mcv_worldgen 约定）；缺区块返回 0。
+    fn surface_at(&self, x: i32, z: i32) -> i32 {
+        let Some(h) = self.chunks.get(&BlockPos::new(x, 0, z).chunk()) else {
+            return 0;
+        };
+        let [lx, _, lz] = BlockPos::new(x, 0, z).local();
+        i32::from(h.heightmap.read().unwrap()[(lz << 4) | lx])
+    }
+
+    /// 方块查询（未加载 = 实心石，生成侧取保守值）。
+    fn block_at(&self, p: BlockPos) -> BlockId {
+        WorldView {
+            chunks: &self.chunks,
+        }
+        .block(p)
+    }
+
+    /// ON_GROUND 可站立判定：下方实心 + 本格与头顶空气（2 格净空，
+    /// SpawnPlacements ON_GROUND 语义的 AABB 近似）。
+    fn standable(&self, p: BlockPos) -> bool {
+        let below = self.block_at(BlockPos::new(p.x, p.y - 1, p.z)).def().solid;
+        let here = !self.block_at(p).def().solid;
+        let above = !self.block_at(BlockPos::new(p.x, p.y + 1, p.z)).def().solid;
+        below && here && above
     }
 
     /// 左键按下入口（桌面鼠标/触摸按下边沿共用）：先攻准星下的 mob，
@@ -1334,12 +1616,26 @@ impl GameRuntime {
                         0,
                     );
                     struck = hurt.is_some();
+                    if struck {
+                        // 受击索敌输入（HurtByTargetGoal 等价，无需视线）。
+                        tk.hurt_flag = true;
+                    }
                     // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
                     if struck && hp.0 <= 0.0 {
                         // 带上 defs::MobKind 枚举（death_drops 按种类查 loot）。
                         slain = Some((target, def.xp, def.kind));
                     }
                 }
+            }
+            // mob 受击击退（LivingEntity.java:1238 `knockback(0.4F, ...)`
+            // victim 侧；combat::knockback_velocity 公式已核实但运行时从未
+            // 调用——combat 审计"玩家命中 mob 无击退"）。
+            if struck
+                && slain.is_none()
+                && let Some(b) = self.mobs_app.world.write::<PhysBody>().get_mut(target)
+            {
+                let dir = Vec3::new(b.pos.x - eye.x, 0.0, b.pos.z - eye.z);
+                b.vel = combat::knockback_velocity(b.vel, b.on_ground, 0.0, 0.4, dir);
             }
             if let Some((e, xp, kind)) = slain {
                 // 击杀掉落（26.1 LivingEntity.die → loot）：despawn 前取位姿。
@@ -1488,6 +1784,8 @@ impl GameRuntime {
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
+            let idx = ly << 8 | lz << 4 | lx;
+            let old_id = handle.voxels.read().unwrap()[idx];
             // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
             // 网格与碰撞按 mcv_core::BlockId::state 读取。
             let st = placement_state(
@@ -1496,8 +1794,11 @@ impl GameRuntime {
                 self.input.sneak,
                 self.player.yaw,
             );
-            handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id.with_state(st);
+            handle.voxels.write().unwrap()[idx] = new_id.with_state(st);
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+            // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
+            //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
+            relight_block_edit(&self.chunks, target, old_id.0, new_id.0);
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
                 self.hotbar.take_one(self.player.sel_slot);
@@ -1530,6 +1831,9 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
+        // heightmap 维护（26.1 destroy → checkBlock）。
+        relight_block_edit(&self.chunks, target, old.0, 0);
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
@@ -2100,25 +2404,78 @@ impl GameRuntime {
 }
 
 /// mob AI 系统的单步只读快照：区块表克隆（物理步进的地形）+ 玩家位姿
-/// （追踪目标）。每固定步 `insert` 进 Resources——克隆只是加 Arc 计数，
-/// 体素/光照数据仍与原表共享。
+/// （追踪目标）+ **20 Hz tick 上下文**——ECS 系统拿不到 GameRuntime，
+/// tick 语义（20 tick/s）必须经 Resources 传入（审计 C-1 的接线面）。
+/// 每固定步 `insert` 进 Resources——克隆只是加 Arc 计数，体素/光照数据
+/// 仍与原表共享。
 #[derive(Clone)]
-struct MobServices {
-    chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
-    player_pos: Vec3,
+pub struct MobServices {
+    pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    pub player_pos: Vec3,
+    /// 本固定步是否跨过 20 Hz tick 边界（[`GameRuntime::on_tick`] 快照）：
+    /// 所有 tick 语义计时器（无敌帧 / noActionTime / 燃烧 / AI 决策 /
+    /// 箭矢推进）只在此为真时 +1，60 Hz 步只跑物理。
+    pub on_tick: bool,
+    /// 单调 20 Hz 计数快照（[`GameRuntime::game_ticks`]）。
+    pub game_ticks: u64,
+    /// 白天（EnvironmentAttributes.MONSTERS_BURN，Timelines.java:157）——
+    /// 亡灵白天直晒燃烧的判据。
+    pub monsters_burn: bool,
+    /// 当前 skyDarken = 15 − SKY_LIGHT_LEVEL（Level.java:736，关键帧
+    /// Timelines.java:80-85）——magic light / 亮度门读天光前必须扣减
+    /// （LevelReader.java:163-170）。
+    pub sky_darken: u8,
 }
 
 /// 近战命中事件（信号）：AI 系统发射，GameRuntime 在固定步末 drain 后结算
 /// 玩家伤害——系统与玩家状态之间不共享可变借用。
 #[derive(Clone, Copy)]
-struct MobMeleeHit {
-    src: Vec3,
-    damage: f32,
+pub struct MobMeleeHit {
+    pub src: Vec3,
+    pub damage: f32,
 }
 
-/// mob AI + 物理固定步系统：一次取齐全部表视图跑 for_each；结构性变更
-/// （死亡 despawn）走延迟命令，命中走事件。逻辑与原内联版一一对应。
-fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
+/// 箭矢命中玩家事件（结算同近战：走 hurt_player）。
+#[derive(Clone, Copy)]
+pub struct MobArrowHit {
+    pub src: Vec3,
+    pub damage: f32,
+}
+
+/// creeper 引爆事件：AI 发信号，GameRuntime 按距离衰减结算玩家伤害
+/// 并移除本体（爆炸会改方块 → 等爆炸系统完整实现后补，TODO）。
+#[derive(Clone, Copy)]
+pub struct MobExplosionHit {
+    pub center: Vec3,
+    pub radius: f32,
+}
+
+/// 区块光照表读取 `(sky, block)`（打包字节：高 4 位天光、低 4 位方块光；
+/// 与 [`GameRuntime::light_at`] 的 (block, sky) 返回序相反，mob 域统一
+/// (sky, block) 以对齐 Java LightLayer.SKY/BLOCK 顺序）。
+/// 未加载/未点亮列按全黑 (0,0)——燃烧/刷怪侧取保守值。
+fn chunk_light(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, p: BlockPos) -> (u8, u8) {
+    let Some(h) = chunks.get(&p.chunk()) else {
+        return (0, 0);
+    };
+    let [lx, ly, lz] = p.local();
+    let b = h.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+    (b >> 4, b & 0xF)
+}
+
+/// 视线（26.1 Sensing.hasLineOfSight 等价）：怪眼 → 玩家眼的射线被固体
+/// 方块截断即不可见（TargetGoal.java:64 的 unseen 账本输入；审计 C-2 的
+/// LOS 接线）。玩家本体不在体素网格，只判方块遮挡。
+fn has_los(view: &WorldView, from: Vec3, to: Vec3) -> bool {
+    let d = to - from;
+    let dist = d.length();
+    dist <= 1e-4 || mcv_game::raycast(view, from, d, dist).is_none()
+}
+
+/// mob AI + 物理固定步系统：AI 决策/计时按 20 Hz tick（`on_tick` 门，
+/// Brain = Goal 系统等价，审计 C-2 接线），物理步进 60 Hz 沿上一 tick 的
+/// [`MobIntent`]。结构性变更走延迟命令，命中走事件。
+pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let svc = ctx
         .resources
         .get::<MobServices>()
@@ -2127,78 +2484,209 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
     let events = &mut *ctx.events;
-    let (mut phys, kind, mut ticks, mut yaw, health) = (
+    let (mut phys, kind, mut ticks, mut yaw, mut health, mut brains, mut intents) = (
         world.write::<PhysBody>(),
         world.read::<MobKind>(),
         world.write::<MobTicks>(),
         world.write::<Yaw>(),
-        world.read::<Health>(),
+        world.write::<Health>(),
+        world.write::<MobBrain>(),
+        world.write::<MobIntent>(),
     );
+    let view = WorldView {
+        chunks: &svc.chunks,
+    };
+    let p_eye = svc.player_pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+    let mut rng = || fast_rand();
     phys.for_each(|e, body| {
-        let tk = match ticks.get_mut(e) {
-            Some(t) => t,
-            None => return,
-        };
-        tk.invulnerable = tk.invulnerable.saturating_sub(1);
         let Some(&MobKind(id)) = kind.get(e) else {
             return;
         };
         let def = *id.def();
-        let idle = tk.idle_ticks;
+        let (Some(tk), Some(brain), Some(intent)) =
+            (ticks.get_mut(e), brains.get_mut(e), intents.get_mut(e))
+        else {
+            return;
+        };
         let mut pos = body.pos;
         let to_player = svc.player_pos - pos;
         let dist_sqr = to_player.length_squared();
         let speed = speed_m_s(def.speed_attr);
-        let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
-            // chase
-            let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
-            if let Some(y) = yaw.get_mut(e) {
-                y.0 = dir.z.atan2(dir.x);
+        // 眼位 ≈ 身高×0.85（原版 getEyeY 的实体尺寸近似）。
+        let eye = pos + Vec3::new(0.0, def.half_size[1] * 1.7, 0.0);
+
+        if svc.on_tick {
+            // ---- 20 Hz tick 语义：计时器只在这里推进（审计 C-1）----
+            // 受击无敌帧：LivingEntity.java:1217 置 20，每 tick 减 1。
+            tk.invulnerable = tk.invulnerable.saturating_sub(1);
+            // 燃烧：Entity.java:534-544——remainingFireTicks%20==0 时 1 点
+            // 伤害（每秒 1 点；"每 tick 1 伤害"系派单口误，以源码为准）。
+            if tk.fire_ticks > 0 {
+                if tk.fire_ticks % 20 == 0
+                    && let Some(h) = health.get_mut(e)
+                {
+                    h.0 -= 1.0;
+                }
+                tk.fire_ticks -= 1;
             }
-            dir * speed
-        } else {
-            // wander: random direction changes on idle ticks
-            if idle % 120 == 0
-                && (fast_rand() & 3) == 0
-                && let Some(y) = yaw.get_mut(e)
-            {
-                y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
+            // magic light（getLightLevelDependentMagicValue，LevelReader.java
+            // :113-117 曲线式）：raw = getMaxLocalRawBrightness(眼位) =
+            // max(sky − skyDarken, block)（LevelReader.java:163-170 +
+            // Level.java:736）。白天直晒 darken=0；夜直晒 raw=15−11=4 →
+            // br≈0.09 < 0.5——旧版误用原始 max(sky, block)，夜间直晒也会
+            // 错触发 Monster.java:49-54 的 +2 加速与黄昏窗口燃烧概率虚高。
+            let (sky, blk) = chunk_light(
+                &svc.chunks,
+                BlockPos::new(
+                    eye.x.floor() as i32,
+                    eye.y.floor() as i32,
+                    eye.z.floor() as i32,
+                ),
+            );
+            let br = spawner::magic_light(spawner::raw_brightness(sky, blk, svc.sky_darken));
+            // noActionTime：Mob.java:683 每 tick +1，Monster.java:51-54 亮处
+            // 额外 +2；<32² 清零（Mob.java:673）。
+            tk.idle_ticks += spawner::no_action_inc(def.hostile, br);
+            if dist_sqr < (spawner::NO_DESPAWN_DIST * spawner::NO_DESPAWN_DIST) as f32 {
+                tk.idle_ticks = 0;
             }
-            let heading = yaw.get(e).map_or(0.0, |y| y.0);
-            Vec3::new(heading.sin(), 0.0, -heading.cos()) * speed * 0.3
-        };
-        let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
+            // 消散（Mob.java:655-678，审计 C-3）：>128² 立即移除；
+            // idle>600 且 >32² 时每 tick 1/800 随机移除。
+            if spawner::should_despawn(
+                dist_sqr,
+                tk.idle_ticks,
+                spawner::DESPAWN_DIST,
+                spawner::NO_DESPAWN_DIST,
+                &mut rng,
+            ) {
+                commands.despawn(e);
+            } else {
+                // ---- AI tick（mcv_entity::ai::Brain，此前是死代码）----
+                let los = def.hostile && has_los(&view, eye, p_eye);
+                // 障碍判定：想走走不动（速度远低于预期）→ 跳跃兜底
+                // （A* 寻路未实现 N-1 的最小替代）。
+                let flat_speed = (body.vel.x * body.vel.x + body.vel.z * body.vel.z).sqrt();
+                let blocked = intent.wish.length_squared() > 1e-4
+                    && body.on_ground
+                    && flat_speed < speed * 0.25;
+                let hurt = tk.hurt_flag;
+                tk.hurt_flag = false;
+                let p = mcv_entity::Percept {
+                    pos,
+                    // 玩家=唯一可索敌实体；和平/创造豁免未接线（N-5）。
+                    target: def.hostile.then_some(svc.player_pos),
+                    target_half_width: mcv_game::Player::HALF[0],
+                    los,
+                    br,
+                    day: svc.monsters_burn,
+                    // canSeeSky(眼) 的代理：眼位格天光=15。
+                    sky_exposed: sky == 15,
+                    // 流体/头部装备/避猫狼/藏身点：世界尚无对应系统 → 保守值。
+                    in_water: false,
+                    head_armor: false,
+                    has_bow: mcv_entity::ai_table(def.kind).default_bow,
+                    hurt,
+                    blocked,
+                    avoid: None,
+                    shelter: None,
+                    difficulty: 2, // 难度系统未接线，恒普通
+                };
+                let acts = brain.0.tick(&def, &p, &mut rng);
+                let mut next = MobIntent::IDLE;
+                for a in &acts {
+                    match a {
+                        AiAction::Walk {
+                            dir,
+                            speed_mult,
+                            jump,
+                        } => {
+                            next.wish = *dir * (speed * speed_mult);
+                            next.jump = *jump;
+                        }
+                        AiAction::Look(t) => {
+                            if let Some(y) = yaw.get_mut(e) {
+                                let d = *t - pos;
+                                y.0 = d.x.atan2(-d.z);
+                            }
+                        }
+                        AiAction::MeleeHit { damage } => {
+                            // 20 tick 节拍由 Brain.attack_cd 保证（MeleeAttack
+                            // Goal.java:136，audit M-12 的字段拆分随之消解）。
+                            events.channel::<MobMeleeHit>().send(MobMeleeHit {
+                                src: pos,
+                                damage: *damage,
+                            });
+                        }
+                        AiAction::Shoot {
+                            dir,
+                            speed: sp,
+                            spread,
+                            base_damage,
+                        } => {
+                            // 散布近似：按 inaccuracy×0.01 扰动方向（原版
+                            // randomTriangularSpread 映射未导出 → 近似）。
+                            let jitter =
+                                |r: u32| (r as f32 / u32::MAX as f32 - 0.5) * spread * 0.01;
+                            let mut d = *dir;
+                            d.x += jitter(rng());
+                            d.y += jitter(rng());
+                            d.z += jitter(rng());
+                            let v = d.normalize_or_zero() * *sp;
+                            let src = eye;
+                            let dmg = *base_damage;
+                            commands.spawn_with(move |w, ar| {
+                                w.insert(
+                                    ar,
+                                    MobArrow {
+                                        pos: src,
+                                        vel: v,
+                                        ttl_ticks: 400,
+                                        damage: dmg,
+                                    },
+                                );
+                            });
+                        }
+                        AiAction::Swelling { .. } => {
+                            // 嘶嘶/膨胀动画 flag：渲染侧消费 fuse（TODO）。
+                        }
+                        AiAction::Detonate { radius } => {
+                            // Creeper.java:144-149 引爆后本体移除；对玩家的
+                            // 距离衰减伤害在 fixed_step 结算。
+                            events.channel::<MobExplosionHit>().send(MobExplosionHit {
+                                center: pos,
+                                radius: *radius,
+                            });
+                            commands.despawn(e);
+                        }
+                        AiAction::SetOnFire { ticks: t } => {
+                            // Mob.java:494 igniteForSeconds(8) → Entity.java:630-632
+                            // floor(8×20)=160 tick。
+                            tk.fire_ticks = *t;
+                        }
+                        AiAction::Nothing => {}
+                    }
+                }
+                *intent = next;
+            }
+        }
+
+        // ---- 60 Hz 物理：沿上一 tick 的移动意图步进（tick 门只管决策）----
         let input = mcv_game::StepInput {
-            wish_dir: if melee { Vec3::ZERO } else { wish },
-            jump: body.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
+            wish_dir: intent.wish,
+            jump: intent.jump && body.on_ground,
             in_water: false,
             sneak: false,
             gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
         let mut eng = body.body();
-        step_entity(
-            &WorldView {
-                chunks: &svc.chunks,
-            },
-            &mut eng,
-            def.half_size,
-            &input,
-        );
+        step_entity(&view, &mut eng, def.half_size, &input);
         body.set_body(&eng);
         pos = body.pos;
-        tk.idle_ticks += 1;
-        // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
-        if melee && tk.invulnerable == 0 {
-            tk.invulnerable = 20;
-            events.channel::<MobMeleeHit>().send(MobMeleeHit {
-                src: pos,
-                damage: def.attack_damage,
-            });
-        }
         // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后
         // retain）+ 环境死亡掉落（非玩家击杀，spider_eye 不掉；玩家击杀
-        // 在 try_attack 即时结算，不会走到这里）。
+        // 在 try_attack 即时结算，不会走到这里）。近战冷却/命中已由
+        // Brain.attack_cd 在 tick 门内结算（MeleeAttackGoal.java:21,136）。
         if health.get(e).is_some_and(|h| h.0 <= 0.0) {
             let mut rng = spawn_rng();
             let drops: Vec<(u16, u8)> = mcv_entity::death_drops(def.kind, false, pos, &mut rng)
@@ -2226,6 +2714,99 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             commands.despawn(e);
         }
     });
+}
+
+/// 简化箭矢系统（AbstractArrow 近似；完整投射物系统 TODO）：仅 `on_tick`
+/// 推进（20 Hz tick 语义），重力 0.05/tick²、惯量 0.99/tick
+/// （INERTIA 0.99/tick AbstractArrow.java:59,263；重力 0.05/tick²
+/// AbstractArrow.java:339-340）；每 tick 拆 8 子步（0.2 格/步）防高速
+/// 隧穿。撞固体方块即移除（原版 onHitBlock → setInGround(true)，
+/// AbstractArrow.java:542；残留杆渲染不做）/ 命中玩家 AABB / ttl 耗尽 →
+/// 移除。伤害取 base=power×2.0（AbstractArrow.java:719 + BowItem.java:74
+/// 满拉 20 tick → power=1）；原版命中量 = ceil(当前速度×base)
+/// （AbstractArrow.java:423-432）随弹道衰减，此处用定值 →
+/// KNOWN-DIVERGENCE（近失伤害虚低 ~2 点）。
+pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
+    let svc = ctx
+        .resources
+        .get::<MobServices>()
+        .expect("mob_arrows：MobServices 快照未注入 Resources");
+    if !svc.on_tick {
+        return;
+    }
+    let world: &mcv_ecs::World = ctx.world;
+    let commands = &mut *ctx.commands;
+    let events = &mut *ctx.events;
+    let view = WorldView {
+        chunks: &svc.chunks,
+    };
+    let mut arrows = world.write::<MobArrow>();
+    arrows.for_each(|e, a| {
+        a.vel.y -= 0.05; // 重力 0.05/tick²
+        let step = a.vel / 8.0;
+        let mut dead = false;
+        for _ in 0..8 {
+            a.pos += step;
+            let bp = BlockPos::new(
+                a.pos.x.floor() as i32,
+                a.pos.y.floor() as i32,
+                a.pos.z.floor() as i32,
+            );
+            if view.block(bp).def().solid {
+                dead = true; // 入地/撞墙（onHitBlock setInGround，AbstractArrow.java:542）
+                break;
+            }
+            let h = mcv_game::Player::HALF;
+            let p = svc.player_pos;
+            // 玩家 AABB（HALF=[0.3,0.9,0.3]，脚底 p.y → 头顶 +2h）。
+            if (a.pos.x - p.x).abs() < h[0]
+                && (a.pos.z - p.z).abs() < h[2]
+                && (a.pos.y - (p.y + h[1])).abs() < h[1]
+            {
+                events.channel::<MobArrowHit>().send(MobArrowHit {
+                    src: a.pos,
+                    damage: a.damage,
+                });
+                dead = true;
+                break;
+            }
+        }
+        a.vel *= 0.99; // INERTIA（AbstractArrow.java:59）
+        a.ttl_ticks = a.ttl_ticks.saturating_sub(1);
+        if dead || a.ttl_ticks == 0 || a.pos.y < -8.0 {
+            commands.despawn(e);
+        }
+    });
+}
+
+/// 白天判定 = EnvironmentAttributes.MONSTERS_BURN（26.1 环境属性，替代
+/// 此前 `day_factor<0.4` 的离散近似）：Timelines.java:157 OR 修饰轨，
+/// t%24000 ∈ [23460,24000)∪[0,12542) 为真（白天）。亡灵燃烧判据
+/// （Mob.java:499-505 isSunBurnTick）以它为前提。
+fn monsters_burn(time_ticks: u64) -> bool {
+    let t = time_ticks % 24_000;
+    !(12_542..23_460).contains(&t)
+}
+
+/// skyDarken = 15 − SKY_LIGHT_LEVEL（Level.java:736）：主世界时间线
+/// SKY_LIGHT_LEVEL = 15 × mult，mult 关键帧 (133,1.0)(11867,1.0)
+/// (13670,4/15)(22330,4/15)（Timelines.java:81-84）→ darken 白天 0、
+/// 夜 11，关键帧间线性插值（修饰轨 easing 曲线未随反编译导出 → 线性近似，
+/// KNOWN-DIVERGENCE）。雷暴 skyDarken=10（Monster.java:87）：无天气系统。
+fn sky_darken(time_ticks: u64) -> u8 {
+    let t = time_ticks % 24_000;
+    // 关键帧 133 在跨日处：把 [0,133) 折回上一周期尾段。
+    let t = (if t < 133 { t + 24_000 } else { t }) as f32;
+    let mult = if t <= 11_867.0 {
+        1.0
+    } else if t < 13_670.0 {
+        1.0 + (4.0 / 15.0 - 1.0) * (t - 11_867.0) / (13_670.0 - 11_867.0)
+    } else if t <= 22_330.0 {
+        4.0 / 15.0
+    } else {
+        4.0 / 15.0 + (1.0 - 4.0 / 15.0) * (t - 22_330.0) / (24_133.0 - 22_330.0)
+    };
+    ((15.0 * (1.0 - mult)).round() as i32).clamp(0, 11) as u8
 }
 
 /// Global XOR-shift rand for spawn jitter (deterministic per sequence).
@@ -2282,6 +2863,12 @@ fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
 /// KNOWN-DIVERGENCE），水平面近似为下半，与半砖一致。
 /// `sneak` 翻转上下为自加行为（KNOWN-DIVERGENCE：26.1 半砖/楼梯放置均
 /// 不看潜行，SlabBlock/StairBlock 源码无 isSecondaryUseActive 分支）。
+/// 放置状态 nibble（半砖 bit0；楼梯 bit0-1 朝向 + bit2 上半）。
+/// 朝向=视线水平同向（26.1 `StairBlock.java:102` `getHorizontalDirection`，
+/// `UseOnContext.java:70`/`DirectionalPlaceContext.java:59`）。半区判据为
+/// 近似：原版按格内点击点 Y 定上下（`SlabBlock.java:78`、`StairBlock.java:
+/// 104`），DDA 仅有进入面法线 → 顶/底面按法线、侧面恒下半，且原版无潜行
+/// 切换（`!= sneak` 为引擎自设便捷位，KNOWN-DIVERGENCE）。
 fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f32) -> u8 {
     match shape {
         mcv_core::Shape::Slab => u8::from((normal[1] == -1) != sneak),
@@ -2306,7 +2893,9 @@ fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f
 /// 网格步进射线检测：按形状的命中判据（`mcv_game::blockshapes`）——
 /// `mode=Pick` 用拾取形状（原版拾取与碰撞无关：火把/花草可命中、
 /// 半砖/楼梯按状态盒、空气/水穿透，BaseTorchBlock.java:16 等）；
-/// `mode=Collide` 用碰撞形状（第三人称相机遮挡，原版相机 clip 走碰撞）。
+/// `mode=Collide` 用碰撞形状（第三人称相机遮挡：原版相机 VISUAL 形状
+/// 默认即碰撞形状，Camera.java:297 + BlockBehaviour.java:345-347，
+/// 栅栏 visual 差异见 blockshapes::RayTarget::Collide 注释）。
 /// 全立方固体的命中/法线与旧整格 DDA 逐位一致。
 fn dda_hit(
     view: &WorldView,
@@ -2462,6 +3051,125 @@ mod placement_tests {
         for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
             assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STONE: u16 = 1;
+    /// 千块表 id 1009 = "torch"（26.1 发光 14；damp=0，见 mcv_core::OPACITY）。
+    const TORCH: u16 = 1009;
+
+    fn lidx(x: usize, y: usize, z: usize) -> usize {
+        y << 8 | z << 4 | x
+    }
+
+    /// 无头拼装一个已完成本地布光的区块（镜像主循环 init 阶段的效果；
+    /// GameRuntime::new 需要 GPU MeshUploader，无头测试走 relight_block_edit
+    /// 这条纯数据接缝——place/destroy 两条游戏路径调用的就是它）。
+    fn lit_chunk(x: i32, z: i32, floor_top: usize) -> Arc<ChunkHandle> {
+        let handle = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
+        {
+            let mut vg = handle.voxels.write().unwrap();
+            for y in 0..=floor_top {
+                for zz in 0..16usize {
+                    for xx in 0..16usize {
+                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                    }
+                }
+            }
+        }
+        let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
+            handle.voxels.read().unwrap().as_slice(),
+        ));
+        *handle.heightmap.write().unwrap() = hm;
+        {
+            let vg = handle.voxels.read().unwrap();
+            let mut lg = handle.light.write().unwrap();
+            let hg = handle.heightmap.read().unwrap();
+            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let mut view = mcv_light::LightChunk {
+                voxels,
+                light: &mut lg[..],
+                heightmap: &hg[..],
+            };
+            mcv_light::init(&mut view);
+        }
+        handle.advance_to(Stage::LightLocalReady);
+        handle
+    }
+
+    fn blk(h: &ChunkHandle, x: usize, y: usize, z: usize) -> u8 {
+        h.light.read().unwrap()[lidx(x, y, z)] & 0xF
+    }
+
+    /// 模拟游戏路径：调用方写体素 → relight_block_edit 接线（同 interact/
+    /// destroy_block 的调用序）。
+    fn edit(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, at: BlockPos, old: u16, new: u16) {
+        let h = &chunks[&at.chunk()];
+        let [lx, ly, lz] = at.local();
+        h.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(new);
+        relight_block_edit(chunks, at, old, new);
+    }
+
+    #[test]
+    fn place_torch_then_dig_updates_block_light() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        let h = &chunks[&ChunkPos::new(0, 0)];
+        let torch_at = BlockPos::new(8, 21, 8);
+        assert_eq!(blk(h, 9, 21, 8), 0, "放火把前邻格无方块光");
+        // 放火把：邻格 = 14 - max(1, damp(空气)=0) = 13（六向同规，
+        // LightEngine.java:77-79）。
+        edit(&chunks, torch_at, 0, TORCH);
+        assert_eq!(blk(h, 8, 21, 8), 14, "火把格自发光 14");
+        assert_eq!(blk(h, 9, 21, 8), 13, "放火把后邻格方块光升高");
+        // 挖掉：removal 波清空后不得留残光。
+        edit(&chunks, torch_at, TORCH, 0);
+        assert_eq!(blk(h, 9, 21, 8), 0, "挖掉后邻格方块光回落");
+        assert_eq!(blk(h, 8, 21, 8), 0, "挖掉后火把格熄灭");
+    }
+
+    #[test]
+    fn torch_light_crosses_chunk_border() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        chunks.insert(ChunkPos::new(1, 0), lit_chunk(1, 0, 20));
+        let a = &chunks[&ChunkPos::new(0, 0)];
+        let b = &chunks[&ChunkPos::new(1, 0)];
+        // 火把贴着 chunk(0,0) 的 +X 边界（x=15）。
+        let torch_at = BlockPos::new(15, 21, 8);
+        assert_eq!(blk(b, 0, 21, 8), 0, "同步前邻块跨界格无光");
+        edit(&chunks, torch_at, 0, TORCH);
+        assert_eq!(blk(a, 15, 21, 8), 14, "火把格自发光");
+        assert_eq!(blk(b, 0, 21, 8), 13, "边同步：光跨过区块边界");
+        assert_eq!(blk(b, 1, 21, 8), 12, "边同步后邻块内部继续衰减");
+        edit(&chunks, torch_at, TORCH, 0);
+        assert_eq!(blk(b, 0, 21, 8), 0, "挖掉后跨界光被 REMOVE 撤回");
+        assert_eq!(blk(b, 1, 21, 8), 0, "撤回不留残光");
+    }
+
+    #[test]
+    fn block_edit_maintains_heightmap() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        let h = &chunks[&ChunkPos::new(0, 0)];
+        let col = (8usize << 4) | 8usize;
+        assert_eq!(h.heightmap.read().unwrap()[col], 21, "初始地表高=20+1");
+        edit(&chunks, BlockPos::new(8, 30, 8), 0, STONE);
+        assert_eq!(
+            h.heightmap.read().unwrap()[col],
+            31,
+            "放置后 heightmap 抬升"
+        );
+        edit(&chunks, BlockPos::new(8, 30, 8), STONE, 0);
+        assert_eq!(
+            h.heightmap.read().unwrap()[col],
+            21,
+            "挖掉后 heightmap 回落"
+        );
     }
 }
 

@@ -166,6 +166,129 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
 /// （MC strength(-1)），水按注册表原值 strength(100)。
 pub static BLOCKS: [BlockDef; GEN_BLOCKS.len()] = gen_blocks();
 
+// ---------------------------------------------------------------------------
+// 光照衰减表（lightDampening）
+// ---------------------------------------------------------------------------
+
+/// const 字符串比较：名字后缀（26.1 例外类按官方命名后缀识别，见 `OPACITY` 注释）。
+const fn name_ends_with(name: &str, suf: &str) -> bool {
+    let (n, s) = (name.as_bytes(), suf.as_bytes());
+    if s.len() > n.len() {
+        return false;
+    }
+    let mut i = 0usize;
+    while i < s.len() {
+        if n[n.len() - s.len() + i] != s[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// 单块 lightDampening 判定（三段规则 + 例外覆盖，Java 依据见 [`OPACITY`]）。
+const fn gen_opacity(t: &GenBlock) -> u8 {
+    let (name, _solid, opaque, liquid, _emit, _tiles, _hard, model_kind) = t;
+    // ① solidRender（整方块不透明渲染）→ 15。表内 opaque=true 即"全不透明
+    //    整方块"，对应原版 solidRender=满块 occlusionShape
+    //    （BlockBehaviour.java:512-513, 305-310）。
+    if *opaque {
+        return 15;
+    }
+    // ② 流体（水/岩浆）：propagatesSkylightDown=false → damp 1
+    //    （LiquidBlock.java:114-116；原版 fluid 非空使默认判据为 false，
+    //    BlockBehaviour.java:395-397）。
+    if *liquid {
+        return 1;
+    }
+    if name_eq(name, "air") {
+        return 0;
+    }
+    // ③ 例外覆盖（对照 src-26.1 逐类核实，注意 tinted_glass 是 15 不是 1）：
+    //    -  tinted_glass = 15（TintedGlassBlock.java:25-27 直接覆写 damp=15）；
+    if name_eq(name, "tinted_glass") {
+        return 15;
+    }
+    //    - 叶 = 1（LeavesBlock.java:84-86 覆写；oak/acacia/azalea… 全部
+    //      *_leaves 后缀）；
+    if name_eq(name, "leaves") || name_ends_with(name, "_leaves") {
+        return 1;
+    }
+    //    - 玻璃/染色玻璃/铜格栅 = 0：TransparentBlock 覆写
+    //      propagatesSkylightDown=true（TransparentBlock.java:34-37；玻璃
+    //      Blocks.java:505-507 直接是 TransparentBlock::new，染色玻璃
+    //      StainedGlassBlock.java:8 继承，铜格栅 Blocks.java:5359 的
+    //      WeatheringCopperGrateBlock 继承 WaterloggedTransparentBlock）。
+    if name_eq(name, "glass")
+        || name_ends_with(name, "_stained_glass")
+        || name_ends_with(name, "copper_grate")
+    {
+        return 0;
+    }
+    //    -  潜影盒/粘液块/蜂蜜块/紫颂植株 = 1：表内 model_kind=1（渲染非纯
+    //      立方）但原版形状是整方块，且 noOcclusion 使 solidRender=false，
+    //      propagatesSkylightDown=false → damp 1（截断源柱，15→14 逐格衰减，
+    //      不能按规则④给 0）。依据：潜影盒 ShulkerBoxBlock.java:159-161 覆写
+    //      false + Blocks.java:5948-5954（noOcclusion，getShape=Shapes.block()）；
+    //      粘液块/蜂蜜块 Blocks.java:2561/4913（noOcclusion，形状取默认整方块，
+    //      HoneyBlock 仅覆写 getCollisionShape）；紫颂植株 PipeBlock.java:59-61
+    //      覆写 false（chorus_plant 属 PipeBlock 系）。
+    if name_eq(name, "shulker_box")
+        || name_ends_with(name, "_shulker_box")
+        || name_eq(name, "slime_block")
+        || name_eq(name, "honey_block")
+        || name_eq(name, "chorus_plant")
+    {
+        return 1;
+    }
+    //    -  屏障/光源 = 0：形状整方块但 noOcclusion + propagatesSkylightDown
+    //      覆写 true（BarrierBlock.java:40-42、LightBlock.java:71-73；
+    //      Blocks.java:2570/2583 noOcclusion），规则④（model_kind=1→0）
+    //      已给 0，此处仅登记依据。
+    // ④ 默认规则（BlockBehaviour.java:305-310 + 395-397）：非整方块形状
+    //    （model_kind=1：板/梯/栅栏/花/火把/栅栏门…）→ propagatesSkylightDown
+    //    =true → 0；整方块形状但非不透明（冰族 ice/packed_ice/blue_ice/
+    //    frosted_ice——noOcclusion 见 Blocks.java:1623）→ false → 1。
+    if *model_kind == 1 { 0 } else { 1 }
+}
+
+const fn name_eq(a: &str, b: &str) -> bool {
+    let (x, y) = (a.as_bytes(), b.as_bytes());
+    if x.len() != y.len() {
+        return false;
+    }
+    let mut i = 0usize;
+    while i < x.len() {
+        if x[i] != y[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
+/// 全 1171 块 lightDampening 静态表（对照反编译 Minecraft 26.1；审计 C2：
+/// 旧 mcv_light 仅 6 个 legacy id 有值，其余 1165 块一律按 15 全挡）。
+/// 规则出处 `BlockBehaviour.getLightDampening`（BlockBehaviour.java:305-310）：
+/// `solidRender ? 15 : (propagatesSkylightDown ? 0 : 1)`，例外覆盖见
+/// [`gen_opacity`] 内逐条 file:line。语义要点：
+/// - 实心整方块 15；水/叶/冰 1；玻璃/花/火把/板/梯/栅栏/格栅 0；
+/// - tinted_glass 例外 15（TintedGlassBlock.java:25-27）；
+/// - 本表只覆盖注册表；越界 id 由 `mcv_light::opacity` 保守按 15。
+///
+/// 消费方：`mcv_light::opacity`（传播代价 `max(1, damp)`，
+/// LightEngine.java:77-79 语义）与天光源柱截断（column_top 判据，
+/// ChunkSkyLightSources.java:140-148）。
+pub static OPACITY: [u8; GEN_BLOCKS.len()] = {
+    let mut t = [15u8; GEN_BLOCKS.len()];
+    let mut i = 0usize;
+    while i < GEN_BLOCKS.len() {
+        t[i] = gen_opacity(&GEN_BLOCKS[i]);
+        i += 1;
+    }
+    t
+};
+
 impl BlockId {
     /// 低 12 位真实方块 id（丢弃状态 nibble）。C++ 侧 kBarrier(0xFFFF)
     /// 掩码后是 0x0FFF——未注册 id，两侧都按"未知=不透明"处理，哨兵语义

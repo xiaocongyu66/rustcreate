@@ -15,8 +15,14 @@
 //! - 火把：`BaseTorchBlock.java:16` 拾取 outline `column(4,0,10)`
 //!   （x/z 6..10px、y 0..10px）；无碰撞（Blocks.java torch 为 noCollision，
 //!   `getShape` 仅是拾取/遮挡形状）。
-//! - 十字花草：`BlockBehaviour#getShape` 默认整格（可被准星选中/挖掘），
-//!   无碰撞（noCollision）。
+//! - 十字花草：无碰撞（Blocks.java:587/750/765 noCollision → 碰撞空，
+//!   `BlockBehaviour.java:333-334`）。拾取轮廓原版**非**整格：花
+//!   `column(6,0,10)`（`FlowerBlock.java:24`）、短草 `column(12,0,13)`
+//!   （`TallGrassBlock.java:17`；整格 `Shapes.block()` 仅是未覆写方的
+//!   默认 `BlockBehaviour.java:329-331`）。本引擎按整格出盒
+//!   KNOWN-DIVERGENCE：网格器把十字渲染为整格对角 quad
+//!   （`cpp/src/mesher.cpp` `emit_cross`），拾取盒与引擎自身视觉一致
+//!   优先于贴原版细轮廓（单一 Cross 形状位也容纳不下花/草两种尺寸）。
 //!
 //! 楼梯 facing 编码（0=+Z 1=-Z 2=+X 3=-X）与 C++ 网格器
 //! `emit_stairs`、`mcv_core::BlockId::state` 注释同一约定；几何含义
@@ -44,9 +50,16 @@ pub const EMPTY_AABB: Aabb = Aabb {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RayTarget {
     /// 拾取形状（outline / `getShape`）：挖掘、准星选中、放置基准。
-    /// 原版拾取与碰撞无关（火把 outline 可命中但无碰撞）。
+    /// 26.1 准星拾取显式走 OUTLINE（=getShape）而非碰撞：
+    /// `Entity.java:1926-1931` `pick` → `ClipContext.Block.OUTLINE`
+    /// （`ClipContext.java:54`），火把 outline 可命中但无碰撞。
     Pick,
-    /// 碰撞形状：第三人称相机遮挡（原版相机 clip 用碰撞形状）。
+    /// 碰撞形状：第三人称相机遮挡。原版相机（`Camera.java:297`）用
+    /// VISUAL，而 `getVisualShape` 默认即碰撞形状（`BlockBehaviour.java:
+    /// 345-347`），火把（无碰撞）不挡相机、半砖/楼梯按状态盒——与本作
+    /// 一致；栅栏覆写 visual=outline 高 1.0（`FenceBlock.java:52-55`），
+    /// 本作按碰撞高 1.5，相机在栅栏顶附近略多让位（KNOWN-DIVERGENCE，
+    /// 物理碰撞仍须 1.5 防跳，`CrossCollisionBlock.java:45`）。
     Collide,
 }
 

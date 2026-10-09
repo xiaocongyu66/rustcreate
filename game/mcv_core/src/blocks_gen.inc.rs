@@ -420,7 +420,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*  407 */ ("fire_coral_block", true, true, false, 0, [310, 310, 310, 310, 310, 310], 1.5f32, 0),
     /*  408 */ ("fire_coral_fan", false, false, false, 0, [311, 311, 311, 311, 311, 311], 0f32, 1),
     /*  409 */ ("fire_coral_wall_fan", false, false, false, 0, [311, 311, 311, 311, 311, 311], 0f32, 1),
-    /*  410 */ ("firefly_bush", true, false, false, 3, [312, 312, 312, 312, 312, 312], 0f32, 1),
+    /*  410 */ ("firefly_bush", true, false, false, 2, [312, 312, 312, 312, 312, 312], 0f32, 1),
     /*  411 */ ("fletching_table", true, true, false, 0, [314, 314, 315, 57, 313, 313], 2.5f32, 0),
     /*  412 */ ("flower_pot", true, false, false, 0, [316, 316, 274, 316, 316, 316], 0f32, 1),
     /*  413 */ ("flowering_azalea", true, false, false, 0, [20, 20, 318, 318, 20, 20], 0f32, 1),

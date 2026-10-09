@@ -397,11 +397,12 @@ fn golden_sky_source_column_transmission() {
     }
 }
 
-/// 黄金用例 3：玻璃透光 vs 石头挡光（材料柱对照表）。
-/// 玻璃尚未注册进 BLOCKS；26.1 中玻璃 `noOcclusion →
-/// propagatesSkylightDown → damp 0`，与花（CrossCollisionBlock）
-/// 同类，此处用花作为玻璃类的透射替身。半透明水/叶 damp=1：
-/// 截断源柱但每格只 -1；实心石头 damp=15：完全挡光。
+/// 黄金用例 3：透射 vs 挡光（材料柱对照表）。damp 判据见
+/// `mcv_core::OPACITY`：26.1 玻璃 `TransparentBlock.java:34-37` 显式覆写
+/// `propagatesSkylightDown=true → damp 0`（全透），花（VegetationBlock
+/// 系，`VegetationBlock.java:50-52`）同 0，此处用例以花为透射代表
+/// （玻璃直查断言见 `opacity_full_table_matches_26_1`）。半透明水/叶
+/// damp=1：截断源柱但每格只 -1；实心石头 damp=15：完全挡光。
 #[test]
 fn golden_sky_through_material_columns() {
     // (材料, 期望的天光序列 [(y, level)])：y=51 为板上方，50 为材料
@@ -463,8 +464,9 @@ fn golden_sky_through_material_columns() {
 /// 26.1 `BlockBehaviour.getLightDampening`（`BlockBehaviour.java:305-310`）
 /// 默认规则：实心渲染整方块（solidRender）=15；否则
 /// `propagatesSkylightDown`（默认=拾取形状非整立方且无流体，
-/// `BlockBehaviour.java:395-397`）= 0（火把/栅栏/半砖/楼梯/花草/空气）；
-/// 其余非实心 =1（水/玻璃：整盒形状 noOcclusion；叶=显式覆盖 1，
+/// `BlockBehaviour.java:395-397`）= 0（火把/栅栏/半砖/楼梯/花草/空气；
+/// 玻璃另有 `TransparentBlock.java:34-37` 显式覆写）；
+/// 其余非实心 =1（水：`LiquidBlock.java:114-116`；叶=显式覆盖 1，
 /// `LeavesBlock.java:83-85`）。
 /// 发光侧：当前 BLOCKS 子集（天然建材+水+花）在 26.1 全部不发光。
 #[test]
@@ -488,11 +490,12 @@ fn golden_light_constants_match_26_1() {
         1,
         "树叶 damp=1（LeavesBlock 覆盖值）"
     );
-    // 花草：拾取形状整盒可命中，但碰撞/渲染非实心 → propagatesSkylightDown
-    // → damp=0（区别于玻璃：玻璃拾取形状整盒 → damp=1，见下）。
+    // 花草：拾取形状可命中，但碰撞/渲染非实心 → propagatesSkylightDown
+    // → damp=0（区别于玻璃：玻璃靠 TransparentBlock 显式覆写得 0，见下）。
     assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（非整盒形状）");
     assert_eq!(opacity(BlockId(13)), 0, "黄花 damp=0");
-    // 形状方块遮光（VERIFY-shapes C6）：非实心 + 形状非整立方 → 0。
+    // 形状方块遮光（VERIFY-shapes C6）：非整方块渲染形状 → 0，全表
+    // （mcv_core::OPACITY 规则④）与本引擎形状表同源成立。
     let by_name = |want: &str| {
         mcv_core::BLOCKS
             .iter()
@@ -508,16 +511,19 @@ fn golden_light_constants_match_26_1() {
     ] {
         assert_eq!(opacity(BlockId(by_name(name))), 0, "{name} damp=0");
     }
-    // 玻璃：整盒形状 noOcclusion → solidRender=false、
-    // propagatesSkylightDown=false → damp=1（`BlockBehaviour.java:305-310,
-    // 395-397`；玻璃柱逐格衰减为 26.1 实况，26.1 起无"玻璃全透"特例）。
-    assert_eq!(opacity(BlockId(by_name("glass"))), 1, "玻璃 damp=1");
-    // 未注册 id（≥BLOCKS.len()）保守按全挡。
-    assert_eq!(
-        opacity(BlockId(mcv_core::BLOCKS.len() as u16)),
-        15,
-        "未注册 id 保守按全挡"
-    );
+    // 玻璃：整盒形状但 TransparentBlock 覆写 propagatesSkylightDown=true
+    // → damp=0（`TransparentBlock.java:34-37`，全透不衰减；
+    // 早前 C6 草稿按"整盒形状 noOcclusion → 1"推断为 1，系误判）。
+    assert_eq!(opacity(BlockId(by_name("glass"))), 0, "玻璃 damp=0");
+    // 状态位掩蔽：带状态 nibble 的体素按基础方块查表（上半砖仍 0，
+    // 有状态的石头仍 15），防止 OPACITY 直查原始 u16 越界误判 15。
+    let slab = BlockId(by_name("oak_slab")).with_state(1);
+    assert_eq!(opacity(slab), 0, "上半砖（带状态位）damp=0");
+    let stone_st = BlockId(1).with_state(7);
+    assert_eq!(opacity(stone_st), 15, "带状态位石头 damp=15");
+    // 千块表接入后 id 99 已是注册方块（black_carpet，damp≠全挡），
+    // "未注册保守全挡"只对越界 id 成立（C2：全表见 mcv_core::OPACITY）。
+    assert_eq!(opacity(BlockId(60000)), 15, "越界 id 保守按全挡");
 
     // ---- 发光（light_emit）----
     // 26.1 参照：这些方块全部 lightLevel 0；将来注册发光方块时按
@@ -545,5 +551,166 @@ fn golden_light_constants_match_26_1() {
         let def = &mcv_core::BLOCKS[i];
         assert_eq!(def.name, name, "id={i} 方块顺序变了，需同步本对照表");
         assert_eq!(def.light_emit, emit, "{name} 发光值应为 {emit}（26.1）");
+    }
+}
+
+/// C2：全表 opacity 抽查（`mcv_core::OPACITY`，三段规则
+/// `solidRender?15:(propagatesSkylightDown?0:1)`，BlockBehaviour.java:305-310）。
+/// 修复前仅 6 个 legacy id 有值，火把/玻璃/板/楼梯/格栅全部被误判 15。
+#[test]
+fn opacity_full_table_matches_26_1() {
+    let id = |name: &str| -> u16 {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == name)
+            .unwrap_or_else(|| panic!("方块 {name} 未注册")) as u16
+    };
+    // 实心整方块（solidRender）= 15。
+    for n in ["stone", "deepslate", "bedrock", "glowstone"] {
+        assert_eq!(opacity(BlockId(id(n))), 15, "{n} 应为 15");
+    }
+    // 非实心且 propagatesSkylightDown（火把/玻璃/板/梯/栅栏/格栅…）= 0：
+    // 玻璃 Blocks.java:505-507 TransparentBlock（TransparentBlock.java:34-37），
+    // 板/梯/火把走默认判据（非整方块形状，BlockBehaviour.java:395-397）。
+    for n in [
+        "glass",
+        "white_stained_glass",
+        "copper_grate",
+        "glass_pane",
+        "torch",
+        "acacia_pressure_plate",
+        "acacia_stairs",
+        "acacia_fence",
+        "activator_rail",
+    ] {
+        assert_eq!(opacity(BlockId(id(n))), 0, "{n} 应为 0");
+    }
+    // 非实心但截断源柱（damp=1）：水/岩浆（LiquidBlock.java:114-116）、
+    // 叶（LeavesBlock.java:84-86）、整方块形状的透光块（冰族，默认规则）。
+    for n in [
+        "water",
+        "lava",
+        "leaves",
+        "acacia_leaves",
+        "flowering_azalea_leaves",
+        "ice",
+        "packed_ice",
+        "blue_ice",
+        "frosted_ice",
+    ] {
+        assert_eq!(opacity(BlockId(id(n))), 1, "{n} 应为 1");
+    }
+    // 遮光玻璃例外 15——源码为 TintedGlassBlock.java:25-27 `return 15`，
+    // 不是审计草稿推测的 1。
+    assert_eq!(opacity(BlockId(id("tinted_glass"))), 15, "遮光玻璃应 15");
+    // 整方块形状 + noOcclusion 的 damp=1 例外（表内 model_kind=1，规则④
+    // 会误给 0，gen_opacity 显式覆盖）：潜影盒 ShulkerBoxBlock.java:159-161、
+    // 粘液/蜂蜜块 Blocks.java:2561/4913、紫颂植株 PipeBlock.java:59-61。
+    for n in [
+        "shulker_box",
+        "white_shulker_box",
+        "black_shulker_box",
+        "slime_block",
+        "honey_block",
+        "chorus_plant",
+    ] {
+        assert_eq!(opacity(BlockId(id(n))), 1, "{n} 应为 1");
+    }
+    // 屏障/光源 = 0（整方块形状但覆写 propagatesSkylightDown=true：
+    // BarrierBlock.java:40-42、LightBlock.java:71-73）。
+    assert_eq!(opacity(BlockId(id("barrier"))), 0, "barrier 应 0");
+    assert_eq!(opacity(BlockId(id("light"))), 0, "light 应 0");
+    // 空气 0；越界 id 保守 15。
+    assert_eq!(opacity(BlockId(0)), 0);
+    assert_eq!(opacity(BlockId(60000)), 15);
+    // firefly_bush 发光数据修正 3→2（Blocks.java:5840-5846 lightLevel→2；
+    // 旧值 3 是 gen-blocks.py 烛例外误伤），形状按植被 damp=0。
+    let fb = id("firefly_bush");
+    assert_eq!(
+        mcv_core::BLOCKS[fb as usize].light_emit,
+        2,
+        "firefly_bush 发光"
+    );
+    assert_eq!(opacity(BlockId(fb)), 0, "firefly_bush damp");
+}
+
+/// C3：海洋水柱源柱截断。26.1 `ChunkSkyLightSources.isEdgeOccluded`
+/// （ChunkSkyLightSources.java:140-148）：bottomState 的 `dampening != 0`
+/// 即截断源柱——水 damp=1（LiquidBlock.java:114-116）同样截断；
+/// `SkyLightEngine.addSourcesAbove`（SkyLightEngine.java:106-131）只在截断点
+/// 以上铺 15。修复前 init 按「不计水」的地形 heightmap 播种，整条水柱 15。
+#[test]
+fn ocean_water_column_falls_off_below_surface() {
+    let mut w = World::new();
+    // 海床石头到 y=39，整 chunk 水体 y40..=55，其上空气。
+    w.box_fill(0, 15, 0, 39, 0, 15, STONE);
+    w.box_fill(0, 15, 40, 55, 0, 15, WATER);
+    w.rebuild_heightmap();
+    // init 不再读 heightmap（播种判据=voxels/column_top，M4 统一判据）：
+    // 故意抹成全 0，旧实现会把整柱（含水）种满 15，新实现结果不变。
+    w.hm.fill(0);
+    let mut c = w.chunk();
+    init(&mut c);
+    // 水面以上的空气是源柱：整段 15。
+    for y in 56..256usize {
+        assert_eq!(sky(&c, 4, y, 4), 15, "水面上方 y={y}");
+    }
+    // 水面格 = 源柱底：15 - max(1, 水 damp=1) = 14，往下每格恰好 -1。
+    for d in 0..=15usize {
+        let y = 55 - d;
+        assert_eq!(
+            sky(&c, 4, y, 4),
+            14u8.saturating_sub(d as u8),
+            "水柱 y={y} 应逐格递减"
+        );
+    }
+    // 海床石面（实心 15）不透光。
+    assert_eq!(sky(&c, 4, 39, 4), 0);
+}
+
+/// C4：removal 波回播自发光。26.1 `BlockLightEngine.propagateDecrease`
+/// （BlockLightEngine.java:91-101）：清零邻居后读取该格自身 `toEmission`，
+/// `toEmission < toLevel` 才让移除波继续携带旧亮度，`toEmission > 0` 则把
+/// 该格按发射值重新压入 increase 队列。修复前弱光源被更强的相邻光源移除时
+/// 清零且不再回填，永久熄灭。
+#[test]
+fn removal_wave_replays_weak_emitters() {
+    let id = |name: &str| -> u16 {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == name)
+            .unwrap_or_else(|| panic!("方块 {name} 未注册")) as u16
+    };
+    let (glowstone, torch, magma) = (id("glowstone"), id("torch"), id("magma_block"));
+    assert_eq!(mcv_core::BLOCKS[glowstone as usize].light_emit, 15);
+    assert_eq!(mcv_core::BLOCKS[torch as usize].light_emit, 14);
+    assert_eq!(mcv_core::BLOCKS[magma as usize].light_emit, 3);
+
+    // 密封石室走廊 y=34：萤石(4) - 火把(5) - 空气(6) - 岩浆岩(7)。
+    let mut w = World::flat(40);
+    w.box_fill(2, 13, 32, 36, 6, 10, AIR);
+    w.rebuild_heightmap();
+    w.voxels[vidx(4, 34, 8)] = glowstone;
+    w.voxels[vidx(5, 34, 8)] = torch;
+    w.voxels[vidx(7, 34, 8)] = magma;
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+        assert_eq!(blk(&c, 4, 34, 8), 15, "萤石格自身发光");
+        assert_eq!(blk(&c, 5, 34, 8), 14, "火把格：发射 14（与萤石投影同值）");
+        assert_eq!(blk(&c, 6, 34, 8), 13, "走廊空气格");
+        assert_eq!(blk(&c, 7, 34, 8), 3, "岩浆岩：实心格只保留自发光");
+    }
+
+    // 挖掉萤石：removal 波会依次触碰火把格(14<15)、空气格、岩浆岩格(3<…)。
+    let (_mask, _seeds) = edit(&mut w, 4, 34, 8, glowstone, AIR);
+    {
+        let c = w.chunk();
+        // 火把（emit=14==被清零的存储值，vanilla 边界 `toEmission < toLevel`
+        // 不成立 → 不续波但必须回播）——修复前这里是 0（永久熄灭）。
+        assert_eq!(blk(&c, 5, 34, 8), 14, "火把光必须存活");
+        assert_eq!(blk(&c, 6, 34, 8), 13, "走廊由火把重新照亮");
+        assert_eq!(blk(&c, 7, 34, 8), 3, "岩浆岩自发光回播");
+        assert_eq!(blk(&c, 4, 34, 8), 13, "萤石位由火把照到 13");
     }
 }

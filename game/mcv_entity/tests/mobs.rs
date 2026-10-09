@@ -700,3 +700,77 @@ fn knockback_formula() {
     let v = knockback_velocity(Vec3::new(1.0, 0.0, 0.0), true, 0.0, 0.5, Vec3::ZERO);
     assert_eq!(v, Vec3::new(1.0, 0.0, 0.0));
 }
+
+// ---------------------------------------------------------------------------
+// 9) 消散 / noActionTime 账本 / raw 亮度（Mob.java:655-683、Monster.java:50-54、
+//    MobCategory.java:21、LevelReader.java:167-175）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn despawn_bands_match_mob_java_655_678() {
+    let mut never = make_seq(vec![7]); // 7 % 800 != 0 → 随机门永不命中
+    // >128² 立即移除（despawnDistance=128，MobCategory.java:7）。
+    assert!(should_despawn(
+        129.0 * 129.0,
+        0,
+        DESPAWN_DIST,
+        NO_DESPAWN_DIST,
+        &mut never
+    ));
+    // 32..128 带：idle ≤ 600 不移除。
+    assert!(!should_despawn(
+        50.0 * 50.0,
+        600,
+        DESPAWN_DIST,
+        NO_DESPAWN_DIST,
+        &mut never
+    ));
+    // idle > 600 且 rng 命中 1/800 → 移除。
+    let mut hit = make_seq(vec![0]);
+    assert!(should_despawn(
+        50.0 * 50.0,
+        601,
+        DESPAWN_DIST,
+        NO_DESPAWN_DIST,
+        &mut hit
+    ));
+    // noDespawn=32（源码实况，派单"24"有误）：32² 内即使 idle 超限也不移。
+    assert!(!should_despawn(
+        31.0 * 31.0,
+        10_000,
+        DESPAWN_DIST,
+        NO_DESPAWN_DIST,
+        &mut hit
+    ));
+    // 31..32 之间无豁免（>32² 才进随机带）。
+    assert!(should_despawn(
+        33.0 * 33.0,
+        601,
+        DESPAWN_DIST,
+        NO_DESPAWN_DIST,
+        &mut hit
+    ));
+}
+
+#[test]
+fn no_action_time_increment_matches_monster_java() {
+    // Mob.java:683 每 tick +1；Monster.java:51-54 敌对亮处（br>0.5）+2。
+    assert_eq!(no_action_inc(true, 0.5), 1);
+    assert_eq!(no_action_inc(false, 1.0), 1);
+    assert_eq!(no_action_inc(true, 0.51), 3);
+    assert_eq!(
+        no_action_inc(true, magic_light(15)),
+        3,
+        "直晒 raw=15 → br=1.0"
+    );
+    assert_eq!(no_action_inc(true, magic_light(7)), 1);
+}
+
+#[test]
+fn raw_brightness_subtracts_sky_darken() {
+    // LevelReader.java:167-175 getRawBrightness(pos, darken)。
+    assert_eq!(raw_brightness(15, 0, 11), 4, "夜晚直晒：15−11");
+    assert_eq!(raw_brightness(15, 0, 0), 15, "白天直晒");
+    assert_eq!(raw_brightness(3, 0, 11), 0, "天光扣到负封 0");
+    assert_eq!(raw_brightness(0, 6, 11), 6, "方块光不受 skyDarken 影响");
+}
