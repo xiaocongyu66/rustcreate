@@ -74,7 +74,8 @@ pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
             while y > 0 {
                 let id = voxels[(y << 8) | (z << 4) | x];
                 // 跳过集：damp==0（全透光：空气/花/玻璃/火把…）或流体
-                // （水/岩浆——原版 MOTION_BLOCKING 高度图同样不计流体；
+                // （水/岩浆——原版 MOTION_BLOCKING=blocksMotion，流体无碰撞
+                // 不计入，Heightmap.java:31 + BlockBehaviour.java:540-543；
                 // 生成期排除集 air/water/flowers 恰是该规则的 legacy 子集）。
                 let damp = mcv_core::OPACITY.get(id as usize).copied().unwrap_or(15);
                 let liquid = mcv_core::BLOCKS.get(id as usize).is_some_and(|b| b.liquid);
