@@ -254,13 +254,15 @@ fn adjacent_player_collects_drop() {
     assert_eq!((s.item, s.count), (27, 3));
 }
 
-/// 满栏（9×64 异种物品）：拾取被拒，实体存活且数量分毫不少。
+/// 满栏（全 36 格 64 钻石）：拾取被拒，实体存活且数量分毫不少。
+/// 26.1 `Inventory.add` 覆盖 0..35（Inventory.java:255-302）——只满快捷栏
+/// 9 格会落进 main 照样捡起，必须 36 格全满才拒收。
 #[test]
 fn full_hotbar_keeps_drop_alive() {
     let mut app = setup(Vec3::new(8.5, 64.0, 8.5));
-    // 全栏填满与掉落物（27 cobble）不同种的钻石（id 3，64 堆）。
+    // 全 36 格填满与掉落物（27 cobble）不同种的钻石（id 3，64 堆）。
     let mut hotbar = mcv_item::Hotbar::empty();
-    for slot in hotbar.slots.iter_mut() {
+    for slot in hotbar.slots.iter_mut().chain(hotbar.main.iter_mut()) {
         *slot = mcv_item::ItemStack::new(3, 64);
     }
     let mut rng = lcg(5);
@@ -280,7 +282,11 @@ fn full_hotbar_keeps_drop_alive() {
         "拾取被拒不吞数量"
     );
     assert!(
-        hotbar.slots.iter().all(|s| s.item == 3 && s.count == 64),
+        hotbar
+            .slots
+            .iter()
+            .chain(hotbar.main.iter())
+            .all(|s| s.item == 3 && s.count == 64),
         "满栏不被改动"
     );
 }
