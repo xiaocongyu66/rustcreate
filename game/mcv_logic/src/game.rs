@@ -3214,6 +3214,8 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             in_water: false,
             sneak: false,
             sprint: false,
+            // 生物无冲刺跳增补（sprint=false 使增补分支不可达），视线置零。
+            look_dir: Vec3::ZERO,
             gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。

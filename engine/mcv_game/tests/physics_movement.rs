@@ -197,7 +197,7 @@ fn analog_half_stick_is_half_speed() {
 /// 达到地面速度。
 #[test]
 fn air_terminal_speed_table() {
-    let mut world = TestWorld::new(); // 全空世界，持续下落
+    let world = TestWorld::new(); // 全空世界，持续下落
     let table: [(bool, f32, &str); 2] = [
         (false, consts::AIR_TERMINAL, "空中"),
         (true, consts::AIR_TERMINAL_SPRINT, "空中冲刺"),
@@ -448,21 +448,27 @@ fn hundred_block_fall_no_tunneling() {
 #[test]
 fn swim_vertical_table() {
     let world = TestWorld::new();
-    let base = StepInput {
-        in_water: true,
-        ..StepInput::default()
-    };
+    // StepInput 非 Copy：每项独立构造（in_water 基础位一致）。
+    fn swim() -> StepInput {
+        StepInput {
+            in_water: true,
+            ..StepInput::default()
+        }
+    }
     let table: [(StepInput, f32, &str); 4] = [
-        (base, -consts::SWIM_SINK_SPEED, "中性缓沉"),
+        (swim(), -consts::SWIM_SINK_SPEED, "中性缓沉"),
         (
-            StepInput { jump: true, ..base },
+            StepInput {
+                jump: true,
+                ..swim()
+            },
             consts::SWIM_UP_SPEED,
             "按跳上浮",
         ),
         (
             StepInput {
                 sneak: true,
-                ..base
+                ..swim()
             },
             -consts::SWIM_DOWN_SPEED,
             "按潜下潜",
@@ -470,7 +476,7 @@ fn swim_vertical_table() {
         (
             StepInput {
                 sprint: true,
-                ..base
+                ..swim()
             },
             0.0,
             "冲刺游泳水平目视（免重力，Player.java:1395-1397）",
