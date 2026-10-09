@@ -176,7 +176,12 @@ impl BlockId {
     }
 
     /// 状态 nibble（bit12-15）：Slab bit0=上半砖；Stairs bit0-1 朝向
-    /// (0=+Z 1=-Z 2=+X 3=-X)、bit2=上半占位。其余形状恒 0。
+    /// (0=+Z 1=-Z 2=+X 3=-X)、bit2=上半。楼梯朝向 = 26.1 FACING，即放置
+    /// 玩家水平视线同向（StairBlock.java:101-102 `FACING =
+    /// context.getHorizontalDirection()`），几何上踏步（整高半）位于朝向侧
+    /// 半格（StairBlock.java:37-38，facing=NORTH → 上半占 -Z 半格）；
+    /// bit2=1 对应原版 Half.TOP（点底面放置，StairBlock.java:103-105）。
+    /// 其余形状恒 0。
     #[inline]
     pub const fn state(self) -> u8 {
         ((self.0 >> STATE_SHIFT) & 0xF) as u8

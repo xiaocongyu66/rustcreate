@@ -1,5 +1,6 @@
 //! Game logic: voxel world access, player, raycasting, input state.
 
+pub mod blockshapes;
 pub mod consts;
 pub mod interact;
 pub mod keymap;

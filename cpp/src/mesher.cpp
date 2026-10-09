@@ -512,19 +512,47 @@ void emit_cross(const Neighborhood& n, std::vector<QuadVertex>& verts,
     }
 }
 
-/* 栅栏：中心立柱全高（x/z 0.375..0.625）+ 水平四向臂（邻格方块 id 相同
- * 即连接，不看状态位）。臂梁 y 0.375..0.5625，沿臂向从柱边到格边；臂端
- * 面与相邻栅栏臂端面共面反向，由背面剔除消化（宁多勿漏）。 */
+/* 栅栏臂连接判据：26.1 FenceBlock.java:59-63 connectsTo ≈
+ *   sturdy 邻块 ∥ 同栅栏类别 ∥ 栅栏门朝向连通
+ * 的移植近似。sturdy 以"实体不透明整立方"（渲染不透明位 + shape==0）
+ * 近似面朝向的 isFaceSturdy；同栅栏类别以 shape==Fence 近似。
+ * KNOWN-DIVERGENCE（本引擎无 tag / blockstate 体系，勿凭直觉收紧）：
+ * - BlockTags.FENCES / WOODEN_FENCES（FenceBlock.java:66-68）未移植，
+ *   木质↔非木质栅栏（橡木↔下界砖）跨类会误连；
+ * - FenceGateBlock 分支缺（本引擎未注册栅栏门）；
+ * - isExceptionForConnection 例外名单（Block.java:255-262 叶/屏障/雕纹南
+ *   瓜/南瓜灯/西瓜/南瓜/潜影盒）未移植——26.1 sturdy=面支撑形整面
+ *   （SupportType.java:11-16 FULL=isFaceFull(blockSupportShape)），南瓜系
+ *   sturdy 但在例外名单，我方会误连、原版排除；
+ * - 玻璃等 opaque=false 整方块在 26.1 支撑形整盒 → faceSturdy=true 原版会
+ *   连臂，我方近似为不透明整立方 → 不连（保守方向，宁缺勿错连）。
+ * Rust 侧同一规则：engine/mcv_game/src/blockshapes.rs::fence_connects，
+ * 两侧必须同步（渲染臂与碰撞臂一致性=原版防跳语义）。 */
+bool fence_arm_connects(uint16_t nb) {
+    if (nb >= kBarrier) {
+        return false; /* 越界/未加载邻区块：不出臂 */
+    }
+    const BlockInfo& i = block_info(nb);
+    if (i.shape == 3 /* Fence */) {
+        return true;
+    }
+    return i.shape == 0 /* Cube */ && i.opaque;
+}
+
+/* 栅栏：中心立柱全高（x/z 0.375..0.625）+ 水平四向臂（连接判据见
+ * fence_arm_connects：贴石墙等 sturdy 邻块原版也出臂，FenceBlock.java:
+ * 91-94）。臂梁 y 0.375..0.5625，沿臂向从柱边到格边；臂端面贴 sturdy
+ * 邻块一侧由不透明面剔除收尾，臂端面与相邻栅栏臂端面共面反向，由背面
+ * 剔除消化（宁多勿漏）。 */
 void emit_fence(const Neighborhood& n, std::vector<QuadVertex>& verts,
                 std::vector<uint32_t>& indices, int x, int y, int z,
-                const BlockInfo& info, uint16_t raw) {
+                const BlockInfo& info) {
     const Box3 post{kFencePost, 0.0f, kFencePost, 1.0f - kFencePost, 1.0f,
                     1.0f - kFencePost};
     emit_box(n, verts, indices, x, y, z, info, post, -1);
-    const uint16_t id = MCV_ID(raw);
     const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
     for (const auto& d : dirs) {
-        if (MCV_ID(block_at(n, x + d[0], y, z + d[1])) != id) {
+        if (!fence_arm_connects(block_at(n, x + d[0], y, z + d[1]))) {
             continue;
         }
         Box3 arm{kFencePost, kRailMin, kFencePost, 1.0f - kFencePost, kRailMax,
@@ -543,9 +571,12 @@ void emit_fence(const Neighborhood& n, std::vector<QuadVertex>& verts,
 }
 
 /* 楼梯：底座（整格宽半高盒）+ 踏步（朝向侧半格、另半高盒），bit2=top
- * 上下翻转。facing 取 placement_state 写入序：0=+Z 1=-Z 2=+X 3=-X
- * （与 game/mcv_logic placement_state / mcv_core BlockId::state 注释同源，
- * 勿按直觉写成 +X 优先）。面剔除只用通用“邻格不透明”判据：同种楼梯
+ * 上下翻转。facing 编码 0=+Z 1=-Z 2=+X 3=-X（与 game/mcv_logic
+ * placement_state / mcv_core BlockId::state / blockshapes.rs 同一约定，
+ * 勿按直觉写成 +X 优先）；语义 = 26.1 FACING（玩家水平视线同向，
+ * StairBlock.java:101-102），几何含义“踏步（整高半）位于朝向侧半格”
+ * 按 StairBlock.java:37-38 推得（facing=NORTH → 上半占 -Z 半格）。
+ * 面剔除只用通用“邻格不透明”判据：同种楼梯
  * 互相做透明剔除会在半盒错位处留洞，故两盒一律按各自暴露面发射，宁多
  * 勿漏；两盒在 y=0.5 的共面相对面（+Y/-Y）由背面剔除消化，不做盒间剔除。 */
 void emit_stairs(const Neighborhood& n, std::vector<QuadVertex>& verts,
@@ -609,7 +640,7 @@ void emit_shapes(const Neighborhood& n, std::vector<QuadVertex>& verts,
                              -1);
                     break;
                 case 3:
-                    emit_fence(n, verts, indices, x, y, z, info, raw);
+                    emit_fence(n, verts, indices, x, y, z, info);
                     break;
                 case 4:
                     if ((st & 1) != 0) {

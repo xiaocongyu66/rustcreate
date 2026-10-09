@@ -389,8 +389,14 @@ fn slab_half_boxes_and_exposed_mid_face() {
 
 #[test]
 fn stairs_facing_and_top_flip() {
-    // facing 为 placement_state 写入序：0=+Z 1=-Z 2=+X 3=-X。踏步半盒的
-    // 顶面顶点（y=9）只允许出现在朝向半格；bit2=top 上下翻转。
+    // facing 编码 0=+Z 1=-Z 2=+X 3=-X，语义 = 26.1 FACING（玩家水平视线
+    // 同向，StairBlock.java:101-102 getHorizontalDirection）。几何判据按
+    // StairBlock.java:37-38 推得：facing=NORTH(-Z) → 上半盒占 -Z 半格，
+    // 即踏步（整高半）位于朝向侧——本用例断言的正是"顶面顶点 y=9 只出现
+    // 在朝向半格"。三段贯通：玩家面向 -Z（yaw=0）放置 → nibble facing=1
+    // （game.rs::placement_tests::stairs_facing_follows_vanilla）→ 本用例
+    // facing=1 分支 → 踏步在 -Z 半格（踏步在玩家面前，可拾级而上）。
+    // bit2=top（点底面放置，StairBlock.java:104 DOWN→TOP）上下翻转。
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
     let stairs = id_of("oak_stairs");
@@ -453,16 +459,50 @@ fn fence_post_and_arms() {
         assert!((8.0..=9.0).contains(&v.pos[2]));
     }
 
+    // 贴同系（云杉栅栏，同为木质 WOODEN_FENCES，FenceBlock.java:66-68
+    // 原版也互连；我方以 shape==Fence 近似同类别）：与同 id 用例同几何。
+    let spruce = id_of("spruce_fence");
+    let mut c2b = chunk(0, 0xF0);
+    put(&mut c2b.0, 8, 8, 8, fence);
+    put(&mut c2b.0, 9, 8, 8, spruce);
+    let buf2b = mesher.build(&full9(&c2b, &side), 0).unwrap();
+    assert_eq!(buf2b.counts(), (96, 144), "跨木种同系互连：各出立柱 + 臂");
+
+    // 贴火把（solid=false、非栅栏 → 非 sturdy 非同系）：不出臂，仅立柱。
+    let torch = id_of("torch");
+    let mut c2c = chunk(0, 0xF0);
+    put(&mut c2c.0, 8, 8, 8, fence);
+    put(&mut c2c.0, 9, 8, 8, torch);
+    let buf2c = mesher.build(&full9(&c2c, &side), 0).unwrap();
+    let only_post = decode(&buf2c)
+        .iter()
+        .filter(|v| v.tex == mcv_core::tiles::PLANKS)
+        .count();
+    assert_eq!(only_post, 24, "火把邻格非 sturdy：不出臂");
+
+    // 贴石头：26.1 FenceBlock.java:59-63/91-94——sturdy 邻块（石头非
+    // isExceptionForConnection 名单 Block.java:255-259）也触发连接臂。
+    // 立柱 5 面（贴石 -X 剔除）+ 臂 5 面（臂贴石端 x=0 剔除）= 40 顶点。
+    // （旧实现"仅同 id 即连"→ 无臂 20 顶点，是 CRITICAL 错误，已改。）
     let mut c3 = chunk(0, 0xF0);
     put(&mut c3.0, 8, 8, 8, fence);
-    put(&mut c3.0, 7, 8, 8, 1); // 石头不是栅栏
+    put(&mut c3.0, 7, 8, 8, 1); // 石头 = sturdy，应连臂
     let buf3 = mesher.build(&full9(&c3, &side), 0).unwrap();
     let fence_verts = decode(&buf3)
         .iter()
         .filter(|v| v.tex == mcv_core::tiles::PLANKS)
         .count();
-    // 异种邻格不触发臂；且立柱贴石头的 -X 面按不透明判据被剔除 → 5 面。
-    assert_eq!(fence_verts, 20, "石头邻格：无臂且 -X 面被剔除");
+    assert_eq!(fence_verts, 40, "石头邻格：出臂，臂贴石端与立柱贴石面剔除");
+    // 臂应延伸到贴石格边界（world x=8.0）。
+    assert!(
+        decode(&buf3)
+            .iter()
+            .any(|v| v.tex == mcv_core::tiles::PLANKS && v.pos[0] == 8.0),
+        "石头臂应触到格边界 x=8.0"
+    );
+
+    // 空气邻格不出臂（负向对照）：仅立柱 6 面 24。
+    // （已在开头单根用例断言。）
 }
 
 #[test]

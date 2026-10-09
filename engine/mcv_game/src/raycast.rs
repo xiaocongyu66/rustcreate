@@ -1,13 +1,10 @@
 //! 方块射线检测（Amanatides & Woo 网格步进）。
 
 use glam::Vec3;
-use mcv_core::{BlockId, BlockPos};
+use mcv_core::BlockPos;
 
 use crate::VoxelAccess;
-
-/// 花的 BlockId（非固体，但可被射线命中/选中）。见 mcv_core::BLOCKS。
-const FLOWER_RED: u16 = 12;
-const FLOWER_YELLOW: u16 = 13;
+use crate::blockshapes::{self, RayTarget};
 
 /// 生存模式交互到达距离（米），挖掘 / 放置射线应传本值。
 ///
@@ -16,12 +13,6 @@ const FLOWER_YELLOW: u16 = 13;
 /// `GameType#getReachDistance` 生存同为 4.5，创造 5.0 靠属性修饰）。
 /// 替换此前调用方的 5.0 临时值（mcv_app 迁移时改传本常数）。
 pub const REACH: f32 = 4.5;
-
-/// 是否可被射线命中：固体方块或花；水与空气穿透。
-fn hittable(id: BlockId) -> bool {
-    let d = id.def();
-    d.solid || id.id() == FLOWER_RED || id.id() == FLOWER_YELLOW
-}
 
 /// 从 `origin` 沿 `dir`（自动归一化）步进 voxel 网格，返回第一个命中方块
 /// 及进入面法线（指向射线来向一侧，如从上方进入 -Y 面 → `[0, 1, 0]`）。
@@ -40,12 +31,6 @@ pub fn raycast(
     let mut x = origin.x.floor() as i32;
     let mut y = origin.y.floor() as i32;
     let mut z = origin.z.floor() as i32;
-
-    // 起始格即可命中（视线在方块内部）。
-    let start = BlockPos::new(x, y, z);
-    if hittable(world.block(start)) {
-        return Some((start, [0, 0, 0]));
-    }
 
     let step_x = if dir.x > 0.0 { 1 } else { -1 };
     let step_y = if dir.y > 0.0 { 1 } else { -1 };
@@ -94,6 +79,25 @@ pub fn raycast(
         },
     );
 
+    // 命中判据 = 拾取形状（outline，`blockshapes::pick_boxes`；26.1 拾取
+    // 与碰撞无关：火把 column(4,0,10) 可命中、花草整格、空气/水无盒）。
+    // 每格按射线落在格内的参数区间 [进入 t, 离开 t] 与各盒求交。
+    // 起始格即可命中（视线在方块内部，法线取 [0,0,0]）。
+    let t1 = t_max.x.min(t_max.y).min(t_max.z).min(max_dist);
+    let start = BlockPos::new(x, y, z);
+    if let Some((_, normal)) = blockshapes::hit_in_cell(
+        world,
+        start,
+        origin,
+        dir,
+        0.0,
+        t1,
+        RayTarget::Pick,
+        [0, 0, 0],
+    ) {
+        return Some((start, normal));
+    }
+
     let mut t = 0.0f32;
     while t <= max_dist {
         // 步进到相邻 voxel（取 t_max 最小的轴）。
@@ -125,8 +129,22 @@ pub fn raycast(
             return None;
         }
         let p = BlockPos::new(x, y, z);
-        if hittable(world.block(p)) {
-            return Some((p, normal));
+        // 格内区间：进入 t 至下一个网格边界（离开本格）或 max_dist。
+        let t1 = t_max.x.min(t_max.y).min(t_max.z);
+        if let Some((th, normal)) = blockshapes::hit_in_cell(
+            world,
+            p,
+            origin,
+            dir,
+            t,
+            t1.min(max_dist),
+            RayTarget::Pick,
+            normal,
+        ) {
+            if th <= max_dist {
+                return Some((p, normal));
+            }
+            return None;
         }
     }
     None
