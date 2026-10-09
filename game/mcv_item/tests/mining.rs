@@ -16,7 +16,6 @@ fn tool(id: u16) -> Option<ItemStack> {
 const STONE: BlockId = BlockId(1);
 const DIRT: BlockId = BlockId(2);
 const LOG: BlockId = BlockId(6);
-const PLANKS: BlockId = BlockId(8);
 const COBBLE: BlockId = BlockId(9);
 const BEDROCK: BlockId = BlockId(10);
 const FLOWER: BlockId = BlockId(12);
