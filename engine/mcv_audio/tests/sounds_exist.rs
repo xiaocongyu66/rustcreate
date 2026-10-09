@@ -18,7 +18,7 @@ fn full_tree_variants_exist_when_table_present() {
     println!("events: {}", table.len());
 
     // 已知关键事件必须可解析(fixture 素材映射的锚点)。
-    let mut loader = SoundLoader::new(&dir);
+    let loader = SoundLoader::new(&dir);
     for event in [
         "block.stone.break",
         "block.stone.place",

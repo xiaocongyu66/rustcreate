@@ -17,9 +17,15 @@ index_path, out = sys.argv[1], sys.argv[2]
 objects = json.load(open(index_path))["objects"]
 tasks = []
 for path, obj in objects.items():
-    if path == "minecraft/sounds.json" or path.startswith("minecraft/sounds/"):
-        rel = path[len("minecraft/"):]
-        tasks.append((obj["hash"], obj["size"], os.path.join(out, rel)))
+    # index 键带命名空间前缀;目标布局 = sounds.json 在根、变体相对 OUT
+    # (loader 按 dir + "mob/strider/death1" + ".ogg" 寻址)。
+    if path == "minecraft/sounds.json":
+        rel = "sounds.json"
+    elif path.startswith("minecraft/sounds/"):
+        rel = path[len("minecraft/sounds/"):]
+    else:
+        continue
+    tasks.append((obj["hash"], obj["size"], os.path.join(out, rel)))
 
 def fetch(task):
     sha, size, dest = task
