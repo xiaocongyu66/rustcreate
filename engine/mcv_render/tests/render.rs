@@ -391,10 +391,22 @@ fn cloud_pipeline_compiles_and_paints_sky() {
         target.read_pixels(&device)
     };
     let (off, on) = (frame(false), frame(true));
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        for (name, px) in [("cloud-off.png", &off), ("cloud-on.png", &on)] {
+            let png = mcv_render::offscreen::encode_png(extent.width, extent.height, px);
+            let _ = std::fs::write(std::path::Path::new(&dir).join(name), png);
+        }
+    }
     let (n, bbox) = a_diff_pixels(&off, &on);
-    // 云图约半覆盖视场：57° 视锥内天空带 320×240 像素里过半应被云重绘。
+    // 断言只为「云管线真的在画」（真机闪退案的 CI 洞：云 pass 从未被
+    // 执行过）。云图 clouds.png 仅 28% 单元占用，白色×0.7 面明暗经 sRGB
+    // 编码后与亮天空底色接近，alpha 混合后逐像素差大多不足阈值——lavapipe
+    // 实测 diff≈1.5k（阈值 3 倍余量即可），静默跳过场景 diff 恰为 0。
+    // bbox 横向跨度防单点噪声假阳：云是横贯视场的整片平面。
     assert!(
-        n > 320 * 240 / 20,
+        n > 400,
         "云开/云关天空带几乎无差（diff={n}, bbox={bbox:?}）——云管线可能被静默跳过"
     );
+    let (x0, _y0, x1, _y1) = bbox.expect("diff>0 必有包围盒");
+    assert!(x1 - x0 > 200, "云 diff 未横贯天空带，bbox={bbox:?}");
 }
