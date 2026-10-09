@@ -1478,11 +1478,12 @@ impl GameRuntime {
             // mob 受击击退（LivingEntity.java:1238 `knockback(0.4F, ...)`
             // victim 侧；combat::knockback_velocity 公式已核实但运行时从未
             // 调用——combat 审计"玩家命中 mob 无击退"）。
-            if struck && slain.is_none() {
-                if let Some(b) = self.mobs_app.world.write::<PhysBody>().get_mut(target) {
-                    let dir = Vec3::new(b.pos.x - eye.x, 0.0, b.pos.z - eye.z);
-                    b.vel = combat::knockback_velocity(b.vel, b.on_ground, 0.0, 0.4, dir);
-                }
+            if struck
+                && slain.is_none()
+                && let Some(b) = self.mobs_app.world.write::<PhysBody>().get_mut(target)
+            {
+                let dir = Vec3::new(b.pos.x - eye.x, 0.0, b.pos.z - eye.z);
+                b.vel = combat::knockback_velocity(b.vel, b.on_ground, 0.0, 0.4, dir);
             }
             if let Some((e, xp, kind)) = slain {
                 // 击杀掉落（26.1 LivingEntity.die → loot）：despawn 前取位姿。
