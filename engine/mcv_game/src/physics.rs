@@ -15,6 +15,7 @@ use mcv_core::BlockPos;
 
 use crate::Player;
 use crate::VoxelAccess;
+use crate::blockshapes;
 use crate::consts;
 
 /// 单轴扫掠的子步上限（米），防止高速穿墙。
@@ -59,6 +60,16 @@ impl Aabb {
             && self.max.z > fz
     }
 
+    /// 与另一 AABB 严格重叠（贴面不算）。
+    pub fn overlaps(&self, o: &Self) -> bool {
+        self.min.x < o.max.x
+            && self.max.x > o.min.x
+            && self.min.y < o.max.y
+            && self.max.y > o.min.y
+            && self.min.z < o.max.z
+            && self.max.z > o.min.z
+    }
+
     fn shift(&mut self, axis: Axis, d: f32) {
         match axis {
             Axis::X => {
@@ -91,8 +102,57 @@ pub enum Axis {
 /// 位移按 ≤ [`MAX_SUBSTEP`] 子步推进；每个子步对扫掠盒覆盖的 voxel
 /// 区间（`floor(min)-1 ..= floor(max)+1`）一次遍历，取最近的阻挡面。
 /// 返回本步是否发生碰撞。
+/// 扫描 `aabb` 覆盖的候选格，返回**碰撞形状**（[`blockshapes`]：全立方=
+/// 格边界；半砖/楼梯/栅栏=按状态盒——栅栏柱+连接臂高 1.5，
+/// CrossCollisionBlock.java:45；火把/花草无碰撞盒）沿移动轴最近的阻挡面
+/// 坐标：正向（朝 +轴）先碰到坐标较小的面，取各盒 min 面中最小者；
+/// 负向取各盒 max 面中最大者。
+fn nearest_face(world: &dyn VoxelAccess, aabb: &Aabb, axis: Axis, forward: bool) -> Option<f32> {
+    let x0 = aabb.min.x.floor() as i32 - 1;
+    let x1 = aabb.max.x.floor() as i32 + 1;
+    let y0 = aabb.min.y.floor() as i32 - 1;
+    let y1 = aabb.max.y.floor() as i32 + 1;
+    let z0 = aabb.min.z.floor() as i32 - 1;
+    let z1 = aabb.max.z.floor() as i32 + 1;
+
+    let mut boxes = [blockshapes::EMPTY_AABB; blockshapes::MAX_SHAPE_BOXES];
+    let mut face: Option<f32> = None;
+    for bx in x0..=x1 {
+        for by in y0..=y1 {
+            for bz in z0..=z1 {
+                let n = blockshapes::collision_boxes(world, BlockPos::new(bx, by, bz), &mut boxes);
+                for b in &boxes[..n] {
+                    if !aabb.overlaps(b) {
+                        continue;
+                    }
+                    // 正向移动被盒子 min 面挡住，负向被 max 面挡住。
+                    let v = match (axis, forward) {
+                        (Axis::X, true) => b.min.x,
+                        (Axis::X, false) => b.max.x,
+                        (Axis::Y, true) => b.min.y,
+                        (Axis::Y, false) => b.max.y,
+                        (Axis::Z, true) => b.min.z,
+                        (Axis::Z, false) => b.max.z,
+                    };
+                    face = Some(match face {
+                        None => v,
+                        Some(f) => {
+                            if forward {
+                                f.min(v)
+                            } else {
+                                f.max(v)
+                            }
+                        }
+                    });
+                }
+            }
+        }
+    }
+    face
+}
+
 /// 单轴扫掠移动的核心实现（与 `Player` 解耦）。
-/// 阻挡时钳位盒体并清零 `vel` 对应分量，返回是否命中。
+/// 阻挡时钳位到碰撞面并清零 `vel` 对应分量，返回是否命中。
 pub fn move_box(
     world: &dyn VoxelAccess,
     pos: &mut Vec3,
@@ -106,44 +166,9 @@ pub fn move_box(
         let step = remaining.clamp(-MAX_SUBSTEP, MAX_SUBSTEP);
         aabb.shift(axis, step);
 
-        let x0 = aabb.min.x.floor() as i32 - 1;
-        let x1 = aabb.max.x.floor() as i32 + 1;
-        let y0 = aabb.min.y.floor() as i32 - 1;
-        let y1 = aabb.max.y.floor() as i32 + 1;
-        let z0 = aabb.min.z.floor() as i32 - 1;
-        let z1 = aabb.max.z.floor() as i32 + 1;
-
-        let mut face: Option<f32> = None;
-        for bx in x0..=x1 {
-            for by in y0..=y1 {
-                for bz in z0..=z1 {
-                    if !world.block(BlockPos::new(bx, by, bz)).def().solid {
-                        continue;
-                    }
-                    if !aabb.intersects_voxel(bx, by, bz) {
-                        continue;
-                    }
-                    let v = match axis {
-                        Axis::X => bx as f32,
-                        Axis::Y => by as f32,
-                        Axis::Z => bz as f32,
-                    };
-                    face = Some(match face {
-                        None => v,
-                        Some(f) => {
-                            if step > 0.0 {
-                                f.min(v)
-                            } else {
-                                f.max(v)
-                            }
-                        }
-                    });
-                }
-            }
-        }
-
-        if let Some(v) = face {
-            let target = if step > 0.0 { v - SKIN } else { v + 1.0 + SKIN };
+        if let Some(v) = nearest_face(world, aabb, axis, step > 0.0) {
+            // v 已是阻挡面本身（正向=盒 min 面，负向=盒 max 面）。
+            let target = if step > 0.0 { v - SKIN } else { v + SKIN };
             let delta = match (axis, step > 0.0) {
                 (Axis::X, true) => target - aabb.max.x,
                 (Axis::X, false) => target - aabb.min.x,
@@ -183,48 +208,10 @@ pub fn move_axis(
         let step = remaining.clamp(-MAX_SUBSTEP, MAX_SUBSTEP);
         aabb.shift(axis, step);
 
-        // 扫掠盒覆盖的 voxel 区间（含 ±1 余量）。
-        let x0 = aabb.min.x.floor() as i32 - 1;
-        let x1 = aabb.max.x.floor() as i32 + 1;
-        let y0 = aabb.min.y.floor() as i32 - 1;
-        let y1 = aabb.max.y.floor() as i32 + 1;
-        let z0 = aabb.min.z.floor() as i32 - 1;
-        let z1 = aabb.max.z.floor() as i32 + 1;
-
-        // 一次遍历找最近的阻挡面坐标。
-        let mut face: Option<f32> = None;
-        for bx in x0..=x1 {
-            for by in y0..=y1 {
-                for bz in z0..=z1 {
-                    if !world.block(BlockPos::new(bx, by, bz)).def().solid {
-                        continue;
-                    }
-                    if !aabb.intersects_voxel(bx, by, bz) {
-                        continue;
-                    }
-                    let v = match axis {
-                        Axis::X => bx as f32,
-                        Axis::Y => by as f32,
-                        Axis::Z => bz as f32,
-                    };
-                    face = Some(match face {
-                        None => v,
-                        // 正向移动取最小面，负向取最大面。
-                        Some(f) => {
-                            if step > 0.0 {
-                                f.min(v)
-                            } else {
-                                f.max(v)
-                            }
-                        }
-                    });
-                }
-            }
-        }
-
-        if let Some(v) = face {
-            // 钳位到方块面，留 SKIN 间隙。
-            let target = if step > 0.0 { v - SKIN } else { v + 1.0 + SKIN };
+        if let Some(v) = nearest_face(world, aabb, axis, step > 0.0) {
+            // v 已是阻挡面坐标（正向=盒 min 面，负向=盒 max 面），
+            // 钳位留 SKIN 间隙。
+            let target = if step > 0.0 { v - SKIN } else { v + SKIN };
             // 正向移动看 max 边，负向看 min 边。
             let delta = match (axis, step > 0.0) {
                 (Axis::X, true) => target - aabb.max.x,

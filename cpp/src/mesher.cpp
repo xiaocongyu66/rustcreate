@@ -1,5 +1,7 @@
 // Greedy voxel mesher: opaque and water passes over a 3x3 chunk
-// neighbourhood (see mcv.h for the ABI contract).
+// neighbourhood (see mcv.h for the ABI contract). Cube blocks take the
+// greedy merge; non-cube shapes (cross/torch/fence/slab/stairs) go through
+// the emit_shapes() parametric template path keyed by the state nibble.
 //
 // Two-phase output: quads accumulate in local std::vector storage, then one
 // mcv_meshbuf_acquire from the thread's active pool backs the returned
@@ -24,6 +26,12 @@ namespace {
  * of the u16 id space so it cannot collide with real ids once the registry
  * grows toward ~1000 blocks. */
 constexpr uint16_t kBarrier = 0xFFFF;
+
+/* 体素 u16 打包（同 mcv_core::BlockId）：bit0-11 = 方块 id，bit12-15 =
+ * 状态 nibble（半砖上下/楼梯朝向）。kBarrier 经 MCV_ID 得 0x0FFF（未注册
+ * → kUnknown 不透明），且拦截先行于取模，哨兵语义不变。 */
+#define MCV_ID(v) ((v) &0x0FFFu)
+#define MCV_STATE(v) (((v) >> 12) & 0xFu)
 
 /* UV units per block edge: 65535 / 16, so a full 16-block quad fills the
  * u16 range exactly (repeat wrap comes from the sampler, values & 0xFFFF). */
@@ -62,14 +70,16 @@ struct BlockInfo {
     bool liquid;
     bool geom; /* emits geometry in the opaque pass */
     uint16_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
+    uint8_t shape; /* mcv_core::Shape: 0 cube 1 cross 2 torch 3 fence 4
+                    * slab 5 stairs（按注册名分类，见 blocks_gen.inc） */
 };
 
 /* Generated from the same ci/gen-blocks.py run as mcv_core::BLOCKS, so id
  * order/flags/tile layers match the Rust registry by construction (tiles[]
- * are texture-array layer indices from tiles_manifest.json). Non-cube blocks
- * (stairs/slabs/fences/crosses, model_kind=1) are placeholder-rendered as
- * full cubes until the shape system lands. ids >= kBlocksCount fall back to
- * kUnknown. */
+ * are texture-array layer indices from tiles_manifest.json). Non-cube shapes
+ * (cross/torch/fence/slab/stairs, model_kind=1) are emitted by the
+ * emit_shapes() template path; only shape==0 (cube) blocks take the greedy
+ * merge. ids >= kBlocksCount fall back to kUnknown. */
 constexpr BlockInfo kBlocks[] = {
 #include "blocks_gen.inc"
 };
@@ -159,14 +169,16 @@ uint16_t block_at(const Neighborhood& n, int x, int y, int z) {
 
 /* Bounds-checked registry access for the (now u16-wide) id space: unknown
  * ids are treated as fully opaque, mirroring mcv_light::opacity. */
-constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}};
+constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}, 0};
 
 const BlockInfo& block_info(uint16_t id) {
-    return id < kBlocksCount ? kBlocks[id] : kUnknown;
+    const uint16_t base = MCV_ID(id);
+    return base < kBlocksCount ? kBlocks[base] : kUnknown;
 }
 
-bool is_opaque(uint16_t id) {
-    return id >= kBarrier || block_info(id).opaque;
+/* 入参为原始体素值（可含状态位；kBarrier 先行拦截）。 */
+bool is_opaque(uint16_t raw) {
+    return raw >= kBarrier || block_info(raw).opaque;
 }
 
 /* Low nibble = block light, high nibble = sky light (mcv_core::ChunkLight).
@@ -358,9 +370,308 @@ void emit_quad(std::vector<QuadVertex>& verts, std::vector<uint32_t>& indices,
     indices.insert(indices.end(), quad, quad + 6);
 }
 
+/* ---- 非立方形状模板（shape 1..5） -------------------------------------
+ * 非 Cube 方块不进贪心合并（合并键以整格面为前提），改由 emit_shapes 按
+ * 状态 nibble 发射参数化盒子/面模板。面剔除与 Cube 同判据：面法线方向
+ * 邻格不透明则不发射；光照/AO/UV/flags 全部复用 Cube 路径函数
+ * （light_at/corner_ao/kCornerOrder/uv_coord）。 */
+
+/* 原版比例（16 px 方块 → 0..1）：半砖/踏步半高 8px；火把柱 2px 宽、
+ * 10px 高；栅栏柱 4px 宽全高，臂梁 3px 厚（y 6..9px）。 */
+constexpr float kHalf = 0.5f;
+constexpr float kTorchMin = 0.4f;   /* 火把柱 x/z 0.4..0.6 */
+constexpr float kTorchTop = 0.625f; /* 火把柱 y 0..0.625 */
+constexpr float kFencePost = 0.375f; /* 栅栏柱 x/z 0.375..0.625 */
+constexpr float kRailMin = 0.375f;  /* 臂梁 y 0.375..0.5625 */
+constexpr float kRailMax = 0.5625f;
+
+/* 盒子：方块内局部坐标（0..1），发射时再加格原点。 */
+struct Box3 {
+    float x0, y0, z0, x1, y1, z1;
+};
+
+/* 面所在 slice 网格的 u/v 轴序号（与 grid_axes 一致：axis0 u=z v=y，
+ * axis1 u=x v=z，axis2 u=x v=y），UV 与 AO 采样共用。 */
+void face_uv_axes(int axis, int* u_axis, int* v_axis) {
+    if (axis == 0) {
+        *u_axis = 2; *v_axis = 1;
+    } else if (axis == 1) {
+        *u_axis = 0; *v_axis = 2;
+    } else {
+        *u_axis = 0; *v_axis = 1;
+    }
+}
+
+/* 发射盒子的一个面。expose=true 强制发射（半砖中层面：邻格是本方块自身
+ * 格的另一半，不属于“不透明邻格”判据）。UV 取盒子在格内的实际区间，
+ * 与 Cube 同一 uv_coord 换算（整盒时与贪心路径逐位一致）。 */
+void emit_box_face(const Neighborhood& n, std::vector<QuadVertex>& verts,
+                   std::vector<uint32_t>& indices, int x, int y, int z,
+                   const BlockInfo& info, const Box3& b, int face,
+                   bool expose) {
+    const int axis = face / 2;
+    const int step = face % 2 == 0 ? 1 : -1;
+    const int nx = x + (axis == 0 ? step : 0);
+    const int ny = y + (axis == 1 ? step : 0);
+    const int nz = z + (axis == 2 ? step : 0);
+    if (!expose && is_opaque(block_at(n, nx, ny, nz))) {
+        return;
+    }
+    const float bmin[3] = {b.x0, b.y0, b.z0};
+    const float bmax[3] = {b.x1, b.y1, b.z1};
+    int u_axis;
+    int v_axis;
+    face_uv_axes(axis, &u_axis, &v_axis);
+    /* corner_ao 的 u/v 轴单位向量（与 grid_axes 同向，对称采样不依赖符号）。 */
+    const int ux = u_axis == 0 ? 1 : 0;
+    const int uy = u_axis == 1 ? 1 : 0;
+    const int uz = u_axis == 2 ? 1 : 0;
+    const int vx = v_axis == 0 ? 1 : 0;
+    const int vy = v_axis == 1 ? 1 : 0;
+    const int vz = v_axis == 2 ? 1 : 0;
+
+    Cell c;
+    std::memset(&c, 0, sizeof(Cell));
+    c.tex = info.tiles[face];
+    c.visible = 1;
+    light_at(n, nx, ny, nz, &c.sky, &c.blk);
+
+    const float plane = face % 2 == 0 ? bmax[axis] : bmin[axis];
+    const uint8_t flags = static_cast<uint8_t>(face);
+    const uint32_t base = static_cast<uint32_t>(verts.size());
+    for (int k = 0; k < 4; ++k) {
+        const int a = kCornerOrder[face][k][0];
+        const int bq = kCornerOrder[face][k][1];
+        float pos[3];
+        pos[axis] = plane;
+        pos[u_axis] = a != 0 ? bmax[u_axis] : bmin[u_axis];
+        pos[v_axis] = bq != 0 ? bmax[v_axis] : bmin[v_axis];
+        const uint16_t cu = uv_coord(pos[u_axis]);
+        const uint16_t cv = uv_coord(pos[v_axis]);
+        const uint8_t ao =
+            corner_ao(n, nx, ny, nz, ux, uy, uz, vx, vy, vz, a, bq);
+        push_vertex(verts, pos[0] + static_cast<float>(x),
+                    pos[1] + static_cast<float>(y),
+                    pos[2] + static_cast<float>(z), cu, cv, c, ao, flags);
+    }
+    const uint32_t i0 = base;
+    const uint32_t i1 = base + 1;
+    const uint32_t i2 = base + 2;
+    const uint32_t i3 = base + 3;
+    const uint32_t quad[6] = {i0, i1, i2, i0, i2, i3};
+    indices.insert(indices.end(), quad, quad + 6);
+}
+
+/* 六面发射；force_face >= 0 的面强制暴露（半砖中层面），其余按邻格剔除。 */
+void emit_box(const Neighborhood& n, std::vector<QuadVertex>& verts,
+              std::vector<uint32_t>& indices, int x, int y, int z,
+              const BlockInfo& info, const Box3& b, int force_face) {
+    for (int f = 0; f < 6; ++f) {
+        emit_box_face(n, verts, indices, x, y, z, info, b, f,
+                      f == force_face);
+    }
+}
+
+/* 十字植物：两条对角双面 quad（正面 + 反面索引各 6——不透明管线开背面
+ * 剔除，反向索引保证两侧可见）。ao 恒 3；flags 用 +Y 光照档（植物不受
+ * 侧面变暗）；光照取方块自身所在格（植物不遮挡所在格光照）。 */
+void emit_cross(const Neighborhood& n, std::vector<QuadVertex>& verts,
+                std::vector<uint32_t>& indices, int x, int y, int z,
+                const BlockInfo& info) {
+    Cell c;
+    std::memset(&c, 0, sizeof(Cell));
+    c.tex = info.tiles[kFacePy];
+    c.visible = 1;
+    light_at(n, x, y, z, &c.sky, &c.blk);
+    const float fx = static_cast<float>(x);
+    const float fy = static_cast<float>(y);
+    const float fz = static_cast<float>(z);
+    const uint16_t u_max = uv_coord(1.0f);
+    const uint16_t v_max = uv_coord(1.0f);
+    const uint8_t flags = static_cast<uint8_t>(kFacePy);
+    /* 每条对角线 4 角：底1 底2 顶2 顶1（u 沿对角线、v 沿 y）。 */
+    const float corners[2][4][3] = {
+        {{0, 0, 0}, {1, 0, 1}, {1, 1, 1}, {0, 1, 0}},
+        {{1, 0, 0}, {0, 0, 1}, {0, 1, 1}, {1, 1, 0}},
+    };
+    const uint16_t cuv[4][2] = {{0, 0}, {u_max, 0}, {u_max, v_max}, {0, v_max}};
+    for (const auto& diag : corners) {
+        const uint32_t base = static_cast<uint32_t>(verts.size());
+        for (int k = 0; k < 4; ++k) {
+            push_vertex(verts, fx + diag[k][0], fy + diag[k][1],
+                        fz + diag[k][2], cuv[k][0], cuv[k][1], c, 3, flags);
+        }
+        const uint32_t i0 = base;
+        const uint32_t i1 = base + 1;
+        const uint32_t i2 = base + 2;
+        const uint32_t i3 = base + 3;
+        const uint32_t front[6] = {i0, i1, i2, i0, i2, i3};
+        const uint32_t back[6] = {i0, i2, i1, i0, i3, i2};
+        indices.insert(indices.end(), front, front + 6);
+        indices.insert(indices.end(), back, back + 6);
+    }
+}
+
+/* 栅栏臂连接判据：26.1 FenceBlock.java:59-63 connectsTo ≈
+ *   sturdy 邻块 ∥ 同栅栏类别 ∥ 栅栏门朝向连通
+ * 的移植近似。sturdy 以"实体不透明整立方"（渲染不透明位 + shape==0）
+ * 近似面朝向的 isFaceSturdy；同栅栏类别以 shape==Fence 近似。
+ * KNOWN-DIVERGENCE（本引擎无 tag / blockstate 体系，勿凭直觉收紧）：
+ * - BlockTags.FENCES / WOODEN_FENCES（FenceBlock.java:66-68）未移植，
+ *   木质↔非木质栅栏（橡木↔下界砖）跨类会误连；
+ * - FenceGateBlock 分支缺（本引擎未注册栅栏门）；
+ * - isExceptionForConnection 例外名单（Block.java:255-262 叶/屏障/雕纹南
+ *   瓜/南瓜灯/西瓜/南瓜/潜影盒）未移植——26.1 sturdy=面支撑形整面
+ *   （SupportType.java:11-16 FULL=isFaceFull(blockSupportShape)），南瓜系
+ *   sturdy 但在例外名单，我方会误连、原版排除；
+ * - 玻璃等 opaque=false 整方块在 26.1 支撑形整盒 → faceSturdy=true 原版会
+ *   连臂，我方近似为不透明整立方 → 不连（保守方向，宁缺勿错连）。
+ * Rust 侧同一规则：engine/mcv_game/src/blockshapes.rs::fence_connects，
+ * 两侧必须同步（渲染臂与碰撞臂一致性=原版防跳语义）。 */
+bool fence_arm_connects(uint16_t nb) {
+    if (nb >= kBarrier) {
+        return false; /* 越界/未加载邻区块：不出臂 */
+    }
+    const BlockInfo& i = block_info(nb);
+    if (i.shape == 3 /* Fence */) {
+        return true;
+    }
+    return i.shape == 0 /* Cube */ && i.opaque;
+}
+
+/* 栅栏：中心立柱全高（x/z 0.375..0.625）+ 水平四向臂（连接判据见
+ * fence_arm_connects：贴石墙等 sturdy 邻块原版也出臂，FenceBlock.java:
+ * 91-94）。臂梁 y 0.375..0.5625，沿臂向从柱边到格边；臂端面贴 sturdy
+ * 邻块一侧由不透明面剔除收尾，臂端面与相邻栅栏臂端面共面反向，由背面
+ * 剔除消化（宁多勿漏）。 */
+void emit_fence(const Neighborhood& n, std::vector<QuadVertex>& verts,
+                std::vector<uint32_t>& indices, int x, int y, int z,
+                const BlockInfo& info) {
+    const Box3 post{kFencePost, 0.0f, kFencePost, 1.0f - kFencePost, 1.0f,
+                    1.0f - kFencePost};
+    emit_box(n, verts, indices, x, y, z, info, post, -1);
+    const int dirs[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+    for (const auto& d : dirs) {
+        if (!fence_arm_connects(block_at(n, x + d[0], y, z + d[1]))) {
+            continue;
+        }
+        Box3 arm{kFencePost, kRailMin, kFencePost, 1.0f - kFencePost, kRailMax,
+                 1.0f - kFencePost};
+        if (d[0] == 1) {
+            arm.x1 = 1.0f;
+        } else if (d[0] == -1) {
+            arm.x0 = 0.0f;
+        } else if (d[1] == 1) {
+            arm.z1 = 1.0f;
+        } else {
+            arm.z0 = 0.0f;
+        }
+        emit_box(n, verts, indices, x, y, z, info, arm, -1);
+    }
+}
+
+/* 楼梯：底座（整格宽半高盒）+ 踏步（朝向侧半格、另半高盒），bit2=top
+ * 上下翻转。facing 编码 0=+Z 1=-Z 2=+X 3=-X（与 game/mcv_logic
+ * placement_state / mcv_core BlockId::state / blockshapes.rs 同一约定，
+ * 勿按直觉写成 +X 优先）；语义 = 26.1 FACING（玩家水平视线同向，
+ * StairBlock.java:101-102），几何含义“踏步（整高半）位于朝向侧半格”
+ * 按 StairBlock.java:37-38 推得（facing=NORTH → 上半占 -Z 半格）。
+ * 面剔除只用通用“邻格不透明”判据：同种楼梯
+ * 互相做透明剔除会在半盒错位处留洞，故两盒一律按各自暴露面发射，宁多
+ * 勿漏；两盒在 y=0.5 的共面相对面（+Y/-Y）由背面剔除消化，不做盒间剔除。 */
+void emit_stairs(const Neighborhood& n, std::vector<QuadVertex>& verts,
+                 std::vector<uint32_t>& indices, int x, int y, int z,
+                 const BlockInfo& info, uint8_t st) {
+    const int facing = st & 3;
+    const bool flipped = (st & 4) != 0;
+    Box3 base;
+    Box3 step;
+    if (!flipped) {
+        base = Box3{0.0f, 0.0f, 0.0f, 1.0f, kHalf, 1.0f};
+        step = Box3{0.0f, kHalf, 0.0f, 1.0f, 1.0f, 1.0f};
+    } else {
+        base = Box3{0.0f, kHalf, 0.0f, 1.0f, 1.0f, 1.0f};
+        step = Box3{0.0f, 0.0f, 0.0f, 1.0f, kHalf, 1.0f};
+    }
+    switch (facing) {
+    case 0:
+        step.z0 = kHalf; /* +Z：踏步占 +Z 半格 */
+        break;
+    case 1:
+        step.z1 = kHalf; /* -Z */
+        break;
+    case 2:
+        step.x0 = kHalf; /* +X */
+        break;
+    default:
+        step.x1 = kHalf; /* -X */
+        break;
+    }
+    emit_box(n, verts, indices, x, y, z, info, base, -1);
+    emit_box(n, verts, indices, x, y, z, info, step, -1);
+}
+
+/* 中心块逐格扫描（16x256x16，只管本区块；邻域只用于剔除/光照），对
+ * shape != 0 的几何方块按状态发射模板；仅不透明 pass 调用。生成表只出
+ * 0..5，default 整盒为防御性回退。 */
+void emit_shapes(const Neighborhood& n, std::vector<QuadVertex>& verts,
+                 std::vector<uint32_t>& indices) {
+    for (int y = 0; y < 256; ++y) {
+        for (int z = 0; z < 16; ++z) {
+            for (int x = 0; x < 16; ++x) {
+                const uint16_t raw = block_at(n, x, y, z);
+                if (raw >= kBarrier) {
+                    continue;
+                }
+                const BlockInfo& info = block_info(raw);
+                if (!info.geom || info.shape == 0) {
+                    continue;
+                }
+                const uint8_t st = static_cast<uint8_t>(MCV_STATE(raw));
+                switch (info.shape) {
+                case 1:
+                    emit_cross(n, verts, indices, x, y, z, info);
+                    break;
+                case 2:
+                    emit_box(n, verts, indices, x, y, z, info,
+                             Box3{kTorchMin, 0.0f, kTorchMin,
+                                  1.0f - kTorchMin, kTorchTop,
+                                  1.0f - kTorchMin},
+                             -1);
+                    break;
+                case 3:
+                    emit_fence(n, verts, indices, x, y, z, info);
+                    break;
+                case 4:
+                    if ((st & 1) != 0) {
+                        /* 上半砖：y 0.5..1，中层面（-Y）永远暴露 */
+                        emit_box(n, verts, indices, x, y, z, info,
+                                 Box3{0.0f, kHalf, 0.0f, 1.0f, 1.0f, 1.0f},
+                                 kFaceNy);
+                    } else {
+                        /* 下半砖：y 0..0.5，中层面（+Y）永远暴露 */
+                        emit_box(n, verts, indices, x, y, z, info,
+                                 Box3{0.0f, 0.0f, 0.0f, 1.0f, kHalf, 1.0f},
+                                 kFacePy);
+                    }
+                    break;
+                case 5:
+                    emit_stairs(n, verts, indices, x, y, z, info, st);
+                    break;
+                default:
+                    emit_box(n, verts, indices, x, y, z, info,
+                             Box3{0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f}, -1);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /* Standard greedy sweep: per (axis, direction, layer), expand width along
  * the grid u axis first, then height along v; cells merge only when the
- * full quad key matches (block, tile, sky/block light, packed AO, wave). */
+ * full quad key matches (block, tile, sky/block light, packed AO, wave).
+ * 贪心仅限 shape==0（Cube）；非立方形状由 emit_shapes 另行发射。 */
 void build_pass(const Neighborhood& n, bool water_pass,
                 std::vector<QuadVertex>& verts,
                 std::vector<uint32_t>& indices) {
@@ -390,10 +701,11 @@ void build_pass(const Neighborhood& n, bool water_pass,
                     for (int u = 0; u < g.gu; ++u) {
                         int x, y, z;
                         cell_coords(axis, layer, u, v, &x, &y, &z);
-                        const uint16_t id = block_at(n, x, y, z);
-                        if (id >= kBarrier) {
+                        const uint16_t raw = block_at(n, x, y, z);
+                        if (raw >= kBarrier) {
                             continue;
                         }
+                        const uint16_t id = MCV_ID(raw);
                         const int nx = x + nx_step;
                         const int ny = y + ny_step;
                         const int nz = z + nz_step;
@@ -403,14 +715,17 @@ void build_pass(const Neighborhood& n, bool water_pass,
                         uint8_t wave = 0;
                         if (water_pass) {
                             /* water vs water (or barrier) shows nothing */
-                            if (id == kWater && nb < kBarrier && nb != kWater) {
+                            if (id == kWater && nb < kBarrier &&
+                                MCV_ID(nb) != kWater) {
                                 visible = true;
                                 if (face == kFacePy) {
-                                    wave = nb == kAir ? 1 : 0;
+                                    wave = MCV_ID(nb) == kAir ? 1 : 0;
                                 }
                             }
                         } else {
-                            visible = block_info(id).geom && !is_opaque(nb);
+                            const BlockInfo& bi = block_info(id);
+                            visible =
+                                bi.geom && bi.shape == 0 && !is_opaque(nb);
                         }
                         if (!visible) {
                             continue;
@@ -512,6 +827,10 @@ int32_t mcv_mesh_build(const uint16_t* const voxels[9],
     std::vector<QuadVertex> verts;
     std::vector<uint32_t> indices;
     build_pass(n, mesh_kind == 1, verts, indices);
+    if (mesh_kind == 0) {
+        /* 非立方形状模板只在不透明 pass（水 pass 只出水）。 */
+        emit_shapes(n, verts, indices);
+    }
 
     uint32_t vertex_cap = static_cast<uint32_t>(verts.size());
     uint32_t index_cap = static_cast<uint32_t>(indices.size());

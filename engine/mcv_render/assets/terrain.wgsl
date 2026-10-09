@@ -15,8 +15,12 @@ struct ChunkOrigin {
 };
 
 // Face brightness by face_id: +X,-X,+Y(top),-Y(bottom),+Z,-Z
+// 原版基数：DOWN0.5 UP1.0 NORTH0.8 SOUTH0.8 WEST0.6 EAST0.6
+// （world/level/CardinalLighting.java:8 DEFAULT）。X 轴面（东/西）=0.6、
+// Z 轴面（南/北）=0.8——此前 X/Z 数值互换且 Z 取 0.65，已按源码修正
+// （MINOR 项，任务书说法与源码一致）。
 fn face_shade(face_id: u32) -> f32 {
-    var table = array<f32, 6>(0.80, 0.80, 1.00, 0.50, 0.65, 0.65);
+    var table = array<f32, 6>(0.60, 0.60, 1.00, 0.50, 0.80, 0.80);
     return table[face_id];
 }
 

@@ -879,7 +879,14 @@ impl GameRuntime {
             let view = WorldView {
                 chunks: &self.chunks,
             };
-            if let Some((hit, _)) = dda_hit(&view, eye, d * sign, THIRD_PERSON_DIST + 0.5) {
+            // 相机遮挡按碰撞形状（原版相机 clip 与拾取不同源：火把不挡相机）。
+            if let Some((hit, _)) = dda_hit(
+                &view,
+                eye,
+                d * sign,
+                THIRD_PERSON_DIST + 0.5,
+                mcv_game::blockshapes::RayTarget::Collide,
+            ) {
                 let t = (Vec3::new(hit.x as f32 + 0.5, hit.y as f32 + 0.5, hit.z as f32 + 0.5)
                     - eye)
                     .dot(d * sign);
@@ -1807,7 +1814,7 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+        let (hit, _) = dda_hit(&view, eye, dir, 5.0, mcv_game::blockshapes::RayTarget::Pick)?;
         Some((hit, view.block(hit).0))
     }
 
@@ -1817,9 +1824,15 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        // 交互距离按模式取 26.1 block_interaction_range（生存 4.5 / 创造 5.0）。
-        let Some((hit, normal)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))
-        else {
+        // 交互距离按模式取 26.1 block_interaction_range（生存 4.5 / 创造 5.0）；
+        // 命中判据 = 拾取形状（火把/花草可命中，见 blockshapes）。
+        let Some((hit, normal)) = dda_hit(
+            &view,
+            eye,
+            dir,
+            block_interaction_reach(self.mode),
+            mcv_game::blockshapes::RayTarget::Pick,
+        ) else {
             return;
         };
         if !place {
@@ -1858,7 +1871,15 @@ impl GameRuntime {
             let [lx, ly, lz] = target.local();
             let idx = ly << 8 | lz << 4 | lx;
             let old_id = handle.voxels.read().unwrap()[idx];
-            handle.voxels.write().unwrap()[idx] = new_id;
+            // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
+            // 网格与碰撞按 mcv_core::BlockId::state 读取。
+            let st = placement_state(
+                mcv_core::shape::shape(new_id.0),
+                normal,
+                self.input.sneak,
+                self.player.yaw,
+            );
+            handle.voxels.write().unwrap()[idx] = new_id.with_state(st);
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
             // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
             //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
@@ -1969,7 +1990,13 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, _)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode)) else {
+        let Some((hit, _)) = dda_hit(
+            &view,
+            eye,
+            dir,
+            block_interaction_reach(self.mode),
+            mcv_game::blockshapes::RayTarget::Pick,
+        ) else {
             return;
         };
         let block = view.block(hit);
@@ -2023,7 +2050,14 @@ impl GameRuntime {
         let dir = self.camera(1.0).dir();
         let reach = block_interaction_reach(self.mode);
         if self.mode == GameMode::Creative {
-            let hit = dda_hit(&view, eye, dir, reach).map(|(p, _)| p);
+            let hit = dda_hit(
+                &view,
+                eye,
+                dir,
+                reach,
+                mcv_game::blockshapes::RayTarget::Pick,
+            )
+            .map(|(p, _)| p);
             if let Some(p) = self.mine.creative_tick(hit) {
                 self.destroy_block(p);
             }
@@ -2031,13 +2065,19 @@ impl GameRuntime {
         }
         // 每 tick 重射线（原版客户端 hitResult 每 tick 重算；超出 reach 打不中
         // → None → continue_tick 内 ABORT，取代旧"中心距 >5.5 才中止"）。
-        let hit = dda_hit(&view, eye, dir, reach)
-            .map(|(p, _)| (p, view.block(p)))
-            .filter(|(_, b)| b.0 != 0)
-            .map(|(p, b)| MineHit {
-                pos: p,
-                per_tick: self.mine_per_tick(&view, b),
-            });
+        let hit = dda_hit(
+            &view,
+            eye,
+            dir,
+            reach,
+            mcv_game::blockshapes::RayTarget::Pick,
+        )
+        .map(|(p, _)| (p, view.block(p)))
+        .filter(|(_, b)| b.0 != 0)
+        .map(|(p, b)| MineHit {
+            pos: p,
+            per_tick: self.mine_per_tick(&view, b),
+        });
         if let MineTick::Broken(p) = self.mine.continue_tick(hit) {
             self.destroy_block(p);
         }
@@ -2070,7 +2110,13 @@ impl GameRuntime {
             None => {
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let dir = self.camera(1.0).dir();
-                let (hit, _) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))?;
+                let (hit, _) = dda_hit(
+                    &view,
+                    eye,
+                    dir,
+                    block_interaction_reach(self.mode),
+                    mcv_game::blockshapes::RayTarget::Pick,
+                )?;
                 hit
             }
         };
@@ -2174,7 +2220,7 @@ impl GameRuntime {
                     let iy = height - 19.0 * s;
                     match stack.def().kind {
                         mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                            mcv_core::BLOCKS[bid.id() as usize].tiles[2],
                             ix,
                             iy,
                             16.0 * s,
@@ -2282,7 +2328,7 @@ impl GameRuntime {
                     if !stack.is_empty() {
                         match stack.def().kind {
                             mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                                mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                                mcv_core::BLOCKS[bid.id() as usize].tiles[2],
                                 x + 5.0,
                                 y0 + 5.0,
                                 slot - 10.0,
@@ -2901,13 +2947,64 @@ fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
         .unwrap_or_else(|_| panic!("wrong voxel slice length"))
 }
 
-/// Temporary inline Amanatides-Woo DDA; replaced by mcv_game::raycast when
-/// the physics module merges.
+/// 放置时按形状计算状态 nibble（写进体素 bit12-15，规则见 mcv_core）。
+/// `normal` = 命中面外法线（+Y 表示点了顶面，= 26.1 getClickedFace）。
+///
+/// 朝向（C1）：26.1 `StairBlock.getStateForPlacement`（StairBlock.java:101-102）
+/// 写 `FACING = context.getHorizontalDirection()` = `player.getDirection()`
+/// （Entity.java:3367 `Direction.fromYRot`，即玩家**视线同向**）；此前实现
+/// 取视线反方向属错误，已按源码修正。引擎相机约定视线水平分量 =
+/// `(sin yaw, -cos yaw)`（camera.rs `Camera::dir`），四向编码
+/// 0=+Z 1=-Z 2=+X 3=-X 与网格器 `emit_stairs`/`mcv_core::BlockId::state`
+/// 同一约定；楼梯几何为"踏步（整高半）位于 FACING 朝向侧"
+/// （StairBlock.java:37-38：facing=NORTH → 上半占 -Z 半格）。
+///
+/// 半区（C2）：26.1 `StairBlock.java:103-105` 与 `SlabBlock.java:77-80`
+/// 同一规则——点底面（DOWN）→ 上半；点顶面（UP）→ 下半；水平面按
+/// 点击点在面内 y>0.5 → 上半。我方 DDA 无格内点击点坐标（输入信息缺失，
+/// KNOWN-DIVERGENCE），水平面近似为下半，与半砖一致。
+/// `sneak` 翻转上下为自加行为（KNOWN-DIVERGENCE：26.1 半砖/楼梯放置均
+/// 不看潜行，SlabBlock/StairBlock 源码无 isSecondaryUseActive 分支）。
+/// 放置状态 nibble（半砖 bit0；楼梯 bit0-1 朝向 + bit2 上半）。
+/// 朝向=视线水平同向（26.1 `StairBlock.java:102` `getHorizontalDirection`，
+/// `UseOnContext.java:70`/`DirectionalPlaceContext.java:59`）。半区判据为
+/// 近似：原版按格内点击点 Y 定上下（`SlabBlock.java:78`、`StairBlock.java:
+/// 104`），DDA 仅有进入面法线 → 顶/底面按法线、侧面恒下半，且原版无潜行
+/// 切换（`!= sneak` 为引擎自设便捷位，KNOWN-DIVERGENCE）。
+fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f32) -> u8 {
+    match shape {
+        mcv_core::Shape::Slab => u8::from((normal[1] == -1) != sneak),
+        mcv_core::Shape::Stairs => {
+            // 视线水平分量 (sin yaw, -cos yaw)，同向归四向（C1）。
+            let (fx, fz) = (yaw.sin(), -yaw.cos());
+            let facing = if fz.abs() >= fx.abs() {
+                if fz > 0.0 { 0 } else { 1 } // +Z / -Z
+            } else if fx > 0.0 {
+                2 // +X
+            } else {
+                3 // -X
+            };
+            // bit2=上半：点底面(-Y)→上半，点顶面(+Y)→下半（C2，
+            // 与半砖 normal[1]==-1 分支同向，StairBlock.java:104）。
+            facing | (u8::from((normal[1] == -1) != sneak) << 2)
+        }
+        _ => 0,
+    }
+}
+
+/// 网格步进射线检测：按形状的命中判据（`mcv_game::blockshapes`）——
+/// `mode=Pick` 用拾取形状（原版拾取与碰撞无关：火把/花草可命中、
+/// 半砖/楼梯按状态盒、空气/水穿透，BaseTorchBlock.java:16 等）；
+/// `mode=Collide` 用碰撞形状（第三人称相机遮挡：原版相机 VISUAL 形状
+/// 默认即碰撞形状，Camera.java:297 + BlockBehaviour.java:345-347，
+/// 栅栏 visual 差异见 blockshapes::RayTarget::Collide 注释）。
+/// 全立方固体的命中/法线与旧整格 DDA 逐位一致。
 fn dda_hit(
     view: &WorldView,
     origin: Vec3,
     dir: Vec3,
     max_dist: f32,
+    mode: mcv_game::blockshapes::RayTarget,
 ) -> Option<(BlockPos, [i32; 3])> {
     let dir = dir.normalize_or_zero();
     if dir == Vec3::ZERO {
@@ -2940,15 +3037,23 @@ fn dda_hit(
     );
     let t_delta = Vec3::new(1.0 / dir.x.abs(), 1.0 / dir.y.abs(), 1.0 / dir.z.abs());
     let mut normal = [0i32; 3];
+    // 射线进入当前格的参数（起始格 = 0）。
+    let mut t0 = 0.0f32;
     for _ in 0..64 {
         let bp = BlockPos::new(pos.x, pos.y, pos.z);
-        if view.block(bp).def().solid {
-            return Some((bp, normal));
+        // 本格区间 [t0, 离开本格的 t]（不超出 max_dist）。
+        let t1 = t_max.x.min(t_max.y).min(t_max.z).min(max_dist);
+        if let Some((th, n)) =
+            mcv_game::blockshapes::hit_in_cell(view, bp, origin, dir, t0, t1, mode, normal)
+            && th <= max_dist
+        {
+            return Some((bp, n));
         }
         if t_max.x < t_max.y && t_max.x < t_max.z {
             if t_max.x > max_dist {
                 return None;
             }
+            t0 = t_max.x;
             pos.x += step.x;
             t_max.x += t_delta.x;
             normal = [-step.x, 0, 0];
@@ -2956,6 +3061,7 @@ fn dda_hit(
             if t_max.y > max_dist {
                 return None;
             }
+            t0 = t_max.y;
             pos.y += step.y;
             t_max.y += t_delta.y;
             normal = [0, -step.y, 0];
@@ -2963,6 +3069,7 @@ fn dda_hit(
             if t_max.z > max_dist {
                 return None;
             }
+            t0 = t_max.z;
             pos.z += step.z;
             t_max.z += t_delta.z;
             normal = [0, 0, -step.z];
@@ -3142,7 +3249,7 @@ pub fn pick_attack_target(
 /// 12/13花）。调用点按动作拼 `.place` / `.break` 后缀；26.1 无 dig/dirt 组，
 /// 泥土/草/沙共用 block.grass 音组。
 fn block_group(vid: u16) -> Option<&'static str> {
-    match vid {
+    match vid & mcv_core::ID_MASK {
         1 | 9 | 10 => Some("block.stone"),
         2 | 3 | 4 | 7 | 11 => Some("block.grass"),
         6 | 8 => Some("block.wood"),
@@ -3153,11 +3260,65 @@ fn block_group(vid: u16) -> Option<&'static str> {
 /// 脚步材质 → 26.1 sounds.json 事件名：草方块踩草地音，沙/石踩石头音，
 /// 木板/原木踩木头音。
 fn step_event(vid: u16) -> Option<&'static str> {
-    match vid {
+    match vid & mcv_core::ID_MASK {
         1 | 4 | 9 | 10 => Some("block.stone.step"),
         2 | 3 | 7 | 11 => Some("block.grass.step"),
         6 | 8 => Some("block.wood.step"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::placement_state;
+    use mcv_core::Shape;
+
+    #[test]
+    fn slab_top_bit() {
+        // 点顶面（法线 +Y）→ 下半砖；点底面 → 上半砖；潜行翻转。
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], false, 0.0), 0);
+        assert_eq!(placement_state(Shape::Slab, [0, -1, 0], false, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], true, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [1, 0, 0], false, 0.0), 0);
+    }
+
+    /// 三段贯通之一（placement→nibble）：26.1 StairBlock.java:101-102
+    /// FACING=视线同向 + 103-105 DOWN→TOP/UP→BOTTOM。nibble 编码
+    /// 0=+Z 1=-Z 2=+X 3=-X，几何（踏步半盒在朝向侧）断言见
+    /// game/mcv_mesher/tests/mesh.rs::stairs_facing_and_top_flip——
+    /// 玩家面向 -Z（yaw=0）放置 → nibble facing=1 → 几何踏步占 -Z 半格。
+    #[test]
+    fn stairs_facing_follows_vanilla() {
+        // yaw=0 视线 (sin0, -cos0)=(0,-1) 即 -Z → facing=1；
+        // 点顶面(+Y 法线)→下半（bit2=0）。
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], false, 0.0), 1);
+        // yaw=π/2 视线 (+1,0) 即 +X → facing=2。
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
+            2
+        );
+        // yaw=π 视线 (0,+1) 即 +Z → facing=0。
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::PI) & 3,
+            0
+        );
+        // 点底面（法线 -Y）→ 上半（bit2=1），与半砖规则同向。
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, -1, 0], false, 0.0),
+            1 | 4
+        );
+        // 水平面：DDA 无格内点击点，近似下半（KNOWN-DIVERGENCE，同半砖）。
+        assert_eq!(placement_state(Shape::Stairs, [0, 0, 1], false, 0.0) & 4, 0);
+        assert_eq!(placement_state(Shape::Stairs, [1, 0, 0], false, 0.0) & 4, 0);
+        // 潜行 XOR 翻转上下（KNOWN-DIVERGENCE：原版无潜行逻辑，保留现状）。
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], true, 0.0), 1 | 4);
+    }
+
+    #[test]
+    fn other_shapes_zero() {
+        for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
+            assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
+        }
     }
 }
 

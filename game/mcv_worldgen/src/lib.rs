@@ -78,7 +78,9 @@ pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
             let mut y = 255usize;
             let mut found = false;
             while y > 0 {
-                let id = voxels[(y << 8) | (z << 4) | x];
+                // 掩掉状态位（bit12-15，半砖/楼梯朝向）：按基础方块查表，
+                // 否则带状态体素越界误判未注册=全挡。
+                let id = (voxels[(y << 8) | (z << 4) | x]) & mcv_core::ID_MASK;
                 // 跳过集：damp==0（全透光：空气/花/玻璃/火把…）或流体。
                 // 不计流体是自研地表基线（出生点取水下地表）；对照原版：
                 // MOTION_BLOCKING 计流体（Heightmap.java:151），不计流体的是

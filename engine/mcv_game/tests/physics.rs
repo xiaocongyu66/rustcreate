@@ -191,7 +191,209 @@ fn raycast_hits_and_misses() {
     assert_eq!(normal, [-1, 0, 0]);
 }
 
-/// 6. can_place_block：脚下格（STONE）不可放、面前一格可放、
+/// 测试用：按注册名查方块 id。
+fn id_of(name: &str) -> u16 {
+    (0..mcv_core::BLOCKS.len() as u16)
+        .find(|i| mcv_core::BLOCKS[*i as usize].name == name)
+        .unwrap()
+}
+
+/// 6a. 形状碰撞（C3）：下半砖（SlabBlock.java:35 column(16,0,8)）上表面
+///     站人——落在 (0,70,0) 的 oak_slab 上，脚底 y=70.5。
+#[test]
+fn stand_on_bottom_slab() {
+    let slab = id_of("oak_slab");
+    let mut world = TestWorld::new();
+    for x in 0..3 {
+        for z in 0..3 {
+            world.set(x, 70, z, slab); // state=0 → 下半砖
+        }
+    }
+    let mut p = ground_player(0.5, 75.0, 0.5);
+    for _ in 0..400 {
+        step(&world, &mut p, &StepInput::default());
+    }
+    assert!(
+        (p.pos.y - 70.5).abs() < 1e-3,
+        "应站在半砖台面 70.5，实际 {}",
+        p.pos.y
+    );
+    assert!(p.on_ground);
+}
+
+/// 6b. 栅栏防跳（C3）：碰撞柱+臂高 1.5（CrossCollisionBlock.java:45
+/// collisionHeight=24），跳峰 1.1~1.35 不可越；且连接臂封住两柱间隙
+/// （原版 CrossCollisionBlock.java:56-66 臂计入碰撞箱）。
+#[test]
+fn fence_blocks_jump_and_gap() {
+    let fence = id_of("oak_fence");
+    let mut world = TestWorld::new();
+    world.fill_layer(0, STONE);
+    // 栅栏线：x=3，z=0 与 x=4，z=0（同系互连出 +X/-X 臂）。
+    world.set(3, 1, 0, fence);
+    world.set(4, 1, 0, fence);
+
+    // (a) 对准单柱正面跳挤：100 步后被挡在 x=3.375（柱 min 面）之前。
+    let mut p = ground_player(0.5, 1.1, 0.5);
+    let mut peak_y = 0.0f32;
+    for _ in 0..120 {
+        step(
+            &world,
+            &mut p,
+            &StepInput {
+                wish_dir: Vec3::X,
+                jump: true,
+                ..StepInput::default()
+            },
+        );
+        peak_y = peak_y.max(p.pos.y);
+        assert!(p.pos.x < 3.375, "越过栅栏柱：{}", p.pos.x);
+    }
+    // 跳峰低于碰撞顶 2.5（脚底 1 + 1.5）。
+    assert!(peak_y < 2.5, "峰高穿过了 1.5 碰撞：{}", peak_y);
+
+    // (b) 从两柱间隙（x=4.0，柱不覆盖 3.625..4.375）挤入：只有连接臂
+    //     存在才会被挡——验证"臂计入碰撞"（防原版式穿缝）。
+    let mut q = ground_player(4.0, 1.1, -2.0);
+    for _ in 0..120 {
+        step(
+            &world,
+            &mut q,
+            &StepInput {
+                wish_dir: Vec3::Z,
+                ..StepInput::default()
+            },
+        );
+        assert!(q.pos.z < 0.375, "从栅栏臂间隙穿过：{}", q.pos.z);
+    }
+}
+
+/// 6c. 火把无实体碰撞（C3，Blocks.java torch noCollision；其
+/// BaseTorchBlock.java:16 形状仅是拾取 outline）：玩家直接穿过火把格落地。
+#[test]
+fn torch_has_no_collision() {
+    let torch = id_of("torch");
+    let mut world = TestWorld::new();
+    world.fill_layer(0, STONE);
+    world.set(0, 1, 0, torch);
+    world.set(0, 2, 0, torch);
+    let mut p = ground_player(0.5, 5.0, 0.5);
+    for _ in 0..200 {
+        step(&world, &mut p, &StepInput::default());
+    }
+    assert!((p.pos.y - 1.0).abs() < 1e-3, "火把挡人：{}", p.pos.y);
+}
+
+/// 6d. 形状拾取命中（C4，BaseTorchBlock.java:16 outline column(4,0,10)）：
+///     火把可命中（侧/顶），瞄准火把上方空区穿透；上半砖下半区穿透；
+///     石/花/空气行为不变（见 6 raycast 用例）。
+#[test]
+fn raycast_hits_shape_outlines() {
+    let torch = id_of("torch");
+    let slab = id_of("oak_slab");
+    let mut world = TestWorld::new();
+    world.set(5, 20, 0, torch);
+    // 上半砖（state bit0=1）放 z=4 列：火把各射线取 z=0.5，互不串扰。
+    world.set(7, 20, 4, slab | (1 << 12));
+
+    // 水平命中火把柱（柱 y 0..0.625，取格内 y=0.3 高度）。
+    let (pos, normal) = raycast(
+        &world,
+        Vec3::new(0.5, 20.3, 0.5),
+        Vec3::new(1.0, 0.0, 0.0),
+        50.0,
+    )
+    .unwrap();
+    assert_eq!(pos, BlockPos::new(5, 20, 0));
+    assert_eq!(normal, [-1, 0, 0]);
+
+    // 瞄准火把柱上方（y=0.8 > 0.625）→ 穿透无命中。
+    assert_eq!(
+        raycast(
+            &world,
+            Vec3::new(0.5, 20.8, 0.5),
+            Vec3::new(1.0, 0.0, 0.0),
+            50.0
+        ),
+        None,
+        "火把柱上方不应命中"
+    );
+
+    // 自上命中火把顶面（outline 顶 y=20.625 → 法线 +Y）。
+    let (pos, normal) = raycast(
+        &world,
+        Vec3::new(5.5, 25.0, 0.5),
+        Vec3::new(0.0, -1.0, 0.0),
+        50.0,
+    )
+    .unwrap();
+    assert_eq!(pos, BlockPos::new(5, 20, 0));
+    assert_eq!(normal, [0, 1, 0]);
+
+    // 上半砖：下半区（y=0.2）水平射线穿透；上半区（y=0.8）命中。
+    assert_eq!(
+        raycast(
+            &world,
+            Vec3::new(5.5, 20.2, 4.5),
+            Vec3::new(1.0, 0.0, 0.0),
+            50.0
+        ),
+        None,
+        "上半砖下半区应穿透"
+    );
+    let (pos, normal) = raycast(
+        &world,
+        Vec3::new(5.5, 20.8, 4.5),
+        Vec3::new(1.0, 0.0, 0.0),
+        50.0,
+    )
+    .unwrap();
+    assert_eq!(pos, BlockPos::new(7, 20, 4));
+    assert_eq!(normal, [-1, 0, 0]);
+}
+
+/// 6e. 栅栏碰撞臂的拾取 outline：贴石头连臂（FenceBlock.java:63 sturdy
+///     分支），outline 高 1.0（CrossCollisionBlock.java:46 wallHeight）。
+#[test]
+fn fence_outline_with_sturdy_arm() {
+    let fence = id_of("oak_fence");
+    let mut world = TestWorld::new();
+    world.set(5, 20, 0, fence);
+    world.set(4, 20, 0, STONE); // sturdy → 连臂（-X 臂 x 5..5.5）
+    // 水平瞄准 -X 臂区域（y=20.3，柱区 5.375 之前 x=5.2 处只有臂）。
+    let (pos, _) = raycast(
+        &world,
+        Vec3::new(3.5, 20.3, 0.5),
+        Vec3::new(1.0, 0.0, 0.0),
+        50.0,
+    )
+    .unwrap();
+    // 先撞上石头格 (4,20,0) 的整盒边界 x=5.0——石头比臂更靠外，
+    // 射线先命中石头；这同时证明拾取按 outline 而非跳过形状块。
+    assert_eq!(pos, BlockPos::new(4, 20, 0));
+    // 柱上方（y=20.9 < outline 顶 1.0=21.0）从 +Z 命中柱。
+    let (pos, normal) = raycast(
+        &world,
+        Vec3::new(5.5, 20.9, 2.5),
+        Vec3::new(0.0, 0.0, -1.0),
+        50.0,
+    )
+    .unwrap();
+    assert_eq!(pos, BlockPos::new(5, 20, 0));
+    assert_eq!(normal, [0, 0, 1]);
+    // y=21.0 以上（outline 高 1.0）穿透。
+    assert_eq!(
+        raycast(
+            &world,
+            Vec3::new(5.5, 21.2, 2.5),
+            Vec3::new(0.0, 0.0, -1.0),
+            50.0
+        ),
+        None
+    );
+}
+
+/// 7. can_place_block：脚下格（STONE）不可放、面前一格可放、
 ///    与玩家重叠或已是实体方块不可放。
 #[test]
 fn can_place_block_rules() {

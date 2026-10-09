@@ -58,9 +58,21 @@ pub struct BorderSeed {
 /// spread cost `max(1, dampening)` (LightEngine.java:77-79) and as the
 /// sky-source-column cutoff (`init` / `column_top`). Ids beyond the
 /// registry stay conservatively fully opaque (15).
+///
+/// 形状方块（火把/栅栏/半砖/楼梯/花草）经 `mcv_core::OPACITY` 规则④
+/// （非整方块渲染形状 → `propagatesSkylightDown`，`BlockBehaviour.java:
+/// 395-397`）取 damp=0，栅栏/花草父类另有显式覆盖恒 0（栅栏系
+/// `CrossCollisionBlock.java:70-73`、花草系 `VegetationBlock.java:49-52`）
+/// ——即审计 C6（形状方块不得整格 15 阻光）由全表满足。
+///
+/// KNOWN-DIVERGENCE: 半砖/楼梯在 26.1 是 damp=0 + `useShapeForLightOcclusion`
+/// 形状感知遮光（`SlabBlock.java:48-51`、`StairBlock.java:69-71`）——本引擎
+/// 光照无形状感知，实半遮/空半透的“半影”效果缺失（半砖顶棚不再有整柱阴影，
+/// 也不投形状影），登记为后续项。
 #[inline]
 pub fn opacity(id: BlockId) -> u8 {
-    match mcv_core::OPACITY.get(id.0 as usize) {
+    // id.id() 掩掉状态位：带状态的体素（上半砖/楼梯朝向）按基础方块遮光。
+    match mcv_core::OPACITY.get(id.id() as usize) {
         Some(&v) => v,
         None => 15,
     }
@@ -80,7 +92,7 @@ static BLOCKS_EMIT: [u8; mcv_core::BLOCKS.len()] = {
 
 #[inline]
 fn light_emit(id: BlockId) -> u8 {
-    match BLOCKS_EMIT.get(id.0 as usize) {
+    match BLOCKS_EMIT.get(id.id() as usize) {
         Some(v) => *v,
         None => 0,
     }

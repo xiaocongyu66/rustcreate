@@ -53,7 +53,7 @@ pub struct BlockMining {
 
 /// 已注册子集的挖掘表（键 = blocks_gen 注册名；数字对齐原版数值/层级）。
 pub fn block_mining(id: BlockId) -> BlockMining {
-    let name = mcv_core::BLOCKS[id.0 as usize].name;
+    let name = mcv_core::BLOCKS[id.id() as usize].name;
     // 镐系：石头家族木镐起、煤矿石镐、铁矿深板岩系石镐、钻石铁镐。
     let pick = |tier: u8| BlockMining {
         speed_tool: Some(ToolKind::Pickaxe),
@@ -134,7 +134,7 @@ pub fn progress_per_tick_env(
     on_ground: bool,
     submerged: bool,
 ) -> f32 {
-    let hardness = mcv_core::BLOCKS[block.0 as usize].hardness;
+    let hardness = mcv_core::BLOCKS[block.id() as usize].hardness;
     if hardness.is_infinite() {
         return 0.0;
     }

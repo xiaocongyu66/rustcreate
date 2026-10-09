@@ -397,11 +397,12 @@ fn golden_sky_source_column_transmission() {
     }
 }
 
-/// 黄金用例 3：玻璃透光 vs 石头挡光（材料柱对照表）。
-/// 玻璃尚未注册进 BLOCKS；26.1 中玻璃 `noOcclusion →
-/// propagatesSkylightDown → damp 0`，与花（CrossCollisionBlock）
-/// 同类，此处用花作为玻璃类的透射替身。半透明水/叶 damp=1：
-/// 截断源柱但每格只 -1；实心石头 damp=15：完全挡光。
+/// 黄金用例 3：透射 vs 挡光（材料柱对照表）。damp 判据见
+/// `mcv_core::OPACITY`：26.1 玻璃 `TransparentBlock.java:34-37` 显式覆写
+/// `propagatesSkylightDown=true → damp 0`（全透），花（VegetationBlock
+/// 系，`VegetationBlock.java:50-52`）同 0，此处用例以花为透射代表
+/// （玻璃直查断言见 `opacity_full_table_matches_26_1`）。半透明水/叶
+/// damp=1：截断源柱但每格只 -1；实心石头 damp=15：完全挡光。
 #[test]
 fn golden_sky_through_material_columns() {
     // (材料, 期望的天光序列 [(y, level)])：y=51 为板上方，50 为材料
@@ -460,9 +461,13 @@ fn golden_sky_through_material_columns() {
 }
 
 /// 黄金用例 4：发光/透光常数表与 26.1 对照。
-/// 26.1 `BlockBehaviour.getLightDampening` 默认规则：
-/// 实心渲染整方块 = 15；非实心且 `propagatesSkylightDown`（玻璃、
-/// 花、空气）= 0；其余非实心（水、叶、雪层等）= 1。
+/// 26.1 `BlockBehaviour.getLightDampening`（`BlockBehaviour.java:305-310`）
+/// 默认规则：实心渲染整方块（solidRender）=15；否则
+/// `propagatesSkylightDown`（默认=拾取形状非整立方且无流体，
+/// `BlockBehaviour.java:395-397`）= 0（火把/栅栏/半砖/楼梯/花草/空气；
+/// 玻璃另有 `TransparentBlock.java:34-37` 显式覆写）；
+/// 其余非实心 =1（水：`LiquidBlock.java:114-116`；叶=显式覆盖 1，
+/// `LeavesBlock.java:83-85`）。
 /// 发光侧：当前 BLOCKS 子集（天然建材+水+花）在 26.1 全部不发光。
 #[test]
 fn golden_light_constants_match_26_1() {
@@ -485,8 +490,37 @@ fn golden_light_constants_match_26_1() {
         1,
         "树叶 damp=1（LeavesBlock 覆盖值）"
     );
-    assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（玻璃同类）");
+    // 花草：拾取形状可命中，但碰撞/渲染非实心 → propagatesSkylightDown
+    // → damp=0（区别于玻璃：玻璃靠 TransparentBlock 显式覆写得 0，见下）。
+    assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（非整盒形状）");
     assert_eq!(opacity(BlockId(13)), 0, "黄花 damp=0");
+    // 形状方块遮光（VERIFY-shapes C6）：非整方块渲染形状 → 0，全表
+    // （mcv_core::OPACITY 规则④）与本引擎形状表同源成立。
+    let by_name = |want: &str| {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == want)
+            .unwrap() as u16
+    };
+    for name in [
+        "torch",
+        "oak_fence",
+        "oak_slab",
+        "oak_stairs",
+        "short_grass",
+    ] {
+        assert_eq!(opacity(BlockId(by_name(name))), 0, "{name} damp=0");
+    }
+    // 玻璃：整盒形状但 TransparentBlock 覆写 propagatesSkylightDown=true
+    // → damp=0（`TransparentBlock.java:34-37`，全透不衰减；
+    // 早前 C6 草稿按"整盒形状 noOcclusion → 1"推断为 1，系误判）。
+    assert_eq!(opacity(BlockId(by_name("glass"))), 0, "玻璃 damp=0");
+    // 状态位掩蔽：带状态 nibble 的体素按基础方块查表（上半砖仍 0，
+    // 有状态的石头仍 15），防止 OPACITY 直查原始 u16 越界误判 15。
+    let slab = BlockId(by_name("oak_slab")).with_state(1);
+    assert_eq!(opacity(slab), 0, "上半砖（带状态位）damp=0");
+    let stone_st = BlockId(1).with_state(7);
+    assert_eq!(opacity(stone_st), 15, "带状态位石头 damp=15");
     // 千块表接入后 id 99 已是注册方块（black_carpet，damp≠全挡），
     // "未注册保守全挡"只对越界 id 成立（C2：全表见 mcv_core::OPACITY）。
     assert_eq!(opacity(BlockId(60000)), 15, "越界 id 保守按全挡");

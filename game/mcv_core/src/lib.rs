@@ -4,10 +4,12 @@
 pub mod atlas;
 pub mod chunk;
 pub mod pool;
+pub mod shape;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};
 pub use pool::{TaskPool, world_worker_count};
+pub use shape::Shape;
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SY: usize = 256;
@@ -70,6 +72,12 @@ const _: () = assert!(std::mem::size_of::<BlockId>() == 2);
 
 pub const AIR: BlockId = BlockId(0);
 
+/// 体素 u16 低位掩码：bit0-11 = 方块 id（≤4095），bit12-15 = 状态 nibble
+/// （见 `BlockId::with_state`）。kBarrier(0xFFFF) 等哨兵值掩码后为 4095
+/// （未注册 id，C++ 侧按未知=不透明处理），语义不变。
+pub const ID_MASK: u16 = 0x0FFF;
+pub const STATE_SHIFT: u32 = 12;
+
 /// Texture array layer indices into the real-texture atlas region
 /// (layers 0..MANIFEST_LAYERS, 字典序 = tiles_manifest.json 索引)。
 /// 值为 manifest 的真实层号；u16 以匹配 `BlockDef::tiles` / 网格器顶点
@@ -106,6 +114,8 @@ pub struct BlockDef {
     pub tiles: [u16; 6],
     /// Seconds to mine; 0 = instant (creative).
     pub hardness: f32,
+    /// 形状编号（[`shape::Shape`] 判别值），按注册名派生，见 `shape.rs`。
+    pub shape: u8,
 }
 
 /// `blocks_gen.inc.rs` 中 GEN_BLOCKS 的元组类型（生成文件不导出别名，补一个）。
@@ -126,6 +136,7 @@ const fn gen_def(t: &GenBlock) -> BlockDef {
         light_emit: t.4,
         tiles: t.5,
         hardness: f32::from_bits(t.6.to_bits()),
+        shape: shape::shape_of_name(t.0),
     }
 }
 
@@ -139,6 +150,7 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
         light_emit: 0,
         tiles: [0; 6],
         hardness: 0.0,
+        shape: 0,
     }; GEN_BLOCKS.len()];
     let mut i = 0;
     while i < GEN_BLOCKS.len() {
@@ -278,9 +290,35 @@ pub static OPACITY: [u8; GEN_BLOCKS.len()] = {
 };
 
 impl BlockId {
+    /// 低 12 位真实方块 id（丢弃状态 nibble）。C++ 侧 kBarrier(0xFFFF)
+    /// 掩码后是 0x0FFF——未注册 id，两侧都按"未知=不透明"处理，哨兵语义
+    /// 不变；kBarrier 只存在于 C++ 邻块视图，Rust 体素数组永不写入。
+    #[inline]
+    pub const fn id(self) -> u16 {
+        self.0 & ID_MASK
+    }
+
+    /// 状态 nibble（bit12-15）：Slab bit0=上半砖；Stairs bit0-1 朝向
+    /// (0=+Z 1=-Z 2=+X 3=-X)、bit2=上半。楼梯朝向 = 26.1 FACING，即放置
+    /// 玩家水平视线同向（StairBlock.java:101-102 `FACING =
+    /// context.getHorizontalDirection()`），几何上踏步（整高半）位于朝向侧
+    /// 半格（StairBlock.java:37-38，facing=NORTH → 上半占 -Z 半格）；
+    /// bit2=1 对应原版 Half.TOP（点底面放置，StairBlock.java:103-105）。
+    /// 其余形状恒 0。
+    #[inline]
+    pub const fn state(self) -> u8 {
+        ((self.0 >> STATE_SHIFT) & 0xF) as u8
+    }
+
+    /// 把 `state`（低 4 位有效）写入状态位，保留本值低 12 位为方块 id。
+    #[inline]
+    pub const fn with_state(self, state: u8) -> Self {
+        Self((self.0 & ID_MASK) | (((state & 0xF) as u16) << STATE_SHIFT))
+    }
+
     #[inline]
     pub fn def(self) -> &'static BlockDef {
-        &BLOCKS[self.0 as usize]
+        &BLOCKS[self.id() as usize]
     }
 }
 
@@ -341,6 +379,7 @@ mod tests {
             light_emit: 0,
             tiles: [0; 6],
             hardness: 0.0,
+            shape: 0,
         },
         BlockDef {
             name: "stone",
@@ -350,6 +389,7 @@ mod tests {
             light_emit: 0,
             tiles: [4; 6],
             hardness: 1.5,
+            shape: 0,
         },
         BlockDef {
             name: "dirt",
@@ -359,6 +399,7 @@ mod tests {
             light_emit: 0,
             tiles: [3; 6],
             hardness: 0.5,
+            shape: 0,
         },
         BlockDef {
             name: "grass",
@@ -368,6 +409,7 @@ mod tests {
             light_emit: 0,
             tiles: [2, 2, 1, 3, 2, 2],
             hardness: 0.6,
+            shape: 0,
         },
         BlockDef {
             name: "sand",
@@ -377,6 +419,7 @@ mod tests {
             light_emit: 0,
             tiles: [5; 6],
             hardness: 0.5,
+            shape: 0,
         },
         BlockDef {
             name: "water",
@@ -386,6 +429,7 @@ mod tests {
             light_emit: 0,
             tiles: [6; 6],
             hardness: 100.0,
+            shape: 0,
         },
         BlockDef {
             name: "log",
@@ -395,6 +439,7 @@ mod tests {
             light_emit: 0,
             tiles: [7, 7, 8, 8, 7, 7],
             hardness: 2.0,
+            shape: 0,
         },
         BlockDef {
             name: "leaves",
@@ -404,6 +449,7 @@ mod tests {
             light_emit: 0,
             tiles: [9; 6],
             hardness: 0.2,
+            shape: 0,
         },
         BlockDef {
             name: "planks",
@@ -413,6 +459,7 @@ mod tests {
             light_emit: 0,
             tiles: [10; 6],
             hardness: 2.0,
+            shape: 0,
         },
         BlockDef {
             name: "cobble",
@@ -422,6 +469,7 @@ mod tests {
             light_emit: 0,
             tiles: [11; 6],
             hardness: 2.0,
+            shape: 0,
         },
         BlockDef {
             name: "bedrock",
@@ -431,6 +479,7 @@ mod tests {
             light_emit: 0,
             tiles: [12; 6],
             hardness: f32::INFINITY,
+            shape: 0,
         },
         BlockDef {
             name: "snow_grass",
@@ -440,6 +489,7 @@ mod tests {
             light_emit: 0,
             tiles: [14, 14, 13, 3, 14, 14],
             hardness: 0.6,
+            shape: 0,
         },
         BlockDef {
             name: "flower_red",
@@ -449,6 +499,7 @@ mod tests {
             light_emit: 0,
             tiles: [15; 6],
             hardness: 0.0,
+            shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
         },
         BlockDef {
             name: "flower_yellow",
@@ -458,6 +509,7 @@ mod tests {
             light_emit: 0,
             tiles: [16; 6],
             hardness: 0.0,
+            shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
         },
     ];
 
@@ -498,6 +550,41 @@ mod tests {
                     assert_ne!(n.tiles[f], 0, "id {i} {} 面 {f} 不应退化为占位层", n.name);
                 }
             }
+        }
+    }
+
+    /// 形状表抽查：`BlockDef::shape` 由注册名派生（生成逻辑见 shape.rs），
+    /// 抽查代表 id 并锁定 name→shape 与 shape_of_name 一致（防手工漂移）。
+    #[test]
+    fn shape_table_assignments() {
+        let by_name = |want: &str| {
+            BLOCKS
+                .iter()
+                .position(|b| b.name == want)
+                .unwrap_or_else(|| panic!("未注册方块 {want}"))
+        };
+        assert_eq!(Shape::from_u8(BLOCKS[12].shape), Shape::Cross); // flower_red
+        assert_eq!(
+            Shape::from_u8(BLOCKS[by_name("acacia_fence")].shape),
+            Shape::Fence
+        );
+        assert_eq!(
+            Shape::from_u8(BLOCKS[by_name("acacia_slab")].shape),
+            Shape::Slab
+        );
+        assert_eq!(
+            Shape::from_u8(BLOCKS[by_name("acacia_stairs")].shape),
+            Shape::Stairs
+        );
+        assert_eq!(Shape::from_u8(BLOCKS[by_name("torch")].shape), Shape::Torch);
+        assert_eq!(Shape::from_u8(BLOCKS[1].shape), Shape::Cube); // stone
+        for (i, b) in BLOCKS.iter().enumerate() {
+            assert_eq!(
+                b.shape,
+                shape::shape_of_name(b.name),
+                "id {i} {} 形状与 shape_of_name 不一致",
+                b.name
+            );
         }
     }
 
