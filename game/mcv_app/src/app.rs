@@ -1817,6 +1817,7 @@ impl AppState {
             time: 0.0,
             day_factor: day,
             sun_dir: sun,
+            moon_phase: mcv_render::celestial::moon_phase(6_000),
             width: mw,
             height: mh,
             chunks: &[],
@@ -2076,6 +2077,8 @@ impl AppState {
             time: (runtime.time_ticks % 24_000) as f32 / 20.0,
             day_factor: day,
             sun_dir: sun,
+            // 月相：26.1 月相周期 192000 tick（timeline/moon.json）。
+            moon_phase: mcv_render::celestial::moon_phase(runtime.time_ticks),
             width: sp.config.width as f32,
             height: sp.config.height as f32,
             chunks: &chunks,

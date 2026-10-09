@@ -2,6 +2,7 @@
 //! offscreen capture for CI verification.
 
 pub mod camera;
+pub mod celestial;
 pub mod cloud;
 pub mod font;
 pub mod frustum;

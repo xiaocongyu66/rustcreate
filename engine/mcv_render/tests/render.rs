@@ -70,8 +70,9 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
         apply_limit_buckets: false,
     }))
     .expect("no adapter: install mesa-vulkan-drivers for lavapipe");
-    // 与 app.rs 同款：方块图集 831 层 > downlevel 256，向 adapter 要实际上限
-    // （lavapipe 3907 / Metal 2048 / D3D 2048），否则草地层 336 被 gpu.rs 截尾。
+    // 与 app.rs 同款：方块图集 837 层（827 真实 + 10 裂纹）> downlevel 256，
+    // 向 adapter 要实际上限（lavapipe 3907 / Metal 2048 / D3D 2048），
+    // 否则草地层 336 被 gpu.rs 截尾。
     let mut limits = wgpu::Limits::downlevel_defaults();
     limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -87,9 +88,16 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
         device.clone(),
         queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        None,
+        Some(&workspace_assets()),
     );
     (device, queue, renderer)
+}
+
+/// 工作区 assets/minecraft 资源根（仓库内已提交原版贴图）。测试显式传给
+/// Renderer::new，让裂纹层吃到原版 destroy_stage_0..9、天空吃到原版
+/// environment/celestial/{sun,moon/*}——与 app.rs 桌面路径同源。
+fn workspace_assets() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft")
 }
 
 /// (green-dominant share of the ground band, blue-dominant share of the sky
@@ -175,6 +183,7 @@ fn terrain_sky_and_hud_render() {
         time: 0.0,
         day_factor: day,
         sun_dir: sun,
+        moon_phase: 0,
         width: 320.0,
         height: 240.0,
         chunks: std::slice::from_ref(&chunk),
@@ -265,6 +274,7 @@ fn mining_crack_and_outline_darken_target() {
             time: 0.0,
             day_factor: day,
             sun_dir: sun,
+            moon_phase: 0,
             width: 320.0,
             height: 240.0,
             chunks: std::slice::from_ref(&chunk),
@@ -420,6 +430,7 @@ fn gles_fallback_world_frame_smoke() {
         time: 0.0,
         day_factor: day,
         sun_dir: sun,
+        moon_phase: 0,
         width: 320.0,
         height: 240.0,
         chunks: std::slice::from_ref(&chunk),
@@ -483,6 +494,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             time: 0.0,
             day_factor: 1.0,
             sun_dir: Vec3::Y,
+            moon_phase: 0,
             width: 320.0,
             height: 240.0,
             chunks: &[],
@@ -516,4 +528,64 @@ fn cloud_pipeline_compiles_and_paints_sky() {
     );
     let (x0, _y0, x1, _y1) = bbox.expect("diff>0 必有包围盒");
     assert!(x1 - x0 > 200, "云 diff 未横贯天空带，bbox={bbox:?}");
+}
+
+/// 日月贴图化回归锁（原版 26.1 日月为 celestials 图集贴图 quad，
+/// SkyRenderer.java:125-157；CELESTIAL 管线加色混合，RenderPipelines.java:643
+/// → BlendFunction.java:9 `dst += src.rgb * src.a`——sun.png 全图不透明、
+/// 四周暗色，加色下只亮出中心核）。相机仰视天顶：太阳亮核在屏上应产出
+/// 一簇白/黄白像素（蓝天底 b 主导，亮核 r/g 追平 b）。程序化圆盘回退路径
+/// （无素材）不会产出该簇 → 双路径可区分。
+#[test]
+fn celestial_sun_texture_paints_core() {
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    // 仰视天顶（pitch>0 朝上；太阳在 sun_dir=+Y 天顶，quad 半角 atan(15/100)≈8.6°）。
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 8.0),
+        yaw: 0.0,
+        pitch: 1.4,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 512.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: 1.0,
+        sun_dir: Vec3::Y,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: &[],
+        hud: &hud,
+        cloud: None,
+        player: None,
+        overlay: None,
+    };
+    let mut enc = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut enc);
+    queue.submit([enc.finish()]);
+    let rgba = target.read_pixels(&device);
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("celestial-test.png"), png);
+    }
+    // 太阳亮核判别：天顶蓝天 sRGB ≈ (153,195,249)，亮核加色后 r/g/b 全顶满
+    // 255——r≥250 即可唯一区分（蓝天 r≈153 差距远超驱动舍入噪声）。
+    let mut core = 0usize;
+    for px in rgba.chunks(4) {
+        if px[0] >= 250 && px[1] >= 250 {
+            core += 1;
+        }
+    }
+    assert!(core > 30, "太阳亮核缺失（原版贴图未上屏？）core={core}");
 }

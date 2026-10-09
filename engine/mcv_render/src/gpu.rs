@@ -7,6 +7,7 @@ use glam::Vec3;
 use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
+use crate::celestial;
 use crate::font;
 use crate::frustum::Frustum;
 use crate::gui::SpriteSheet;
@@ -138,7 +139,8 @@ pub struct MineFace {
 }
 
 /// 选中/挖掘 overlay：`min` = 方块最小角世界坐标；`crack_stage` =
-/// Some(0..=3) 时画裂纹层（CRACK_BASE+stage），描边始终画。
+/// Some(0..=9) 时画裂纹层（CRACK_BASE+stage，原版 10 档
+/// destroy_stage_0..9，MultiPlayerGameMode.java:551），描边始终画。
 /// 面顺序与着色器 face_id 一致：+X,-X,+Y,-Y,+Z,-Z。
 #[derive(Clone, Copy, Debug)]
 pub struct MiningOverlay {
@@ -214,9 +216,13 @@ const FACE_NORM: [[f32; 3]; 6] = [
 const FACE_UV: [[u16; 2]; 4] = [[0, 0], [0, 65535], [65535, 65535], [65535, 0]];
 
 /// 生成暴露面的裂纹 quad（局部坐标沿法线外偏 0.003，深度只读时防
-/// z-fighting）。layer = CRACK_BASE + stage。
+/// z-fighting）。layer = CRACK_BASE + stage（stage 0..=9 已由 game 层
+/// 按原版公式钳好）。
 fn build_crack_overlay(ov: &MiningOverlay) -> (Vec<CrackVertex>, Vec<u32>) {
-    let stage = ov.crack_stage.unwrap_or(0).min(3);
+    let stage = ov
+        .crack_stage
+        .unwrap_or(0)
+        .min((atlas::CRACK_LAYERS - 1) as u32);
     let layer = (atlas::CRACK_BASE + stage as usize) as u16;
     let mut verts = Vec::with_capacity(24);
     let mut idx = Vec::with_capacity(36);
@@ -253,6 +259,8 @@ pub struct Scene<'a> {
     pub time: f32,
     pub day_factor: f32,
     pub sun_dir: Vec3,
+    /// 月相序号 0..=7（MoonPhase 序，`celestial::moon_phase` 由游戏时间算出）。
+    pub moon_phase: u32,
     /// Render target size in pixels (HUD coordinate space).
     pub width: f32,
     pub height: f32,
@@ -302,6 +310,9 @@ pub struct Renderer {
     /// 设备纹理数组层数是否容得下 CRACK_BASE..（GLES 256 层钳制时为 false，
     /// 只画描边不画裂纹）。
     crack_layers_ok: bool,
+    /// 原版天体贴图（sun + moon/<phase>）是否就位；false = 无素材部署，
+    /// fs_sky 回退程序化天体圆盘。
+    celestial_loaded: bool,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -500,6 +511,61 @@ impl Renderer {
             ..Default::default()
         });
 
+        // ---- celestial texture array（太阳 + 8 月相）--------------------
+        // 原版 26.1 日月为贴图 quad（SkyRenderer.java:125-127/:149-157），
+        // 素材 environment/celestial/{sun.png, moon/<phase>.png}。素材缺失
+        // （无素材部署）时全 0 透明 + 天体回退程序化圆盘（shader 内
+        // celestials.y 开关），正常部署不触发。
+        let celestial_payload = assets_dir.and_then(celestial::load_payload);
+        let celestial_loaded = celestial_payload.is_some();
+        let celestial_data = celestial_payload
+            .unwrap_or_else(|| vec![0u8; celestial::CELESTIAL_LAYERS * 32 * 32 * 4]);
+        let celestial_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("celestial-array"),
+            size: wgpu::Extent3d {
+                width: celestial::CELESTIAL_PX as u32,
+                height: celestial::CELESTIAL_PX as u32,
+                depth_or_array_layers: celestial::CELESTIAL_LAYERS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &celestial_tex,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &celestial_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some((celestial::CELESTIAL_PX * 4) as u32),
+                rows_per_image: Some(celestial::CELESTIAL_PX as u32),
+            },
+            wgpu::Extent3d {
+                width: celestial::CELESTIAL_PX as u32,
+                height: celestial::CELESTIAL_PX as u32,
+                depth_or_array_layers: celestial::CELESTIAL_LAYERS as u32,
+            },
+        );
+        let celestial_view = celestial_tex.create_view(&wgpu::TextureViewDescriptor {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+        let celestial_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("celestial-sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
         // ---- font texture ---------------------------------------------
         // 优先 MC ascii.png,失败回退程序化字体(见 font.rs)
         let (font_data, font_widths, _mc_font) = font::load_atlas(assets_dir);
@@ -654,16 +720,36 @@ impl Renderer {
         });
         let sky_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sky-layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // 天体纹理数组（太阳 + 8 月相）：原版日月为贴图 quad，
+                // fs_sky 解析投影采样（SkyRenderer.java:125-157）。
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2Array,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
         });
         let hud_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hud-layout"),
@@ -874,10 +960,20 @@ impl Renderer {
         let sky_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sky-bind"),
             layout: &sky_bind_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: sky_buf.as_entire_binding(),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: sky_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&celestial_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&celestial_sampler),
+                },
+            ],
         });
         let hud_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hud-bind"),
@@ -1370,6 +1466,7 @@ impl Renderer {
             overlay_ibuf,
             outline_vbuf,
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
+            celestial_loaded,
             max_chunks,
             max_hud_quads,
         }
@@ -1528,6 +1625,14 @@ impl Renderer {
         sky_u[20..24].copy_from_slice(&sun_arr);
         let hor = [0.62, 0.76, 0.95, 0.0];
         sky_u[24..28].copy_from_slice(&hor);
+        // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 原版贴图是否就位
+        // （0 → shader 回退程序化圆盘，仅无素材部署）。
+        sky_u[28..32].copy_from_slice(&[
+            scene.moon_phase as f32,
+            if self.celestial_loaded { 1.0 } else { 0.0 },
+            0.0,
+            0.0,
+        ]);
         self.queue
             .write_buffer(&self.sky_buf, 0, bytemuck::cast_slice(&sky_u));
 

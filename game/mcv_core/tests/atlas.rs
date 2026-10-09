@@ -109,3 +109,24 @@ fn mip_downsample() {
         assert_eq!(mip1[dst + c] as u32, exp, "channel {c}");
     }
 }
+
+#[test]
+fn vanilla_crack_stages_load() {
+    // 仓库内已提交的原版 destroy_stage_0..9（26.1 jar MANIFEST 名录）必须
+    // 全部命中裂纹层 CRACK_BASE+s；原版裂纹为黑裂纹 + alpha，覆盖面逐档
+    // 单调不减（MultiPlayerGameMode.java:551 十档映射）。
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft");
+    let mut layers = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
+    let n = atlas::load_crack_stages(&dir, &mut layers);
+    assert_eq!(n, atlas::CRACK_LAYERS, "10 档原版裂纹应全部加载");
+    let tile = atlas::TILE_PX * atlas::TILE_PX * 4;
+    let crack_alpha = |s: usize, i: usize| layers[(atlas::CRACK_BASE + s) * tile + i * 4 + 3];
+    // stage 0 有不透明裂纹像素（原版贴图 alpha>0），且逐档裂纹像素数不减。
+    let count = |s: usize| (0..256).filter(|&i| crack_alpha(s, i) > 0).count();
+    assert!(count(0) > 0, "stage0 裂纹层不应为空");
+    assert!(
+        (0..9).all(|s| count(s + 1) >= count(s)),
+        "裂纹覆盖应随档位单调不减: {:?}",
+        (0..10).map(count).collect::<Vec<_>>()
+    );
+}
