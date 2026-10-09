@@ -24,6 +24,7 @@
  "deathScreen.title": "You Died!",
  "deathScreen.respawn": "Respawn",
  "deathScreen.titleScreen": "Title Screen",
+ "multiplayer.downloadingTerrain": "Loading terrain...",
  "mcv.selectWorld.title": "Select World",
  "mcv.createWorld.create": "Create World",
  "mcv.mode.survival": "Survival",

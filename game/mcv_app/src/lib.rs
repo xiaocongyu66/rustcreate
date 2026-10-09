@@ -4,6 +4,7 @@ pub mod app;
 pub mod binds_ui;
 pub mod craft_ui;
 pub mod i18n;
+pub mod loading_ui;
 pub mod options;
 
 #[cfg(target_os = "android")]

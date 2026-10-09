@@ -48,6 +48,7 @@ UI_KEYS = [
     "deathScreen.title",          # 死亡界面标题
     "deathScreen.respawn",        # 死亡界面：重生
     "deathScreen.titleScreen",    # 死亡界面：回标题屏
+    "multiplayer.downloadingTerrain",  # 进世界加载画面标题（LevelLoadingScreen）
 ]
 
 # extra.json 中实际用到的自维护 key

@@ -263,6 +263,26 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
     }
 }
 
+/// 游戏阶段（26.1 `LevelLoadTracker.ClientState` 三态收束版）。
+///
+/// 本仓单进程一体（无客户端/服务端之分），`WaitingForServer` 与
+/// `WaitingForPlayerChunk` 合并为 [`GamePhase::Loading`]；`ClientLevelReady`
+/// 对应 [`GameRuntime::load_ready_at`] 记账 + 关屏延迟
+/// （`isLevelReady`，LevelLoadTracker.java:66-68）。
+///
+/// 26.1 进入世界即 `setScreen(LevelLoadingScreen)`（Minecraft.java
+/// `doWorldLoad` :2080-2081），出生点区块未就绪前画面停在本阶段：
+/// 文本 + 进度条 + 区块状态网格（LevelLoadingScreen.java:91-120），期间
+/// 玩家输入被挡（screen 非 null 时 `KeyboardInput` 不驱动移动）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GamePhase {
+    /// 进入世界加载：世界生成/光照/网格照常流式跑，玩家无输入。
+    #[default]
+    Loading,
+    /// 出生点邻域就绪，正常游玩。
+    Playing,
+}
+
 #[derive(Default)]
 pub struct InputState {
     pub forward: bool,
@@ -331,6 +351,22 @@ pub struct GameRuntime {
     pub dead: bool,
     /// 离地时的 y（落地按 26.1 规则算摔落伤害：floor(高度−3)）。
     fall_y: Option<f32>,
+    /// 当前阶段：进入世界先 [`GamePhase::Loading`]，出生点邻域就绪后转
+    /// [`GamePhase::Playing`]（26.1 `LevelLoadTracker` 状态机）。
+    pub phase: GamePhase,
+    /// 就绪后的关屏延迟，单位 tick（26.1 `LevelLoadTracker` 构造参数
+    /// `closeDelayMs`，新世界 500ms、其余 0，Minecraft.java `doWorldLoad`
+    /// :2083；500ms / 50ms-per-tick = 10 tick）。
+    load_close_delay_ticks: u32,
+    /// 出生点邻域首次全部就绪的 game_ticks（26.1 `ClientLevelReady(readyAt)`
+    /// ，LevelLoadTracker.java:107）。
+    load_ready_at: Option<u64>,
+    /// 加载等待截止 tick（26.1 `CLIENT_WAIT_TIMEOUT_MS` = 30s =
+    /// 600 tick，LevelLoadTracker.java:26；超时放玩家进场，:152-156）。
+    load_deadline_tick: u64,
+    /// 显示用平滑进度：每 tick 向目标值 lerp 0.2
+    /// （LevelLoadingScreen.java:84 `smoothedProgress += (target−cur)×0.2`）。
+    smoothed_progress: f32,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -584,6 +620,15 @@ impl GameRuntime {
             step_dist: 0.0,
             dead: false,
             fall_y: None,
+            // 构造即加载态（26.1 doWorldLoad 先 setScreen(LevelLoadingScreen)
+            // 再起服务器，Minecraft.java:2079-2081）；closeDelay 仅新世界
+            // 500ms（:2083 `new LevelLoadTracker(newWorld ? 500L : 0L)`），
+            // 由 begin_load 按入口覆写；等待截止 = 30s（600 tick）。
+            phase: GamePhase::Loading,
+            load_close_delay_ticks: 0,
+            load_ready_at: None,
+            load_deadline_tick: 600,
+            smoothed_progress: 0.0,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
@@ -704,11 +749,149 @@ impl GameRuntime {
         self.player.last_hurt = 0.0;
         self.food_tick_timer = 0;
         self.player.invulnerable = 0;
-        self.player.pos = Vec3::new(8.5, 200.0, 8.5);
         self.player.vel = Vec3::ZERO;
         self.player.flying = self.mode == GameMode::Creative;
         self.dead = false;
         self.fall_y = None;
+        // 26.1 重生与首次进入同走加载画面：handleRespawn →
+        // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
+        // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
+        // 新世界路径，Minecraft.java:2083）。
+        self.begin_load(false);
+        // 复活点位改走出生点投放路径（stream() 里按 heightmap 落地）：
+        // 旧实现固定 (8.5, 200, 8.5) 自由落体，若死亡点远离出生点、区块
+        // 已卸载（unloaded 按实心石代理）或地形顶面远低于 200，落地即
+        // floor(高度差−3) 摔死循环。pos=ZERO + spawned=false 即复用首次
+        // 进世界的投放（game.rs stream 出生投放块）。
+        self.player.pos = Vec3::ZERO;
+        self.spawned = false;
+    }
+
+    /// 进入/重进加载态（26.1 `Minecraft.doWorldLoad` :2079-2081
+    /// `setScreen(new LevelLoadingScreen(loadTracker, …))` + 重生路径
+    /// `ClientPacketListener.startWaitingForNewLevel` :1630-1643）。
+    ///
+    /// `new_world` = true 时关屏延迟 500ms（Minecraft.java:2083
+    /// `LevelLoadTracker(newWorld ? 500L : 0L)` → 10 tick），存档载入/
+    /// 重生为 0。等待截止 30s（`CLIENT_WAIT_TIMEOUT_MS`，LevelLoadTracker
+    /// .java:26）超时放行，防区块流式卡死时永久黑屏。
+    pub fn begin_load(&mut self, new_world: bool) {
+        self.phase = GamePhase::Loading;
+        self.load_close_delay_ticks = if new_world { 10 } else { 0 };
+        self.load_ready_at = None;
+        self.load_deadline_tick = self.game_ticks + 600;
+        self.smoothed_progress = 0.0;
+    }
+
+    /// 加载进度统计半径（出生点区块四周）。
+    ///
+    /// 原版玩家区块批 = `EXPECTED_PLAYER_CHUNKS = Mth.square(7)` = 7×7
+    /// （LevelLoadProgressTracker.java:15），即半径 3；上限再与渲染距离取
+    /// min——stream 只在 render_dist 环内请求区块，半径超过它就永远等不齐
+    /// （设置界面下限 4，正常运行恒取 3，此 min 仅为兜底）。
+    fn load_radius(&self) -> i32 {
+        self.render_dist.min(3)
+    }
+
+    /// 出生点邻域（玩家所在区块为中心、半径 [`Self::load_radius`]）的
+    /// 加载统计：`(已就绪数, 总数)`。就绪 = 状态机走到 [`Stage::Uploaded`]
+    /// （网格已建并上传 GPU；真实网格器建网格成功处推进该状态，无头路径
+    /// 由测试手工推进——见 mobs_runtime.rs:44 同款用法）。
+    ///
+    /// 进度语义对应 26.1 `LevelLoadProgressTracker` 的 currentChunks/
+    /// totalChunks 分段分数（:62-70），本仓无服务端权重段
+    /// （PREPARE_SERVER_WEIGHT/LOAD_PLAYER_CHUNKS 是服务器启动编排，
+    /// 单进程一体不存在），直接用就绪区块占比。
+    pub fn loading_progress_parts(&self) -> (usize, usize) {
+        let r = self.load_radius();
+        let center = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        let mut ready = 0usize;
+        let total = ((2 * r + 1) * (2 * r + 1)) as usize;
+        for dx in -r..=r {
+            for dz in -r..=r {
+                if self
+                    .chunks
+                    .get(&ChunkPos::new(center.x + dx, center.z + dz))
+                    .is_some_and(|h| (h.stage() as u8) >= (Stage::Uploaded as u8))
+                {
+                    ready += 1;
+                }
+            }
+        }
+        (ready, total)
+    }
+
+    /// 原始加载进度（钳制 0..1；就绪数/总数，对应 26.1 serverProgress）。
+    pub fn loading_progress(&self) -> f32 {
+        let (ready, total) = self.loading_progress_parts();
+        if total == 0 {
+            return 0.0;
+        }
+        (ready as f32 / total as f32).clamp(0.0, 1.0)
+    }
+
+    /// 显示用平滑进度（LevelLoadingScreen.java:84 每 tick lerp 0.2）。
+    pub fn loading_progress_smoothed(&self) -> f32 {
+        self.smoothed_progress
+    }
+
+    /// 加载画面的区块状态网格数据（26.1 `ChunkLoadStatusView` 等价）：
+    /// `(dx, dz, Option<Stage as u8>)` 列表，视野半径 7 = 26.1
+    /// `chunkStatusViewRadius = max(5, 3) + RADIUS_AROUND_FULL_CHUNK + 1`
+    /// （Minecraft.java `doWorldLoad`；RADIUS_AROUND_FULL_CHUNK=1，
+    /// ChunkLevel.java:13-14——FULL 步仅继承 LIGHT 对 INITIALIZE_LIGHT 的
+    /// 半径 1 需求，ChunkPyramid.java:36-39）。未加载格返回 None。
+    pub fn loading_grid(&self) -> (i32, Vec<(i32, i32, Option<u8>)>) {
+        // max(5, 3) + RADIUS_AROUND_FULL_CHUNK + 1 = 5 + 1 + 1 = 7。
+        let radius = 5 + 1 + 1;
+        let center = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        let mut cells = Vec::with_capacity(((2 * radius + 1) * (2 * radius + 1)) as usize);
+        for dx in -radius..=radius {
+            for dz in -radius..=radius {
+                let stage = self
+                    .chunks
+                    .get(&ChunkPos::new(center.x + dx, center.z + dz))
+                    .map(|h| h.stage() as u8);
+                cells.push((dx, dz, stage));
+            }
+        }
+        (radius, cells)
+    }
+
+    /// 加载态门：输入清零、进度平滑、就绪判定与阶段转移。每固定步调用
+    /// （就绪判定 ≤49 次 stage 读，开销可忽略；平滑按 on_tick 20Hz——
+    /// 原版 LevelLoadingScreen.tick 走 20 TPS 游戏拍）。
+    fn update_load_gate(&mut self) {
+        // 进度平滑（LevelLoadingScreen.java:84，每 tick lerp 0.2）。
+        if self.on_tick {
+            let target = self.loading_progress();
+            self.smoothed_progress =
+                (self.smoothed_progress + (target - self.smoothed_progress) * 0.2).clamp(0.0, 1.0);
+        }
+        // 邻域首次全就绪 → 记账 ClientLevelReady(readyAt)
+        // （LevelLoadTracker.java:107、WaitingForPlayerChunk.tick :117-120）。
+        let (ready, total) = self.loading_progress_parts();
+        let all_ready = ready >= total;
+        if all_ready && self.load_ready_at.is_none() {
+            self.load_ready_at = Some(self.game_ticks);
+        }
+        // isLevelReady（LevelLoadTracker.java:66-68）= 已记账且
+        // now ≥ readyAt + closeDelay；或 30s 超时放行（:152-156 的
+        // "Timed out … letting the player into the world anyway"）。
+        let delayed_ok = self
+            .load_ready_at
+            .is_some_and(|t| self.game_ticks >= t + self.load_close_delay_ticks as u64);
+        let timeout = self.game_ticks >= self.load_deadline_tick;
+        if delayed_ok || timeout {
+            self.phase = GamePhase::Playing;
+            self.load_ready_at = None;
+        }
     }
 
     /// 装配真实音频后端（app 层 open 成功后注入；失败保持 silent 降级）。
@@ -1072,6 +1255,11 @@ impl GameRuntime {
                     .retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
                 self.render_chunks.push(rc);
                 handle.clear_dirty(mcv_core::dirty::MESH);
+                // 网格已建且经 MeshUploader 上传 GPU → 状态机终点
+                // Uploaded（chunk.rs:4 的 Empty→…→Uploaded；此前该状态
+                // 从未被推进，加载画面「就绪」判定依赖它）。无头 NullMesher
+                // 不产出网格、不推进，由测试手工 advance_to。
+                handle.advance_to(Stage::Uploaded);
                 remesh_budget -= 1;
             }
         }
@@ -1181,7 +1369,17 @@ impl GameRuntime {
             self.game_ticks += n;
             self.time_ticks += n; // 26.1 ServerClockManager 每 tick +1
         }
-        self.apply_touch_input();
+        if self.phase == GamePhase::Loading {
+            // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
+            // 移动/跳跃等输入不生效、触屏摇杆不接入（apply_touch_input 仅
+            // Playing 接线）；触摸事件队列仍要排空，防止积压的放置/挖掘
+            // 按下效果在进场瞬间连发。
+            self.update_load_gate();
+            let _ = self.touch.consume();
+            self.input = Default::default();
+        } else {
+            self.apply_touch_input();
+        }
         if self.dead {
             // 死亡界面：尸体不响应输入，仅重力继续
             self.input = Default::default();
@@ -1271,7 +1469,11 @@ impl GameRuntime {
         );
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
-        {
+        // 出生投放前暂停（pos=ZERO 是「待投放」哨兵，26.1 里玩家实体在
+        // 区块就绪前不存在于客户端）：ZERO 坐在实体柱里会被去穿透乱推，
+        // 投放路径（stream 出生投放块）会整体覆写 pos，期间步进纯浪费。
+        let awaiting_spawn = !self.spawned && self.player.pos == Vec3::ZERO;
+        if !awaiting_spawn {
             let f = self.camera(1.0).dir();
             let f = Vec3::new(f.x, 0.0, f.z)
                 .try_normalize()
@@ -1615,6 +1817,11 @@ impl GameRuntime {
     /// 不在这里——那是 `fixed_step` 每 tick 驱动的 `step_mining`
     /// （原版 Minecraft.continueAttack，Minecraft.java:1606-1628）。
     pub fn on_left_press(&mut self) {
+        // 加载态屏蔽（26.1：LevelLoadingScreen 活动时 MouseHandler 不派发
+        // 攻击，continueAttack 只在 screen==null 时走）。
+        if self.phase == GamePhase::Loading {
+            return;
+        }
         if self.try_attack() {
             return;
         }
@@ -1799,7 +2006,13 @@ impl GameRuntime {
     }
 
     /// Mouse look.
+    ///
+    /// 加载态不生效：26.1 LevelLoadingScreen 是活动 Screen，MouseHandler
+    /// 只在 mouseGrabbed 且 screen 为 null 时转向玩家。
     pub fn look(&mut self, dx: f64, dy: f64) {
+        if self.phase == GamePhase::Loading {
+            return;
+        }
         let k = 0.0025 * self.sens;
         self.player.yaw += dx as f32 * k;
         self.player.pitch = (self.player.pitch - dy as f32 * k).clamp(-1.55, 1.55);
@@ -1819,6 +2032,10 @@ impl GameRuntime {
     }
 
     pub fn interact(&mut self, place: bool) {
+        // 加载态屏蔽（同 on_left_press：Screen 非 null 时不派发交互）。
+        if self.phase == GamePhase::Loading {
+            return;
+        }
         let view = WorldView {
             chunks: &self.chunks,
         };
@@ -3446,6 +3663,192 @@ mod tests {
             21,
             "挖掉后 heightmap 回落"
         );
+    }
+
+    // ---- 加载态（26.1 LevelLoadingScreen / LevelLoadTracker）----
+
+    /// 无头运行时 + 唯一临时存档目录（并行安全，模式照抄 tests/runtime.rs）。
+    fn headless_rt(tag: &str) -> GameRuntime {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (tag, std::process::id(), std::time::SystemTime::now()).hash(&mut h);
+        let dir = std::env::temp_dir().join(format!("mcv-load-{}-{:x}", tag, h.finish()));
+        GameRuntime::new_headless(20261010, dir, GameMode::Survival)
+    }
+
+    /// 把玩家摆到地表并把出生点邻域（半径 3，49 块 = 26.1
+    /// EXPECTED_PLAYER_CHUNKS = Mth.square(7)，LevelLoadProgressTracker
+    /// .java:15）全部顶到 Uploaded。
+    fn fill_neighborhood(rt: &mut GameRuntime) {
+        rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        for dx in -3i32..=3 {
+            for dz in -3i32..=3 {
+                let pos = ChunkPos::new(dx, dz);
+                rt.chunks
+                    .entry(pos)
+                    .or_insert_with(|| lit_chunk(dx, dz, 69));
+                rt.chunks[&pos].advance_to(Stage::Uploaded);
+            }
+        }
+    }
+
+    #[test]
+    fn loading_state_blocks_input_and_transition_until_ready() {
+        let mut rt = headless_rt("gate");
+        // 构造即加载态（26.1 doWorldLoad 先 setScreen(LevelLoadingScreen)）。
+        assert_eq!(rt.phase, GamePhase::Loading);
+        rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
+        // 只有中心块就绪：49 块邻域未齐 → 不放玩家。
+        rt.chunks
+            .entry(ChunkPos::new(0, 0))
+            .or_insert_with(|| lit_chunk(0, 0, 69))
+            .advance_to(Stage::Uploaded);
+        rt.input.forward = true;
+        rt.input.jump = true;
+        rt.input.mining = true;
+        for _ in 0..30 {
+            rt.fixed_step(1.0 / 60.0);
+        }
+        assert_eq!(rt.phase, GamePhase::Loading, "邻域未就绪不放玩家");
+        assert!(
+            !rt.input.forward && !rt.input.jump && !rt.input.mining,
+            "加载态输入被门清零（26.1 Screen 非 null 时移动输入不生效）"
+        );
+        assert!(
+            rt.mine.pos.is_none() && rt.mine.progress == 0.0,
+            "挖掘状态机不得被输入带起"
+        );
+    }
+
+    #[test]
+    fn loading_transfers_next_step_when_neighborhood_instant_ready() {
+        let mut rt = headless_rt("instant");
+        fill_neighborhood(&mut rt);
+        // 全部区块瞬间就绪：下一固定步即转游玩（closeDelay 默认 0）。
+        rt.fixed_step(1.0 / 60.0);
+        assert_eq!(rt.phase, GamePhase::Playing);
+        // 游玩态输入恢复生效：前向输入驱动位移。
+        rt.input.forward = true;
+        let before = rt.player.pos;
+        rt.fixed_step(1.0 / 60.0);
+        assert_ne!(rt.player.pos, before, "转游玩后输入生效");
+    }
+
+    #[test]
+    fn loading_progress_monotonic_and_clamped() {
+        let mut rt = headless_rt("progress");
+        rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
+        let mut last = rt.loading_progress();
+        assert_eq!(last, 0.0, "无就绪区块进度 0");
+        let mut cells: Vec<(i32, i32)> = {
+            let mut v = Vec::new();
+            for dx in -3i32..=3 {
+                for dz in -3i32..=3 {
+                    v.push((dx, dz));
+                }
+            }
+            v
+        };
+        // 打乱填充顺序，验证乱序完成下进度单调不减。
+        for i in (0..cells.len()).rev() {
+            let j = (i * 7 + 13) % (i + 1);
+            cells.swap(i, j);
+        }
+        for (dx, dz) in cells {
+            let pos = ChunkPos::new(dx, dz);
+            rt.chunks
+                .entry(pos)
+                .or_insert_with(|| lit_chunk(dx, dz, 69))
+                .advance_to(Stage::Uploaded);
+            let p = rt.loading_progress();
+            assert!((0.0..=1.0).contains(&p), "进度钳制 0..1：{p}（{dx},{dz}）");
+            assert!(p >= last, "进度单调不减：{p} < {last}");
+            last = p;
+        }
+        assert_eq!(last, 1.0, "邻域全就绪进度 1");
+        // 平滑进度（LevelLoadingScreen.java:84 每 tick lerp 0.2）：重进
+        // 加载态（新世界关屏延迟 10 tick 留出观察窗），观察期内平滑值
+        // 向 1 单调爬升且钳制。
+        rt.begin_load(true);
+        let mut last_s = rt.loading_progress_smoothed();
+        for _ in 0..30 {
+            rt.fixed_step(1.0 / 60.0);
+            let s = rt.loading_progress_smoothed();
+            assert!((0.0..=1.0).contains(&s), "平滑进度钳制 0..1：{s}");
+            assert!(s >= last_s, "平滑进度单调不减：{s} < {last_s}");
+            last_s = s;
+        }
+        assert!(last_s > 0.0, "观察期内平滑进度应向 1 爬升：{last_s}");
+        assert_eq!(rt.phase, GamePhase::Playing, "关屏延迟走满转游玩");
+    }
+
+    #[test]
+    fn loading_close_delay_holds_new_world_half_second() {
+        let mut rt = headless_rt("delay");
+        fill_neighborhood(&mut rt);
+        // 新世界关屏延迟 500ms = 10 tick（Minecraft.java:2083
+        // `new LevelLoadTracker(newWorld ? 500L : 0L)`）；60Hz 下每 3 步
+        // 1 tick，第 30 步 game_ticks 才到 10。前 27 步（game_ticks≤9）
+        // 必须保持加载态。
+        rt.begin_load(true);
+        for _ in 0..27 {
+            rt.fixed_step(1.0 / 60.0);
+            assert_eq!(rt.phase, GamePhase::Loading, "关屏延迟期内保持加载态");
+        }
+        // 延迟走满（game_ticks 达 ready_at+10）即转游玩。
+        for _ in 0..6 {
+            rt.fixed_step(1.0 / 60.0);
+            if rt.phase == GamePhase::Playing {
+                return;
+            }
+        }
+        panic!("关屏延迟走满后未转游玩态");
+    }
+
+    #[test]
+    fn loading_timeout_lets_player_in() {
+        let mut rt = headless_rt("timeout");
+        rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
+        // 30s 等待截止（LevelLoadTracker.java:26 CLIENT_WAIT_TIMEOUT_MS，
+        // :152-156 超时放行）。
+        rt.game_ticks = 601;
+        rt.fixed_step(1.0 / 60.0);
+        assert_eq!(rt.phase, GamePhase::Playing, "超时放玩家进场");
+    }
+
+    #[test]
+    fn respawn_reenters_loading_and_drops_at_surface() {
+        let mut rt = headless_rt("respawn");
+        rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
+        rt.hurt_player(100.0, None);
+        assert!(rt.dead);
+        rt.respawn();
+        assert!(!rt.dead);
+        assert_eq!(
+            rt.phase,
+            GamePhase::Loading,
+            "重生重进加载态（26.1 handleRespawn → startWaitingForNewLevel）"
+        );
+        assert_eq!(rt.player.pos, Vec3::ZERO, "复活点位待出生点投放");
+        // 出生区块地形就绪 → stream 投放到地表（heightmap 落地，不再从
+        // y=200 自由落体）。
+        let spawn = rt
+            .chunks
+            .entry(ChunkPos::new(0, 0))
+            .or_insert_with(|| lit_chunk(0, 0, 69))
+            .clone();
+        rt.stream();
+        let surface = f32::from(spawn.heightmap.read().unwrap()[(8 << 4) | 8]) + 1.0;
+        assert_eq!(
+            rt.player.pos,
+            Vec3::new(8.5, surface, 8.5),
+            "复活落点 = 出生点地表"
+        );
+        // 邻域就绪后放行。
+        fill_neighborhood(&mut rt);
+        rt.fixed_step(1.0 / 60.0);
+        assert_eq!(rt.phase, GamePhase::Playing);
     }
 }
 
