@@ -9,7 +9,8 @@
 
 use mcv_core::{BlockId, CHUNK_VOL, vidx};
 use mcv_light::{
-    BorderSeed, LightChunk, apply_edge, extract_edge, init, opacity, propagate, update_block,
+    BorderSeed, LightChunk, SIDE_MINUS_X, SIDE_MINUS_Z, SIDE_PLUS_X, SIDE_PLUS_Z, apply_edge,
+    extract_edge, init, opacity, propagate, update_block,
 };
 
 const AIR: u16 = 0;
@@ -294,9 +295,12 @@ fn tunnel_light_falloff() {
 // 与反编译 Minecraft 26.1 对拍的黄金用例（表格断言）。
 // ---------------------------------------------------------------------------
 
-/// 26.1 `Blocks.TORCH.lightLevel(14)`（火把尚未注册进 BLOCKS，
-/// 按参照发光值手工播种方块光通道）。
-const TORCH_EMISSION: u8 = 14;
+/// 26.1 `Blocks.TORCH.lightLevel(14)`（Blocks.java:963-971）。火把已注册进
+/// `mcv_core::BLOCKS`（gen 全表 1171 块、93 发光方块），发光值直查真相源
+/// 而非手工常量——新增发光方块在源头登记后本表自动跟随（MINOR-1）。
+fn torch_emission() -> u8 {
+    mcv_core::BLOCKS[bid("torch") as usize].light_emit
+}
 
 /// 黄金用例 1：火把方块光衰减序列 14,13,…,1,0。
 /// 参照 `BlockLightEngine.propagateIncrease`：六向每格
@@ -308,6 +312,8 @@ fn golden_torch_decay_sequence() {
     let mut w = World::flat(40);
     w.box_fill(1, 15, 32, 36, 6, 10, AIR);
     w.rebuild_heightmap();
+    let torch_emit = torch_emission();
+    assert_eq!(torch_emit, 14, "火把 26.1 发光值");
     {
         let mut c = w.chunk();
         init(&mut c);
@@ -316,7 +322,7 @@ fn golden_torch_decay_sequence() {
     }
 
     // 火把（发光 14）放在 (1,34,8)。
-    w.light[vidx(1, 34, 8)] = TORCH_EMISSION;
+    w.light[vidx(1, 34, 8)] = torch_emit;
     let mask = {
         let mut c = w.chunk();
         propagate(&mut c)
@@ -325,9 +331,7 @@ fn golden_torch_decay_sequence() {
     assert_eq!(mask, 0);
 
     // 水平序列（沿 +x）：14,13,12,…,1，第 15 格衰减到 0。
-    let sequence: Vec<u8> = (0..=14u8)
-        .map(|d| TORCH_EMISSION.saturating_sub(d))
-        .collect();
+    let sequence: Vec<u8> = (0..=14u8).map(|d| torch_emit.saturating_sub(d)).collect();
     let mut got = Vec::new();
     {
         let c = w.chunk();
@@ -712,5 +716,448 @@ fn removal_wave_replays_weak_emitters() {
         assert_eq!(blk(&c, 6, 34, 8), 13, "走廊由火把重新照亮");
         assert_eq!(blk(&c, 7, 34, 8), 3, "岩浆岩自发光回播");
         assert_eq!(blk(&c, 4, 34, 8), 13, "萤石位由火把照到 13");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MINOR-1：发光表默认态——mcv_core::BLOCKS 是唯一真相源。
+// ---------------------------------------------------------------------------
+
+/// 按名字查注册 id（BLOCKS 表 1171 块全注册）。
+fn bid(name: &str) -> u16 {
+    mcv_core::BLOCKS
+        .iter()
+        .position(|b| b.name == name)
+        .unwrap_or_else(|| panic!("方块 {name} 未注册")) as u16
+}
+
+/// 发光值黄金表：火把族 + 主力光源逐类对照 26.1 `Blocks.java`（发光不再
+/// 存在任何「手工登记/静默 0」旁路——`mcv_light::light_emit` 是
+/// `mcv_core::BLOCKS` 的 const 镜像，新增方块在源头登记即自动生效；
+/// 本用例锁死火把类回归基线）。
+#[test]
+fn golden_emit_table_torch_family_matches_26_1() {
+    // (方块名, 26.1 发光值, Blocks.java 依据 file:line)
+    const GOLDEN: [(&str, u8, &str); 17] = [
+        ("torch", 14, "Blocks.java:966 lightLevel(statex -> 14)"),
+        (
+            "wall_torch",
+            14,
+            "Blocks.java:971 wallVariant(TORCH).lightLevel(14)",
+        ),
+        ("copper_torch", 14, "Blocks.java:1726-1730 lightLevel(14)"),
+        (
+            "copper_wall_torch",
+            14,
+            "Blocks.java:1731-1734 lightLevel(14)",
+        ),
+        ("soul_torch", 10, "Blocks.java:1716-1720 lightLevel(10)"),
+        (
+            "soul_wall_torch",
+            10,
+            "Blocks.java:1721-1724 lightLevel(10)",
+        ),
+        (
+            "redstone_torch",
+            7,
+            "Blocks.java:1589-1593 litBlockEmission(7)",
+        ),
+        (
+            "redstone_wall_torch",
+            7,
+            "Blocks.java:1594-1597 litBlockEmission(7)",
+        ),
+        ("glowstone", 15, "Blocks.java:1736-1744 lightLevel(15)"),
+        ("sea_lantern", 15, "Blocks.java:2619-2627 lightLevel(15)"),
+        ("shroomlight", 15, "Blocks.java:4728-4729 lightLevel(15)"),
+        ("jack_o_lantern", 15, "Blocks.java:1756-1764 lightLevel(15)"),
+        ("end_rod", 14, "Blocks.java:3562-3565 lightLevel(14)"),
+        ("lantern", 15, "Blocks.java:4578-4587 lightLevel(15)"),
+        ("soul_lantern", 10, "Blocks.java:4590-4599 lightLevel(10)"),
+        ("fire", 15, "Blocks.java:973-981 lightLevel(15)"),
+        ("soul_fire", 10, "Blocks.java:985-992 lightLevel(10)"),
+    ];
+    for (name, emit, src) in GOLDEN {
+        let id = bid(name) as usize;
+        assert_eq!(
+            mcv_core::BLOCKS[id].light_emit,
+            emit,
+            "{name} 发光值应为 {emit}（{src}）"
+        );
+    }
+}
+
+/// MINOR-1 端到端：id≥14 的发光方块经 `update_block` 放置即从 BLOCKS
+/// 真相源播种（生产路径，非手工灌 light），挖掘后逐格回撤到 0。
+#[test]
+fn torch_placement_seeds_block_light_via_update_block() {
+    let torch = bid("torch");
+    assert!(torch >= 14, "火把是 id≥14 的新注册方块（gen 字典序）");
+    let mut w = World::flat(40);
+    // 密封石室：内部空气 x 3..=12, y 32..=36, z 6..=10。
+    w.box_fill(3, 12, 32, 36, 6, 10, AIR);
+    w.rebuild_heightmap();
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+
+    // 放置火把：update_block 读 BLOCKS 播种并 BFS。
+    let (mask, _seeds) = edit(&mut w, 5, 34, 8, AIR, torch);
+    assert_eq!(mask, 0, "光照被石室吞掉，不触边");
+    {
+        let c = w.chunk();
+        assert_eq!(blk(&c, 5, 34, 8), 14, "火把格自发光（真相源播种）");
+        // 水平 +x 逐格 -1，墙（x=13 起 damp 15）吞光。
+        for d in 0..=7usize {
+            assert_eq!(blk(&c, 5 + d, 34, 8), 14 - d as u8, "+x 第 {d} 格");
+        }
+        assert_eq!(blk(&c, 13, 34, 8), 0, "东墙");
+        // -x 与垂直同样逐格 -1。
+        assert_eq!(blk(&c, 4, 34, 8), 13);
+        assert_eq!(blk(&c, 3, 34, 8), 12);
+        assert_eq!(blk(&c, 2, 34, 8), 0, "西墙");
+        for (y, expect) in [(33usize, 13u8), (32, 12), (35, 13), (36, 12)] {
+            assert_eq!(blk(&c, 5, y, 8), expect, "垂直 y={y}");
+        }
+        assert_eq!(blk(&c, 5, 31, 8), 0, "地板");
+        assert_eq!(blk(&c, 5, 37, 8), 0, "天花板");
+    }
+
+    // 挖掉火把：撤销波清场，逐格回 0。
+    let (_mask, _seeds) = edit(&mut w, 5, 34, 8, torch, AIR);
+    {
+        let c = w.chunk();
+        for d in 0..=7usize {
+            assert_eq!(blk(&c, 5 + d, 34, 8), 0, "回撤 +x 第 {d} 格");
+        }
+        assert_eq!(blk(&c, 5, 33, 8), 0);
+        assert_eq!(blk(&c, 5, 35, 8), 0);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// MINOR-2：跨区块边界撤销判据。PairWorld 复刻 game.rs::sync_light_edges
+// 的派发循环（抽边 → REMOVE 后 ADD → 脏位回队级联，512 步预算）。
+// ---------------------------------------------------------------------------
+
+const CHUNK_A: u8 = 0;
+const CHUNK_B: u8 = 1;
+
+/// 两区块世界：全局 x 0..=15 属 A，16..=31 属 B（B 局部 x = gx-16）。
+struct PairWorld {
+    chunks: [World; 2],
+}
+
+impl PairWorld {
+    fn flat(top: usize) -> Self {
+        Self {
+            chunks: [World::flat(top), World::flat(top)],
+        }
+    }
+
+    fn set(&mut self, gx: usize, y: usize, z: usize, id: u16) {
+        if gx < 16 {
+            self.chunks[0].voxels[vidx(gx, y, z)] = id;
+        } else {
+            self.chunks[1].voxels[vidx(gx - 16, y, z)] = id;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn box_fill(
+        &mut self,
+        gx0: usize,
+        gx1: usize,
+        y0: usize,
+        y1: usize,
+        z0: usize,
+        z1: usize,
+        id: u16,
+    ) {
+        for y in y0..=y1 {
+            for z in z0..=z1 {
+                for gx in gx0..=gx1 {
+                    self.set(gx, y, z, id);
+                }
+            }
+        }
+    }
+
+    fn rebuild_heightmaps(&mut self) {
+        for w in &mut self.chunks {
+            w.rebuild_heightmap();
+        }
+    }
+
+    /// 经 `update_block` 的编辑（先写体素，同生产路径）。
+    fn edit(
+        &mut self,
+        which: u8,
+        x: usize,
+        y: usize,
+        z: usize,
+        old: u16,
+        new: u16,
+    ) -> (u8, Vec<BorderSeed>) {
+        let w = &mut self.chunks[which as usize];
+        w.voxels[vidx(x, y, z)] = new;
+        let mut seeds = Vec::new();
+        let mask = {
+            let mut c = w.chunk();
+            update_block(&mut c, x as u32, y as u32, z as u32, old, new, &mut seeds)
+        };
+        (mask, seeds)
+    }
+
+    /// `game.rs::sync_light_edges` 同构：弹 (块, 边)，抽源边快照，对邻块
+    /// 先 REMOVE 后 ADD，脏位回队级联。只派发 A+X / B-X 这对真实相邻边
+    /// （±Z 邻块不在本用例世界内，同 game.rs 对缺失邻块的跳过）。
+    fn sync_edges(&mut self, queue: Vec<(u8, u8)>) {
+        let mut queue = queue;
+        let mut steps = 0usize;
+        while let Some((which, side)) = queue.pop() {
+            let connects_pair = match side {
+                SIDE_PLUS_X => which == CHUNK_A,
+                SIDE_MINUS_X => which == CHUNK_B,
+                // ±Z 的邻块不在本两块世界内（game.rs 会同步真实 ±Z 邻块；
+                // 此处同其对缺失邻块的跳过路径）。
+                SIDE_PLUS_Z | SIDE_MINUS_Z => false,
+                _ => false,
+            };
+            if !connects_pair {
+                continue;
+            }
+            steps += 1;
+            assert!(steps <= 512, "边界同步预算耗尽（级联不收敛）");
+            let other = if which == CHUNK_A { CHUNK_B } else { CHUNK_A };
+            let obit = if side < 2 { 1 - side } else { 5 - side };
+            let edge = {
+                let mut c = self.chunks[which as usize].chunk();
+                extract_edge(&c, side)
+            };
+            for op in [1u8, 0u8] {
+                let dirty = {
+                    let mut c = self.chunks[other as usize].chunk();
+                    apply_edge(&mut c, &edge, obit, op)
+                };
+                for bit in 0..4u8 {
+                    if dirty & (1 << bit) != 0 {
+                        queue.push((other, bit));
+                    }
+                }
+            }
+        }
+    }
+
+    /// 双块 init + 初始成对边同步（同 game.rs border pairing）。
+    fn init_and_pair(&mut self) {
+        {
+            let mut c = self.chunks[0].chunk();
+            init(&mut c);
+        }
+        {
+            let mut c = self.chunks[1].chunk();
+            init(&mut c);
+        }
+        self.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X), (CHUNK_B, SIDE_MINUS_X)]);
+    }
+}
+
+fn blk_p(p: &PairWorld, gx: usize, y: usize, z: usize) -> u8 {
+    let (which, x) = if gx < 16 {
+        (0usize, gx)
+    } else {
+        (1usize, gx - 16)
+    };
+    p.chunks[which].light[vidx(x, y, z)] & 0xF
+}
+
+fn sky_p(p: &PairWorld, gx: usize, y: usize, z: usize) -> u8 {
+    let (which, x) = if gx < 16 {
+        (0usize, gx)
+    } else {
+        (1usize, gx - 16)
+    };
+    p.chunks[which].light[vidx(x, y, z)] >> 4
+}
+
+/// 用例 1：火把恰在边界格（A 的 +X 边），挖掉后邻区整列回撤。
+/// 参照 26.1 `BlockLightEngine.propagateDecrease`（BlockLightEngine.java:
+/// 91-101）：撤销只减不增，A 边值归零后 B 侧不再被证成的格子逐格清零。
+#[test]
+fn border_torch_dug_retracts_neighbour_per_nibble() {
+    let torch = bid("torch");
+    let mut p = PairWorld::flat(40);
+    p.set(15, 45, 8, torch); // A 的 +X 边界格
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    // 点亮态：A 边界格自身 14，B 侧 13,12,11,… 逐格 -1；天光满照度。
+    assert_eq!(blk_p(&p, 15, 45, 8), 14, "火把格");
+    for d in 0..=7usize {
+        assert_eq!(blk_p(&p, 16 + d, 45, 8), 13 - d as u8, "B 侧 +{d}");
+        assert_eq!(sky_p(&p, 16 + d, 45, 8), 15, "天光 +{d}");
+    }
+
+    // 挖掉火把：A 本地撤销 + 边推送 → B 侧整列回撤为 0。
+    let (mask, _seeds) = p.edit(CHUNK_A, 15, 45, 8, torch, AIR);
+    assert_eq!(mask & (1 << SIDE_PLUS_X), 1 << SIDE_PLUS_X, "+X 脏位");
+    p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X)]);
+    assert_eq!(blk_p(&p, 15, 45, 8), 0, "A 边界格归零");
+    for d in 0..=7usize {
+        assert_eq!(blk_p(&p, 16 + d, 45, 8), 0, "B 侧回撤 +{d}");
+        assert_eq!(sky_p(&p, 16 + d, 45, 8), 15, "天光不受方块光撤销影响 +{d}");
+    }
+}
+
+/// 用例 2（修复「错压/漏照」）：B 侧自有萤石时挖掉边界火把——火把份额
+/// 撤销、萤石份额按邻区现值存活，且编辑块（A）侧必须由 B 的现值回喂：
+/// 26.1 跨 section 撤销波对 `toLevel >= oldFromLevel` 的幸存格按其
+/// stored 现值重播种（BlockLightEngine.java:103-105）；本协议等价实现
+/// 是 REMOVE 回报边变化 → game.rs 级联反向推送（拉）。修复前 A 侧
+/// 永久漏照（0 而非 11）。
+#[test]
+fn border_torch_dug_keeps_neighbour_justified_light() {
+    let (torch, glowstone) = (bid("torch"), bid("glowstone"));
+    let mut p = PairWorld::flat(40);
+    p.set(15, 45, 8, torch); // A 边界格
+    p.set(19, 45, 8, glowstone); // B 局部 x=3
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    // 点亮态：B(16)=13（火把 13 与萤石 12 取大）、B(17)=13、B(18)=14、
+    // B(19)=15；A(15)=14。
+    assert_eq!(blk_p(&p, 15, 45, 8), 14);
+    assert_eq!(blk_p(&p, 16, 45, 8), 13);
+    assert_eq!(blk_p(&p, 17, 45, 8), 13);
+    assert_eq!(blk_p(&p, 18, 45, 8), 14);
+    assert_eq!(blk_p(&p, 19, 45, 8), 15);
+
+    let _ = p.edit(CHUNK_A, 15, 45, 8, torch, AIR);
+    p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X)]);
+
+    // 萤石份额存活（撤销波触到 B(16) 后由 ≥ 波前的萤石梯度回播）。
+    assert_eq!(blk_p(&p, 19, 45, 8), 15, "萤石自发光存活");
+    assert_eq!(blk_p(&p, 18, 45, 8), 14);
+    assert_eq!(blk_p(&p, 17, 45, 8), 13);
+    assert_eq!(blk_p(&p, 16, 45, 8), 12, "B 边界格回落到萤石正当值");
+    // 编辑块侧回喂：A(15) = B(16) 现值 - 1，向内逐格 -1（修复前恒 0）。
+    assert_eq!(blk_p(&p, 15, 45, 8), 11, "A 边界格由邻区现值回喂");
+    assert_eq!(blk_p(&p, 14, 45, 8), 10);
+    assert_eq!(blk_p(&p, 13, 45, 8), 9);
+    // 天光满照度不受影响。
+    assert_eq!(sky_p(&p, 15, 45, 8), 15);
+    assert_eq!(sky_p(&p, 16, 45, 8), 15);
+}
+
+/// 用例 3（修复「错压邻区」）：发光体恰在 B 的边界格、A 侧同列是暗格
+/// （n_blk=0）——修复前 REMOVE 推送把贴边萤石清零且从不回播（apply_edge
+/// 的边界清零不走 removal_channel 的自发光回播路径），邻区光源被永久
+/// 压灭。26.1 `checkNode`：stored > emission → 清零 + decrease(stored)
+/// + increase(emission)（BlockLightEngine.java:30-41）。
+#[test]
+fn border_emitter_survives_neighbour_dark_edge() {
+    let glowstone = bid("glowstone");
+    let mut p = PairWorld::flat(40);
+    p.set(16, 45, 8, glowstone); // B 的 -X 边界格
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    assert_eq!(blk_p(&p, 16, 45, 8), 15, "贴边萤石不被邻区暗边压灭");
+    assert_eq!(blk_p(&p, 17, 45, 8), 14);
+    assert_eq!(blk_p(&p, 18, 45, 8), 13);
+
+    // 再吃一次全暗 REMOVE 推送仍不熄灭（A 侧没有任何方块光来源）。
+    p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X)]);
+    assert_eq!(blk_p(&p, 16, 45, 8), 15, "重复 REMOVE 后萤石仍在");
+    assert_eq!(blk_p(&p, 17, 45, 8), 14);
+    // 天光通道不受方块光回播影响。
+    assert_eq!(sky_p(&p, 16, 45, 8), 15);
+}
+
+/// 用例 4：玻璃隧道跨界、遮光体（收口石壁）在亮侧（B）挖开——B 的边界
+/// 字节 0→9 变化，正常推送即可把光喂进暗侧 A。逐格 9,8,7,…（山体内
+/// 天光 nibble 恒 0，整字节 == 方块光 nibble）。
+#[test]
+fn glass_tunnel_blocker_dug_on_lit_side_feeds_dark_side() {
+    let torch = bid("torch");
+    let mut p = PairWorld::flat(49);
+    // 石山 y50..=60 全覆盖；隧道 y=50 z=8：B 半段 gx 16..=23（火把 gx=21），
+    // A 半段 gx 9..=15（无光源全暗），收口石壁恰在 B 的边界格 gx=16。
+    p.box_fill(0, 31, 50, 60, 0, 15, STONE);
+    p.box_fill(16, 23, 50, 50, 8, 8, AIR);
+    p.box_fill(9, 15, 50, 50, 8, 8, AIR);
+    p.set(16, 50, 8, STONE);
+    p.set(21, 50, 8, torch);
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    assert_eq!(blk_p(&p, 21, 50, 8), 14, "火把格");
+    assert_eq!(blk_p(&p, 20, 50, 8), 13);
+    assert_eq!(blk_p(&p, 17, 50, 8), 10);
+    assert_eq!(blk_p(&p, 16, 50, 8), 0, "收口石壁不透光");
+    assert_eq!(blk_p(&p, 15, 50, 8), 0, "A 侧隧道全暗");
+
+    // 在亮侧挖开收口：B 边界字节 0→9 → 推送 → A 吸收。
+    let (mask, _seeds) = p.edit(CHUNK_B, 0, 50, 8, STONE, AIR);
+    assert_eq!(mask & (1 << SIDE_MINUS_X), 1 << SIDE_MINUS_X, "-X 脏位");
+    p.sync_edges(vec![(CHUNK_B, SIDE_MINUS_X)]);
+
+    assert_eq!(blk_p(&p, 16, 50, 8), 9, "B 边界格点亮");
+    for d in 0..=6usize {
+        let (gx, expect) = (15 - d, 8 - d as u8);
+        assert_eq!(blk_p(&p, gx, 50, 8), expect, "A 隧道第 {d} 格");
+        // 逐 nibble：山体内天光 0，整字节 == 方块光。
+        let (which, x) = if gx < 16 { (0usize, gx) } else { (1, gx - 16) };
+        assert_eq!(
+            p.chunks[which].light[vidx(x, 50, 8)],
+            expect,
+            "整字节 gx={gx}"
+        );
+    }
+}
+
+/// 用例 5：玻璃隧道跨界、遮光体在暗侧（A）的边界格挖开——编辑块自身
+/// 光照字节 0→0 不变，纯字节 diff 漏报；`update_block` 现按「边界格遮光
+/// 等级下降」补报脏位（本用例断言该位）。但补报驱动的是「推」方向
+/// （A→B），B 的光要回流进 A 还需调用方对该边补一次反向同步
+/// （game.rs::sync_light_edges 接线需求，见任务报告）——这里按接线后
+/// 的语义补推反向边，断言拉取后的逐格预期。
+#[test]
+fn glass_tunnel_blocker_dug_on_dark_side_pulls_via_reverse_sync() {
+    let torch = bid("torch");
+    let mut p = PairWorld::flat(49);
+    p.box_fill(0, 31, 50, 60, 0, 15, STONE);
+    p.box_fill(16, 23, 50, 50, 8, 8, AIR);
+    p.box_fill(9, 15, 50, 50, 8, 8, AIR);
+    p.set(15, 50, 8, STONE); // 遮光体恰在 A 的 +X 边界格
+    p.set(21, 50, 8, torch);
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    assert_eq!(blk_p(&p, 16, 50, 8), 9, "B 边界格亮");
+    assert_eq!(blk_p(&p, 15, 50, 8), 0, "A 侧被收口挡住");
+
+    let (mask, _seeds) = p.edit(CHUNK_A, 15, 50, 8, STONE, AIR);
+    assert_eq!(blk_p(&p, 15, 50, 8), 0, "本地无源仍暗（字节 0→0）");
+    assert_eq!(
+        mask & (1 << SIDE_PLUS_X),
+        1 << SIDE_PLUS_X,
+        "遮光下降补报 +X 脏位"
+    );
+
+    // 接线后的完整语义：正向（A→B，无害空转）+ 反向（B→A，拉取）。
+    p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X), (CHUNK_B, SIDE_MINUS_X)]);
+    assert_eq!(blk_p(&p, 16, 50, 8), 9);
+    for d in 0..=6usize {
+        let (gx, expect) = (15 - d, 8 - d as u8);
+        assert_eq!(blk_p(&p, gx, 50, 8), expect, "拉取后 A 隧道第 {d} 格");
+        let (which, x) = if gx < 16 { (0usize, gx) } else { (1, gx - 16) };
+        assert_eq!(
+            p.chunks[which].light[vidx(x, 50, 8)],
+            expect,
+            "整字节 gx={gx}"
+        );
     }
 }

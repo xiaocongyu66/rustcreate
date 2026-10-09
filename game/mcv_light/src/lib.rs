@@ -418,7 +418,16 @@ pub fn extract_edge(chunk: &LightChunk, side: u8) -> [u8; 4096] {
 /// `neighbour - max(1, opacity)` and re-propagated. REMOVE: boundary cells
 /// brighter than `neighbour + 1` are retracted with a removal BFS; light the
 /// neighbour no longer justifies falls back onto internal re-light sources.
-/// Returns a dirty mask over this chunk's *other* three borders.
+///
+/// Returns a dirty mask. ADD never reports the side just synced (the absorb
+/// direction already converged; reporting back would only churn). REMOVE
+/// *does* report that side when its stored bytes changed: the retraction may
+/// have extinguished cells the neighbour itself still justifies, and the
+/// caller cascading `(this chunk, side)` re-pushes our new edge values into
+/// the edited chunk — the cross-chunk equivalent of vanilla's decrease wave
+/// re-lighting survivors at their raw stored brightness
+/// (BlockLightEngine.java:103-105 `toLevel >= oldFromLevel` →
+/// `enqueueIncrease(toNode, toLevel)`).
 pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -> u8 {
     if side > 3 || op > 1 {
         return 0;
@@ -428,6 +437,8 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
     let mut blk_rem: Vec<(u16, u8)> = Vec::new();
     let mut sky_add: Vec<(u16, u8)> = Vec::new();
     let mut blk_add: Vec<(u16, u8)> = Vec::new();
+    let mut sky_readd: Vec<(u16, u8)> = Vec::new();
+    let mut blk_readd: Vec<(u16, u8)> = Vec::new();
 
     for y in 0..256usize {
         for h in 0..16usize {
@@ -451,20 +462,35 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
                     blk_add.push((sidx as u16, t_blk));
                 }
             } else {
+                // 撤销判据（MINOR 边界撤销）：`s > n + 1` 才回撤。协议拿不到
+                // 26.1 撤销波的「编辑前波前等级」（propagateDecrease 携带被
+                // 清格子的旧值续传，BlockLightEngine.java:91-101），只能以
+                // 邻区现值 n 为界：n+1 的余量保证内部自证光不被邻区暗边误撤
+                // （残余 ≤+2 记为 KNOWN-DIVERGENCE，随下次编辑自愈），也保证
+                // 直天 15 源柱在 n≤14 下永不回撤（同型判据
+                // `toLevel <= oldFromLevel - 1`，SkyLightEngine.java:141-166）。
                 if s_sky > n_sky + 1 && s_sky > 0 {
                     set_ch(chunk.light, sidx, SKY_SHIFT, 0);
                     sky_rem.push((sidx as u16, s_sky));
                 }
                 if s_blk > n_blk + 1 && s_blk > 0 {
+                    // 清零后回播本格自发光（26.1 checkNode：stored > emission
+                    // → 清零 + decrease(stored) + increase(emission)，
+                    // BlockLightEngine.java:30-41；与 removal_channel 对被清
+                    // 邻居的处理同型）。缺失时贴边界发光体（萤石/火把恰在
+                    // 边界格）会被邻区暗边快照永久压灭。天光无发射体。
                     set_ch(chunk.light, sidx, BLK_SHIFT, 0);
+                    let emit = light_emit(BlockId(chunk.voxels[sidx]));
+                    if emit > 0 {
+                        set_ch(chunk.light, sidx, BLK_SHIFT, emit);
+                        blk_readd.push((sidx as u16, emit));
+                    }
                     blk_rem.push((sidx as u16, s_blk));
                 }
             }
         }
     }
 
-    let mut sky_readd = Vec::new();
-    let mut blk_readd = Vec::new();
     if op == 1 {
         removal_channel(
             chunk.voxels,
@@ -486,9 +512,14 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
     propagate_channel(chunk.voxels, chunk.light, SKY_SHIFT, &mut sky_add);
     propagate_channel(chunk.voxels, chunk.light, BLK_SHIFT, &mut blk_add);
 
-    // Never report the synced side back: the neighbour already owns that
-    // state and a REMOVE bounce could erode its direct-sky columns.
-    diff_edges(&before, chunk, Some(side), None)
+    // REMOVE 时回报刚同步的边：撤回若改变了本侧边值（邻区不再证成/改由
+    // 内部光源证成），调用方按 (本块, 该边) 再推一次，等价把本侧现值回喂
+    // 进编辑块——修复「挖掉边界光源后编辑块侧漏照」（26.1 跨 section 撤销
+    // 波按邻区 stored 现值回播，BlockLightEngine.java:103-105）。级联单调
+    // 有界（回报仅在边字节严格变化时触发），game.rs 的 512 步预算兜底。
+    // ADD 不回报：吸收方向已收敛，回报只空转。
+    let exclude = if op == 1 { None } else { Some(side) };
+    diff_edges(&before, chunk, exclude, None)
 }
 
 /// Re-run both increase channels to convergence (full-scan seeding: every
@@ -517,6 +548,12 @@ pub fn propagate(chunk: &mut LightChunk) -> u8 {
 /// `old_block` is the id that produced the light currently stored at the
 /// cell. Emits `BorderSeed`s for boundary cells whose light changed and
 /// returns the border dirty mask (bits 0..3 = +X, -X, +Z, -Z).
+///
+/// 除光照字节差分外，边界格「遮光耦合变化」也置脏：编辑格恰在某条边上且
+/// 遮光等级下降（挖开贴边石壁）时，邻区光照从此可以穿透，但本侧光照字节
+/// 可能不变（暗格 0→0），纯字节 diff 会漏报该边。注意这只驱动调用方
+/// 「推」方向（本块→邻块）；邻区光照回流（拉）需要调用方对该边补一次
+/// 反向边同步（game.rs 接线，见任务报告）。
 pub fn update_block(
     chunk: &mut LightChunk,
     x: u32,
@@ -629,5 +666,24 @@ pub fn update_block(
     propagate_channel(chunk.voxels, chunk.light, SKY_SHIFT, &mut sky_add);
     propagate_channel(chunk.voxels, chunk.light, BLK_SHIFT, &mut blk_add);
 
-    diff_edges(&before, chunk, None, Some(out_seeds))
+    let mut mask = diff_edges(&before, chunk, None, Some(out_seeds));
+    // 边界耦合变化补报（MINOR 边界撤销判据）：遮光下降的编辑格恰在边界上
+    // 时，即便光照字节不变（暗格 0→0），该边的跨区块耦合也已打开，必须
+    // 置脏让调用方派发该边同步，否则邻区光永远进不来（玻璃隧道暗侧挖收
+    // 口石壁用例）。
+    if opacity(BlockId(old_block)) > opacity(BlockId(new_block)) {
+        if x == 15 {
+            mask |= 1 << SIDE_PLUS_X;
+        }
+        if x == 0 {
+            mask |= 1 << SIDE_MINUS_X;
+        }
+        if z == 15 {
+            mask |= 1 << SIDE_PLUS_Z;
+        }
+        if z == 0 {
+            mask |= 1 << SIDE_MINUS_Z;
+        }
+    }
+    mask
 }
