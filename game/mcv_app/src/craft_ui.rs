@@ -1,6 +1,6 @@
-//! 合成/创造取物界面的 HUD 构建：纯函数把 [`CraftScreen`]/[`CreativePicker`]
-//! + [`Hotbar`] 渲染成 [`HudQuad`]，同时产出命中矩形表（桌面鼠标/触屏共用）。
-//! 布局仿 26.1 InventoryScreen：18px 槽距、居中面板、下段 27 主背包 + 9 快捷栏
+//! 合成/创造取物界面的 HUD 构建：纯函数把 [`CraftScreen`]/[`CreativePicker`] 与
+//! [`Hotbar`] 渲染成 [`HudQuad`]，同时产出命中矩形表（桌面鼠标/触屏共用）。
+//! 布局仿原版 InventoryScreen：18px 槽距、居中面板，下段 27 主背包接 9 快捷栏
 //! （全局 0..35 = `Hotbar::slot_mut` 序）；光标手持物跟随鼠标绘制。
 
 use mcv_item::{Hotbar, ItemKind, ItemStack};
@@ -141,15 +141,15 @@ fn inv_section(
     s: f32,
     g: Option<&SpriteSheet>,
 ) {
-    for i in 0..27 {
+    for (i, st) in hb.main.iter().enumerate() {
         let x = px + PAD * s + (i % 9) as f32 * SLOT * s;
         let y = inv_y + (i / 9) as f32 * SLOT * s;
-        slot(q, hot, INV_IDS[9 + i], x, y, s, Some(&hb.main[i]), g);
+        slot(q, hot, INV_IDS[9 + i], x, y, s, Some(st), g);
     }
     let hb_y = inv_y + 3.0 * SLOT * s + 6.0 * s;
-    for i in 0..9 {
+    for (i, st) in hb.slots.iter().enumerate() {
         let x = px + PAD * s + i as f32 * SLOT * s;
-        slot(q, hot, INV_IDS[i], x, hb_y, s, Some(&hb.slots[i]), g);
+        slot(q, hot, INV_IDS[i], x, hb_y, s, Some(st), g);
     }
 }
 
@@ -199,10 +199,10 @@ pub fn craft_quads(
     ));
     close_button(&mut q, &mut hot, px, py, pw, s);
     // 合成网格
-    for i in 0..cw * cw {
+    for (i, gid) in GRID_IDS.iter().enumerate().take(cw * cw) {
         let x = px + PAD * s + (i % cw) as f32 * SLOT * s;
         let y = py + PAD * s + (i / cw) as f32 * SLOT * s;
-        slot(&mut q, &mut hot, GRID_IDS[i], x, y, s, craft.grid.get(i), g);
+        slot(&mut q, &mut hot, gid, x, y, s, craft.grid.get(i), g);
     }
     // 结果槽 + 箭头
     let rx = px + pw - PAD * s - SLOT * s;
