@@ -77,10 +77,10 @@ pub async fn run(android: Option<AndroidApp>) -> Result<(), Box<dyn std::error::
             .as_ref()
             .and_then(|a| a.internal_data_path().map(std::path::PathBuf::from));
         log::info!("android internal data: {:?}", state.android_data);
-        if let Some(app) = android.as_ref() {
-            if let Some(data) = state.android_data.as_ref() {
-                crate::android_assets::extract_assets(app, data);
-            }
+        if let Some(app) = android.as_ref()
+            && let Some(data) = state.android_data.as_ref()
+        {
+            crate::android_assets::extract_assets(app, data);
         }
         if let Some(app) = android {
             builder.with_android_app(app);
@@ -998,11 +998,11 @@ impl AppState {
             }
             self.on_menu_click(id);
             // 设置实时应用到运行中的世界
-            if self.screen == Screen::Paused || self.screen == Screen::InGame {
-                if let Some(rt) = self.runtime.as_mut() {
-                    rt.render_dist = self.set_dist;
-                    rt.sens = self.set_sens;
-                }
+            if (self.screen == Screen::Paused || self.screen == Screen::InGame)
+                && let Some(rt) = self.runtime.as_mut()
+            {
+                rt.render_dist = self.set_dist;
+                rt.sens = self.set_sens;
             }
         }
     }
@@ -1124,10 +1124,10 @@ impl ApplicationHandler for AppState {
                 // 玩家皮肤：texturepack/skin/{steve,alex}.png（开发期素材）
                 if let Some(dir) = self.texture_pack_dir() {
                     let read = |n: &str| std::fs::read(dir.join("skin").join(n)).ok();
-                    if let (Some(s), Some(a)) = (read("steve.png"), read("alex.png")) {
-                        if let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a) {
-                            log::warn!("skin load failed: {e}");
-                        }
+                    if let (Some(s), Some(a)) = (read("steve.png"), read("alex.png"))
+                        && let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a)
+                    {
+                        log::warn!("skin load failed: {e}");
                     }
                 }
                 self.set_dist = 8;
@@ -1181,13 +1181,14 @@ impl ApplicationHandler for AppState {
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
-                if let (Some(sp), Some(_)) = (self.surface.as_mut(), self.runtime.as_ref()) {
-                    if size.width > 0 && size.height > 0 {
-                        let (cw, ch) = fit_surface_size(size.width, size.height, sp.max_extent);
-                        sp.config.width = cw;
-                        sp.config.height = ch;
-                        // reconfigure happens lazily in redraw
-                    }
+                if let (Some(sp), Some(_)) = (self.surface.as_mut(), self.runtime.as_ref())
+                    && size.width > 0
+                    && size.height > 0
+                {
+                    let (cw, ch) = fit_surface_size(size.width, size.height, sp.max_extent);
+                    sp.config.width = cw;
+                    sp.config.height = ch;
+                    // reconfigure happens lazily in redraw
                 }
             }
             WindowEvent::KeyboardInput {
@@ -1205,10 +1206,8 @@ impl ApplicationHandler for AppState {
                 let pressed = state == ElementState::Pressed;
                 use mcv_game::keymap::Action;
                 // 快捷栏：MC 是 9 个独立键位，本引擎键位表单动作单键，暂直绑
-                if pressed {
-                    if let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
-                        runtime.player.sel_slot = slot;
-                    }
+                if pressed && let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
+                    runtime.player.sel_slot = slot;
                 }
                 // F5 切视角不在 MC 键位表内（本引擎扩展），保持硬编码
                 if pressed && code == KeyCode::F5 {
@@ -1248,20 +1247,20 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.screen == Screen::InGame {
-                    if let (Some(runtime), Some(last)) = (self.runtime.as_mut(), self.last_cursor) {
-                        runtime.look(position.x - last.0, position.y - last.1);
-                    }
+                if self.screen == Screen::InGame
+                    && let (Some(runtime), Some(last)) = (self.runtime.as_mut(), self.last_cursor)
+                {
+                    runtime.look(position.x - last.0, position.y - last.1);
                 }
                 self.last_cursor = Some((position.x, position.y));
             }
             WindowEvent::Touch { .. } => {
                 if self.screen != Screen::InGame {
                     // 菜单：触摸按下 = 点击
-                    if let WindowEvent::Touch(t) = &event {
-                        if t.phase == winit::event::TouchPhase::Started {
-                            self.handle_menu_pointer(t.location.x, t.location.y);
-                        }
+                    if let WindowEvent::Touch(t) = &event
+                        && t.phase == winit::event::TouchPhase::Started
+                    {
+                        self.handle_menu_pointer(t.location.x, t.location.y);
                     }
                     return;
                 }
@@ -1273,10 +1272,11 @@ impl ApplicationHandler for AppState {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 if self.screen != Screen::InGame {
-                    if state == ElementState::Pressed && button == MouseButton::Left {
-                        if let Some(cur) = self.last_cursor {
-                            self.handle_menu_pointer(cur.0, cur.1);
-                        }
+                    if state == ElementState::Pressed
+                        && button == MouseButton::Left
+                        && let Some(cur) = self.last_cursor
+                    {
+                        self.handle_menu_pointer(cur.0, cur.1);
                     }
                     return;
                 }

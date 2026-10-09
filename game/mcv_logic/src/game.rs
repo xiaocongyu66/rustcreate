@@ -469,15 +469,15 @@ impl GameRuntime {
 
         // spawn drop: once the spawn chunk has terrain, place the player on
         // the surface (unless a saved position was loaded)
-        if !self.spawned && self.player.pos == Vec3::ZERO {
-            if let Some(handle) = self.chunks.get(&ChunkPos::new(0, 0)) {
-                if (handle.stage() as u8) >= (Stage::TerrainReady as u8) {
-                    let hm = handle.heightmap.read().unwrap();
-                    let y = hm[(8 << 4) | 8];
-                    self.player.pos = Vec3::new(8.5, f32::from(y) + 1.0, 8.5);
-                    self.spawned = true;
-                }
-            }
+        if !self.spawned
+            && self.player.pos == Vec3::ZERO
+            && let Some(handle) = self.chunks.get(&ChunkPos::new(0, 0))
+            && (handle.stage() as u8) >= (Stage::TerrainReady as u8)
+        {
+            let hm = handle.heightmap.read().unwrap();
+            let y = hm[(8 << 4) | 8];
+            self.player.pos = Vec3::new(8.5, f32::from(y) + 1.0, 8.5);
+            self.spawned = true;
         }
         // light init on newly-terrain-ready chunks (budgeted, main thread)
         let mut light_budget = 2;
@@ -718,10 +718,11 @@ impl GameRuntime {
                     dir * speed
                 } else {
                     // wander: random direction changes on idle ticks
-                    if idle % 120 == 0 && (fast_rand() & 3) == 0 {
-                        if let Some(y) = yaw.get_mut(e) {
-                            y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
-                        }
+                    if idle % 120 == 0
+                        && (fast_rand() & 3) == 0
+                        && let Some(y) = yaw.get_mut(e)
+                    {
+                        y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
                     }
                     let heading = yaw.get(e).map_or(0.0, |y| y.0);
                     Vec3::new(heading.sin(), 0.0, -heading.cos()) * speed * 0.3
