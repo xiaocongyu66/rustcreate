@@ -1,4 +1,4 @@
-//! 字体图集:优先使用 MC 原版 ascii.png(texturepack/gui/ascii.png),
+//! 字体图集:优先使用 MC 原版 ascii.png(`assets/minecraft/textures/font/ascii.png`),
 //! 失败时回退公共域 8x8 位图字体。两种布局一致:16x16 格、每格 8x8、
 //! 格序号 = codepoint(MC 映射:行 = cp >> 4,列 = cp & 0xF)。
 //! MC 参照:BitmapProvider / SpaceProvider(advances: 空格 = 4,
@@ -248,12 +248,12 @@ pub fn advance(cp: u32) -> f32 {
     }
 }
 
-/// 加载字体图集:优先 `dir/gui/ascii.png`(MC 原版,任意尺寸近邻重采样
-/// 到 128x128),失败回退程序化 8x8 字体。返回 (RGBA 数据, 宽度表, 是否
-/// 为 MC 素材)。
+/// 加载字体图集:优先 `dir/textures/font/ascii.png`(MC 原版,任意尺寸
+/// 近邻重采样到 128x128),失败回退程序化 8x8 字体。返回 (RGBA 数据,
+/// 宽度表, 是否为 MC 素材)。`dir` = 资源根(assets/minecraft)。
 pub fn load_atlas(dir: Option<&std::path::Path>) -> (Vec<u8>, [u8; 256], bool) {
     if let Some(dir) = dir {
-        let path = dir.join("gui").join("ascii.png");
+        let path = dir.join("textures").join("font/ascii.png");
         if let Ok(bytes) = std::fs::read(&path) {
             if let Ok(img) = image::load_from_memory(&bytes) {
                 let rgba = img.to_rgba8();

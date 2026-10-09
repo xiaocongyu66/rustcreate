@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# 构建时从 Mojang 官方 CDN 拉全量原版音效到 sounds/（原版目录树，不落 git）。
-# 仓库内只保留本脚本 + 少量扁平开发音效；dev 构建（push main）调用，
-# release 路径不调用（DEVELOP_ONLY 约定：发行产物不得含 Mojang 资产）。
-# 用法: ci/fetch-sounds.sh [输出目录=sounds]
+# 构建时从 Mojang 官方 CDN 拉全量原版音效到 assets/minecraft/sounds/
+# （sounds.json 在根、变体按原版 sounds/ 下路径铺开——即 loader 按
+# sounds 根 + sounds.json 变体路径寻址的布局；不落 git）。
+# dev 构建（push main）调用，release 路径不调用（DEVELOP_ONLY 约定：
+# 发行产物不得含 Mojang 资产）。
+# 用法: ci/fetch-sounds.sh [输出目录=assets/minecraft/sounds]
 set -euo pipefail
-OUT="${1:-sounds}"
+OUT="${1:-assets/minecraft/sounds}"
 # MC 26.1 资产索引 index 30（piston-meta，按内容寻址 URL → 不可变、可复现）。
 INDEX_URL="https://piston-meta.mojang.com/v1/packages/a1969c2dd99745486cbd873da16792b3b2381504/30.json"
 CACHE="${FETCH_SOUNDS_CACHE:-ci/.cache/fetch-sounds}"

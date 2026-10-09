@@ -1,4 +1,4 @@
-//! 首启把 APK assets/（CI 打包的 texturepack/sounds）解到 internal data 目录。
+//! 首启把 APK assets/（CI 打包的单一资源根 `assets/`）解到 internal data 目录。
 //!
 //! manifest.txt 由 CI 在打 APK 前生成并随包携带；stamp 记录已解包的
 //! manifest 内容，素材更新（manifest 变化）时自动重解。
@@ -9,7 +9,7 @@ use std::io::Read;
 use std::path::Path;
 
 /// 只解这些前缀，防 manifest 被塞任意路径。
-const ALLOW_PREFIXES: &[&str] = &["texturepack/", "sounds/"];
+const ALLOW_PREFIXES: &[&str] = &["assets/"];
 
 pub fn extract_assets(app: &AndroidApp, data: &Path) {
     let am = app.asset_manager();

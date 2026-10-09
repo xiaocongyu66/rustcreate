@@ -1,6 +1,6 @@
-//! 解码链路:仓库 12 个扁平开发音效经**事件流**(fixture 事件 → loader 抽变体
-//! → 读 ogg → symphonia 解码)必须解出**非零** PCM(验证 symphonia feature 组合
-//! 与真实 ogg 的兼容性)。CI 无全量原版树也能跑:fixture 只依赖已跟踪文件。
+//! 解码链路:12 个真实树原版音效经**事件流**(fixture 事件 → loader 抽变体
+//! → 读 ogg → symphonia 解码)必须解出**非零** PCM(验证 symphonia feature
+//! 组合与真实 ogg 的兼容性)。依赖 `ci/fetch-sounds.sh` 拉取的音效树。
 mod common;
 
 use common::{DEV_SOUNDS, SoundFixture};
@@ -10,7 +10,7 @@ const ORIGIN: [f32; 3] = [0.0; 3];
 
 #[test]
 fn all_dev_sounds_decode_via_event_stream() {
-    // 为 12 个扁平文件各建一个单变体事件,变体路径 = 文件基名。
+    // 为 12 个真实树变体各建一个单变体事件,变体路径 = 原版路径。
     let json = format!(
         "{{{}",
         DEV_SOUNDS

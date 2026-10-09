@@ -155,7 +155,7 @@
 |---|---|---|---|---|---|
 | 4.1 | 通用容器/背包 UI 框架：18px 槽网格、悬停提示、点选-放置两段式拖拽、Shift 等效钮 | `AbstractContainerScreen`/`Slot`/`Tooltip` | `app.rs`（新 Screen::Container）、`mcv_render/src/gui.rs`（container_background/slot 九宫格）、新 `mcv_app/src/ui/container.rs` | L | 点选代替拖拽（BE 同款） |
 | 4.2 | 生存背包 E：盔甲 4 + 副手 + 2×2 合成 | `InventoryScreen` | 同上 + `mcv_item/src/crafting.rs` 接入 | L | E 键→背包钮上 HUD |
-| 4.3 | 创造物品栏：分页网格 + 当前手持置顶 + 销毁槽；替换 `game.rs HOTBAR` 写死表 | `CreativeModeInventoryScreen` | `game.rs`、容器 UI 复用、`texturepack` 方块图标源 | L | 网格加大格距；页签横滑 |
+| 4.3 | 创造物品栏：分页网格 + 当前手持置顶 + 销毁槽；替换 `game.rs HOTBAR` 写死表 | `CreativeModeInventoryScreen` | `game.rs`、容器 UI 复用、`assets/minecraft/textures` 方块/物品图标源 | L | 网格加大格距；页签横滑 |
 | 4.4 | 挖掘掉落 → 物品实体 → 拾取入包 → 快捷栏显示数量/耐久条 | `ItemEntity`、`Gui` 耐久条规格 | `mcv_game`、`mcv_item`、`game.rs` | L | 自动吸附拾取（BE 默认开） |
 | 4.5 | 工作台 3×3 界面（合成逻辑已有） | `CraftingScreen` | 容器 UI 复用 | M | 同点选式 |
 | 4.6 | 命令/聊天（单机命令：gamemode/time/tp/give） | `ChatScreen`/`Commands` | `app.rs`（EditBox 自绘）、`mcv_item` give | M | 按钮呼出 + 系统 IME；Tab 补全裁剪 |

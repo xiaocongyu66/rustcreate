@@ -149,7 +149,7 @@ pub struct Renderer {
     frame_bind: wgpu::BindGroup,
     hud_bind: wgpu::BindGroup,
     sky_bind: wgpu::BindGroup,
-    /// MC GUI 精灵表(texturepack/gui/);None = 回退程序化绘制。
+    /// MC GUI 精灵表(资源根 textures/ 下原版精灵);None = 回退程序化绘制。
     gui: Option<SpriteSheet>,
     player_pipeline: wgpu::RenderPipeline,
     player_bind_layout: wgpu::BindGroupLayout,
@@ -267,7 +267,7 @@ impl Renderer {
         device: wgpu::Device,
         queue: wgpu::Queue,
         color_format: wgpu::TextureFormat,
-        texture_pack_dir: Option<&std::path::Path>,
+        assets_dir: Option<&std::path::Path>,
     ) -> Self {
         let max_chunks: u32 = 1024;
         let max_hud_quads: u32 = 4096;
@@ -277,7 +277,7 @@ impl Renderer {
         // limits 钳制（app.rs 建 device 时已尽量抬到 adapter 上限，Vulkan 桌面
         // 可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
         let max_layers = atlas::LAYERS.min(device.limits().max_texture_array_layers as usize);
-        let (payload, n_layers) = atlas::generate_payload_clamped(texture_pack_dir, max_layers);
+        let (payload, n_layers) = atlas::generate_payload_clamped(assets_dir, max_layers);
         if n_layers < atlas::LAYERS {
             log::warn!(
                 "texture array clamped {}→{} layers (device limit)",
@@ -334,7 +334,7 @@ impl Renderer {
 
         // ---- font texture ---------------------------------------------
         // 优先 MC ascii.png,失败回退程序化字体(见 font.rs)
-        let (font_data, font_widths, _mc_font) = font::load_atlas(texture_pack_dir);
+        let (font_data, font_widths, _mc_font) = font::load_atlas(assets_dir);
         font::install_widths(font_widths);
         let font_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("font"),
@@ -377,9 +377,9 @@ impl Renderer {
         }
         let font_view = font_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // ---- GUI 精灵表(texturepack/gui/)-----------------------------
+        // ---- GUI 精灵表(资源根 textures/ 下原版精灵)-------------------
         // 缺素材时建 1x1 占位纹理,gui 字段为 None → 上层回退程序化绘制。
-        let gui = texture_pack_dir.and_then(SpriteSheet::load);
+        let gui = assets_dir.and_then(SpriteSheet::load);
         let (gui_rgba, gui_w, gui_h) = match &gui {
             Some(s) => (s.rgba.clone(), s.w, s.h),
             None => (vec![0u8; 4], 1, 1),
@@ -1082,7 +1082,7 @@ impl Renderer {
         }
     }
 
-    /// MC GUI 精灵表;None 表示 texturepack 未带 gui/ 素材,上层应回退
+    /// MC GUI 精灵表;None 表示资源根未带精灵,上层应回退
     /// 程序化绘制。
     pub fn gui(&self) -> Option<&SpriteSheet> {
         self.gui.as_ref()

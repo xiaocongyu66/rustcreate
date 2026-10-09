@@ -825,19 +825,30 @@ impl AppState {
         }
     }
 
-    /// 纹理包目录（texturepack/）：Android 优先 internal 数据目录下的
-    /// texturepack/（仅当目录存在），否则退回 <exe 目录>/texturepack/。
-    fn texture_pack_dir(&self) -> Option<std::path::PathBuf> {
+    /// 资源根（`assets/minecraft`，布局镜像原版 jar）。Android 优先 internal
+    /// 数据目录解包出的 assets/minecraft/，否则开发期 workspace 根（CWD），
+    /// 最后退回 <exe 目录>/assets/minecraft/（桌面 bundle 分发形态）。
+    fn assets_dir(&self) -> Option<std::path::PathBuf> {
+        const REL: &str = "assets/minecraft";
         #[cfg(target_os = "android")]
         if let Some(data) = &self.android_data {
-            let dir = data.join("texturepack");
+            let dir = data.join(REL);
             if dir.is_dir() {
                 return Some(dir);
             }
         }
-        std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("texturepack")))
+        #[cfg(not(target_os = "android"))]
+        {
+            let cwd = std::path::PathBuf::from(REL);
+            if cwd.is_dir() {
+                return Some(cwd);
+            }
+            return std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join(REL)));
+        }
+        #[cfg(target_os = "android")]
+        None
     }
 
     /// 存档根目录（saves/）。
@@ -1109,9 +1120,9 @@ impl ApplicationHandler for AppState {
         };
         match Self::init_gpu(window.clone()) {
             Ok((surface, config, depth, device, queue, max_extent)) => {
-                // 纹理包目录:Android 用 <internal data>/texturepack/,
-                // 否则 <exe>/texturepack/(仅当目录存在时生效)
-                let pack = self.texture_pack_dir().filter(|d| d.is_dir());
+                // 资源根:Android 解包目录优先,桌面开发期 CWD(workspace 根),
+                // bundle 形态 exe 同级(仅当目录存在时生效)
+                let pack = self.assets_dir().filter(|d| d.is_dir());
                 self.cached_device = Some(device.clone());
                 self.cached_queue = Some(queue.clone());
                 self.renderer = Some(mcv_render::Renderer::new(
@@ -1121,11 +1132,13 @@ impl ApplicationHandler for AppState {
                     pack.as_deref(),
                 ));
                 self.clouds = Some(mcv_render::Clouds::new(&device, &queue));
-                // 玩家皮肤：texturepack/skin/{steve,alex}.png（开发期素材）
-                if let Some(dir) = self.texture_pack_dir() {
-                    let read = |n: &str| std::fs::read(dir.join("skin").join(n)).ok();
-                    if let (Some(s), Some(a)) = (read("steve.png"), read("alex.png"))
-                        && let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a)
+                // 玩家皮肤：原版 entity/player/{wide/steve,slim/alex}.png
+                if let Some(dir) = self.assets_dir() {
+                    let read = |p: &str| std::fs::read(dir.join("textures").join(p)).ok();
+                    if let (Some(s), Some(a)) = (
+                        read("entity/player/wide/steve.png"),
+                        read("entity/player/slim/alex.png"),
+                    ) && let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a)
                     {
                         log::warn!("skin load failed: {e}");
                     }

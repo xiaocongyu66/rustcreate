@@ -133,12 +133,15 @@ pub struct Clouds {
 }
 
 impl Clouds {
-    /// 加载内嵌的 26.1 `clouds.png`（编译期嵌入 `texturepack/misc/clouds.png`），
+    /// 加载内嵌的 26.1 `clouds.png`（编译期嵌入资源根
+    /// `assets/minecraft/textures/environment/clouds.png`），
     /// 在 CPU 端二值化为单元占用表（26.1 同样只在 CPU 读像素，不建 GPU 纹理）。
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
-        let img = image::load_from_memory(include_bytes!("../../../texturepack/misc/clouds.png"))
-            .expect("clouds.png")
-            .to_rgba8();
+        let img = image::load_from_memory(include_bytes!(
+            "../../../assets/minecraft/textures/environment/clouds.png"
+        ))
+        .expect("clouds.png")
+        .to_rgba8();
         let (width, height) = (img.width() as usize, img.height() as usize);
         let empty = |x: isize, y: isize| -> bool {
             let x = x.rem_euclid(width as isize) as u32;

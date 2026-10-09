@@ -50,7 +50,7 @@ jobs:
       # 全量原版音效树不入 git:test 前按 sha1 从 Mojang CDN 拉取,
       # 使 sounds_exist 的全树 ogg 校验真实发生。
       - name: Fetch vanilla sounds (sounds.json + ogg tree)
-        run: bash ci/fetch-sounds.sh sounds
+        run: bash ci/fetch-sounds.sh
       - run: cargo test --workspace --locked
 
   render-headless:

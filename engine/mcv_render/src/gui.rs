@@ -1,6 +1,7 @@
-//! MC GUI 精灵表:从 texturepack/gui/*.png 读取原版按钮/HUD 精灵/logo,
-//! 运行时拼成一张 RGBA 纹理(HUD 管线 tex=2)。任一文件缺失/解码失败都
-//! 返回 None,调用方回退程序化绘制(安卓包不带素材也不能崩)。
+//! MC GUI 精灵表:从单一资源根 `assets/minecraft/textures/**` 读取原版
+//! 按钮/HUD 精灵/logo(路径即 jar 内原版路径),运行时拼成一张 RGBA 纹理
+//! (HUD 管线 tex=2)。任一文件缺失/解码失败都返回 None,调用方回退
+//! 程序化绘制(安卓包不带素材也不能崩)。
 //!
 //! 尺寸参照(见 /root/mc-ref/NOTES-ui.md):button.png 200x20 九宫格
 //! border=3(AbstractButton + mcmeta),hotbar.png 182x22、选中 24x23、
@@ -9,21 +10,36 @@
 
 use crate::gpu::HudQuad;
 
-/// 精灵条目:文件名(texturepack/gui/ 下)→ 逻辑尺寸。
+/// 精灵条目:`textures/` 下的原版路径 → 逻辑尺寸。
 const SPRITES: [(&str, &str, u32, u32); 13] = [
-    ("logo", "minecraft.png", 256, 64),
-    ("button", "button.png", 200, 20),
-    ("button_hl", "button_highlighted.png", 200, 20),
-    ("button_dis", "button_disabled.png", 200, 20),
-    ("hotbar", "hotbar.png", 182, 22),
-    ("hotbar_sel", "hotbar_selection.png", 24, 23),
-    ("crosshair", "crosshair.png", 15, 15),
-    ("heart_container", "heart_container.png", 9, 9),
-    ("heart_full", "heart_full.png", 9, 9),
-    ("heart_half", "heart_half.png", 9, 9),
-    ("food_empty", "food_empty.png", 9, 9),
-    ("food_full", "food_full.png", 9, 9),
-    ("food_half", "food_half.png", 9, 9),
+    ("logo", "gui/title/minecraft.png", 256, 64),
+    ("button", "gui/sprites/widget/button.png", 200, 20),
+    (
+        "button_hl",
+        "gui/sprites/widget/button_highlighted.png",
+        200,
+        20,
+    ),
+    (
+        "button_dis",
+        "gui/sprites/widget/button_disabled.png",
+        200,
+        20,
+    ),
+    ("hotbar", "gui/sprites/hud/hotbar.png", 182, 22),
+    ("hotbar_sel", "gui/sprites/hud/hotbar_selection.png", 24, 23),
+    ("crosshair", "gui/sprites/hud/crosshair.png", 15, 15),
+    (
+        "heart_container",
+        "gui/sprites/hud/heart/container.png",
+        9,
+        9,
+    ),
+    ("heart_full", "gui/sprites/hud/heart/full.png", 9, 9),
+    ("heart_half", "gui/sprites/hud/heart/half.png", 9, 9),
+    ("food_empty", "gui/sprites/hud/food_empty.png", 9, 9),
+    ("food_full", "gui/sprites/hud/food_full.png", 9, 9),
+    ("food_half", "gui/sprites/hud/food_half.png", 9, 9),
 ];
 
 /// logo 实际绘制行数(MC 纹理 256x64 只显示上 44 行)。
@@ -51,11 +67,11 @@ fn resample(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, dst: &mut [u8]) {
 }
 
 impl SpriteSheet {
-    /// 从纹理包目录(texturepack 根)读 gui/ 子目录。缺文件 → None。
+    /// 从资源根(`assets/minecraft`)读 `textures/` 下原版精灵。缺文件 → None。
     pub fn load(dir: &std::path::Path) -> Option<Self> {
         let mut loaded: Vec<(&'static str, Vec<u8>, u32, u32)> = Vec::new();
         for (name, file, w, h) in SPRITES {
-            let path = dir.join("gui").join(file);
+            let path = dir.join("textures").join(file);
             let bytes = std::fs::read(&path).ok()?;
             let img = image::load_from_memory(&bytes)
                 .map_err(|e| log::warn!("gui: decode {}: {e}", path.display()))

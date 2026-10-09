@@ -13,7 +13,7 @@ fn mixer() -> Mixer {
 
 fn play_cmd(sound: &Arc<mcv_audio::SoundData>, pitch: f32) -> AudioCmd {
     AudioCmd::Play {
-        key: "dig_stone1".into(),
+        key: "dig/stone1".into(),
         sound: Arc::clone(sound),
         gain: 1.0,
         pitch,
@@ -39,8 +39,8 @@ fn drain(m: &mut Mixer, block: usize) -> (usize, usize) {
 
 #[test]
 fn pitch_doubles_playback_rate() {
-    let bytes = std::fs::read(default_sounds_dir().join("dig_stone1.ogg"))
-        .expect("仓库扁平音效缺失(dig_stone1.ogg)");
+    let bytes = std::fs::read(default_sounds_dir().join("dig/stone1.ogg"))
+        .expect("音效树缺失——先跑 ci/fetch-sounds.sh(dig/stone1.ogg)");
     let sound = Arc::new(decode_to_stereo(bytes).expect("解码失败"));
     assert!(
         sound.frames > 4096,
@@ -79,7 +79,7 @@ fn pitch_doubles_playback_rate() {
 
 #[test]
 fn invalid_pitch_falls_back_to_normal_rate() {
-    let bytes = std::fs::read(default_sounds_dir().join("dig_stone1.ogg")).unwrap();
+    let bytes = std::fs::read(default_sounds_dir().join("dig/stone1.ogg")).unwrap();
     let sound = Arc::new(decode_to_stereo(bytes).unwrap());
 
     // NaN / 非正 pitch:混音端钳回 1.0,不 panic、行为同原速。

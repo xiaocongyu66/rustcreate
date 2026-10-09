@@ -1,6 +1,6 @@
 {
- "note": "tiles_manifest: 纹理数组层索引(按文件名字典序)→贴图。由 ci/gen-blocks.py 生成。贴图不入库，运行时从 assets_vanilla/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。",
- "texture_root": "assets_vanilla/textures/block",
+ "note": "tiles_manifest: 纹理数组层索引(按文件名字典序)→贴图。由 ci/gen-blocks.py 生成。贴图不入库，运行时从资源根 assets/minecraft/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。",
+ "texture_root": "assets/minecraft/textures/block",
  "tile_index_to_file": [
   "acacia_door_bottom",
   "acacia_leaves",

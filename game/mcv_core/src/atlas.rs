@@ -1,5 +1,5 @@
 //! Terrain texture array: layers `0..MANIFEST_LAYERS` 是真实方块贴图
-//! （tiles_manifest.json 字典序，运行时从 `<texturepack>/blocks/*.png` 读盘），
+//! （tiles_manifest.json 字典序，运行时从资源根 `textures/block/*.png` 读盘），
 //! 特殊程序化层（挖掘裂纹等）排在 `CRACK_BASE..`。真实贴图缺失时回退到
 //! 程序化噪声（原始调色板，逐层配方见 LEGACY_RECIPES），保证不崩。
 
@@ -374,11 +374,12 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
 }
 
 /// Full upload payload: mip0 + mip1 contiguous. 真实贴图从
-/// `<pack_dir>/blocks/*.png` 读盘覆盖（目录不存在 = 纯程序化，兼容无素材部署）。
-pub fn generate_payload_with_pack(pack_dir: Option<&Path>) -> Vec<u8> {
+/// `<assets_dir>/textures/block/*.png`（资源根 = assets/minecraft）读盘
+/// 覆盖（目录不存在 = 纯程序化，兼容无素材部署）。
+pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
     let mut mip0 = vec![0u8; LAYERS * TILE_PX * TILE_PX * 4];
     generate_layers(&mut mip0);
-    if let Some(dir) = pack_dir {
+    if let Some(dir) = assets_dir {
         let n = load_real_tiles(dir, &mut mip0);
         if n > 0 {
             log::info!(
@@ -394,7 +395,7 @@ pub fn generate_payload_with_pack(pack_dir: Option<&Path>) -> Vec<u8> {
     mip0
 }
 
-/// 无纹理包路径（纯程序化）。带真实贴图用 [`generate_payload_with_pack`]。
+/// 无资源路径（纯程序化）。带真实贴图用 [`generate_payload_with_pack`]。
 pub fn generate_payload() -> Vec<u8> {
     generate_payload_with_pack(None)
 }
@@ -403,9 +404,9 @@ pub fn generate_payload() -> Vec<u8> {
 /// 钳到 `n` 层时返回实际可用的 mip0+mip1 载荷与数组层数。
 /// tiles 引用被钳掉的层时 wgpu 在采样器边界内回绕/钳位（贴图上屏，不崩）。
 /// 建议 gpu.rs 用 `min(LAYERS, limits.max_texture_layers())` 调用。
-pub fn generate_payload_clamped(pack_dir: Option<&Path>, max_layers: usize) -> (Vec<u8>, usize) {
+pub fn generate_payload_clamped(assets_dir: Option<&Path>, max_layers: usize) -> (Vec<u8>, usize) {
     let n = max_layers.clamp(1, LAYERS);
-    let full = generate_payload_with_pack(pack_dir);
+    let full = generate_payload_with_pack(assets_dir);
     if n == LAYERS {
         return (full, n);
     }
@@ -418,7 +419,7 @@ pub fn generate_payload_clamped(pack_dir: Option<&Path>, max_layers: usize) -> (
 }
 
 const MANIFEST_JSON: &str = include_str!("../tiles_manifest.json");
-const BLOCKS_SUBDIR: &str = "blocks";
+const BLOCKS_SUBDIR: &str = "textures/block";
 // manifest 键存在性由 tests::parse_manifest_names 运行期锁（str::find 非 const）
 
 /// 从嵌入的 tiles_manifest.json 抠出 `tile_index_to_file` 数组的文件名词表。
@@ -486,9 +487,10 @@ fn decode_into_layer(bytes: &[u8], src_path: &Path, layer: usize, layers: &mut [
     true
 }
 
-/// 从 `<dir>/blocks/<name>.png` 加载 827 张真实方块贴图覆盖层 0..827。
-/// 缺文件/解码失败保留程序化回退（开发期桌面与真机 texturepack 路径差异
-/// 下不崩）；目录整体不存在时零次读盘尝试。返回覆盖层数。
+/// 从 `<dir>/textures/block/<name>.png`（单一资源根的原版路径）加载
+/// 827 张真实方块贴图覆盖层 0..827。缺文件/解码失败保留程序化回退
+/// （开发期桌面与真机资源路径差异下不崩）；目录整体不存在时零次读盘
+/// 尝试。返回覆盖层数。
 pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
     assert!(layers.len() >= MANIFEST_LAYERS * TILE_PX * TILE_PX * 4);
     let blocks = dir.join(BLOCKS_SUBDIR);

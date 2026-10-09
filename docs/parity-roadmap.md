@@ -37,7 +37,7 @@
 | Camera | 第一/第三前/第三后 距离与偏移 | mcv_game 相机 | ⬜ 波2（任务 #11） |
 | particle (81) | 破坏粒子、方块破裂 overlay | mcv_render + mcv_game | ⬜ 波3 |
 | screeneffect（受伤红/水下蓝） | 全屏叠加 | mcv_render HUD | ⬜ 波3 |
-| textures 原版材质 | 开发期贴图 | texturepack/ | 🔨 波1-A（发布前移除） |
+| textures 原版材质 | 开发期贴图 | assets/minecraft/ | 🔨 波1-A（发布前移除） |
 
 ## 界面与交互
 

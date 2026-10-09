@@ -179,7 +179,7 @@ class AssetIndex:
         return models
 
     def texture_report(self, name, local_tiles):
-        """返回 (贴图列文案, 备注)。local_tiles: 我方 texturepack 的 png 名集合。"""
+        """返回 (贴图列文案, 备注)。local_tiles: 资源根方块贴图的 png 名集合。"""
         models = self._models_of_blockstate(name)
         if models is None:
             return "未知", "blockstate JSON 解析失败"
@@ -263,7 +263,7 @@ def main():
     ap.add_argument("--gen-file",
                     default=os.path.join(REPO, "game/mcv_core/src/blocks_gen.inc.rs"))
     ap.add_argument("--local-tiles",
-                    default=os.path.join(REPO, "texturepack"))
+                    default=os.path.join(REPO, "assets/minecraft/textures/block"))
     ap.add_argument("--out", default=os.path.join(REPO, "docs/missing-blocks.md"))
     ap.add_argument("--stdout-only", action="store_true")
     a = ap.parse_args()

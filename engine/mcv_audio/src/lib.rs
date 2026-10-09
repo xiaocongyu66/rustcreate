@@ -38,11 +38,10 @@
 //! ```
 //!
 //! ## 素材
-//! 素材目录为顶层 `sounds/`(与 `texturepack/` 同等待遇:开发期 Mojang 原版资产,
-//! 发布前删除)。全量原版音效树(4564 个 ogg + `sounds.json`)不入 git,由
-//! `ci/fetch-sounds.sh` 在构建时从 Mojang CDN 按 sha1 拉取,保留原版目录树
-//! (`sounds/dig/stone1.ogg` 等);仓库内另保留 12 个扁平开发音效文件,重构后
-//! 引擎不再直接消费它们。素材或 `sounds.json` 缺失时所有播放调用都是 no-op
+//! 素材目录为单一资源根下的 `assets/minecraft/sounds/`(开发期 Mojang 原版
+//! 资产,发布前删除)。全量原版音效树(4564 个 ogg + `sounds.json`)不入 git,
+//! 由 `ci/fetch-sounds.sh` 在构建时从 Mojang CDN 按 sha1 拉取(原版目录树)。
+//! 素材或 `sounds.json` 缺失时所有播放调用都是 no-op
 //! (仅首次告警),不会 panic。
 pub mod decode;
 pub mod loader;
@@ -132,20 +131,24 @@ pub fn distance_attenuation(dist: f32, radius: f32) -> f32 {
     1.0 - dist / radius
 }
 
-/// 开发期默认素材目录:顶层 `sounds/`。
+/// 开发期默认素材目录:`assets/minecraft/sounds/`(单一资源根,布局镜像
+/// 原版 jar 的 assets 树;sounds.json 在该目录下,变体按原版 sounds/ 下路径)。
 ///
-/// 解析顺序:环境变量 `MCV_SOUNDS_DIR` → 编译期 workspace 根下 `sounds/`
-/// (dev 构建即 `/root/mcv-engine/sounds`)→ 运行时相对路径 `./sounds`。
-/// 发布构建(Android)应由主控解包素材后用 [`AudioManager::open`] 传入实际路径。
+/// 解析顺序:环境变量 `MCV_SOUNDS_DIR` → 编译期 workspace 根下该路径
+/// → 运行时相对路径。发布构建(Android)应由主控解包素材后用
+/// [`AudioManager::open`] 传入实际路径。
 pub fn default_sounds_dir() -> PathBuf {
+    const REL: &str = "assets/minecraft/sounds";
     if let Ok(dir) = std::env::var("MCV_SOUNDS_DIR") {
         return PathBuf::from(dir);
     }
-    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sounds");
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../")
+        .join(REL);
     if workspace.is_dir() {
         return workspace;
     }
-    PathBuf::from("sounds")
+    PathBuf::from(REL)
 }
 
 /// 跨线程命令:游戏线程产出 → 音频回调线程消费(SPSC 环,非阻塞)。

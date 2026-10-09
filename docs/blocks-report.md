@@ -1,21 +1,22 @@
 # 方块表生成管道报告（ci/gen-blocks.py）
 
-- 日期：2026-10-09。生成器：`ci/gen-blocks.py`（DEVELOP_ONLY，同 texturepack 素材政策）。
-- 输入：官方 26.1 素材树 `assets_vanilla/`（本机 = `/root/mc-ref/src-26.1/assets/minecraft/`，
+- 日期：2026-10-09。生成器：`ci/gen-blocks.py`（DEVELOP_ONLY，同 assets/ 素材政策）。
+- 输入：官方 26.1 素材树 `assets/minecraft/`（历史输入 = `/root/mc-ref/src-26.1/assets/minecraft/`，
   1170 blockstates / 2392 block models）+ 反编译 `net/minecraft/world/level/block/Blocks.java`。
 - 产物：
   - `crates/mcv_core/src/blocks_gen.inc.rs` —— `GEN_BLOCKS: [(&str, bool,bool,bool, u8, [u16;6], f32, u8); 1171]`
   - `crates/mcv_core/tiles_manifest.json` —— tile 层索引（按贴图名字典序）→ 文件名 + 虚拟路径
-- 贴图**不拷贝**：运行时从 `assets_vanilla/textures/block/` 按 manifest 虚拟路径加载（主控指令，
+- 贴图**不拷贝**：运行时从 `assets/minecraft/textures/block/` 按 manifest 虚拟路径加载（主控指令，
   不访问 Mojang CDN；沙箱内 Mojang CDN 亦实测整体 404）。
 - lib.rs 未改动（等主控合并 BlockId u8→u16 后 `include!` 本表）。
   - **2026-10-09 更新（接线已完成）**：`mcv_core::BLOCKS` 已改为 `include!`
     本表（1171 项；前 14 项回归锁 `mcv_core::tests::first_14_match_legacy_table`）。
-    827 张贴图已从 `assets_vanilla/textures/block/` 拷入 `texturepack/blocks/`
+    827 张贴图源为 `assets/minecraft/textures/block/`（历史上曾拷入 texturepack/blocks/，现已退役）
     （DEVELOP_ONLY 体系），atlas 运行时按 manifest 层号读盘（层 0..827 =
     真实贴图，裂纹特殊层移至 827..831，`atlas::LAYERS = 831`）；缺文件回退
-    程序化噪声。原“贴图不拷贝、运行时读 assets_vanilla”方案已由 texturepack
-    方案替代（assets_vanilla 仍为生成器输入，运行时代码不再读它）。
+    程序化噪声。（历史注：曾以 texturepack/blocks/ 作为运行时贴图层，2026-10
+    目录统一后退役，现一律从资源根 assets/minecraft/textures/block/ 读取，
+    见 assets/DEVELOP_ONLY.md。）
 
 ## 规模与分类统计
 
@@ -40,7 +41,7 @@
 
 ## 抽查 15 方块（逐面贴图 [+X,-X,+Y,-Y,+Z,-Z]）
 
-模型 JSON 解析结果 + PIL 像素校验（assets_vanilla 原图）：
+模型 JSON 解析结果 + PIL 像素校验（原版原图）：
 
 | 方块 | kind | 逐面贴图 | 校验 |
 |---|---|---|---|

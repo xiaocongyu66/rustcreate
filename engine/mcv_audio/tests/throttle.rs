@@ -4,7 +4,7 @@
 //!
 //! 本文件**不创建音频后端设备**(无头环境可跑):按真实数据流驱动
 //! [`SoundLoader`] → [`AudioCmd`] → [`Mixer`]。fixture 见 `common`(事件全部
-//! 单变体,抽取与种子无关,节流行为确定)。
+//! 单变体,抽取与种子无关,节流行为确定;素材来自 fetch 的真实树)。
 mod common;
 
 use std::sync::Arc;
@@ -59,7 +59,7 @@ fn same_variant_one_shots_are_throttled() {
             .play_at("dev.oneshot", ORIGIN, ORIGIN, 1.0, t_after)
             .is_some()
     );
-    // 不同变体路径互不影响(dev.other → step_stone1)。
+    // 不同变体路径互不影响(dev.other → step/stone1)。
     assert!(
         loader
             .play_at(
@@ -77,7 +77,7 @@ fn same_variant_one_shots_are_throttled() {
 fn throttle_key_is_variant_path_not_event_name() {
     let (_fx, mut loader, _m) = rig();
     let t0 = Instant::now();
-    // dev.oneshot 与 dev.oneshot2 是两个事件、同一个变体路径(dig_stone1):
+    // dev.oneshot 与 dev.oneshot2 是两个事件、同一个变体路径(dig/stone1):
     // 节流按变体路径判,后者必须被前者压进窗口。
     assert!(
         loader
@@ -259,7 +259,7 @@ fn missing_table_and_missing_files_are_silent_noop() {
 
     // 情形二:表在、变体文件缺失 → 记入 missing,重复触发不再重试。
     let fx = SoundFixture::with_json(
-        r#"{"dev.gone": {"sounds": ["no_such_file"]}, "dev.ok": {"sounds": ["dig_stone1"]}}"#,
+        r#"{"dev.gone": {"sounds": ["no_such_file"]}, "dev.ok": {"sounds": ["dig/stone1"]}}"#,
     );
     let mut loader = SoundLoader::new(fx.dir());
     assert!(
@@ -308,16 +308,4 @@ fn ui_playback_bypasses_attenuation() {
     m.apply(cmd);
     m.mix(&mut out);
     assert!(out.iter().any(|s| s.abs() > 1e-4));
-}
-
-#[test]
-fn flat_repo_sounds_still_exist_for_fixtures() {
-    // fixture 依赖仓库里 12 个扁平开发音效;缺失时 fixture 复制会 panic,
-    // 这里给出可读的失败信息(顺带验证 default_sounds_dir 解析)。
-    let dir = default_sounds_dir();
-    let ogg = dir.join("dig_stone1.ogg");
-    assert!(
-        ogg.is_file(),
-        "仓库扁平音效缺失: {ogg:?}(fixture 单测依赖它)"
-    );
 }

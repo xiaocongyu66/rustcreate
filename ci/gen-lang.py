@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# DEVELOP_ONLY 数据管道（同 texturepack 素材政策）：
+# DEVELOP_ONLY 数据管道（同 assets/ 素材政策）：
 #   从 Mojang 官方语言文件（data/lang/en_us.json / zh_cn.json，版权归 Mojang，
 #   发布前删除或替换为自维护表）挑出引擎 UI 实际用到的 key 子集，
 #   生成 compact 表（data/lang/compact/），运行时只嵌 compact 不嵌全量。

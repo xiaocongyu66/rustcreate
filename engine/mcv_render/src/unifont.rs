@@ -3,7 +3,7 @@
 //! CJK 走 unifont 16x16 位图回退(半角 8 列、全角 16 列)。
 //!
 //! 数据为 `engine/mcv_render/data/font/cjk.f16`(DEVELOP_ONLY,政策同
-//! texturepack):索引按 codepoint 升序二分,位图 1bpp。本模块只做
+//! assets/):索引按 codepoint 升序二分,位图 1bpp。本模块只做
 //! 解析 + 排版 + quad 生成,不碰 wgpu;图集上传由 app 侧把
 //! [`Unifont::atlas_rgba`] 铺成纹理/HUD 图集层,并把 quads 拼进
 //! `Scene::hud`(与 [`crate::text`] 的 ascii 路径并行使用)。

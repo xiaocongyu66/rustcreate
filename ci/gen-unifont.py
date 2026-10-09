@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# DEVELOP_ONLY 数据管道（同 texturepack / data/lang 素材政策）：
+# DEVELOP_ONLY 数据管道（同 assets/ / data/lang 素材政策）：
 #   下载 Unifont（https://unifoundry.com/ ，SIL OFL 1.1 授权开源字体，
 #   允许再分发，非 Mojang 版权内容），提取中文渲染所需字形，生成引擎
 #   运行时位图字体数据 engine/mcv_render/data/font/cjk.f16。
