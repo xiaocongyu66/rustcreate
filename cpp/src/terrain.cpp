@@ -1,7 +1,7 @@
 // Terrain kernel: three-layer noise heightmap + dual-threshold 3D caves +
 // deterministic cross-chunk tree projection.
 //
-// 常数按 /root/mc-ref/NOTES-terrain.md 从 MC 26.1 反编译源提取校准
+// 常数按 mc-ref/NOTES-terrain.md 从 MC 26.1 反编译源提取校准
 // （NoiseRouterData / TerrainProvider / PerlinNoise / noise JSON /
 // SurfaceRuleData），机制简化到 bloomcraft 基准：世界 0..255、海平面 96。
 // 可步行尺度约束：波长 > ~300 格的通道一律 ÷8 压到 ≤256，保持相对比例
@@ -140,7 +140,7 @@ float forest_mask(uint64_t seed, float wx, float wz) {
 // |n| < thickness —— MC 26.1 NoiseRouterData entrances() 的 spaghetti3D 配方）
 // + cheese 大洞（大尺度阈值，underground() 的 solidifiedCheese 折算）；
 // 洞口随深度渐隐（entrances yClampedGradient 同构），海底保持水密
-// （aquifer barrier 的简化）。见 /root/mc-ref/NOTES-terrain.md §3/§7。
+// （aquifer barrier 的简化）。见 mc-ref/NOTES-terrain.md §3/§7。
 bool carve_cave(uint64_t seed, int x, int y, int z, int surface, bool ocean) {
     if (y <= 2 || y > surface) {
         return false;

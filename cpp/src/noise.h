@@ -4,7 +4,7 @@
 //
 // 倍频常数参照 MC 26.1 synth/PerlinNoise.getValue：每倍频频率 ×2.0、
 // 值权重 ÷2.0（相对权重 ∝ amplitude[i]/2^i）；提取笔记见
-// /root/mc-ref/NOTES-terrain.md §1（机制与常数，非代码搬运）。
+// mc-ref/NOTES-terrain.md §1（机制与常数，非代码搬运）。
 
 #ifndef MCV_NOISE_H
 #define MCV_NOISE_H
@@ -80,7 +80,7 @@ inline float value3(uint64_t seed, float x, float y, float z) {
 
 // Fractal Brownian motion (2D), result in [0, 1).
 // 倍频语义与 MC 26.1 PerlinNoise.getValue 一致：频率比 2.0、振幅衰减 0.5
-// （等价于 amplitude 全 1 序列，权重 ∝ amp[i]/2^i）。见 /root/mc-ref/NOTES-terrain.md §1。
+// （等价于 amplitude 全 1 序列，权重 ∝ amp[i]/2^i）。见 mc-ref/NOTES-terrain.md §1。
 inline float fbm2(uint64_t seed, float x, float y, int octaves) {
     float sum = 0.0f;
     float amp = 1.0f;

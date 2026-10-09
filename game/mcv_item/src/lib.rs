@@ -1,5 +1,5 @@
 //! Items: stacks, tool materials, durability, enchanting, anvil repair,
-//! crafting. Constants from /root/mc-ref/NOTES-2.md (MC 26.1 decompiled).
+//! crafting. Constants from mc-ref/NOTES-2.md (MC 26.1 decompiled).
 
 pub mod anvil;
 pub mod crafting;

@@ -13,7 +13,7 @@
 //! - 淡出 = 线性雾 `a *= 1 - clamp(d/fog_end,0,1)`，fog_end=云距离
 //!   （26.1 rendertype_clouds.fsh + AtmosphericFogEnvironment）。
 //!
-//! 与 26.1 的实现差异（详见 /root/mc-ref/NOTES-clouds.md）：面表用实例 u32
+//! 与 26.1 的实现差异（详见 mc-ref/NOTES-clouds.md）：面表用实例 u32
 //! 属性代替 isamplerBuffer；`pass.draw(0..4, 0..n)` 代替索引 quad；深度按
 //! 本引擎约定只读不写（26.1 为默认写深度）。
 //!

@@ -7,9 +7,9 @@
 # 用法（仓库根目录）:  python3 ci/gen-blocks.py
 #
 # 素材来源（主控指令：不访问 Mojang CDN，整包官方素材树已就位）：
-#   ASSETS = /root/mcv-engine/assets/minecraft/  （与 /root/mc-ref/src-26.1/assets/
-#   minecraft/ 同内容，含 textures/**（真实名 PNG）、models/**、blockstates/**；
-#   该目录不存在时回退 mc-ref 解包树，仅本机参考、绝不入仓）。
+#   ASSETS = <repo>/assets/minecraft/（含 textures/**（真实名 PNG）、models/**、
+#   blockstates/**；不存在时回退环境变量 MCV_REF_SRC 指向的本机解包树，
+#   仅本机参考、绝不入仓——路径一律不写死进仓库）。
 #   贴图不另设拷贝：运行时直接从资源根 assets/minecraft/textures/block/
 #   按虚拟路径加载；tiles_manifest.json 存 tile_index(字典序) → 贴图名/虚拟路径。
 #
@@ -22,6 +22,7 @@
 #   直接采用 grass_block_snow 模型贴图）。新方块从 14 起按官方名字典序。
 #   tiles 按 BlockId=u16 加宽目标输出 [u16;6]；tile 0 = 空/占位层。
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -29,13 +30,20 @@ from pathlib import Path
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
-REF_ASSETS = Path("/root/mc-ref/src-26.1/assets/minecraft")
+# 本机解包参考树根（含 assets/minecraft 与 net/minecraft/**），仅经环境变量
+# 注入——本机路径绝不写死入仓。
+REF_SRC = Path(os.environ["MCV_REF_SRC"]) if os.environ.get("MCV_REF_SRC") else None
 VANILLA = ROOT / "assets/minecraft"
-ASSETS = VANILLA if (VANILLA / "blockstates").is_dir() else REF_ASSETS
+ASSETS = VANILLA if (VANILLA / "blockstates").is_dir() else (
+    REF_SRC / "assets/minecraft" if REF_SRC else VANILLA)
 BLOCKSTATES = ASSETS / "blockstates"
 MODELS = ASSETS / "models"
 LOCAL_TEX = ASSETS / "textures"
-BLOCKS_JAVA = Path("/root/mc-ref/src-26.1/net/minecraft/world/level/block/Blocks.java")
+BLOCKS_JAVA = (REF_SRC / "net/minecraft/world/level/block/Blocks.java") if REF_SRC else None
+if not BLOCKSTATES.is_dir():
+    sys.exit(f"缺 blockstates 树：置 MCV_REF_SRC=<26.1解包树根> 或就位 {VANILLA}")
+if BLOCKS_JAVA is None or not BLOCKS_JAVA.is_file():
+    sys.exit("缺反编译 Blocks.java：置 MCV_REF_SRC=<26.1解包树根>（仅本机，勿入仓）")
 
 OUT_MANIFEST = ROOT / "game" / "mcv_core" / "tiles_manifest.json"
 OUT_RS = ROOT / "game" / "mcv_core" / "src" / "blocks_gen.inc.rs"

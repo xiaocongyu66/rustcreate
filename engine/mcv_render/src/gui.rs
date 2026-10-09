@@ -3,7 +3,7 @@
 //! (HUD 管线 tex=2)。核心 HUD 精灵任一文件缺失/解码失败都返回 None,调用方
 //! 回退程序化绘制(安卓包不带素材也不能崩);物品图标缺失只跳过该条。
 //!
-//! 尺寸参照(见 /root/mc-ref/NOTES-ui.md):button.png 200x20 九宫格
+//! 尺寸参照(见 mc-ref/NOTES-ui.md):button.png 200x20 九宫格
 //! border=3(AbstractButton + mcmeta),hotbar.png 182x22、选中 24x23、
 //! 心/饥饿 9x9、准星 15x15(Gui.java),logo 逻辑 256x64 取上 44
 //! (LogoRenderer.LOGO_HEIGHT)。

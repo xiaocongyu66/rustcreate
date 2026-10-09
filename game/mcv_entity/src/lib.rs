@@ -1,7 +1,7 @@
 //! Mobs: definitions, spawn rules (NaturalSpawner, MC 26.1), combat math
 //! (Player.attack / LivingEntity.hurt / CombatRules), hostile AI state machine
 //! (Goal-system equivalent, simplified) and death drops.
-//! All constants from /root/mc-ref/NOTES-mobs.md & NOTES-2.md (source line refs).
+//! All constants from mc-ref/NOTES-mobs.md & NOTES-2.md (source line refs).
 
 pub mod ai;
 pub mod combat;

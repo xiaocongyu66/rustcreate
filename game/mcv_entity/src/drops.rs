@@ -1,6 +1,6 @@
 //! 死亡掉落表（LootTable 简化，参照 NOTES-mobs.md §6）。
 //!
-//! 26.1 的 loot json 未随反编译提取（/root/mc-ref/data 仅含 worldgen），
+//! 26.1 的 loot json 未随反编译提取（mc-ref/data 仅含 worldgen），
 //! 数量取经典值（各怪 uniform[min,max]）。掉落不直接生成实体，
 //! 以 [`DropEvent`] 枚举输出，由主控接线（生成掉落物实体 / 播放音效）。
 

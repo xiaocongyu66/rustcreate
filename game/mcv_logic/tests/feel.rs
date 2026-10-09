@@ -1,6 +1,6 @@
 //! 战斗/手感域回归锁（fix/feel）：攻击冷却 tick 单位、无敌帧差值门、
 //! exhaustion 增量表 + 饱和度、昼夜相位与 day_factor 曲线、攻击射线遮挡。
-//! Java 依据均为 /root/mc-ref/src-26.1（Minecraft 26.1 反编译树）。
+//! Java 依据均为 src-26.1（Minecraft 26.1 反编译树）。
 
 use std::collections::HashMap;
 use std::sync::Arc;

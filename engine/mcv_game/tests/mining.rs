@@ -1,6 +1,6 @@
 //! 挖掘公式表驱动测试。MC 26.1 原式（BlockBehaviour#getDestroyProgress）：
 //! `progress_per_tick = speed / hardness / (正确工具 ? 30 : 100)`，≥1 破坏；
-//! 空中 /5、水下 ×0.2。推导见 /root/mc-ref/NOTES-physics.md。
+//! 空中 /5、水下 ×0.2。推导见 mc-ref/NOTES-physics.md。
 
 use mcv_core::{BlockId, BlockPos};
 use mcv_game::consts::FIXED_DT;

@@ -1,7 +1,7 @@
 # 方块表生成管道报告（ci/gen-blocks.py）
 
 - 日期：2026-10-09。生成器：`ci/gen-blocks.py`（DEVELOP_ONLY，同 assets/ 素材政策）。
-- 输入：官方 26.1 素材树 `assets/minecraft/`（历史输入 = `/root/mc-ref/src-26.1/assets/minecraft/`，
+- 输入：官方 26.1 素材树 `assets/minecraft/`（历史输入 = `src-26.1/assets/minecraft/`，
   1170 blockstates / 2392 block models）+ 反编译 `net/minecraft/world/level/block/Blocks.java`。
 - 产物：
   - `crates/mcv_core/src/blocks_gen.inc.rs` —— `GEN_BLOCKS: [(&str, bool,bool,bool, u8, [u16;6], f32, u8); 1171]`

@@ -1,7 +1,7 @@
 //! Synthetic-voxel tests for the BFS lighting engine.
 //!
 //! 光照规则参照反编译 Minecraft 26.1（机制与常数提取见仓库外笔记
-//! `/root/mc-ref/NOTES-light.md`）：
+//! `mc-ref/NOTES-light.md`）：
 //! - 传播代价 = `max(1, lightDampening)`，六个方向一视同仁；
 //! - 天光"垂直 15 不衰减"仅存在于源柱（全透空气柱），水/叶
 //!   （damp=1）截断源柱并逐格 -1；

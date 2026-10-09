@@ -161,7 +161,7 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
 }
 
 /// 硬度与发光对照反编译 Minecraft 26.1 `Blocks.java`（数值来源见仓库外笔记
-/// `/root/mc-ref/NOTES-blocks.md`）。id 0-13 为地形生成器/网格器硬编码依赖的
+/// `mc-ref/NOTES-blocks.md`）。id 0-13 为地形生成器/网格器硬编码依赖的
 /// 旧 14 方块，字段与旧表逐字节一致；基岩不可挖用 `f32::INFINITY` 表示
 /// （MC strength(-1)），水按注册表原值 strength(100)。
 pub static BLOCKS: [BlockDef; GEN_BLOCKS.len()] = gen_blocks();

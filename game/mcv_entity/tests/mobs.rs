@@ -1,5 +1,5 @@
 //! 敌对生物参数 / 状态机 / 刷怪 / 掉落表驱动测试。
-//! 参照值全部来自 /root/mc-ref/NOTES-mobs.md（MC 26.1 反编译行号）。
+//! 参照值全部来自 mc-ref/NOTES-mobs.md（MC 26.1 反编译行号）。
 
 use glam::Vec3;
 use mcv_core::BlockPos;

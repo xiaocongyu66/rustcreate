@@ -1,7 +1,7 @@
 //! 玩家模型网格：按 64x64 皮肤 UV 布局程序化生成六部位盒体（steve / alex 两套
 //! 常数表），外加帽/外套/衣袖/裤腿第二层（overlay）盒体，共 12 个盒体 ×2 款式。
 //!
-//! 常数照 MC 26.1 反编译提取（来源见 /root/mc-ref/NOTES-model.md）：
+//! 常数照 MC 26.1 反编译提取（来源见 mc-ref/NOTES-model.md）：
 //! - `model/HumanoidModel.java createMesh`：head texOffs(0,0) 8x8x8 pivot(0,0,0)；
 //!   body (16,16) 8x12x4 pivot(0,0,0)；right_arm (40,16) 4x12x4 pivot(-5,2,0)；
 //!   left_arm (40,16) mirror；right_leg (0,16) 4x12x4 pivot(-1.9,12,0)；

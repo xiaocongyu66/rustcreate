@@ -1,7 +1,7 @@
 //! 玩家物理常数。
 //!
-//! 出处：仓库外反编译参照 `/root/mc-ref/src-26.1/`（Minecraft 26.1）与
-//! 换算笔记 `/root/mc-ref/NOTES-physics.md`、`/root/mc-ref/NOTES.md`。
+//! 出处：仓库外反编译参照 `src-26.1/`（Minecraft 26.1）与
+//! 换算笔记 `mc-ref/NOTES-physics.md`、`mc-ref/NOTES.md`。
 //! MC 逻辑 tick = 20/s，速度单位换算：1 块/tick = 20 m/s，1 块/tick² = 400 m/s²。
 
 /// 重力加速度：MC gravity 属性默认 0.08 块/tick²（Entity.java:166、

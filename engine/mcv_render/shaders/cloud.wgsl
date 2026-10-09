@@ -1,5 +1,5 @@
 // 体素云顶点/片元着色器 —— 机制翻译自 MC 26.1
-// assets/minecraft/shaders/core/rendertype_clouds.{vsh,fsh}（见 /root/mc-ref/NOTES-clouds.md）。
+// assets/minecraft/shaders/core/rendertype_clouds.{vsh,fsh}（见 mc-ref/NOTES-clouds.md）。
 // 非原文复制：isamplerBuffer 面表改为实例属性 u32；动态 uniform 矩阵改为传入的 view_proj。
 
 struct CloudUniform {

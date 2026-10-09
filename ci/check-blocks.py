@@ -25,7 +25,11 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OFFICIAL_DEFAULT = "/root/mc-ref/src-26.1/assets/minecraft"
+# 本机解包参考树经 MCV_REF_SRC 注入，缺省回退仓内 assets/（本机路径不写死入仓）。
+OFFICIAL_DEFAULT = os.environ.get(
+    "MCV_REF_SRC", os.path.join(REPO, "assets/minecraft"))
+if not OFFICIAL_DEFAULT.endswith("minecraft"):
+    OFFICIAL_DEFAULT = os.path.join(OFFICIAL_DEFAULT, "assets/minecraft")
 
 # 我方历史遗留名 -> 官方 26.1 规范名（仅现表用到的 oak-only 旧名）。
 # GEN 表按规范名生成后直接精确匹配，别名只影响下面这几项。

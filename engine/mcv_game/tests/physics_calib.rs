@@ -1,6 +1,6 @@
 //! 物理与射线校准：表驱动对照 Minecraft 26.1 换算值。
 //!
-//! 常数来源与推导：仓库外笔记 `/root/mc-ref/NOTES-physics.md`
+//! 常数来源与推导：仓库外笔记 `mc-ref/NOTES-physics.md`
 //! （重力 32、跳 8.4、竖直阻力 k≈0.404、终端 78.4、reach 4.5）。
 
 use std::collections::HashMap;

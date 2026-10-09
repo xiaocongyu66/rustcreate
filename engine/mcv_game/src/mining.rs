@@ -1,6 +1,6 @@
 //! 方块挖掘进度：机制与数值取自反编译 Minecraft 26.1（只提取机制，不搬运代码）。
 //!
-//! 参照（本机 `/root/mc-ref/src-26.1/net/minecraft/`，仓库外，禁止入库）：
+//! 参照（本机 `src-26.1/net/minecraft/`，仓库外，禁止入库）：
 //!
 //! - `world/level/block/state/BlockBehaviour.java:355-363`（Blocks#getDestroyProgress）：
 //!   ```text
@@ -20,7 +20,7 @@
 //!   `requiresCorrectToolForDrops == false` 的方块（泥土/沙/木/花等）空手也算
 //!   "正确工具"走 30 档，石头类需要镐、空手走 100 档 —— 即"空手惩罚"。
 //!
-//! tick→秒 换算与完整推导见仓库外笔记 `/root/mc-ref/NOTES-physics.md`。
+//! tick→秒 换算与完整推导见仓库外笔记 `mc-ref/NOTES-physics.md`。
 
 use mcv_core::{BlockId, BlockPos};
 

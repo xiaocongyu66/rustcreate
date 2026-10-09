@@ -1,4 +1,4 @@
-//! 敌对生物 AI 状态机（MC 26.1 Goal 体系的等价简化，参数见 /root/mc-ref/NOTES-mobs.md）。
+//! 敌对生物 AI 状态机（MC 26.1 Goal 体系的等价简化，参数见 mc-ref/NOTES-mobs.md）。
 //!
 //! 状态图（zombie/spider 近战怪 / skeleton 弓怪 / creeper）：
 //!

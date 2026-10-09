@@ -1,7 +1,7 @@
 //! 方块表校准测试：逐项对照反编译 Minecraft 26.1
 //! `net/minecraft/world/level/block/Blocks.java` 中的 `BlockBehaviour.Properties`
 //! （`strength(x)` 的第一参数 = 生存挖掘硬度 hardness）。
-//! 完整数据出处见仓库外笔记 `/root/mc-ref/NOTES-blocks.md`。
+//! 完整数据出处见仓库外笔记 `mc-ref/NOTES-blocks.md`。
 
 use mcv_core::BlockDef;
 
