@@ -335,6 +335,113 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
     (n, bb)
 }
 
+/// GLES 后端守护（2026-10-10 真机两连 fatal：cloud.wgsl naga 校验、GLES 拒绝
+/// 对创建期映射 buffer 做 queue.write_buffer）。CI render-headless 全走
+/// lavapipe Vulkan，GLES 回退后端的 buffer 映射/上传语义从未覆盖。本测试
+/// 向 adapter 要 fallback：拿到 swrast GL 就用 MeshUploader（出事入口）+ 云 +
+/// HUD 渲一整帧；fallback 仍是 Vulkan 或无 GL/EGL 环境则跳过，不为守护引入
+/// flake。
+#[test]
+fn gles_fallback_world_frame_smoke() {
+    let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+    let Ok(adapter) = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::None,
+        compatible_surface: None,
+        force_fallback_adapter: true,
+        apply_limit_buckets: false,
+    })) else {
+        return;
+    };
+    if !matches!(adapter.get_info().backend, wgpu::Backend::Gl) {
+        return; // fallback 仍是 Vulkan（如 lavapipe），本环境无新增覆盖
+    }
+    if adapter.limits().max_texture_array_layers < mcv_core::atlas::LAYERS as u32 {
+        return; // swrast 数组层数装不下图集，跳过
+    }
+    let mut limits = wgpu::Limits::downlevel_defaults();
+    limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
+    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("gl-smoke"),
+        required_features: wgpu::Features::empty(),
+        required_limits: limits,
+        experimental_features: wgpu::ExperimentalFeatures::disabled(),
+        memory_hints: wgpu::MemoryHints::default(),
+        trace: wgpu::Trace::Off,
+    }))
+    .expect("gl device");
+    let mut renderer = mcv_render::Renderer::new(
+        device.clone(),
+        queue.clone(),
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    let clouds = mcv_render::Clouds::new(&device, &queue);
+    // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。
+    let up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
+    let y = 100.0f32;
+    let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer: mcv_core::tiles::GRASS_TOP,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2,
+        pad: [0; 2],
+    };
+    let verts = [
+        mk([0.0, y, 0.0], [0, 0]),
+        mk([0.0, y, 16.0], [0, 65535]),
+        mk([16.0, y, 16.0], [65535, 65535]),
+        mk([16.0, y, 0.0], [65535, 0]),
+    ];
+    let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    let chunk = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
+
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000);
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        sun_dir: sun,
+        width: 320.0,
+        height: 240.0,
+        chunks: std::slice::from_ref(&chunk),
+        hud: &hud,
+        cloud: Some((&clouds, mcv_render::CloudSettings::default())),
+        player: None,
+        overlay: None,
+    };
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut encoder);
+    queue.submit([encoder.finish()]);
+    let rgba = target.read_pixels(&device);
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("gles-smoke.png"), png);
+    }
+    // GL 回退下草地必须仍然画得出（颜色路径跨后端一致性弱，阈值放宽）。
+    let (green, _) = sample_stats(&rgba, extent.width, extent.height);
+    assert!(green > 0.15, "GLES 回退下草地缺失，green={green}");
+}
+
 #[test]
 fn vec4_identity() {
     // keeps glam import used in feature-off builds

@@ -58,19 +58,30 @@ impl MeshUploader {
     fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {
         let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-vb"),
-            size: (v.len() as u64).max(1),
+            // 映射视图要求长度是 4 的倍数且非空（wgpu 30 MapRangeError）。
+            size: (v.len() as u64).next_multiple_of(4).max(4),
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        self.queue.write_buffer(&vb, 0, v);
+        // 创建期映射的 buffer 必须经 mapped slice 写入，不能 queue.write_buffer：
+        // Vulkan 容忍但 GLES hal 直接报 "Buffer is expected to be unmapped"
+        // （Android 真机走 GL 回退时进世界首个网格上传即 fatal，2026-10-10）。
+        {
+            let mut view = vb.as_slice(..).get_mapped_range_mut().expect("vb mapped");
+            view[..v.len()].copy_from_slice(v);
+        }
         vb.unmap();
         let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-ib"),
-            size: (i.len() as u64 * 4).max(4),
+            size: (i.len() as u64 * 4).next_multiple_of(4).max(4),
             usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         });
-        self.queue.write_buffer(&ib, 0, bytemuck::cast_slice(i));
+        let ib_bytes = bytemuck::cast_slice::<u32, u8>(i);
+        {
+            let mut view = ib.as_slice(..).get_mapped_range_mut().expect("ib mapped");
+            view[..ib_bytes.len()].copy_from_slice(ib_bytes);
+        }
         ib.unmap();
         (vb, ib)
     }
