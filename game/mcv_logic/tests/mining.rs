@@ -237,8 +237,11 @@ fn release_midway_forfeits_progress_never_breaks() {
 #[test]
 fn creative_hold_breaks_every_sixth_tick() {
     let a = pos(2, 2, 2);
-    let mut m = MineMachine::default();
-    m.delay = 5; // on_left_press 创造分支的等价效果
+    // delay=5 = on_left_press 创造分支（按下首破置 destroyDelay）的等价效果。
+    let mut m = MineMachine {
+        delay: 5,
+        ..Default::default()
+    };
     for i in 0..5 {
         assert_eq!(m.creative_tick(Some(a)), None, "创造冷却第 {i} tick 不破坏");
     }
