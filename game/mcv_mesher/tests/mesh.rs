@@ -39,9 +39,18 @@ fn only_center<'a>(center: &'a Chunk) -> [Option<Slot<'a>>; 9] {
     out
 }
 
+/// 按注册名查方块 id（测试只依赖生成表，不硬编码 id）。
+fn id_of(name: &str) -> u16 {
+    mcv_core::BLOCKS
+        .iter()
+        .position(|b| b.name == name)
+        .expect("unknown block name") as u16
+}
+
 struct Vtx {
     pos: [f32; 3],
     tex: u16,
+    sky: u8,
     ao: u8,
     flags: u8,
 }
@@ -56,6 +65,7 @@ fn decode(buf: &CxxMeshBuffer) -> Vec<Vtx> {
             Vtx {
                 pos: [f(0), f(4), f(8)],
                 tex: u16::from_le_bytes([b[16], b[17]]),
+                sky: b[19],
                 ao: b[20],
                 flags: b[21],
             }
@@ -267,4 +277,249 @@ fn null_neighbour_is_opaque_boundary() {
     );
     assert_eq!(verts.iter().filter(|v| v.flags & 7 == 1).count(), 4);
     assert_eq!(verts.iter().filter(|v| v.flags & 7 == 2).count(), 4);
+}
+
+#[test]
+fn shape_templates_structural_invariants() {
+    // 每种非立方形状：中心 (8,8,8) 悬浮于全空气 3x3x3 世界。断言：有几何、
+    // 两次 build 逐字节相等（确定性替代黄金逐顶点）、索引不越界、顶点全部
+    // 落在方块 AABB 内、光照采到邻空气格 sky=15。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    for (name, lo, hi) in [
+        ("flower_red", [8.0f32, 8.0, 8.0], [9.0, 9.0, 9.0]),
+        ("torch", [8.4, 8.0, 8.4], [8.6, 8.625, 8.6]),
+        ("oak_fence", [8.0, 8.0, 8.0], [9.0, 9.0, 9.0]),
+        ("oak_slab", [8.0, 8.0, 8.0], [9.0, 8.5, 9.0]),
+        ("oak_stairs", [8.0, 8.0, 8.0], [9.0, 9.0, 9.0]),
+    ] {
+        let id = id_of(name);
+        let mut c = chunk(0, 0xF0);
+        put(&mut c.0, 8, 8, 8, id);
+        let a = mesher.build(&full9(&c, &side), 0).unwrap();
+        let b = mesher.build(&full9(&c, &side), 0).unwrap();
+        assert_eq!(a.vertex_data(), b.vertex_data(), "{name}: 顶点不确定");
+        assert_eq!(a.indices(), b.indices(), "{name}: 索引不确定");
+        let (vc, ic) = a.counts();
+        assert!(vc > 0 && ic > 0, "{name}: 无几何");
+        assert!(a.indices().iter().all(|&i| i < vc), "{name}: 索引越界");
+        for v in decode(&a) {
+            for axis in 0..3 {
+                assert!(
+                    (lo[axis]..=hi[axis]).contains(&v.pos[axis]),
+                    "{name}: 顶点 {:?} 越出 AABB {lo:?}..{hi:?}",
+                    v.pos
+                );
+            }
+            assert_eq!(v.sky, 15, "{name}: 邻空气格 sky 应为 15");
+        }
+        put(&mut c.0, 8, 8, 8, 0);
+    }
+}
+
+#[test]
+fn cross_plant_two_double_sided_quads() {
+    // 十字植物：2 条对角 quad ×（正反索引各 6）= 8 顶点 / 24 索引；
+    // flags 全部 +Y 面档、ao 恒 3、贴图用方块 tile 层、顶点落在对角线上。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let flower = id_of("flower_red");
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, flower);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (8, 24));
+    for v in decode(&buf) {
+        assert_eq!(v.flags & 7, 2, "cross 面档应为 +Y");
+        assert_eq!(v.ao, 3, "cross 无 AO 采样，应全亮");
+        assert_eq!(
+            v.tex as usize,
+            mcv_core::BLOCKS[flower as usize].tiles[2] as usize
+        );
+        let fx = v.pos[0] - 8.0;
+        let fz = v.pos[2] - 8.0;
+        assert!(
+            (fx - fz).abs() < 1e-4 || (fx + fz - 1.0).abs() < 1e-4,
+            "顶点应落在两条对角线上: ({fx}, {fz})"
+        );
+    }
+}
+
+#[test]
+fn slab_half_boxes_and_exposed_mid_face() {
+    // 下半砖（state 0）y∈[8,8.5]：5 外面 + y=0.5 中层面（永远暴露）= 6 面；
+    // 上半砖（state 1）y∈[8.5,9] 同 6 面；上下叠放不合并，各自 6 面。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let slab = id_of("oak_slab");
+    let tiles = mcv_core::BLOCKS[slab as usize].tiles;
+
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, slab);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (24, 36), "下半砖 6 面");
+    for v in decode(&buf) {
+        assert!(
+            (8.0..=8.5).contains(&v.pos[1]),
+            "下半砖顶点 y = {}",
+            v.pos[1]
+        );
+        assert_eq!(v.tex as usize, tiles[(v.flags & 7) as usize] as usize);
+    }
+
+    let mut c2 = chunk(0, 0xF0);
+    put(&mut c2.0, 8, 8, 8, slab | (1u16 << 12));
+    let buf2 = mesher.build(&full9(&c2, &side), 0).unwrap();
+    assert_eq!(buf2.counts(), (24, 36), "上半砖 6 面");
+    for v in decode(&buf2) {
+        assert!(
+            (8.5..=9.0).contains(&v.pos[1]),
+            "上半砖顶点 y = {}",
+            v.pos[1]
+        );
+    }
+
+    let mut c3 = chunk(0, 0xF0);
+    put(&mut c3.0, 8, 8, 8, slab);
+    put(&mut c3.0, 8, 9, 8, slab | (1u16 << 12));
+    let buf3 = mesher.build(&full9(&c3, &side), 0).unwrap();
+    assert_eq!(buf3.counts(), (48, 72), "叠放两块各 6 面，无合并");
+    let ys: Vec<f32> = decode(&buf3).iter().map(|v| v.pos[1]).collect();
+    assert!(ys.contains(&8.5) && ys.contains(&9.5), "两个中层面都在");
+}
+
+#[test]
+fn stairs_facing_and_top_flip() {
+    // facing 为 placement_state 写入序：0=+Z 1=-Z 2=+X 3=-X。踏步半盒的
+    // 顶面顶点（y=9）只允许出现在朝向半格；bit2=top 上下翻转。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let stairs = id_of("oak_stairs");
+    for facing in 0u16..4 {
+        let mut c = chunk(0, 0xF0);
+        put(&mut c.0, 8, 8, 8, stairs | (facing << 12));
+        let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+        assert_eq!(buf.counts(), (48, 72), "facing {facing}: 两盒 12 面");
+        for v in decode(&buf).iter().filter(|v| v.pos[1] == 9.0) {
+            let in_half = match facing {
+                0 => v.pos[2] >= 8.5,
+                1 => v.pos[2] <= 8.5,
+                2 => v.pos[0] >= 8.5,
+                _ => v.pos[0] <= 8.5,
+            };
+            assert!(in_half, "facing {facing}: 踏步越出朝向半格 {:?}", v.pos);
+        }
+        put(&mut c.0, 8, 8, 8, 0);
+    }
+    // top 翻转：底座占上半，踏步半盒在下半的朝向侧（facing 0 = +Z）。
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, stairs | (4u16 << 12));
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (48, 72));
+    let verts = decode(&buf);
+    assert!(
+        verts.iter().any(|v| v.pos[1] == 8.0 && v.pos[2] >= 8.5),
+        "翻转后踏步底面应留在 +Z 半格"
+    );
+    assert!(
+        !verts.iter().any(|v| v.pos[1] == 8.0 && v.pos[2] < 8.5),
+        "翻转后 y=8 平面不应有 -Z 半格顶点"
+    );
+}
+
+#[test]
+fn fence_post_and_arms() {
+    // 单根：仅立柱 6 面；相邻同 id：两根各出立柱+相向臂；邻格异种不连接。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let fence = id_of("oak_fence");
+
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, fence);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (24, 36), "单根栅栏只有立柱");
+    for v in decode(&buf) {
+        assert!((8.375..=8.625).contains(&v.pos[0]), "立柱 x = {}", v.pos[0]);
+        assert!((8.375..=8.625).contains(&v.pos[2]), "立柱 z = {}", v.pos[2]);
+    }
+
+    let mut c2 = chunk(0, 0xF0);
+    put(&mut c2.0, 8, 8, 8, fence);
+    put(&mut c2.0, 9, 8, 8, fence);
+    let buf2 = mesher.build(&full9(&c2, &side), 0).unwrap();
+    assert_eq!(buf2.counts(), (96, 144), "相邻两根各出立柱 + 臂");
+    for v in decode(&buf2) {
+        assert!((8.0..=10.0).contains(&v.pos[0]));
+        assert!((8.0..=9.0).contains(&v.pos[1]));
+        assert!((8.0..=9.0).contains(&v.pos[2]));
+    }
+
+    let mut c3 = chunk(0, 0xF0);
+    put(&mut c3.0, 8, 8, 8, fence);
+    put(&mut c3.0, 7, 8, 8, 1); // 石头不是栅栏
+    let buf3 = mesher.build(&full9(&c3, &side), 0).unwrap();
+    let fence_verts = decode(&buf3)
+        .iter()
+        .filter(|v| v.tex == mcv_core::tiles::PLANKS)
+        .count();
+    assert_eq!(fence_verts, 24, "异种邻格不触发臂（石头面另计）");
+}
+
+#[test]
+fn torch_thin_column() {
+    // 火把：细立柱盒 x/z 0.4..0.6、y 0..0.625，6 面含顶面（y=8.625）。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let torch = id_of("torch");
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, torch);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (24, 36), "细柱 6 面");
+    let verts = decode(&buf);
+    for v in &verts {
+        assert!((8.4..=8.6).contains(&v.pos[0]), "柱 x = {}", v.pos[0]);
+        assert!((8.0..=8.625).contains(&v.pos[1]), "柱 y = {}", v.pos[1]);
+        assert!((8.4..=8.6).contains(&v.pos[2]), "柱 z = {}", v.pos[2]);
+        let face = (v.flags & 7) as usize;
+        assert_eq!(
+            v.tex as usize,
+            mcv_core::BLOCKS[torch as usize].tiles[face] as usize
+        );
+    }
+    assert!(verts.iter().any(|v| v.pos[1] == 8.625), "顶面缺失");
+}
+
+#[test]
+fn shape_faces_cull_against_opaque_neighbours() {
+    // 形状面剔除与 Cube 同判据：下半砖放在整片石头地板上，-Y 面被剔除
+    // → 5 面 20 顶点；y=0.5 中层面（+Y）仍然暴露。
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let slab = id_of("oak_slab");
+    let mut c = chunk(0, 0xF0);
+    for x in 0..16 {
+        for z in 0..16 {
+            put(&mut c.0, x, 7, z, 1); // 石地板
+        }
+    }
+    put(&mut c.0, 8, 8, 8, slab);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    let slab_verts: Vec<_> = decode(&buf)
+        .iter()
+        .filter(|v| v.tex == mcv_core::tiles::PLANKS)
+        .collect();
+    assert_eq!(slab_verts.len(), 20, "石面上半砖 5 面（-Y 被剔除）");
+    for v in &slab_verts {
+        assert!((8.0..=8.5).contains(&v.pos[1]));
+        assert!(
+            v.pos[1] > 8.0 || (v.flags & 7) != 3,
+            "不应有 -Y 面：{:?}",
+            v.pos
+        );
+    }
+    assert!(
+        slab_verts
+            .iter()
+            .any(|v| v.pos[1] == 8.5 && (v.flags & 7) == 2),
+        "中层面（+Y）仍暴露"
+    );
 }
