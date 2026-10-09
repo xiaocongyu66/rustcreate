@@ -119,8 +119,10 @@ fn hotbar_kind_roundtrip() {
 #[test]
 fn add_overflow_fills_hotbar_then_main() {
     let mut h = Hotbar::empty();
-    // 快捷栏先吸收(每格 64,9 格 = 576)。
-    assert_eq!(h.add_overflow(COBBLESTONE, 64 * 9), 0);
+    // 快捷栏先吸收(每格 64,9 格 = 576;参数 u8 分次塞满)。
+    for _ in 0..9 {
+        assert_eq!(h.add_overflow(COBBLESTONE, 64), 0);
+    }
     assert!(h.slots.iter().all(|s| s.count == 64));
     assert!(h.main.iter().all(|s| s.is_empty()), "快捷栏未满不进 main");
     // 溢出进主背包,合并优先再空位。

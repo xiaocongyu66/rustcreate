@@ -1,7 +1,7 @@
-//! 合成/创造界面的纯状态机(无 wgpu、可无头测试):
-//! - [`CraftScreen`]:2x2(玩家随身)/3x3(工作台)合成网格 + 光标手持物,
-//!   左键交换/合并、右键拆分/单放,vanilla-ish 语义(无 shift-click、无拖动)。
-//! - [`CreativePicker`]:创造模式物品选择页。
+//! 合成/创造界面的纯状态机(无 wgpu、可无头测试)。
+//! [`CraftScreen`] 是 2x2(玩家随身)/3x3(工作台)合成网格 + 光标手持物,
+//! 左键交换/合并、右键拆分/单放,vanilla-ish 语义(无 shift-click、无拖动)。
+//! [`CreativePicker`] 是创造模式物品选择页。
 //! 物品守恒是硬约束:`close()` 必须归还网格 + 光标的全部物品。
 
 use mcv_item::crafting::{self, EMPTY_SLOT};
