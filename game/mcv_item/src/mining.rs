@@ -112,9 +112,28 @@ pub fn destroy_speed(block: BlockId, stack: Option<&ItemStack>) -> f32 {
     1.0
 }
 
-/// 每游戏 tick（1/20 s）的破坏进度。0 = 不可破坏（硬度无限，基岩）；
-/// 硬度 ≤0 = 瞬碎（花草类，返回 ∞ 让调用方走秒破分支）。
-pub fn progress_per_tick(block: BlockId, stack: Option<&ItemStack>) -> f32 {
+/// 空中挖掘速度除数（26.1 `Player#getDestroySpeed`：`!onGround()` → `speed /= 5`，
+/// `world/entity/player/Player.java:611-612`；与引擎参考实现
+/// `mcv_game::mining::progress_per_tick` 同值，那边是同一公式的无背包版本）。
+pub const AIR_MINING_DIVISOR: f32 = 5.0;
+
+/// 眼在水中挖掘速度倍率（26.1 `Player.java:607-608` `isEyeInFluid(WATER)` →
+/// `Attributes.SUBMERGED_MINING_SPEED` 默认 0.2，`Attributes.java:88-90`。
+/// 判定基准是**眼睛**所在流体，不是脚、也不是目标方块）。
+pub const SUBMERGED_MINING_SPEED: f32 = 0.2;
+
+/// 每游戏 tick 进度，带 26.1 惩罚链的完整版（`Player#getDestroySpeed` 尾部
+/// 两段，`Player.java:586-614`）：`on_ground = false`（空中）速度 ÷5、
+/// `submerged = true`（眼在水中）速度 ×0.2。原版每 tick 重算
+/// `getDestroyProgress`（`ServerPlayerGameMode.tick()` :107-130），所以跳起/
+/// 入水当 tick 速率即变。惩罚乘在速度上再除 hardness/modifier，与原式
+/// 乘法交换等价。
+pub fn progress_per_tick_env(
+    block: BlockId,
+    stack: Option<&ItemStack>,
+    on_ground: bool,
+    submerged: bool,
+) -> f32 {
     let hardness = mcv_core::BLOCKS[block.0 as usize].hardness;
     if hardness.is_infinite() {
         return 0.0;
@@ -127,5 +146,19 @@ pub fn progress_per_tick(block: BlockId, stack: Option<&ItemStack>) -> f32 {
     } else {
         100.0
     };
-    destroy_speed(block, stack) / hardness / modifier
+    let mut speed = destroy_speed(block, stack);
+    if !on_ground {
+        speed /= AIR_MINING_DIVISOR;
+    }
+    if submerged {
+        speed *= SUBMERGED_MINING_SPEED;
+    }
+    speed / hardness / modifier
+}
+
+/// 每游戏 tick（1/20 s）的破坏进度（地面 + 不在水中，无惩罚基准）。
+/// 0 = 不可破坏（硬度无限，基岩）；硬度 ≤0 = 瞬碎（花草类，返回 ∞ 让调用方走秒破分支）。
+/// 空中/水下惩罚版见 [`progress_per_tick_env`]。
+pub fn progress_per_tick(block: BlockId, stack: Option<&ItemStack>) -> f32 {
+    progress_per_tick_env(block, stack, true, false)
 }
