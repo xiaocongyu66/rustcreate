@@ -191,11 +191,11 @@ fn walk_animation_builds_and_rests() {
     // 强制持续游走：把目标放远处并反复重掷。
     let mut peak = 0.0f32;
     for t in 0..240 {
-        if t % 60 == 0 {
-            if let Some(w) = app.world.write::<mcv_entity::WanderState>().get_mut(e) {
-                w.mode = PassiveMode::Wander;
-                w.target = Vec3::new(8.0 + (t % 7) as f32, 64.0, 8.0 - (t % 5) as f32);
-            }
+        if t % 60 == 0
+            && let Some(w) = app.world.write::<mcv_entity::WanderState>().get_mut(e)
+        {
+            w.mode = PassiveMode::Wander;
+            w.target = Vec3::new(8.0 + (t % 7) as f32, 64.0, 8.0 - (t % 5) as f32);
         }
         step(&mut app);
         if let Some(a) = app.world.read::<mcv_entity::AnimState>().get(e) {
