@@ -23,16 +23,21 @@
 //!   `AbstractContainerMenu.doClick` 的纯数据移植，对镜像
 //!   `StackRef` 槽位表生效并同步发 [`slot::MenuCmd`] 事件——游戏层
 //!   拿事件改背包，容器关闭时读回镜像）。
+//! - [`layout`]：布局原语 `LinearLayout`（横/纵向 + spacing +
+//!   padding/交叉轴对齐 + spacer，对照 `layouts/LinearLayout`/
+//!   `GridLayout`/`LayoutSettings`/`AbstractLayout`）。
 //! - [`text`]：文本裁剪/折行（对照 `Font.plainSubstrByWidth` 与
 //!   `Tooltip.MAX_WIDTH` 170）。
 
 pub mod context;
+pub mod layout;
 pub mod screen;
 pub mod slot;
 pub mod text;
 pub mod widget;
 
 pub use context::{Rect, UiContext, UiGraphics, calculate_scale, scaled_len};
+pub use layout::{CellSettings, LinearLayout};
 pub use screen::{KeyEvent, Screen, ScreenStack, key};
 pub use slot::{MenuCmd, StackRef};
 pub use widget::{UiEvent, WidgetSet};

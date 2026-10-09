@@ -202,32 +202,31 @@ impl KeyBindsScreen {
                 .add_button(i, x, top + i as f32 * row_h, btn_w, row_h, "");
         }
         let bw3 = (btn_w - gap * 2.0) / 3.0;
-        self.widgets.add_button_accent(
+        // 底部三按钮走原版白皮 button 贴图（对齐任务 #53 素材红线后
+        // 的现网 mc_button 风格：不染色、不回退纯色）。
+        self.widgets.add_button(
             ID_RESET,
             x,
             y_btn,
             bw3,
             btn_h,
             ui_text(self.lang, Text::Restore),
-            [0.3, 0.15, 0.13, 0.85],
         );
-        self.widgets.add_button_accent(
+        self.widgets.add_button(
             ID_SAVE,
             x + bw3 + gap,
             y_btn,
             bw3,
             btn_h,
             ui_text(self.lang, Text::Save),
-            [0.13, 0.3, 0.16, 0.85],
         );
-        self.widgets.add_button_accent(
+        self.widgets.add_button(
             ID_BACK,
             x + (bw3 + gap) * 2.0,
             y_btn,
             bw3,
             btn_h,
             crate::i18n::t(self.lang, "gui.back"),
-            [0.15, 0.16, 0.2, 0.82],
         );
     }
 

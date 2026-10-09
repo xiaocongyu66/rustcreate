@@ -138,7 +138,8 @@ impl WidgetSet {
         });
     }
 
-    /// 附带回退底色的按钮（无素材时的可读性，对照现网 mc_button accent）。
+    /// 附带染色 tint 的按钮（染色作用于真实 button 贴图，如捕获/冲突
+    /// 行高亮；素材红线后 tint 不再是"缺素材回退底色"——缺贴图只画文字）。
     #[allow(clippy::too_many_arguments)] // 控件构造参数天然多
     pub fn add_button_accent(
         &mut self,
@@ -297,7 +298,9 @@ impl WidgetSet {
 
     // ---- 绘制 ----
 
-    /// 绘制全部控件（三态贴图 + 文本裁剪；无素材回退纯色块）。
+    /// 绘制全部控件（三态贴图 + 文本裁剪）。素材红线（任务 #53 同款，
+    /// 2026-10）：精灵表缺失**不画纯色假按钮/假滑轨**，仅保留文字标签
+    /// 与命中矩形（缺贴图应当显眼，不伪装）。
     pub fn draw(&mut self, g: &mut UiGraphics, sprites: Option<&SpriteSheet>) {
         let (mx, my) = self.mouse;
         let s = g.scale;
@@ -310,24 +313,18 @@ impl WidgetSet {
             } else {
                 "button"
             };
-            match sprites {
-                Some(sprites) => {
-                    for q in sprites.nine_slice(
-                        sprite,
-                        b.rect.x * s,
-                        b.rect.y * s,
-                        b.rect.w * s,
-                        b.rect.h * s,
-                        3,
-                        s,
-                        b.tint,
-                    ) {
-                        g.push_raw(q);
-                    }
-                }
-                None => {
-                    let tint = if b.enabled { b.tint } else { dim(b.tint) };
-                    g.fill(b.rect.x, b.rect.y, b.rect.w, b.rect.h, tint);
+            if let Some(sprites) = sprites {
+                for q in sprites.nine_slice(
+                    sprite,
+                    b.rect.x * s,
+                    b.rect.y * s,
+                    b.rect.w * s,
+                    b.rect.h * s,
+                    3,
+                    s,
+                    b.tint,
+                ) {
+                    g.push_raw(q);
                 }
             }
             draw_clipped_center(g, &b.label, &b.rect, b.enabled);
@@ -365,47 +362,42 @@ impl WidgetSet {
         }
         for sl in self.sliders.iter_mut() {
             let hovered = sl.enabled && sl.rect.contains(mx, my);
-            // 滑轨（getSprite/getHandleSprite :53-61；素材表用按钮三态）
-            match sprites {
-                Some(sprites) => {
-                    let track = if !sl.enabled {
-                        "button_dis"
-                    } else if hovered || sl.dragging {
-                        "button_hl"
-                    } else {
-                        "button"
-                    };
-                    for q in sprites.nine_slice(
-                        track,
-                        sl.rect.x * s,
-                        sl.rect.y * s,
-                        sl.rect.w * s,
-                        sl.rect.h * s,
-                        3,
-                        s,
-                        sl.tint,
-                    ) {
-                        g.push_raw(q);
-                    }
-                }
-                None => {
-                    let tint = if sl.enabled { sl.tint } else { dim(sl.tint) };
-                    g.fill(sl.rect.x, sl.rect.y, sl.rect.w, sl.rect.h, tint);
-                }
-            }
-            let hx = sl.rect.x + sl.value * (sl.rect.w - SLIDER_HANDLE_W);
-            let handle_hi = sl.enabled && (hovered || sl.dragging);
-            g.fill(
-                hx,
-                sl.rect.y,
-                SLIDER_HANDLE_W,
-                sl.rect.h,
-                if handle_hi {
-                    [1.0, 0.98, 0.6, 1.0]
+            // 滑轨（getSprite/getHandleSprite :53-61；素材表用按钮三态）。
+            // 素材红线：缺精灵表不画假滑轨/假滑块，只留文字。
+            if let Some(sprites) = sprites {
+                let track = if !sl.enabled {
+                    "button_dis"
+                } else if hovered || sl.dragging {
+                    "button_hl"
                 } else {
-                    [0.75, 0.75, 0.8, 1.0]
-                },
-            );
+                    "button"
+                };
+                for q in sprites.nine_slice(
+                    track,
+                    sl.rect.x * s,
+                    sl.rect.y * s,
+                    sl.rect.w * s,
+                    sl.rect.h * s,
+                    3,
+                    s,
+                    sl.tint,
+                ) {
+                    g.push_raw(q);
+                }
+                let hx = sl.rect.x + sl.value * (sl.rect.w - SLIDER_HANDLE_W);
+                let handle_hi = sl.enabled && (hovered || sl.dragging);
+                g.fill(
+                    hx,
+                    sl.rect.y,
+                    SLIDER_HANDLE_W,
+                    sl.rect.h,
+                    if handle_hi {
+                        [1.0, 0.98, 0.6, 1.0]
+                    } else {
+                        [0.75, 0.75, 0.8, 1.0]
+                    },
+                );
+            }
             draw_clipped_center(g, &sl.label, &sl.rect, sl.enabled);
         }
     }
@@ -462,10 +454,6 @@ fn set_slider_value(s: &mut Slider, x: f32) -> Vec<UiEvent> {
     } else {
         Vec::new()
     }
-}
-
-fn dim(c: [f32; 4]) -> [f32; 4] {
-    [c[0] * 0.5, c[1] * 0.5, c[2] * 0.5, c[3]]
 }
 
 /// 居中文本 + 超宽裁剪（extractScrollingStringOverContents 的静态版：
