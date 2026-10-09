@@ -17,6 +17,10 @@ const FLOWER_YELLOW: u16 = 13;
 /// 替换此前调用方的 5.0 临时值（mcv_app 迁移时改传本常数）。
 pub const REACH: f32 = 4.5;
 
+/// 创造模式交互到达距离（米）：26.1 创造靠属性修饰抬到 **5.0**
+/// （生存 [`REACH`] 4.5 不变）。挖掘/放置按 GameMode 选其一。
+pub const CREATIVE_REACH: f32 = 5.0;
+
 /// 是否可被射线命中：固体方块或花；水与空气穿透。
 fn hittable(id: BlockId) -> bool {
     let d = id.def();
