@@ -34,9 +34,11 @@ pub fn mining_tier(m: ToolMaterial) -> u8 {
         3
     } else if m == IRON {
         4
-    } else {
-        // DIAMOND / NETHERITE
+    } else if m == DIAMOND || m == NETHERITE {
         5
+    } else {
+        // 未知材料按木级兜底（ITEMS 只用已知材料，不会走到）。
+        1
     }
 }
 
