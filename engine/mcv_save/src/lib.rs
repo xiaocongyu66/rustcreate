@@ -194,7 +194,8 @@ impl LevelMeta {
                 }
                 let f32_at =
                     |o: usize| f32::from_le_bytes(data[i + o..i + o + 4].try_into().unwrap());
-                let (x, y, z, yaw, pitch) = (f32_at(0), f32_at(4), f32_at(8), f32_at(12), f32_at(16));
+                let (x, y, z, yaw, pitch) =
+                    (f32_at(0), f32_at(4), f32_at(8), f32_at(12), f32_at(16));
                 let (flying, sel_slot) = (data[i + 20] != 0, data[i + 21]);
                 i += 4 * 5 + 2;
                 let mut hotbar = Vec::new();

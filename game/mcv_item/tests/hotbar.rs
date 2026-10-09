@@ -43,14 +43,13 @@ fn add_prefers_selected_slot_then_merges_then_empty() {
 fn enchanted_or_damaged_stacks_never_merge() {
     let mut h = Hotbar::empty();
     let mut ench = ItemStack::new(COBBLESTONE, 1);
-    ench.enchants
-        .push(mcv_item::EnchStack { ench_id: 0, level: 1 });
+    ench.enchants.push(mcv_item::EnchStack {
+        ench_id: 0,
+        level: 1,
+    });
     assert!(h.add(0, ench).is_none());
     assert!(h.add(0, ItemStack::new(COBBLESTONE, 1)).is_none());
-    assert!(
-        h.slots[1].item == COBBLESTONE,
-        "附魔堆与干净堆不得合并"
-    );
+    assert!(h.slots[1].item == COBBLESTONE, "附魔堆与干净堆不得合并");
 
     let mut h2 = Hotbar::empty();
     let mut dmg = ItemStack::new(IRON_SWORD_INDEX, 1);
@@ -70,8 +69,10 @@ fn full_hotbar_keeps_leftover() {
     for i in 0..HOTBAR_SLOTS {
         let mut s = ItemStack::new(COBBLESTONE, 64);
         // 每格挂附魔防合并,占满 9 格。
-        s.enchants
-            .push(mcv_item::EnchStack { ench_id: 0, level: 1 });
+        s.enchants.push(mcv_item::EnchStack {
+            ench_id: 0,
+            level: 1,
+        });
         h.slots[i] = s;
     }
     let left = h.add(0, ItemStack::new(PLANKS, 3));
@@ -99,6 +100,11 @@ fn block_drops_follow_261_semantics() {
     assert_eq!(
         mcv_item::drop_for_block(BlockId(8)).map(|d| d.item),
         Some(PLANKS)
+    );
+    // 圆石块注册名是 "cobble"(blocks_gen),必须能掉。
+    assert_eq!(
+        mcv_item::drop_for_block(BlockId(9)).map(|d| d.item),
+        Some(COBBLESTONE)
     );
     // 无对应物品的方块不掉落(宁缺勿错)。
     assert!(mcv_item::drop_for_block(BlockId(2)).is_none());

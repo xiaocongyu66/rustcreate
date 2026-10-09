@@ -1,7 +1,7 @@
 //! MC GUI 精灵表:从单一资源根 `assets/minecraft/textures/**` 读取原版
 //! 按钮/HUD 精灵/logo(路径即 jar 内原版路径),运行时拼成一张 RGBA 纹理
-//! (HUD 管线 tex=2)。任一文件缺失/解码失败都返回 None,调用方回退
-//! 程序化绘制(安卓包不带素材也不能崩)。
+//! (HUD 管线 tex=2)。核心 HUD 精灵任一文件缺失/解码失败都返回 None,调用方
+//! 回退程序化绘制(安卓包不带素材也不能崩);物品图标缺失只跳过该条。
 //!
 //! 尺寸参照(见 /root/mc-ref/NOTES-ui.md):button.png 200x20 九宫格
 //! border=3(AbstractButton + mcmeta),hotbar.png 182x22、选中 24x23、
@@ -10,8 +10,8 @@
 
 use crate::gpu::HudQuad;
 
-/// 精灵条目:`textures/` 下的原版路径 → 逻辑尺寸。
-const SPRITES: [(&str, &str, u32, u32); 13] = [
+/// 核心 HUD 精灵条目:`textures/` 下的原版路径 → 逻辑尺寸。缺一整表弃用。
+const CORE_SPRITES: [(&str, &str, u32, u32); 13] = [
     ("logo", "gui/title/minecraft.png", 256, 64),
     ("button", "gui/sprites/widget/button.png", 200, 20),
     (
@@ -42,6 +42,39 @@ const SPRITES: [(&str, &str, u32, u32); 13] = [
     ("food_half", "gui/sprites/hud/food_half.png", 9, 9),
 ];
 
+/// 物品图标条目(名字 = mcv_item::ItemDef.name,快捷栏直接按名查)。
+/// 与核心表不同:缺文件只跳过该条(sprite_full 返回 None,调用方回退),
+/// 不拖垮整表。Block 类物品不走此表——用方块图集 tile 面。
+/// lapis 原版贴图叫 lapis_lazuli.png,条目名保持物品名。
+const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
+    ("stick", "item/stick.png", 16, 16),
+    ("coal", "item/coal.png", 16, 16),
+    ("iron_ingot", "item/iron_ingot.png", 16, 16),
+    ("diamond", "item/diamond.png", 16, 16),
+    ("lapis", "item/lapis_lazuli.png", 16, 16),
+    ("book", "item/book.png", 16, 16),
+    ("enchanted_book", "item/enchanted_book.png", 16, 16),
+    ("wooden_sword", "item/wooden_sword.png", 16, 16),
+    ("stone_sword", "item/stone_sword.png", 16, 16),
+    ("iron_sword", "item/iron_sword.png", 16, 16),
+    ("diamond_sword", "item/diamond_sword.png", 16, 16),
+    ("golden_sword", "item/golden_sword.png", 16, 16),
+    ("netherite_sword", "item/netherite_sword.png", 16, 16),
+    ("wooden_pickaxe", "item/wooden_pickaxe.png", 16, 16),
+    ("stone_pickaxe", "item/stone_pickaxe.png", 16, 16),
+    ("iron_pickaxe", "item/iron_pickaxe.png", 16, 16),
+    ("diamond_pickaxe", "item/diamond_pickaxe.png", 16, 16),
+    ("golden_pickaxe", "item/golden_pickaxe.png", 16, 16),
+    ("netherite_pickaxe", "item/netherite_pickaxe.png", 16, 16),
+    ("wooden_axe", "item/wooden_axe.png", 16, 16),
+    ("stone_axe", "item/stone_axe.png", 16, 16),
+    ("iron_axe", "item/iron_axe.png", 16, 16),
+    ("diamond_axe", "item/diamond_axe.png", 16, 16),
+    ("iron_shovel", "item/iron_shovel.png", 16, 16),
+    ("diamond_shovel", "item/diamond_shovel.png", 16, 16),
+    ("wooden_shovel", "item/wooden_shovel.png", 16, 16),
+];
+
 /// logo 实际绘制行数(MC 纹理 256x64 只显示上 44 行)。
 pub const LOGO_VISIBLE_H: u32 = 44;
 
@@ -67,10 +100,15 @@ fn resample(src: &[u8], sw: u32, sh: u32, dw: u32, dh: u32, dst: &mut [u8]) {
 }
 
 impl SpriteSheet {
-    /// 从资源根(`assets/minecraft`)读 `textures/` 下原版精灵。缺文件 → None。
+    /// 从资源根(`assets/minecraft`)读 `textures/` 下原版精灵。
+    /// 核心 HUD 精灵缺一即 None(调用方整体回退程序化绘制);
+    /// 物品图标 best-effort:缺文件只 warn 并跳过该条。
     pub fn load(dir: &std::path::Path) -> Option<Self> {
-        let mut loaded: Vec<(&'static str, Vec<u8>, u32, u32)> = Vec::new();
-        for (name, file, w, h) in SPRITES {
+        let decode = |name: &'static str,
+                      file: &str,
+                      w: u32,
+                      h: u32|
+         -> Option<(&'static str, Vec<u8>, u32, u32)> {
             let path = dir.join("textures").join(file);
             let bytes = std::fs::read(&path).ok()?;
             let img = image::load_from_memory(&bytes)
@@ -83,7 +121,19 @@ impl SpriteSheet {
             }
             let mut buf = vec![0u8; (w * h * 4) as usize];
             resample(rgba.as_raw(), sw, sh, w, h, &mut buf);
-            loaded.push((name, buf, w, h));
+            Some((name, buf, w, h))
+        };
+        let mut loaded: Vec<(&'static str, Vec<u8>, u32, u32)> = Vec::new();
+        for (name, file, w, h) in CORE_SPRITES {
+            loaded.push(decode(name, file, w, h)?);
+        }
+        let items_before = loaded.len();
+        for (name, file, w, h) in ITEM_SPRITES {
+            loaded.extend(decode(name, file, w, h));
+        }
+        let items = loaded.len() - items_before;
+        if items < ITEM_SPRITES.len() {
+            log::warn!("gui: {}/{} item icons missing", items, ITEM_SPRITES.len());
         }
         // 竖排:宽度取最大(256),总高向上取整到 2 的幂
         let sheet_w = loaded.iter().map(|(_, _, w, _)| *w).max().unwrap_or(0);

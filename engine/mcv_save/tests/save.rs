@@ -160,6 +160,8 @@ fn meta_roundtrip() {
             pitch: -12.5,
             flying: true,
             sel_slot: 4,
+            // 中间空槽以 (0,0,0) 占位，槽序即下标。
+            hotbar: vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)],
         }),
     };
     let bytes = meta.encode();
@@ -172,6 +174,12 @@ fn meta_roundtrip() {
     assert_eq!(p.z, -3.25);
     assert!(p.flying);
     assert_eq!(p.sel_slot, 4);
+    assert_eq!(p.hotbar, vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)]);
+
+    // 版本 4 必须拒绝。
+    let mut future = bytes.clone();
+    future[4] = 4;
+    assert!(LevelMeta::decode(&future).is_err());
 
     let bare = LevelMeta {
         seed: 7,
@@ -182,4 +190,27 @@ fn meta_roundtrip() {
     };
     let back = LevelMeta::decode(&bare.encode()).expect("decode");
     assert!(back.player.is_none());
+}
+
+#[test]
+fn meta_v2_backcompat() {
+    // 手写 v2 字节流(无快捷栏字段):必须照常解码,hotbar 读为空。
+    let mut v: Vec<u8> = Vec::new();
+    v.extend_from_slice(b"MCV1");
+    v.extend_from_slice(&2u16.to_le_bytes());
+    v.extend_from_slice(&42u64.to_le_bytes());
+    v.extend_from_slice(&1234u64.to_le_bytes());
+    v.extend_from_slice(&[1, b'x']);
+    v.push(1); // player present
+    for f in [1.0f32, 2.0, 3.0, 4.0, 5.0] {
+        v.extend_from_slice(&f.to_le_bytes());
+    }
+    v.push(0); // flying
+    v.push(7); // sel_slot
+    v.push(1); // mode = creative（保持末尾字节约定）
+    let back = LevelMeta::decode(&v).expect("v2 decodes");
+    assert_eq!((back.seed, back.day_time, back.mode), (42, 1234, 1));
+    let p = back.player.expect("player");
+    assert_eq!(p.sel_slot, 7);
+    assert!(p.hotbar.is_empty(), "v1/v2 读为空快捷栏");
 }

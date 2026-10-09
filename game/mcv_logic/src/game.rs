@@ -19,7 +19,6 @@ use mcv_render::gpu::RenderChunk;
 use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
-pub const HOTBAR: [u16; 9] = [1, 2, 3, 4, 8, 6, 7, 5, 10];
 
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -157,7 +156,9 @@ pub struct GameRuntime {
     pub attack_ticker: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
-    pub hotbar_slot: Option<mcv_item::ItemStack>,
+    /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
+    /// 生存破坏掉落入栏、攻击武器 = 选中槽(方块按拳头)。
+    pub hotbar: mcv_item::Hotbar,
     pub touch: TouchState,
     pub mode: GameMode,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
@@ -197,6 +198,27 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
+        // 开局装备:铁剑(旧单格行为)。创造另发 8 格可放方块(开发期
+        // 创造背包未做,给旧调试快捷栏的等价子集;水/基岩不可入栏)。
+        let mut hotbar = mcv_item::Hotbar::empty();
+        hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1);
+        if mode == GameMode::Creative {
+            for (i, item) in [
+                mcv_item::STONE_ITEM,
+                mcv_item::DIRT_ITEM,
+                mcv_item::GRASS_ITEM,
+                mcv_item::SAND_ITEM,
+                mcv_item::COBBLESTONE,
+                mcv_item::PLANKS,
+                mcv_item::LOG,
+                mcv_item::LEAVES_ITEM,
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                hotbar.slots[1 + i] = mcv_item::ItemStack::new(item, 64);
+            }
+        }
         let mut rt = Self {
             seed,
             chunks: HashMap::new(),
@@ -213,7 +235,7 @@ impl GameRuntime {
             attack_ticker: 20.0, // ready
             spawn_cooldown: 0,
             player_xp: 0,
-            hotbar_slot: Some(mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
+            hotbar,
             touch: TouchState::default(),
             mode,
             hardcore_death: false,
@@ -302,6 +324,22 @@ impl GameRuntime {
                     self.player.pitch = p.pitch;
                     self.player.flying = p.flying;
                     self.player.sel_slot = p.sel_slot as usize;
+                    // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
+                    // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
+                    if !p.hotbar.is_empty() {
+                        let mut h = mcv_item::Hotbar::empty();
+                        for (k, (item, count, damage)) in p.hotbar.into_iter().take(9).enumerate() {
+                            if count > 0 && (item as usize) < mcv_item::ITEMS.len() {
+                                h.slots[k] = mcv_item::ItemStack {
+                                    item,
+                                    count,
+                                    damage,
+                                    enchants: Vec::new(),
+                                };
+                            }
+                        }
+                        self.hotbar = h;
+                    }
                 }
                 log::info!(
                     "loaded world meta: seed={} time={}",
@@ -328,6 +366,13 @@ impl GameRuntime {
                 pitch: self.player.pitch,
                 flying: self.player.flying,
                 sel_slot: self.player.sel_slot as u8,
+                // 9 槽全量导出,槽序即下标(count 0 = 空格)。
+                hotbar: self
+                    .hotbar
+                    .slots
+                    .iter()
+                    .map(|s| (s.item, s.count, s.damage))
+                    .collect(),
             }),
         };
         let tmp = self.save_dir.join("level.meta.tmp");
@@ -968,6 +1013,7 @@ impl GameRuntime {
             }
         }
         let mut slain = None;
+        let mut struck = false;
         if let Some((target, _)) = best {
             {
                 let (kind, mut health, mut ticks, mut last_hurt) = (
@@ -991,8 +1037,9 @@ impl GameRuntime {
                         out.damage,
                         0,
                     );
+                    struck = hurt.is_some();
                     // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
-                    if hurt.is_some() && hp.0 <= 0.0 {
+                    if struck && hp.0 <= 0.0 {
                         slain = Some((target, def.xp));
                     }
                 }
@@ -1002,16 +1049,35 @@ impl GameRuntime {
                 self.player_xp += xp;
             }
         }
-        if let Some(item) = &mut self.hotbar_slot {
-            let _ = item.hurt(1, &mut || 0);
+        // 耐久只在命中时消耗（26.1 useOnEnemy 语义）；破损清槽并播放
+        // random.break（缺事件时加载器自带节流 no-op）。
+        if struck {
+            let broke = self
+                .hotbar
+                .selected_mut(self.player.sel_slot)
+                .hurt(1, &mut || 0);
+            if broke {
+                self.hotbar.slots[self.player.sel_slot % 9] = mcv_item::ItemStack::empty();
+                self.audio.play_event(
+                    "random.break",
+                    [eye.x, eye.y, eye.z],
+                    [eye.x, eye.y, eye.z],
+                    1.0,
+                );
+            }
         }
     }
 
+    /// 攻击武器：选中槽的非方块物品（26.1：方块不参战，按空手算）。
     fn hotbar_item(&self) -> Option<mcv_item::ItemStack> {
-        self.hotbar_slot.clone()
+        let s = self.hotbar.selected(self.player.sel_slot);
+        if !s.is_empty() && !matches!(s.def().kind, mcv_item::ItemKind::Block(_)) {
+            Some(s.clone())
+        } else {
+            None
+        }
     }
 
-    #[allow(dead_code)] // wired into physics once mcv_game::step merges
     #[allow(dead_code)] // wired into physics once mcv_game::step merges
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
@@ -1042,6 +1108,20 @@ impl GameRuntime {
         } else {
             hit
         };
+        // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
+        // （26.1 交互仅方块实现，其余走未实现的 useItem）。
+        let place_id = if place {
+            let s = self.hotbar.selected(self.player.sel_slot);
+            match s.def().kind {
+                mcv_item::ItemKind::Block(bid) if !s.is_empty() => Some(bid),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        if place && place_id.is_none() {
+            return;
+        }
         if place {
             // reject placement that would intersect the player AABB
             let p = &self.player;
@@ -1060,16 +1140,23 @@ impl GameRuntime {
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
-            let new_id = BlockId(if place {
-                HOTBAR[self.player.sel_slot % 9]
-            } else {
-                0
-            });
+            let new_id = place_id.unwrap_or(BlockId(0));
             let old = handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx];
             // 破坏按原方块发声，放置按新方块发声（26.1 GameRenderer 行为音）
             let snd_vid = if place { new_id.0 } else { old.0 };
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+            // 生存：放置消耗一格（consumeItem），破坏按 26.1 dropResources
+            // 入栏（满栏剩余暂无掉落物实体，丢弃）；创造两者都不做。
+            if self.mode != GameMode::Creative {
+                if place {
+                    self.hotbar.take_one(self.player.sel_slot);
+                } else if old.0 != 0
+                    && let Some(drop) = mcv_item::drop_for_block(old)
+                {
+                    let _ = self.hotbar.add(self.player.sel_slot, drop);
+                }
+            }
             if (old.0 != 0 || place)
                 && let Some(group) = block_group(snd_vid)
             {
@@ -1135,13 +1222,59 @@ impl GameRuntime {
                 23.0 * s,
                 white,
             ));
-            for (i, &id) in HOTBAR.iter().enumerate() {
-                if id != 0 {
-                    quads.push(text::tile_icon(
-                        mcv_core::BLOCKS[id as usize].tiles[2],
-                        width * 0.5 - 88.0 * s + i as f32 * 20.0 * s,
-                        height - 19.0 * s,
+            // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
+            // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
+            for (i, stack) in self.hotbar.slots.iter().enumerate() {
+                if stack.is_empty() {
+                    continue;
+                }
+                let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
+                let iy = height - 19.0 * s;
+                match stack.def().kind {
+                    mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                        mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                        ix,
+                        iy,
                         16.0 * s,
+                    )),
+                    _ => quads.extend(g.sprite_full(
+                        stack.def().name,
+                        ix,
+                        iy,
+                        16.0 * s,
+                        16.0 * s,
+                        white,
+                    )),
+                }
+                if stack.count > 1 {
+                    let t = stack.count.to_string();
+                    let tw = text::text_width(&t, s);
+                    quads.extend(text::text_quads(
+                        &t,
+                        ix + 18.0 * s - tw,
+                        iy + 11.0 * s,
+                        s,
+                        white,
+                    ));
+                }
+                // renderSlot 耐久条：黑底 13x1 + 绿→红渐变前景，位于图标下沿。
+                if stack.damage > 0 {
+                    let max = stack.max_damage().max(1) as f32;
+                    let f = 1.0 - stack.damage as f32 / max;
+                    let bar = (13.0 - stack.damage as f32 * 13.0 / max).max(0.0) * s;
+                    quads.push(text::rect(
+                        ix + s,
+                        iy + 12.0 * s,
+                        13.0 * s,
+                        s,
+                        [0.0, 0.0, 0.0, 1.0],
+                    ));
+                    quads.push(text::rect(
+                        ix + s,
+                        iy + 12.0 * s,
+                        bar,
+                        s,
+                        [f * 0.392, f, 0.0, 1.0],
                     ));
                 }
             }
@@ -1193,7 +1326,7 @@ impl GameRuntime {
                 slot + 4.0,
                 [0.1, 0.1, 0.1, 0.6],
             ));
-            for (i, &id) in HOTBAR.iter().enumerate() {
+            for (i, stack) in self.hotbar.slots.iter().enumerate() {
                 let x = x0 + i as f32 * slot;
                 quads.push(text::rect(
                     x + 1.0,
@@ -1202,13 +1335,34 @@ impl GameRuntime {
                     slot - 2.0,
                     [0.25, 0.25, 0.28, 0.8],
                 ));
-                if id != 0 {
-                    quads.push(text::tile_icon(
-                        mcv_core::BLOCKS[id as usize].tiles[2],
-                        x + 5.0,
-                        y0 + 5.0,
-                        slot - 10.0,
-                    ));
+                if !stack.is_empty() {
+                    match stack.def().kind {
+                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                            x + 5.0,
+                            y0 + 5.0,
+                            slot - 10.0,
+                        )),
+                        // 无图集时非方块物品只画通用色块。
+                        _ => quads.push(text::rect(
+                            x + (slot - 20.0) * 0.5,
+                            y0 + (slot - 20.0) * 0.5,
+                            20.0,
+                            20.0,
+                            [0.55, 0.5, 0.42, 0.95],
+                        )),
+                    }
+                    if stack.count > 1 {
+                        let t = stack.count.to_string();
+                        let tw = text::text_width(&t, 1.0);
+                        quads.extend(text::text_quads(
+                            &t,
+                            x + slot - 3.0 - tw,
+                            y0 + slot - 12.0,
+                            1.0,
+                            white,
+                        ));
+                    }
                 }
                 if i == sel {
                     quads.push(text::rect(

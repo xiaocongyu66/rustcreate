@@ -106,7 +106,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 32] = [
+pub static ITEMS: [ItemDef; 36] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -187,6 +187,11 @@ pub static ITEMS: [ItemDef; 32] = [
     def!("iron_ore", ItemKind::Block(BlockId(1)), 0.0, 0.0, 0, 0),
     def!("diamond_ore", ItemKind::Block(BlockId(1)), 0.0, 0.0, 0, 0),
     def!("log", ItemKind::Block(BlockId(6)), 0.0, 0.0, 0, 0),
+    // 创造初始快捷栏用的方块物品(32 之后追加,旧 id 序列化稳定)。
+    def!("dirt", ItemKind::Block(BlockId(2)), 0.0, 0.0, 0, 0),
+    def!("grass", ItemKind::Block(BlockId(3)), 0.0, 0.0, 0, 0),
+    def!("sand", ItemKind::Block(BlockId(4)), 0.0, 0.0, 0, 0),
+    def!("leaves", ItemKind::Block(BlockId(7)), 0.0, 0.0, 0, 0),
 ];
 
 pub const STICK: u16 = 0;
@@ -202,6 +207,10 @@ pub const STONE_ITEM: u16 = 28;
 pub const IRON_ORE_ITEM: u16 = 29;
 pub const DIAMOND_ORE_ITEM: u16 = 30;
 pub const LOG: u16 = 31;
+pub const DIRT_ITEM: u16 = 32;
+pub const GRASS_ITEM: u16 = 33;
+pub const SAND_ITEM: u16 = 34;
+pub const LEAVES_ITEM: u16 = 35;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;

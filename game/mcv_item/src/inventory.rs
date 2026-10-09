@@ -128,7 +128,8 @@ impl Hotbar {
 pub fn drop_for_block(id: BlockId) -> Option<ItemStack> {
     let name = mcv_core::BLOCKS[id.0 as usize].name;
     let item = match name {
-        "stone" | "cobblestone" => COBBLESTONE,
+        // 方块表 id 9 的注册名是 "cobble"(blocks_gen),非原版 cobblestone。
+        "stone" | "cobble" => COBBLESTONE,
         "planks" => PLANKS,
         "log" => LOG,
         "coal_ore" => COAL,
