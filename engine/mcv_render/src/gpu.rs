@@ -68,7 +68,7 @@ impl MeshUploader {
         // （Android 真机走 GL 回退时进世界首个网格上传即 fatal，2026-10-10）。
         {
             let mut view = vb.slice(..).get_mapped_range_mut().expect("vb mapped");
-            view[..v.len()].copy_from_slice(v);
+            view.slice(0..v.len()).copy_from_slice(v);
         }
         vb.unmap();
         let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -80,7 +80,7 @@ impl MeshUploader {
         let ib_bytes = bytemuck::cast_slice::<u32, u8>(i);
         {
             let mut view = ib.slice(..).get_mapped_range_mut().expect("ib mapped");
-            view[..ib_bytes.len()].copy_from_slice(ib_bytes);
+            view.slice(0..ib_bytes.len()).copy_from_slice(ib_bytes);
         }
         ib.unmap();
         (vb, ib)
