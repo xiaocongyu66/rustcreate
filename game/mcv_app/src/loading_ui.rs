@@ -232,11 +232,24 @@ mod tests {
         let s = layout(h);
         let no_grid = quads(w, h, &model(0.0, 0, Vec::new()), None);
         let with_grid = quads(w, h, &model(0.0, 7, vec![(0, 0, Some(0))]), None);
-        // 无网格：q[1] = 标题首 quad，y = textTop = yc − 50（GUI px）。
-        assert_eq!(no_grid[1].y, h * 0.5 - 50.0 * s, "无网格 textTop = yc−50");
+        // 无网格：q[1] = 标题阴影首 quad——文字层先画 (1,1) 偏移的阴影
+        // 再画正文（text.rs，MC shadowOffset=1 屏幕像素、不随字号缩放），
+        // 正文首行 y = textTop = yc − 50（GUI px）。
+        let text_top = h * 0.5 - 50.0 * s;
+        assert_eq!(no_grid[1].y, text_top + 1.0, "阴影 quad 偏移 (1,1)");
+        assert!(no_grid.iter().any(|q| q.y == text_top), "正文 textTop = yc−50");
         // 有网格：q[1] = 网格格 (0,0)：start(−15) + (0+7)×2 = −1 → yc − s；
-        // 标题（q[2]）textTop = yc − radius×2 − 27 = yc − 41。
+        // 标题阴影随其后，正文 textTop = yc − radius×2 − 27 = yc − 41。
         assert_eq!(with_grid[1].y, h * 0.5 - 1.0 * s, "网格格 y = yc−1");
-        assert_eq!(with_grid[2].y, h * 0.5 - 41.0 * s, "有网格 textTop = yc−41");
+        let grid_text_top = h * 0.5 - 41.0 * s;
+        assert_eq!(
+            with_grid[2].y,
+            grid_text_top + 1.0,
+            "有网格标题阴影 = (yc−41)+1"
+        );
+        assert!(
+            with_grid.iter().any(|q| q.y == grid_text_top),
+            "有网格正文 textTop = yc−41"
+        );
     }
 }
