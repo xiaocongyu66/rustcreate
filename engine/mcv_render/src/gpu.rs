@@ -47,12 +47,12 @@ pub struct RenderChunk {
 /// 缓冲、复用 opaque 顶点缓冲（与既有渲染语义一致）。
 pub struct MeshUploader {
     device: wgpu::Device,
-    queue: wgpu::Queue,
 }
 
 impl MeshUploader {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        Self { device, queue }
+    /// 只需 device：网格经创建期映射视图写入，不占队列写带宽。
+    pub fn new(device: wgpu::Device) -> Self {
+        Self { device }
     }
 
     fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {

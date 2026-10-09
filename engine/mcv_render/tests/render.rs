@@ -377,7 +377,7 @@ fn gles_fallback_world_frame_smoke() {
     );
     let clouds = mcv_render::Clouds::new(&device, &queue);
     // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。
-    let up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
+    let up = mcv_render::gpu::MeshUploader::new(device.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,

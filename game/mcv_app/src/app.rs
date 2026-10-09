@@ -113,7 +113,6 @@ struct AppState {
     set_dist: i32,
     set_sens: f32,
     cached_device: Option<wgpu::Device>,
-    cached_queue: Option<wgpu::Queue>,
     last_cursor: Option<(f64, f64)>,
     step_accum: f32,
     last_time: Option<std::time::Instant>,
@@ -1161,12 +1160,11 @@ impl AppState {
             .unwrap_or(12345)
             | 1;
         let device = self.runtime_device();
-        let queue = self.runtime_queue();
-        let (Some(device), Some(queue)) = (device, queue) else {
+        let Some(device) = device else {
             log::error!("gpu not ready");
             return;
         };
-        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
+        let uploader = mcv_render::gpu::MeshUploader::new(device);
         let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
         if mode == GameMode::Creative {
             runtime.player.flying = true;
@@ -1225,10 +1223,6 @@ impl AppState {
         self.surface.as_ref()?;
         // GameRuntime 需要独立 device/queue；wgpu Device 是 Arc 型克隆。
         self.cached_device.clone()
-    }
-
-    fn runtime_queue(&self) -> Option<wgpu::Queue> {
-        self.cached_queue.clone()
     }
 
     /// 菜单指针点击（桌面鼠标/触屏统一入口）。
@@ -1440,8 +1434,7 @@ impl AppState {
         };
         let dir = entry.dir.clone();
         let device = self.runtime_device();
-        let queue = self.runtime_queue();
-        let (Some(device), Some(queue)) = (device, queue) else {
+        let Some(device) = device else {
             return;
         };
         let seed = std::time::SystemTime::now()
@@ -1457,7 +1450,7 @@ impl AppState {
                 Err(_) => GameMode::Survival,
             }
         };
-        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
+        let uploader = mcv_render::gpu::MeshUploader::new(device);
         let runtime = GameRuntime::new(seed, uploader, dir, mode);
         self.enter_game(runtime);
     }
@@ -1485,7 +1478,6 @@ impl ApplicationHandler for AppState {
                 // bundle 形态 exe 同级(仅当目录存在时生效)
                 let pack = self.assets_dir().filter(|d| d.is_dir());
                 self.cached_device = Some(device.clone());
-                self.cached_queue = Some(queue.clone());
                 self.renderer = Some(mcv_render::Renderer::new(
                     device.clone(),
                     queue.clone(),
