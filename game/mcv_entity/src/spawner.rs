@@ -295,10 +295,10 @@ pub fn spawn_round(
             if d2 <= cfg.min_dist_sqr || d2 > cfg.max_dist_sqr {
                 continue;
             }
-            if let Some(r) = cfg.respawn_center {
-                if r.distance_squared(center) <= RESPAWN_REJECT_DIST * RESPAWN_REJECT_DIST {
-                    continue;
-                }
+            if let Some(r) = cfg.respawn_center
+                && r.distance_squared(center) <= RESPAWN_REJECT_DIST * RESPAWN_REJECT_DIST
+            {
+                continue;
             }
             if !is_dark_enough(
                 world.sky_light(pos),

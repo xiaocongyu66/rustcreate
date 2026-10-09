@@ -26,7 +26,9 @@ fn mixer() -> Mixer {
 
 fn rig() -> (SoundFixture, SoundLoader, Mixer) {
     let fx = SoundFixture::new();
-    (fx, SoundLoader::new(fx.dir()), mixer())
+    // 先建 loader 再组元组:元组元素从左到右求值,fx 会先被移走。
+    let loader = SoundLoader::new(fx.dir());
+    (fx, loader, mixer())
 }
 
 #[test]
@@ -171,7 +173,10 @@ fn loops_are_idempotent_by_event_and_stoppable() {
     let cmd = loader
         .loop_start("dev.oneshot", 1.0, t0)
         .expect("素材应存在");
-    assert!(cmd.loop_event.as_deref() == Some("dev.oneshot"));
+    let AudioCmd::Play { loop_event, .. } = &cmd else {
+        panic!("loop_start 应产出 Play 命令");
+    };
+    assert_eq!(loop_event.as_deref(), Some("dev.oneshot"));
     assert!(m.apply(cmd));
     // 持续"按住挖掘"每帧调用:loader 每帧都产命令(不节流循环),
     // 幂等由音频线程按事件名把关——不得叠加第二个声部。

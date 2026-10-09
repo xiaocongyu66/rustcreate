@@ -695,7 +695,7 @@ impl GameRuntime {
                 w.write::<Yaw>(),
             );
             phys.for_each(|e, body| {
-                let mut tk = match ticks.get_mut(e) {
+                let tk = match ticks.get_mut(e) {
                     Some(t) => t,
                     None => return,
                 };

@@ -43,10 +43,10 @@ fn cell_for(ch: char) -> Option<Cell> {
     if cp < 256 && advance(cp) > 1.0 {
         return Some(Cell::Ascii(cp));
     }
-    if let Some(u) = unifont() {
-        if u.covers(ch) {
-            return Some(Cell::Uni);
-        }
+    if let Some(u) = unifont()
+        && u.covers(ch)
+    {
+        return Some(Cell::Uni);
     }
     Some(Cell::Ascii(MISSING))
 }

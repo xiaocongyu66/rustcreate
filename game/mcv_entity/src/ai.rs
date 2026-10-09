@@ -454,22 +454,22 @@ impl Brain {
         acts: &mut Vec<AiAction>,
     ) {
         // FleeSunGoal(优先级 3) 高于弓(4)：白天直晒 → 逃向阴影。
-        if p.day && p.sky_exposed {
-            if let Some(s) = p.shelter {
-                self.state = MobState::Flee;
-                acts.push(self.walk_toward(p, s, 1.0));
-                return;
-            }
+        if p.day
+            && p.sky_exposed
+            && let Some(s) = p.shelter
+        {
+            self.state = MobState::Flee;
+            acts.push(self.walk_toward(p, s, 1.0));
+            return;
         }
         // AvoidEntityGoal(Wolf, 6.0)（AbstractSkeleton.java:79）。
-        if tbl.avoids {
-            if let Some(a) = p.avoid {
-                if p.pos.distance(a) < AVOID_DIST {
-                    self.state = MobState::Flee;
-                    acts.push(self.walk_away(p, a));
-                    return;
-                }
-            }
+        if tbl.avoids
+            && let Some(a) = p.avoid
+            && p.pos.distance(a) < AVOID_DIST
+        {
+            self.state = MobState::Flee;
+            acts.push(self.walk_away(p, a));
+            return;
         }
         if !self.has_target {
             self.wander_only(def, tbl, p, rng, acts);
@@ -565,14 +565,13 @@ impl Brain {
             return;
         }
         // 避猫/豹猫 6 格（Creeper.java:67-68；任务描述的"逃跑"即此）。
-        if tbl.avoids {
-            if let Some(a) = p.avoid {
-                if p.pos.distance(a) < AVOID_DIST {
-                    self.state = MobState::Flee;
-                    acts.push(self.walk_away(p, a));
-                    return;
-                }
-            }
+        if tbl.avoids
+            && let Some(a) = p.avoid
+            && p.pos.distance(a) < AVOID_DIST
+        {
+            self.state = MobState::Flee;
+            acts.push(self.walk_away(p, a));
+            return;
         }
         if !self.has_target {
             if self.ignited {
