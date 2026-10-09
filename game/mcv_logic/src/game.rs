@@ -4,7 +4,7 @@
 //! chunk map), and the renderer. Mesh upload lands when the C++ mesher
 //! merges (M4); a no-op mesher keeps this compiling until then.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec3;
@@ -215,6 +215,9 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
         steps += 1;
         let (dx, dz) = side_delta(side);
         let npos = ChunkPos::new(pos.x + dx, pos.z + dz);
+        // 真机取证埋点：每条边同步任务（REMOVE+ADD 两相一体）。静止期持续
+        // 刷屏即光照边同步乒乓/级联不收敛实证（512 步兜底会伴随 warn）。
+        log::debug!("light edge {pos:?} side{side} -> {npos:?}");
         let (Some(from), Some(to)) = (chunks.get(&pos), chunks.get(&npos)) else {
             continue;
         };
@@ -315,6 +318,10 @@ pub struct GameRuntime {
     pub mesher: Box<dyn ChunkMesher>,
     pub save_dir: std::path::PathBuf,
     render_chunks: Vec<RenderChunk>,
+    /// 已建网格区块的 origin 记账（与 `render_chunks` 严格同步增删）。
+    /// O(1) 判「这块是否已有网格」替代逐帧对全表做线性扫（旧实现每帧
+    /// O(loaded×meshed) 次浮点比对），并消除按 origin 浮点匹配的精度隐患。
+    meshed: HashSet<ChunkPos>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
     /// 运行时 mob 集合（ECS App：World + 调度 + 事件总线；组件见
@@ -599,6 +606,7 @@ impl GameRuntime {
             mesher,
             save_dir,
             render_chunks: Vec::new(),
+            meshed: HashSet::new(),
             spawned: false,
             border_synced: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
@@ -1138,12 +1146,19 @@ impl GameRuntime {
             // 卸载即 forget：border_synced 记账必须同步清理，否则区块重进
             // 视野时会跳过与新邻块的成对边同步（C1 配套清理）。
             self.border_synced.remove(&c);
+            // 网格记账同步回收：render_chunks 里的 GPU 缓冲随条目 drop 释放，
+            // meshed 集合删键保证重进视野时会重建网格（保持两者严格同步）。
+            self.meshed.remove(&c);
             self.render_chunks
                 .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
         }
-        // request in ring order; bounded per frame
+        // request in ring order; bounded per frame。
+        // 多请求一圈支撑环（render_dist+1，原版 view distance +1 边界块）：
+        // 可见最外环的网格需要 3×3 邻域在册，只请求到 render_dist 时外环
+        // 永远凑不齐邻居、永远建不了网格——真机上渲染边缘呈永久残缺带，
+        // 玩家移动时残带随视野推进逐块翻新（症状：往右动一点就换一批块）。
         let mut budget = 4;
-        'outer: for r in 0..=self.render_dist {
+        'outer: for r in 0..=(self.render_dist + 1) {
             for dx in -r..=r {
                 for dz in -r..=r {
                     if dx.abs() != r && dz.abs() != r {
@@ -1210,9 +1225,13 @@ impl GameRuntime {
             self.player.pos = slot;
             self.spawned = true;
         }
-        // light init on newly-terrain-ready chunks (budgeted, main thread)
+        // light init on newly-terrain-ready chunks (budgeted, main thread)。
+        // 候选按「离玩家近优先」排序：HashMap 迭代序随每次插入/删除漂移，
+        // 每帧 2 格预算会随机落到世界任何角落——真机上表现为每帧零散点亮
+        // 不同区块（地下/地上无规律闪现）。排序后布光以玩家为圆心成波推进，
+        // 加载门控关心的出生邻域最先就绪。
         let mut light_budget = 2;
-        let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
+        let keys = self.sorted_keys(center);
         for pos in &keys {
             if light_budget == 0 {
                 break;
@@ -1262,6 +1281,9 @@ impl GameRuntime {
                         marks.push((npos, obit));
                         pair_edges.push((*pos, bit));
                         pair_edges.push((npos, obit));
+                        // 真机取证埋点：成对标记应每对仅一次——静止期重复
+                        // 出现同一对即记账被反复重置（乒乓实证）。
+                        log::debug!("border pair {pos:?} bit{bit} <-> {npos:?}");
                     }
                 }
             }
@@ -1273,10 +1295,11 @@ impl GameRuntime {
         }
         sync_light_edges(&self.chunks, &mut pair_edges);
 
-        // mesh chunks: 3x3 loaded, center lit, dirty or missing
+        // mesh chunks: 3x3 loaded, center lit, dirty or missing。
+        // 同样按玩家近优先排序（理由同 light init）：网格以玩家脚下的区块
+        // 最先建成，远处补齐——不再出现「眼前的块没网格、远处的块先上屏」。
         let mut remesh_budget = 2;
-        let keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
-        for pos in keys {
+        for pos in self.sorted_keys(center) {
             if remesh_budget == 0 {
                 break;
             }
@@ -1287,10 +1310,7 @@ impl GameRuntime {
             if !self.neighbors_ready(pos) {
                 continue;
             }
-            let already = self
-                .render_chunks
-                .iter()
-                .any(|r| r.origin[0] == 16.0 * pos.x as f32 && r.origin[2] == 16.0 * pos.z as f32);
+            let already = self.meshed.contains(&pos);
             let dirty_mesh = handle.dirty() & mcv_core::dirty::MESH != 0;
             if already && !dirty_mesh {
                 continue;
@@ -1304,18 +1324,48 @@ impl GameRuntime {
             }
             if let Some(rc) = self.mesher.build(pos, &handles) {
                 let origin = rc.origin;
-                self.render_chunks
-                    .retain(|r| r.origin[0] != origin[0] || r.origin[2] != origin[2]);
-                self.render_chunks.push(rc);
+                let idx_count = rc.opaque_range.end;
+                // 原位替换已存在的网格条目：push 到尾部会让整个 Vec 每帧重排，
+                // 渲染器的槽位分配（scene.chunks 下标）随之漂移，高渲染距离下
+                // 超过 max_chunks 的截断集也逐帧变化——画面呈块状翻动。原位
+                // 替换保持「首次建网格」的稳定顺序，重网格不再搬动其他条目。
+                match self
+                    .render_chunks
+                    .iter()
+                    .position(|r| r.origin[0] == origin[0] && r.origin[2] == origin[2])
+                {
+                    Some(slot) => self.render_chunks[slot] = rc,
+                    None => self.render_chunks.push(rc),
+                }
+                // render_chunks 与 meshed 记账同步：弃旧、记新。
+                self.meshed.insert(pos);
                 handle.clear_dirty(mcv_core::dirty::MESH);
                 // 网格已建且经 MeshUploader 上传 GPU → 状态机终点
                 // Uploaded（chunk.rs:4 的 Empty→…→Uploaded；此前该状态
                 // 从未被推进，加载画面「就绪」判定依赖它）。无头 NullMesher
                 // 不产出网格、不推进，由测试手工 advance_to。
                 handle.advance_to(Stage::Uploaded);
+                // 真机取证埋点（logcat -s RustMcv）：网格入队/上传事件带
+                // 区块坐标与索引量——静止期反复出现即重网格循环实证。
+                log::debug!("mesh upload {pos:?} idx={idx_count}");
                 remesh_budget -= 1;
             }
         }
+    }
+
+    /// 在册区块按「玩家环距（Chebyshev）近优先」排序的键表，环内按
+    /// (dx,dz) 字典序破平——同一输入恒得同一顺序。布光/成对边标记/建网格
+    /// 三条预算流水共用：哈希表迭代序随插入删除逐帧漂移，按它花钱会让
+    /// 每帧预算散落到任意区块（真机症状：每帧零散加载不同块、明暗碎片
+    /// 闪烁）；排序后三条流水都以玩家为中心的同心波推进。
+    fn sorted_keys(&self, center: ChunkPos) -> Vec<ChunkPos> {
+        let mut keys: Vec<ChunkPos> = self.chunks.keys().copied().collect();
+        keys.sort_by_key(|p| {
+            let dx = p.x - center.x;
+            let dz = p.z - center.z;
+            (dx.abs().max(dz.abs()), dx, dz)
+        });
+        keys
     }
 
     pub(crate) fn opposite_side(bit: u8) -> u8 {
@@ -1352,11 +1402,16 @@ impl GameRuntime {
         true
     }
 
+    /// 建网格门槛：3×3 邻域全部在册且都已完成本地布光（≥LightLocalReady）。
+    /// 旧门槛只要求邻域 TerrainReady——网格顶点把邻块边界面光烘焙为字节，
+    /// 未布光邻块的光数组是全 0，交界处会烘出一圈黑缝，等邻块布光+边同步
+    /// 后再触发整块重建（先黑后亮的闪烁 + 一倍无效网格工作量）。中心块的
+    /// stage 由调用方（stream 的 remesh 循环）单独检查。
     fn neighbors_ready(&self, pos: ChunkPos) -> bool {
         for dx in -1..=1 {
             for dz in -1..=1 {
                 if let Some(h) = self.chunks.get(&ChunkPos::new(pos.x + dx, pos.z + dz)) {
-                    if (h.stage() as u8) < (Stage::TerrainReady as u8) {
+                    if (h.stage() as u8) < (Stage::LightLocalReady as u8) {
                         return false;
                     }
                 } else {

@@ -13,10 +13,12 @@ pub mod android_assets;
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)] // edition 2024:unsafe 属性须显式 unsafe 标注
 fn android_main(app: android_activity::AndroidApp) {
-    // 日志进 logcat（tag RustMcv）：adb logcat -s RustMcv
+    // 日志进 logcat（tag RustMcv）：adb logcat -s RustMcv。
+    // Debug 级放行：流式/光照边同步取证埋点走 log::debug（带区块坐标），
+    // 真机定位「每帧不同画面/重网格循环」靠它；稳态下事件零发生零刷屏。
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Info)
+            .with_max_level(log::LevelFilter::Debug)
             .with_tag("RustMcv"),
     );
     // panic 也写进 logcat，否则闪退无线索
