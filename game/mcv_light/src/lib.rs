@@ -4,8 +4,13 @@
 //! Layout contract (matches `mcv_core`):
 //! - light: 65536 bytes, index `(y<<8)|(z<<4)|x`, low nibble = block light,
 //!   high nibble = sky light (0..=15 each).
-//! - heightmap: 256 bytes, index `(z<<4)|x`, value = highest light-blocking
-//!   block y + 1 (0 = open column, direct sky all the way down).
+//! - heightmap: 256 bytes, index `(z<<4)|x`, terrain surface height
+//!   (topmost solid-terrain y + 1; water/flowers excluded — see
+//!   `mcv_worldgen::recompute_heightmap`). It is a *gameplay* surface array
+//!   (spawn/mob logic); lighting never reads it — the direct-sky source
+//!   column is derived from voxels via [`opacity`], the single criterion
+//!   shared by `init` and `update_block` (vanilla `ChunkSkyLightSources.
+//!   isEdgeOccluded`, ChunkSkyLightSources.java:140-148).
 //!
 //! BFS semantics follow vanilla `LightEngine.propagateIncreases` /
 //! `propagateDecreases`: plain FIFO queues with a head cursor, stale entries
@@ -43,26 +48,21 @@ pub struct BorderSeed {
     pub blk: u8,
 }
 
-/// Per-block light dampening, calibrated against decompiled Minecraft
-/// 26.1 `BlockBehaviour.getLightDampening` (consumed by
-/// `LightEngine.getOpacity` as `max(1, dampening)`):
-/// - solid-render full cubes = 15 (stone, dirt, log, …);
-/// - water = 1 (`LiquidBlock.propagatesSkylightDown == false` → damp 1;
-///   the pre-1.20.5 "water costs 3" rule is *not* 26.1 behaviour);
-/// - leaves = 1 (`LeavesBlock.getLightDampening` override);
-/// - flowers / air = 0 (`CrossCollisionBlock.propagatesSkylightDown` →
-///   damp 0; glass would land here too once registered);
-/// - unknown ids are treated as fully opaque (15).
-///   `mcv_core::BLOCKS` has no opacity column and must not gain one, so
-///   this table is the single source of truth.
+/// Per-block light dampening. Full registry table in `mcv_core::OPACITY`,
+/// generated from `BlockBehaviour.getLightDampening` (BlockBehaviour.java:
+/// 305-310): `solidRender ? 15 : (propagatesSkylightDown ? 0 : 1)`, with
+/// per-class overrides verified against `src-26.1` (see `mcv_core::OPACITY`
+/// docs: leaves 1 = LeavesBlock.java:84-86, water 1 = LiquidBlock.java:
+/// 114-116, glass/stained-glass/copper-grate 0 = TransparentBlock.java:
+/// 34-37, tinted glass 15 = TintedGlassBlock.java:25-27). Consumed as the
+/// spread cost `max(1, dampening)` (LightEngine.java:77-79) and as the
+/// sky-source-column cutoff (`init` / `column_top`). Ids beyond the
+/// registry stay conservatively fully opaque (15).
 #[inline]
-pub const fn opacity(id: BlockId) -> u8 {
-    match id.0 {
-        0 => 0,       // air
-        5 => 1,       // water
-        7 => 1,       // leaves
-        12 | 13 => 0, // flowers
-        _ => 15,      // opaque solids (and unknown ids)
+pub fn opacity(id: BlockId) -> u8 {
+    match mcv_core::OPACITY.get(id.0 as usize) {
+        Some(&v) => v,
+        None => 15,
     }
 }
 
@@ -95,11 +95,6 @@ fn get_ch(light: &[u8], idx: usize, shift: u32) -> u8 {
 fn set_ch(light: &mut [u8], idx: usize, shift: u32, v: u8) {
     let keep = if shift == SKY_SHIFT { 0x0F } else { 0xF0 };
     light[idx] = (light[idx] & keep) | (v << shift);
-}
-
-#[inline]
-fn clamp_hm(h: usize) -> usize {
-    if h > 256 { 256 } else { h }
 }
 
 /// Neighbour offsets: (dx, dy, dz).
@@ -137,8 +132,9 @@ fn out_of_bounds(x: i32, y: i32, z: i32) -> bool {
 /// *source column* (`ChunkSkyLightSources.lowestSourceY` +
 /// `SkyLightEngine.addSourcesAbove` write 15 down every damp==0 column
 /// until the first damp!=0 block truncates it). In this engine a stored
-/// 15 only ever comes from the heightmap seeds (`init`) or the dug-column
-/// writes (`update_block`), i.e. from exactly those source columns, so
+/// 15 only ever comes from the source-column seeds (`init`, `column_top`
+/// criterion) or the dug-column writes (`update_block`), i.e. from exactly
+/// those source columns, so
 /// the carve-out reproduces the reference: open-air shafts stay 15 all
 /// the way down, while water/leaves (damp 1) truncate the column and
 /// attenuate 15 → 14 → 13 … vertically as well (there `dec = opacity =
@@ -191,7 +187,16 @@ fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut V
 /// Removal BFS over one channel. Queue entries must have their storage
 /// already zeroed before enqueue; neighbours brighter than or equal to the
 /// removed level are re-light sources and go into `readd`.
+///
+/// C4 (vanilla `BlockLightEngine.propagateDecrease`, BlockLightEngine.java:
+/// 91-101): after zeroing a cell we re-read its *own* emission. Vanilla
+/// clears storage, continues the decrease wave only when `toEmission <
+/// toLevel`, and — whenever `toEmission > 0` — re-seeds the cell into the
+/// increase queue at its emission level, so a weak emitter adjacent to a
+/// brighter removed source is never permanently extinguished. Sky has no
+/// emitters (26.1 sky `getEmission` ≡ 0), hence the channel check.
 fn removal_channel(
+    voxels: &[u16],
     light: &mut [u8],
     shift: u32,
     queue: &mut Vec<(u16, u8)>,
@@ -216,7 +221,22 @@ fn removal_channel(
             }
             if ncur < old {
                 set_ch(light, nidx, shift, 0);
-                queue.push((nidx as u16, ncur));
+                // 清零后回播本格自发光（BlockLightEngine.java:94-101）：
+                // emit < ncur 时移除波继续携带旧亮度；emit>0 时按发射值
+                // 重新播种进 readd（vanilla 在 setStoredLevel(0) 后
+                // enqueueIncrease(toEmission) 的等价实现）。
+                let emit = if shift == BLK_SHIFT {
+                    light_emit(BlockId(voxels[nidx]))
+                } else {
+                    0
+                };
+                if emit > 0 {
+                    set_ch(light, nidx, shift, emit);
+                    readd.push((nidx as u16, emit));
+                }
+                if emit < ncur {
+                    queue.push((nidx as u16, ncur));
+                }
             } else {
                 readd.push((nidx as u16, ncur));
             }
@@ -303,19 +323,29 @@ fn diff_edges(
     mask
 }
 
-/// Cold-init a chunk: zero light, seed direct-sky columns from the
-/// heightmap, seed emitters, then run both BFS channels to convergence.
+/// Cold-init a chunk: zero light, seed direct-sky source columns from the
+/// voxels, seed emitters, then run both BFS channels to convergence.
 /// Returns the border dirty mask (bits 0..3 = +X, -X, +Z, -Z).
 pub fn init(chunk: &mut LightChunk) -> u8 {
     chunk.light.fill(0);
     let mut sky_q: Vec<(u16, u8)> = Vec::new();
     let mut blk_q: Vec<(u16, u8)> = Vec::new();
 
-    // Direct sunlight: every cell at or above the column heightmap is 15.
+    // Direct-sky seeding (C3; vanilla `ChunkSkyLightSources.lowestSourceY`
+    // — isEdgeOccluded truncates the source column at the first cell whose
+    // `lightDampening != 0`, ChunkSkyLightSources.java:140-148 — plus
+    // `SkyLightEngine.addSourcesAbove` writing 15 down every cell above
+    // that edge, SkyLightEngine.java:106-131). The cutoff therefore *does*
+    // include water (damp 1): the sea surface is the source bottom and the
+    // water column falls off 14, 13, 12 … via BFS (`max(1, damp)` cost);
+    // the old heightmap-driven seeding used the terrain heightmap, which
+    // deliberately excludes water, and lit whole ocean columns to 15.
+    // `column_top` (opacity > 0) is the single criterion shared with the
+    // `update_block` column fix-up.
     for z in 0..16usize {
         for x in 0..16usize {
-            let hm = clamp_hm(chunk.heightmap[(z << 4) | x] as usize);
-            for y in hm..256usize {
+            let top = column_top(chunk.voxels, x, z, None);
+            for y in (top + 1) as usize..256usize {
                 let idx = vidx(x, y, z);
                 set_ch(chunk.light, idx, SKY_SHIFT, 15);
                 sky_q.push((idx as u16, 15));
@@ -424,8 +454,20 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
     let mut sky_readd = Vec::new();
     let mut blk_readd = Vec::new();
     if op == 1 {
-        removal_channel(chunk.light, SKY_SHIFT, &mut sky_rem, &mut sky_readd);
-        removal_channel(chunk.light, BLK_SHIFT, &mut blk_rem, &mut blk_readd);
+        removal_channel(
+            chunk.voxels,
+            chunk.light,
+            SKY_SHIFT,
+            &mut sky_rem,
+            &mut sky_readd,
+        );
+        removal_channel(
+            chunk.voxels,
+            chunk.light,
+            BLK_SHIFT,
+            &mut blk_rem,
+            &mut blk_readd,
+        );
     }
     sky_add.extend(sky_readd);
     blk_add.extend(blk_readd);
@@ -484,8 +526,9 @@ pub fn update_block(
 
     // Column tops: the edit is already in `voxels`, so the pre-edit top is
     // reconstructed by substituting `old_block` back over the edited cell.
-    // This is the heightmap-column fix-up (placing an opaque block raises the
-    // direct column, digging lowers it); the heightmap slice is caller-owned.
+    // This is the direct-column fix-up (placing a blocker raises the source
+    // column cutoff, digging lowers it); the caller-owned gameplay heightmap
+    // is maintained separately by the edit path (game.rs).
     let new_top = column_top(chunk.voxels, x, z, None);
     let old_top = column_top(chunk.voxels, x, z, Some((y, old_block)));
 
@@ -528,8 +571,20 @@ pub fn update_block(
     // 3. Removal waves; cells keeping their level become re-light sources.
     let mut sky_readd = Vec::new();
     let mut blk_readd = Vec::new();
-    removal_channel(chunk.light, SKY_SHIFT, &mut sky_rem, &mut sky_readd);
-    removal_channel(chunk.light, BLK_SHIFT, &mut blk_rem, &mut blk_readd);
+    removal_channel(
+        chunk.voxels,
+        chunk.light,
+        SKY_SHIFT,
+        &mut sky_rem,
+        &mut sky_readd,
+    );
+    removal_channel(
+        chunk.voxels,
+        chunk.light,
+        BLK_SHIFT,
+        &mut blk_rem,
+        &mut blk_readd,
+    );
     sky_add.extend(sky_readd);
     blk_add.extend(blk_readd);
 

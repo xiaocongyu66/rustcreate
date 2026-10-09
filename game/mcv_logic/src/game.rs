@@ -128,6 +128,141 @@ impl VoxelAccess for WorldView<'_> {
     }
 }
 
+/// 边号 → 相邻区块方向：0=+X 1=-X 2=+Z 3=-Z（与 mcv_light 的边编码一致）。
+fn side_delta(side: u8) -> (i32, i32) {
+    match side {
+        0 => (1, 0),
+        1 => (-1, 0),
+        2 => (0, 1),
+        _ => (0, -1),
+    }
+}
+
+/// C1 光照接线：place/destroy 共用的方块编辑入口。26.1 参照
+/// `Level.setBlock` → `LevelLightEngine.checkBlock` → `LightEngine.
+/// runLightUpdates`（先 decrease 后 increase 两阶段，LightEngine.java:
+/// 147-148）；调用方必须已经写好体素并标好 MESH/SAVE 脏。步骤：
+/// 1. 重算 heightmap——用 worldgen 唯一生产者 [`mcv_worldgen::
+///    recompute_heightmap`]（对生成期方块与 C++ terrain pass 3 逐列一致，
+///    并推广到玩家放置的透明方块；光照不读 heightmap，见
+///    `mcv_light::init` 文档——它是出生/刷怪用的地表高）。
+/// 2. 区块光照已初始化（≥LightLocalReady）时调 [`mcv_light::update_block`]
+///    做增量重光照；未初始化时直接返回，主循环稍后的 `init` 会全量覆盖。
+/// 3. 光发生变化的边界交给 [`sync_light_edges`] 跨区块派发，光变块的
+///    MESH 脏在派发路径内标好（网格顶点烘焙光照字节）。
+fn relight_block_edit(
+    chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
+    target: BlockPos,
+    old_id: u16,
+    new_id: u16,
+) {
+    let cpos = target.chunk();
+    let Some(handle) = chunks.get(&cpos) else {
+        return;
+    };
+    {
+        let ids: Vec<u16> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
+    }
+    if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
+        return;
+    }
+    let [lx, ly, lz] = target.local();
+    let mut seeds = Vec::new();
+    let mask = {
+        let vg = handle.voxels.read().unwrap();
+        let mut lg = handle.light.write().unwrap();
+        let hg = handle.heightmap.read().unwrap();
+        let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+        let mut view = mcv_light::LightChunk {
+            voxels,
+            light: &mut lg[..],
+            heightmap: &hg[..],
+        };
+        mcv_light::update_block(
+            &mut view, lx as u32, ly as u32, lz as u32, old_id, new_id, &mut seeds,
+        )
+    };
+    // BorderSeed 是格级差分记录；跨区块协议以整条边快照
+    // （extract_edge/apply_edge）为单位，脏面掩码已足够驱动派发。
+    let _ = seeds;
+    let mut queue: Vec<(ChunkPos, u8)> = Vec::new();
+    for side in 0..4u8 {
+        if mask & (1 << side) != 0 {
+            queue.push((cpos, side));
+        }
+    }
+    sync_light_edges(chunks, &mut queue);
+}
+
+/// 跨区块光照边派发队列（C1：原 border_synced 只做记账，光从不真正过界）。
+/// 每步取源区块 `side` 的整条边快照，先 REMOVE（撤回邻块不再被该边证成的
+/// 光）再 ADD（吸收该边新增的光）——等价 vanilla 跨 section 的
+/// decrease→increase 两阶段（LightEngine.java:147-148，由 setBlock 的
+/// checkNode 驱动）。接收块光变 → 标 MESH 脏 + 其另三面新脏回队级联。
+/// `apply_edge` 从不回报刚同步的边（mcv_light::diff_edges 的 exclude 机制），
+/// 光级别有限，级联自然收敛；步数上限只是防御性兜底。
+fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Vec<(ChunkPos, u8)>) {
+    let mut steps = 0usize;
+    while let Some((pos, side)) = queue.pop() {
+        if steps >= 512 {
+            log::warn!(
+                "light edge sync budget exhausted, {} edge task(s) dropped",
+                queue.len()
+            );
+            break;
+        }
+        steps += 1;
+        let (dx, dz) = side_delta(side);
+        let npos = ChunkPos::new(pos.x + dx, pos.z + dz);
+        let (Some(from), Some(to)) = (chunks.get(&pos), chunks.get(&npos)) else {
+            continue;
+        };
+        if (to.stage() as u8) < (Stage::LightLocalReady as u8) {
+            // 未初始化邻块：其 init 会本地播种，就绪时由 border_synced 的
+            // 成对同步补收这条边。
+            continue;
+        }
+        let obit = GameRuntime::opposite_side(side);
+        let edge = {
+            let vg = from.voxels.read().unwrap();
+            let mut lg = from.light.write().unwrap();
+            let hg = from.heightmap.read().unwrap();
+            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let view = mcv_light::LightChunk {
+                voxels,
+                light: &mut lg[..],
+                heightmap: &hg[..],
+            };
+            mcv_light::extract_edge(&view, side)
+        };
+        // REMOVE(1) 先、ADD(0) 后：边变暗时撤无据光、变亮时喂新光；
+        // 混合变化两轮都收敛到"以该边为界的正当亮度"。
+        for op in [1u8, 0u8] {
+            let dirty = {
+                let vg = to.voxels.read().unwrap();
+                let mut lg = to.light.write().unwrap();
+                let hg = to.heightmap.read().unwrap();
+                let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+                let mut view = mcv_light::LightChunk {
+                    voxels,
+                    light: &mut lg[..],
+                    heightmap: &hg[..],
+                };
+                mcv_light::apply_edge(&mut view, &edge, obit, op)
+            };
+            if dirty != 0 {
+                to.mark_dirty(mcv_core::dirty::MESH);
+                for bit in 0..4u8 {
+                    if dirty & (1 << bit) != 0 {
+                        queue.push((npos, bit));
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct InputState {
     pub forward: bool,
@@ -733,6 +868,9 @@ impl GameRuntime {
         for c in far {
             self.save_dirty(Some(c));
             self.chunks.remove(&c);
+            // 卸载即 forget：border_synced 记账必须同步清理，否则区块重进
+            // 视野时会跳过与新邻块的成对边同步（C1 配套清理）。
+            self.border_synced.remove(&c);
             self.render_chunks
                 .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
         }
@@ -815,7 +953,10 @@ impl GameRuntime {
             light_budget -= 1;
         }
 
-        // border sync: mark pairs once both ends are LightLocalReady
+        // border sync: mark pairs once both ends are LightLocalReady。
+        // C1：新成对（两端都已本地布光）时真正交换边快照——init 只做块内
+        // 播种，跨界的火把/阴影在此对齐（双向各发一条边，REMOVE+ADD 两相）。
+        let mut pair_edges: Vec<(ChunkPos, u8)> = Vec::new();
         for pos in &keys {
             let handle = self.chunks[pos].clone();
             if handle.stage() != Stage::LightLocalReady {
@@ -832,7 +973,10 @@ impl GameRuntime {
                         .is_some_and(|n| (n.stage() as u8) >= (Stage::LightLocalReady as u8));
                     if ready {
                         cur |= 1 << bit;
-                        marks.push((npos, Self::opposite_side(bit)));
+                        let obit = Self::opposite_side(bit);
+                        marks.push((npos, obit));
+                        pair_edges.push((*pos, bit));
+                        pair_edges.push((npos, obit));
                     }
                 }
             }
@@ -842,6 +986,7 @@ impl GameRuntime {
                 *ns |= 1 << obit;
             }
         }
+        sync_light_edges(&self.chunks, &mut pair_edges);
 
         // mesh chunks: 3x3 loaded, center lit, dirty or missing
         let mut remesh_budget = 2;
@@ -1626,8 +1771,13 @@ impl GameRuntime {
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
-            handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
+            let idx = ly << 8 | lz << 4 | lx;
+            let old_id = handle.voxels.read().unwrap()[idx];
+            handle.voxels.write().unwrap()[idx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+            // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
+            //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
+            relight_block_edit(&self.chunks, target, old_id.0, new_id.0);
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
                 self.hotbar.take_one(self.player.sel_slot);
@@ -1660,6 +1810,9 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
+        // heightmap 维护（26.1 destroy → checkBlock）。
+        relight_block_edit(&self.chunks, target, old.0, 0);
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
@@ -2737,6 +2890,125 @@ fn step_event(vid: u16) -> Option<&'static str> {
         2 | 3 | 7 | 11 => Some("block.grass.step"),
         6 | 8 => Some("block.wood.step"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const STONE: u16 = 1;
+    /// 千块表 id 1009 = "torch"（26.1 发光 14；damp=0，见 mcv_core::OPACITY）。
+    const TORCH: u16 = 1009;
+
+    fn lidx(x: usize, y: usize, z: usize) -> usize {
+        y << 8 | z << 4 | x
+    }
+
+    /// 无头拼装一个已完成本地布光的区块（镜像主循环 init 阶段的效果；
+    /// GameRuntime::new 需要 GPU MeshUploader，无头测试走 relight_block_edit
+    /// 这条纯数据接缝——place/destroy 两条游戏路径调用的就是它）。
+    fn lit_chunk(x: i32, z: i32, floor_top: usize) -> Arc<ChunkHandle> {
+        let handle = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
+        {
+            let mut vg = handle.voxels.write().unwrap();
+            for y in 0..=floor_top {
+                for zz in 0..16usize {
+                    for xx in 0..16usize {
+                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                    }
+                }
+            }
+        }
+        let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
+            handle.voxels.read().unwrap().as_slice(),
+        ));
+        *handle.heightmap.write().unwrap() = hm;
+        {
+            let vg = handle.voxels.read().unwrap();
+            let mut lg = handle.light.write().unwrap();
+            let hg = handle.heightmap.read().unwrap();
+            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let mut view = mcv_light::LightChunk {
+                voxels,
+                light: &mut lg[..],
+                heightmap: &hg[..],
+            };
+            mcv_light::init(&mut view);
+        }
+        handle.advance_to(Stage::LightLocalReady);
+        handle
+    }
+
+    fn blk(h: &ChunkHandle, x: usize, y: usize, z: usize) -> u8 {
+        h.light.read().unwrap()[lidx(x, y, z)] & 0xF
+    }
+
+    /// 模拟游戏路径：调用方写体素 → relight_block_edit 接线（同 interact/
+    /// destroy_block 的调用序）。
+    fn edit(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, at: BlockPos, old: u16, new: u16) {
+        let h = &chunks[&at.chunk()];
+        let [lx, ly, lz] = at.local();
+        h.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(new);
+        relight_block_edit(chunks, at, old, new);
+    }
+
+    #[test]
+    fn place_torch_then_dig_updates_block_light() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        let h = &chunks[&ChunkPos::new(0, 0)];
+        let torch_at = BlockPos::new(8, 21, 8);
+        assert_eq!(blk(h, 9, 21, 8), 0, "放火把前邻格无方块光");
+        // 放火把：邻格 = 14 - max(1, damp(空气)=0) = 13（六向同规，
+        // LightEngine.java:77-79）。
+        edit(&chunks, torch_at, 0, TORCH);
+        assert_eq!(blk(h, 8, 21, 8), 14, "火把格自发光 14");
+        assert_eq!(blk(h, 9, 21, 8), 13, "放火把后邻格方块光升高");
+        // 挖掉：removal 波清空后不得留残光。
+        edit(&chunks, torch_at, TORCH, 0);
+        assert_eq!(blk(h, 9, 21, 8), 0, "挖掉后邻格方块光回落");
+        assert_eq!(blk(h, 8, 21, 8), 0, "挖掉后火把格熄灭");
+    }
+
+    #[test]
+    fn torch_light_crosses_chunk_border() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        chunks.insert(ChunkPos::new(1, 0), lit_chunk(1, 0, 20));
+        let a = &chunks[&ChunkPos::new(0, 0)];
+        let b = &chunks[&ChunkPos::new(1, 0)];
+        // 火把贴着 chunk(0,0) 的 +X 边界（x=15）。
+        let torch_at = BlockPos::new(15, 21, 8);
+        assert_eq!(blk(b, 0, 21, 8), 0, "同步前邻块跨界格无光");
+        edit(&chunks, torch_at, 0, TORCH);
+        assert_eq!(blk(a, 15, 21, 8), 14, "火把格自发光");
+        assert_eq!(blk(b, 0, 21, 8), 13, "边同步：光跨过区块边界");
+        assert_eq!(blk(b, 1, 21, 8), 12, "边同步后邻块内部继续衰减");
+        edit(&chunks, torch_at, TORCH, 0);
+        assert_eq!(blk(b, 0, 21, 8), 0, "挖掉后跨界光被 REMOVE 撤回");
+        assert_eq!(blk(b, 1, 21, 8), 0, "撤回不留残光");
+    }
+
+    #[test]
+    fn block_edit_maintains_heightmap() {
+        let mut chunks = HashMap::new();
+        chunks.insert(ChunkPos::new(0, 0), lit_chunk(0, 0, 20));
+        let h = &chunks[&ChunkPos::new(0, 0)];
+        let col = (8usize << 4) | 8usize;
+        assert_eq!(h.heightmap.read().unwrap()[col], 21, "初始地表高=20+1");
+        edit(&chunks, BlockPos::new(8, 30, 8), 0, STONE);
+        assert_eq!(
+            h.heightmap.read().unwrap()[col],
+            31,
+            "放置后 heightmap 抬升"
+        );
+        edit(&chunks, BlockPos::new(8, 30, 8), STONE, 0);
+        assert_eq!(
+            h.heightmap.read().unwrap()[col],
+            21,
+            "挖掉后 heightmap 回落"
+        );
     }
 }
 
