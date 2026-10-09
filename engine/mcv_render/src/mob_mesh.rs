@@ -710,7 +710,7 @@ mod tests {
         let m = build_mob_mesh();
         for (k, r) in m.slices.iter().enumerate() {
             let boxes = PARTS[k].iter().map(|p| p.boxes.len()).sum::<usize>();
-            assert_eq!(r.len() as usize, boxes * 36, "kind {k} index span");
+            assert_eq!(r.len(), boxes * 36, "kind {k} index span");
         }
         // 总盒数：鸡 8 + 牛 10（头 4 含双角 + 躯干 2 含乳房 + 腿 4）
         // + 羊 12 + 猪 7（头 2 含鼻 + 躯干 1 + 腿 4）= 37
