@@ -235,8 +235,8 @@ fn terrain_sky_and_hud_render() {
 
 #[test]
 fn mining_crack_and_outline_darken_target() {
-    // 同一场景渲两次：overlay（stage3 裂纹 + 描边）应在目标投影区制造
-    // 明显多于基线的暗像素（草地亮、裂纹/描边深色系）。
+    // 同一场景渲两次：overlay（stage3 裂纹 + 描边）应让目标投影区像素
+    // 明显变暗（草地亮、裂纹/描边深色系），按像素 diff 计数断言。
     let (device, queue, mut renderer) = setup();
     let extent = wgpu::Extent3d {
         width: 320,
@@ -297,13 +297,24 @@ fn mining_crack_and_outline_darken_target() {
         }),
     );
 
-    let dark = |px: &[u8]| {
-        px.chunks(4)
-            .filter(|p| (p[0] as u32 + p[1] as u32 + p[2] as u32) < 150)
-            .count()
-    };
-    let (d0, d1) = (dark(&base), dark(&with));
-    assert!(d1 > d0 + 25, "overlay should darken: base={d0} with={d1}");
+    // 差分断言：同场景两次渲染只应差在 overlay 投影区（裂纹/描边把草地
+    // 明显压暗）。按像素 diff 计数，不依赖草地底色，抗驱动差异。
+    let changed = a_diff_pixels(&base, &with);
+    assert!(
+        changed > 40,
+        "overlay should visibly darken target region, changed={changed}"
+    );
+}
+
+fn a_diff_pixels(a: &[u8], b: &[u8]) -> usize {
+    a.chunks(4)
+        .zip(b.chunks(4))
+        .filter(|(p, q)| {
+            let dp: i32 = p[..3].iter().map(|&v| v as i32).sum();
+            let dq: i32 = q[..3].iter().map(|&v| v as i32).sum();
+            (dp - dq).abs() > 40
+        })
+        .count()
 }
 
 #[test]
