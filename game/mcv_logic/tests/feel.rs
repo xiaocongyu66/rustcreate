@@ -169,9 +169,16 @@ fn sun_zenith_at_tick_6000() {
     assert!(d.y.abs() < 1e-5, "tick 12000 日落地平线");
     let (d, _) = sun_state(18_000);
     assert!((d.y + 1.0).abs() < 1e-5, "tick 18000 子夜天底");
-    // 新世界初始 6000（noon start）在新相位下确为正午。
     let (_, day) = sun_state(6_000);
     assert!((day - 1.0).abs() < 1e-6);
+    // 新世界从 tick 0 黎明起步（26.1 ClockInstance.totalTicks 默认 0，
+    // ServerClockManager.java:149；day.json wake_up_from_sleep 标记 0）：
+    // day_factor(0) 处于黎明线性段（0.24→1.0），既非正午也非深夜。
+    assert!(
+        (day_factor(0) - 0.24) > 0.01 && (day_factor(0) - 1.0) < -0.01,
+        "黎明段 day_factor(0) 应介于平台之间, got {}",
+        day_factor(0)
+    );
 }
 
 #[test]

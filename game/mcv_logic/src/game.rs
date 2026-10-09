@@ -414,7 +414,11 @@ impl GameRuntime {
             scheduler: mcv_worldgen::TerrainScheduler::new(seed, mcv_core::world_worker_count()),
             player: Player::default(),
             input: InputState::default(),
-            time_ticks: 6_000, // noon start
+            // 新世界从 tick 0 = 黎明起步（26.1 ClockInstance.totalTicks
+            // 默认 0，ServerClockManager.java:149；day.json wake_up_from_sleep
+            // 标记 0。旧实现 6000「noon start」在新相位下是正午开局，无源码
+            // 依据——旧相位 bug 时代的补偿，相位修正后按原版语义归零）。
+            time_ticks: 0,
             tick_frac: 0.0,
             game_ticks: 0,
             on_tick: false,
