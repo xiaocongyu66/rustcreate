@@ -10,6 +10,7 @@ pub mod components;
 pub mod defs;
 pub mod drops;
 pub mod items;
+pub mod passive;
 pub mod pathfinding;
 pub mod spawner;
 
@@ -25,6 +26,12 @@ pub use items::{
     DEATH_PICKUP_DELAY, DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, PICKUP_DELAY,
     PICKUP_INFLATE_XZ, PICKUP_INFLATE_Y, PickupReq, item_merge_system, item_physics_system,
     item_pickup_system, register_drop_components, settle_pickups, spawn_item_drop,
+};
+pub use passive::{
+    AnimState, EAT_GRASS_INTERVAL, EAT_GRASS_TICKS, PANIC_MAX_TICKS, PANIC_RADIUS,
+    PLAYER_WALK_SPEED, PassiveMode, PassiveServices, STROLL_INTERVAL, WanderState,
+    panic_speed_mult, passive_ai_system, register_passive_components, spawn_passive_mob,
+    update_wing,
 };
 pub use pathfinding::{BASE_FALL_DISTANCE, Path, PathParams, find_path, max_fall_distance};
 pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};
