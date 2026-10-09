@@ -62,6 +62,16 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
 }
 
 fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
+    setup_with_assets(None)
+}
+
+/// 喂仓库内原版素材的 setup：裂纹测试验证真实 destroy_stage、天体测试
+/// 验证真实 environment/celestial。管线冒烟测试保持 None——原版
+/// grass_block_top 是灰度待生物群系染色贴图（本引擎尚未实现染色，见
+/// KNOWN-DIVERGENCE），真实素材下草地渲染为灰，绿色断言不适用。
+fn setup_with_assets(
+    assets: Option<&std::path::Path>,
+) -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::None,
@@ -88,7 +98,7 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
         device.clone(),
         queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        Some(&workspace_assets()),
+        assets,
     );
     (device, queue, renderer)
 }
@@ -246,7 +256,9 @@ fn terrain_sky_and_hud_render() {
 fn mining_crack_and_outline_darken_target() {
     // 同一场景渲两次：overlay（stage3 裂纹 + 描边）应让目标投影区像素
     // 明显变暗（草地亮、裂纹/描边深色系），按像素 diff 计数断言。
-    let (device, queue, mut renderer) = setup();
+    // 喂真实素材：裂纹层走原版 destroy_stage_3（16x16 黑裂纹 + alpha），
+    // 验证新 10 档图集接入后暗化不回退。
+    let (device, queue, mut renderer) = setup_with_assets(Some(&workspace_assets()));
     let extent = wgpu::Extent3d {
         width: 320,
         height: 240,
@@ -538,7 +550,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
 /// （无素材）不会产出该簇 → 双路径可区分。
 #[test]
 fn celestial_sun_texture_paints_core() {
-    let (device, queue, mut renderer) = setup();
+    let (device, queue, mut renderer) = setup_with_assets(Some(&workspace_assets()));
     let extent = wgpu::Extent3d {
         width: 320,
         height: 240,
