@@ -16,6 +16,7 @@
 //!   工作台 x=29（CraftingScreen.java:22）、随身 x=97（InventoryScreen.java:29）；
 //!   "Inventory" 标签 y = 166-94 = 72（:83）。颜色 0xFF404040。
 //! - 面板贴图自带槽位凹槽与合成箭头：命中面板精灵时不再程序化画槽底/箭头。
+//!
 //! 精灵表缺失（无素材部署）时回退程序化面板（同布局纯色矩形）。
 //! 创造取物界面原版用分页 tab 贴图（CreativeModeInventoryScreen），暂不
 //! 对齐，保持程序化面板。
