@@ -51,7 +51,6 @@
 //! （左右互换）；生物几何双轴对称，视觉无差（与玩家管线同款约定）。
 
 use crate::player_mesh::{PX, PlayerVertex, quadruped_faces};
-use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3};
 
 /// 生物种类数（鸡/牛/羊/猪；结构可扩展全部 mob——加条目 + 贴图层即可）。
@@ -119,7 +118,9 @@ enum PartAnim {
     Wing { sign: f32 },
 }
 
-/// 盒体（像素，MC 约定：min 相对部位 pivot，y 向下）。
+/// 盒体（像素，MC 约定：min 相对部位 pivot，y 向下）。Copy 供静态
+/// 初始化的 `&[SINGLE_BOX]` / `&[mirrored(..)]` 数组取用。
+#[derive(Clone, Copy)]
 struct MobBox {
     min: [f32; 3],
     size: [f32; 3],
@@ -687,12 +688,13 @@ pub fn load_mob_payload(assets_dir: Option<&std::path::Path>) -> Option<Vec<u8>>
             log::warn!("mob texture {file}: unexpected {w}x{h}");
             return None;
         }
+        // into_raw 只取一次（消费 img），循环内按行拷贝 pad。
+        let raw = img.into_raw();
         for y in 0..h {
             for x in 0..w {
                 let s = (y * w + x) * 4;
                 let d = ((y * MOB_TEX_PX) + x) * 4;
-                out[layer * MOB_TEX_PX * MOB_TEX_PX * 4 + d..][..4]
-                    .copy_from_slice(&img.into_raw()[s..s + 4]);
+                out[layer * MOB_TEX_PX * MOB_TEX_PX * 4 + d..][..4].copy_from_slice(&raw[s..s + 4]);
             }
         }
     }
@@ -734,7 +736,7 @@ mod tests {
         let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
         for v in &m.verts[0..24] {
             assert_eq!(v.meta, [0, 0]);
-            let w = mm[0] * Vec3::from(v.pos).extend(1.0);
+            let w = mm[0].transform_point3(Vec3::from(v.pos));
             lo = lo.min(w);
             hi = hi.max(w);
         }
@@ -769,7 +771,7 @@ mod tests {
         let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
         for v in &m.verts[288..288 + 48] {
             assert_eq!(v.meta[1] as usize, 8 + 1, "牛躯干部位序");
-            let w = mm[1] * Vec3::from(v.pos).extend(1.0);
+            let w = mm[1].transform_point3(Vec3::from(v.pos));
             lo = lo.min(w);
             hi = hi.max(w);
         }

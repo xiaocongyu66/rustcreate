@@ -123,14 +123,15 @@ impl AnimState {
     }
     /// 羊低头角（getHeadEatAngleScale，a=0，弧度，正=低头 MC 语义）。
     pub fn head_eat_angle(&self, eat_ticks: u32) -> f32 {
+        // std 无 FRAC_PI_5 常数（f32::consts 只有 2/3/4/6/8），就地除。
         if eat_ticks == 0 {
             return 0.0;
         }
         if eat_ticks > 4 && eat_ticks <= 36 {
             let scale = (eat_ticks as f32 - 4.0) / 32.0;
-            std::f32::consts::FRAC_PI_5 + 0.219_911_5 * (scale * 28.7).sin()
+            std::f32::consts::PI / 5.0 + 0.219_911_5 * (scale * 28.7).sin()
         } else {
-            std::f32::consts::FRAC_PI_5
+            std::f32::consts::PI / 5.0
         }
     }
 }
@@ -315,7 +316,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     // 羊：站在草方块上按 p=1/1000 低头吃草（动画段）。
                     if def.kind == MobKind::Sheep
                         && body.on_ground
-                        && xorshift(&mut rng_state).is_multiple_of(EAT_GRASS_INTERVAL)
+                        && xorshift(&mut rng_state).is_multiple_of(u64::from(EAT_GRASS_INTERVAL))
                     {
                         let below = BlockPos::new(
                             pos.x.floor() as i32,
@@ -329,7 +330,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     }
                     // RandomStrollGoal：每 tick p=1/120 起游。
                     if wander.mode == PassiveMode::Idle
-                        && xorshift(&mut rng_state).is_multiple_of(STROLL_INTERVAL)
+                        && xorshift(&mut rng_state).is_multiple_of(u64::from(STROLL_INTERVAL))
                     {
                         let ang = rand01(&mut rng_state) * std::f32::consts::TAU;
                         let d = 2.0 + rand01(&mut rng_state) * (crate::ai::WANDER_RADIUS - 2.0);
@@ -397,20 +398,21 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
 
         // ---- 动画账本（每步推进）：行走摆动 + 鸡扑翼 ----
         if let Some(anim) = anims.get_mut(e) {
+            const DT: f32 = 1.0 / 60.0;
             let horiz = (eng.vel.x * eng.vel.x + eng.vel.z * eng.vel.z).sqrt();
             // 与 player_mesh::update_walk_animation 同款（玩家 0.1 属性 =
             // 4.317 m/s；被动怪属性不同，直接按比值缩放相位与幅值）。
             let ratio = (horiz / PLAYER_WALK_SPEED).min(1.0);
             let target = ratio * 0.88;
             anim.amount = if horiz > 0.15 {
-                anim.amount + (target - anim.amount) * ((1.0 / 60.0 * 10.0).min(1.0))
+                anim.amount + (target - anim.amount) * (DT * 10.0).min(1.0)
             } else {
-                anim.amount * (-(1.0 / 60.0) * 12.0).exp()
+                anim.amount * (-DT * 12.0).exp()
             };
             if horiz <= 0.15 && anim.amount < 0.005 {
                 anim.amount = 0.0;
             }
-            anim.phase = (anim.phase + ratio * 1.2 * (1.0 / 60.0 * 20.0)) % std::f32::consts::TAU;
+            anim.phase = (anim.phase + ratio * 1.2 * (DT * 20.0)) % std::f32::consts::TAU;
             // 鸡扑翼：Chicken.java:117-119（tick 语义，在 on_tick 内推进）。
             if on_tick {
                 let on_ground = body.on_ground;

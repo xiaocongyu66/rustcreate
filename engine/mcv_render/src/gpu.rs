@@ -1693,7 +1693,7 @@ impl Renderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &player_uniform,
                         offset: 0,
-                        size: Some(size_of::<PlayerUniforms>() as u64),
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -1735,7 +1735,7 @@ impl Renderer {
         });
         // 原版 mob 贴图（entity/{chicken,cow,sheep,pig}/...）：素材缺失时
         // mobs_loaded=false 短路不画，绝不程序化伪造。
-        let mob_payload = assets_dir.and_then(crate::mob_mesh::load_mob_payload);
+        let mob_payload = crate::mob_mesh::load_mob_payload(assets_dir);
         let mobs_loaded = mob_payload.is_some();
         let mob_tex_data = mob_payload.unwrap_or_else(|| {
             vec![
@@ -1784,7 +1784,7 @@ impl Renderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &mob_uniform,
                         offset: 0,
-                        size: Some(size_of::<PlayerUniforms>() as u64),
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -1915,7 +1915,7 @@ impl Renderer {
                     resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &self.player_uniform,
                         offset: 0,
-                        size: Some(size_of::<PlayerUniforms>() as u64),
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
                     }),
                 },
                 wgpu::BindGroupEntry {
@@ -1991,8 +1991,10 @@ impl Renderer {
                 view_proj,
                 models: [[[0.0; 4]; 4]; PART_COUNT],
             };
+            // MobInstance.models 已是 to_cols_array_2d 的列数组形（由
+            // mob_render 拼装），这里逐矩阵直拷即可。
             for (m, dst) in inst.models.iter().zip(u.models.iter_mut()) {
-                *dst = m.to_cols_array_2d();
+                *dst = *m;
             }
             self.queue.write_buffer(
                 &self.mob_uniform,
