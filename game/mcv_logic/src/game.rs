@@ -13,8 +13,8 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, Health, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobTicks, PhysBody,
-    Yaw, spawn_mob,
+    AiAction, Health, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath, MobTicks,
+    PhysBody, Yaw, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
@@ -335,6 +335,13 @@ pub struct GameRuntime {
     pub hotbar: mcv_item::Hotbar,
     pub touch: TouchState,
     pub mode: GameMode,
+    /// 难度（26.1 Difficulty.java:8-13；伤害缩放见
+    /// [`difficulty::scale_entity_damage`]，和平清怪/不索敌在 AI 系统门）。
+    pub difficulty: crate::difficulty::Difficulty,
+    /// 天气状态机（ServerLevel.advanceWeatherCycle；[`weather::Weather`]）。
+    pub weather: crate::weather::Weather,
+    /// 弓蓄力账本（Some=按住蓄力中的 tick 数；状态机 [`mcv_item::bow`]）。
+    bow_hold: Option<u32>,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
     pub hardcore_death: bool,
     /// 渲染距离（区块），设置界面可调。
@@ -612,6 +619,9 @@ impl GameRuntime {
             hotbar,
             touch: TouchState::default(),
             mode,
+            difficulty: crate::difficulty::Difficulty::Normal,
+            weather: crate::weather::Weather::new(),
+            bow_hold: None,
             hardcore_death: false,
             render_dist: RENDER_DIST,
             sens: 1.0,
@@ -673,6 +683,17 @@ impl GameRuntime {
     /// 不建模）；`lastHurtByMobTimestamp`/`lastHurtMobTimestamp` 只用于仇恨
     /// 记录（LivingEntity.java:241-244），不构成本门的一部分——按源码实况实现。
     pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
+        // 难度缩放（Player.hurtServer:692-706）：仅 scalesWithDifficulty 伤
+        // 害源（DamageSource.java:92-97 = LivingEntity 造成且非玩家 → 本仓
+        // mob 近战/箭/爆炸，`from` 有值）参与；和平归 0 直接免伤结算。
+        let amount = if from.is_some() {
+            crate::difficulty::scale_entity_damage(amount, self.difficulty)
+        } else {
+            amount
+        };
+        if amount <= 0.0 {
+            return;
+        }
         let p = &mut self.player;
         if p.health <= 0.0 || self.mode == GameMode::Creative {
             return;
@@ -1038,6 +1059,17 @@ impl GameRuntime {
         }
     }
 
+    /// 天气渲染参数（app 层 Scene 装配用）：`(day_factor 混合值, 雾色 RGB
+    /// 乘子, 雾密度乘子)`。`day` 传 `mcv_render::sun_state(t).1`；
+    /// `base_fog_end` 传 `camera.far × 0.95`（FrameUniforms.fog_params 基线）。
+    pub fn weather_visual(&self, day: f32, base_fog_end: f32) -> (f32, [f32; 3], f32) {
+        (
+            self.weather.sky_light_factor(day),
+            self.weather.fog_tint(),
+            self.weather.fog_density_multiplier(base_fog_end),
+        )
+    }
+
     pub fn camera(&self, aspect: f32) -> Camera {
         let mut cam = Camera {
             pos: self.player.pos,
@@ -1368,6 +1400,8 @@ impl GameRuntime {
         if self.on_tick {
             self.game_ticks += n;
             self.time_ticks += n; // 26.1 ServerClockManager 每 tick +1
+            // 天气推进（ServerLevel.advanceWeatherCycle:694-755）。
+            self.weather.tick(&mut spawn_rng());
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
@@ -1424,8 +1458,11 @@ impl GameRuntime {
                 on_tick: self.on_tick,
                 game_ticks: self.game_ticks,
                 monsters_burn: monsters_burn(self.time_ticks),
-                sky_darken: sky_darken(self.time_ticks),
+                // 天气修正（WeatherAttributes SKY_LIGHT_LEVEL 混合）。
+                sky_darken: self.weather.sky_darken(sky_darken(self.time_ticks)),
                 ticks_step: n.min(u32::MAX as u64) as u32,
+                difficulty: self.difficulty.id(),
+                creative: self.mode == GameMode::Creative,
             });
             // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
@@ -1448,6 +1485,7 @@ impl GameRuntime {
         for h in arrows {
             self.hurt_player(h.damage.max(1.0), Some(h.src));
         }
+        self.settle_player_arrow_hits();
         let blasts: Vec<MobExplosionHit> = self.mobs_app.events.channel::<MobExplosionHit>().take();
         for b in blasts {
             // ExplosionDamageCalculator 不在反编译树（NOTES-mobs.md:94，无法
@@ -1612,6 +1650,60 @@ impl GameRuntime {
             }
         }
 
+        // ---- 弓（BowItem.releaseUsing:28-43 蓄力放箭；状态机 mcv_item::bow）----
+        // 按住右键蓄力（每 game tick +1）、松开结算；pow<0.1 取消（:38）。
+        let has_bow =
+            self.hotbar.selected(self.player.sel_slot).def().kind == mcv_item::ItemKind::Bow;
+        if let Some(rel) = mcv_item::bow::step_charge(
+            self.input.placing,
+            self.on_tick,
+            has_bow,
+            &mut self.bow_hold,
+        ) {
+            // 弹药门（BowItem.java:30-34 getProjectile 空 → 不放）；创造豁免。
+            let arrow_id = mcv_item::item_by_name("arrow");
+            let has_ammo = self.mode == GameMode::Creative
+                || arrow_id.is_some_and(|id| {
+                    self.hotbar
+                        .all_slots()
+                        .iter()
+                        .any(|s| !s.is_empty() && s.item == id)
+                });
+            if has_ammo {
+                if self.mode != GameMode::Creative
+                    && let Some(id) = arrow_id
+                {
+                    // 消耗一支箭（vanilla draw() shrink；就近找格扣 1）。
+                    for i in 0..mcv_item::HOTBAR_SLOTS + mcv_item::MAIN_SLOTS {
+                        let s = self.hotbar.slot_mut(i);
+                        if !s.is_empty() && s.item == id {
+                            s.count -= 1;
+                            if s.count == 0 {
+                                *s = mcv_item::ItemStack::empty();
+                            }
+                            break;
+                        }
+                    }
+                }
+                // shootFromRotation：初速 pow×3.0（BowItem.java:41），
+                // pow==1 → 暴击 flag（:41 第 5 参）。
+                let dir = self.camera(1.0).dir();
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let e = self.mobs_app.world.spawn();
+                self.mobs_app.world.insert(
+                    e,
+                    MobArrow {
+                        pos: eye + dir * 0.5,
+                        vel: dir * mcv_item::bow::release_velocity(rel.power),
+                        ttl_ticks: 1200,
+                        base_damage: 2.0, // AbstractArrow.java:622 默认。
+                        crit: rel.power >= 1.0,
+                        player_owned: true,
+                    },
+                );
+            }
+        }
+
         // ---- 虚空伤害（y < -10）：无视无敌帧的重击，死亡后传送回出生点上方 ----
         if self.player.pos.y < -10.0 {
             self.player.invulnerable = 0;
@@ -1620,6 +1712,77 @@ impl GameRuntime {
                 self.player.pos = Vec3::new(8.5, 200.0, 8.5);
                 self.player.vel = Vec3::ZERO;
                 self.player.flying = self.mode == GameMode::Creative;
+            }
+        }
+    }
+
+    /// 玩家箭命中 mob 结算（`arrow_system` 事件 → 伤害/击退/击杀掉落）。
+    /// 伤害路径与 try_attack 相同（combat::apply_hurt + HurtByTarget 输入 +
+    /// knockback 0.4 + die → XP/loot）；不重构 try_attack（并行接线纪律），
+    /// 此处独立成方法。
+    fn settle_player_arrow_hits(&mut self) {
+        let hits: Vec<PlayerArrowHitMob> =
+            self.mobs_app.events.channel::<PlayerArrowHitMob>().take();
+        for h in hits {
+            let Some(def) = ({
+                let world = &self.mobs_app.world;
+                let kind = world.read::<MobKind>();
+                kind.get(h.target).map(|k| *k.0.def())
+            }) else {
+                continue;
+            };
+            let mut slain = false;
+            {
+                let world = &mut self.mobs_app.world;
+                let mut health = world.write::<Health>();
+                let mut ticks = world.write::<MobTicks>();
+                let mut last_hurt = world.write::<LastHurt>();
+                if let (Some(hp), Some(tk), Some(lh)) = (
+                    health.get_mut(h.target),
+                    ticks.get_mut(h.target),
+                    last_hurt.get_mut(h.target),
+                ) {
+                    let hurt = combat::apply_hurt(
+                        &mut hp.0,
+                        &mut tk.invulnerable,
+                        &mut lh.0,
+                        def.armor,
+                        h.damage as f32,
+                        0,
+                    );
+                    if hurt.is_some() {
+                        tk.hurt_flag = true; // 受击索敌（HurtByTargetGoal）。
+                        slain = hp.0 <= 0.0;
+                    }
+                }
+            }
+            // 击退（LivingEntity.java:1238，victim 0.4，同近战）。
+            if !slain && let Some(b) = self.mobs_app.world.write::<PhysBody>().get_mut(h.target) {
+                let dir = Vec3::new(b.pos.x - h.src.x, 0.0, b.pos.z - h.src.z);
+                b.vel = combat::knockback_velocity(b.vel, b.on_ground, 0.0, 0.4, dir);
+            }
+            if slain {
+                let pos = self
+                    .mobs_app
+                    .world
+                    .get_ref::<PhysBody>(h.target)
+                    .map(|b| b.pos + Vec3::Y * 0.5)
+                    .unwrap_or(h.src);
+                self.mobs_app.world.despawn(h.target);
+                self.player_xp += def.xp;
+                let mut rng = spawn_rng();
+                for ev in mcv_entity::death_drops(def.kind, true, pos, &mut rng) {
+                    if let Some(item) = mcv_item::item_by_name(ev.item) {
+                        mcv_entity::spawn_item_drop(
+                            &mut self.mobs_app.world,
+                            pos,
+                            item,
+                            ev.count.min(u8::MAX as u32) as u8,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut rng,
+                        );
+                    }
+                }
             }
         }
     }
@@ -2736,9 +2899,16 @@ pub struct MobServices {
     /// 亡灵白天直晒燃烧的判据。
     pub monsters_burn: bool,
     /// 当前 skyDarken = 15 − SKY_LIGHT_LEVEL（Level.java:736，关键帧
-    /// Timelines.java:80-85）——magic light / 亮度门读天光前必须扣减
-    /// （LevelReader.java:163-170）。
+    /// Timelines.java:80-85；天气混合 WeatherAttributes.java:13/:26）——
+    /// magic light / 亮度门读天光前必须扣减（LevelReader.java:163-170）。
     pub sky_darken: u8,
+    /// 难度 id（Difficulty.java:28-30 快照）：和平清怪/不索敌（Mob.java:656
+    /// + LivingEntity.java:928）、skeleton 射速/散布（AbstractSkeleton
+    /// .java:51-54,170）、箭 base 噪声（AbstractArrow.java:718-720）。
+    pub difficulty: u8,
+    /// 玩家创造态快照：创造玩家不被索敌（LivingEntity.java:928
+    /// canBeSeenAsEnemy 的本仓等价门，审计 N-5）。
+    pub creative: bool,
 }
 
 /// 近战命中事件（信号）：AI 系统发射，GameRuntime 在固定步末 drain 后结算
@@ -2754,6 +2924,17 @@ pub struct MobMeleeHit {
 pub struct MobArrowHit {
     pub src: Vec3,
     pub damage: f32,
+}
+
+/// 玩家箭命中 mob 事件（arrow_system 发射；结算走
+/// [`GameRuntime::settle_player_arrow_hits`]，同 try_attack 的伤害路径）。
+#[derive(Clone, Copy)]
+pub struct PlayerArrowHitMob {
+    pub target: mcv_ecs::Entity,
+    /// 命中点（击退方向基准，AbstractArrow.doKnockback :514-516 近似）。
+    pub src: Vec3,
+    /// 已含速度缩放/暴击的点数（AbstractArrow.java:421-437）。
+    pub damage: u32,
 }
 
 /// creeper 引爆事件：AI 发信号，GameRuntime 按距离衰减结算玩家伤害
@@ -2798,7 +2979,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
     let events = &mut *ctx.events;
-    let (mut phys, kind, mut ticks, mut yaw, mut health, mut brains, mut intents) = (
+    let (mut phys, kind, mut ticks, mut yaw, mut health, mut brains, mut intents, mut paths) = (
         world.write::<PhysBody>(),
         world.read::<MobKind>(),
         world.write::<MobTicks>(),
@@ -2806,6 +2987,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         world.write::<Health>(),
         world.write::<MobBrain>(),
         world.write::<MobIntent>(),
+        world.write::<MobPath>(),
     );
     let view = WorldView {
         chunks: &svc.chunks,
@@ -2839,6 +3021,12 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         if svc.on_tick {
             // ---- 20 Hz tick 语义：计时器只在这里推进（审计 C-1）----
             //（无敌帧递减在循环头部按 ticks_step 处理，见上。）
+            // 和平清怪（Mob.checkDespawn:656-658）：PEACEFUL 且非
+            // isAllowedInPeaceful → 立即 discard（审计 N-5 接线）。
+            if svc.difficulty == 0 && def.hostile {
+                commands.despawn(e);
+                return;
+            }
             // 燃烧：Entity.java:534-544——remainingFireTicks%20==0 时 1 点
             // 伤害（每秒 1 点；"每 tick 1 伤害"系派单口误，以源码为准）。
             if tk.fire_ticks > 0 {
@@ -2891,10 +3079,78 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     && flat_speed < speed * 0.25;
                 let hurt = tk.hurt_flag;
                 tk.hurt_flag = false;
+                // 和平/创造豁免（LivingEntity.java:928 canBeSeenAsEnemy +
+                // 审计 N-5）：创造玩家/和平难度不被索敌。
+                let targetable = def.hostile && !svc.creative && svc.difficulty != 0;
+                // ---- A* 路径账本（审计 N-1）：GroundPathNavigation.moveTo +
+                // MeleeAttackGoal.java:100-124 重算节奏。寻路失败 → 航点空，
+                // Brain 走直线（旧行为兜底，等价 moveTo false 的 +15 惩罚）。
+                let mut waypoint = None;
+                if targetable && let Some(path) = paths.get_mut(e) {
+                    path.recalc_cd = path.recalc_cd.saturating_sub(1);
+                    let moved = (svc.player_pos - path.pathed_target).length_squared() >= 1.0;
+                    if path.recalc_cd == 0 && (moved || path.idx >= path.nodes.len()) {
+                        let hp = health.get(e).map(|h| h.0).unwrap_or(def.health);
+                        let params = mcv_entity::pathfinding::PathParams::ground(
+                            def.follow_range,
+                            def.half_size[1] * 2.0,
+                            mcv_entity::pathfinding::max_fall_distance(
+                                true,
+                                hp,
+                                def.health,
+                                svc.difficulty,
+                            ),
+                        );
+                        let tgt = BlockPos::new(
+                            svc.player_pos.x.floor() as i32,
+                            svc.player_pos.y.floor() as i32,
+                            svc.player_pos.z.floor() as i32,
+                        );
+                        path.pathed_target = svc.player_pos;
+                        match mcv_entity::pathfinding::find_path(&view, pos, tgt, &params) {
+                            Some(found) => {
+                                path.nodes = found.nodes;
+                                path.idx = 0;
+                                // MeleeAttackGoal.java:111-117：4+rand(7)，
+                                // dist²>256 +5、>1024 +10。
+                                path.recalc_cd = 4
+                                    + rng() % 7
+                                    + if dist_sqr > 1024.0 {
+                                        10
+                                    } else if dist_sqr > 256.0 {
+                                        5
+                                    } else {
+                                        0
+                                    };
+                            }
+                            None => {
+                                path.nodes.clear(); // moveTo false → +15（:121-123）。
+                                path.recalc_cd = 4 + rng() % 7 + 15;
+                            }
+                        }
+                    }
+                    // 航点推进：水平 0.5² 内且高差 <1.5 视作到达（vanilla
+                    // tick 判据近似）。
+                    while path.idx < path.nodes.len() {
+                        let w = path.nodes[path.idx];
+                        let dx = pos.x - (w.x as f32 + 0.5);
+                        let dz = pos.z - (w.z as f32 + 0.5);
+                        if dx * dx + dz * dz < 0.25 && (pos.y - w.y as f32).abs() < 1.5 {
+                            path.idx += 1;
+                        } else {
+                            waypoint =
+                                Some(Vec3::new(w.x as f32 + 0.5, w.y as f32, w.z as f32 + 0.5));
+                            break;
+                        }
+                    }
+                    if path.idx >= path.nodes.len() {
+                        waypoint = Some(svc.player_pos); // 路径走完 → 直奔玩家。
+                    }
+                }
                 let p = mcv_entity::Percept {
                     pos,
-                    // 玩家=唯一可索敌实体；和平/创造豁免未接线（N-5）。
-                    target: def.hostile.then_some(svc.player_pos),
+                    // 玩家=唯一可索敌实体；和平/创造豁免（N-5）。
+                    target: targetable.then_some(svc.player_pos),
                     target_half_width: mcv_game::Player::HALF[0],
                     los,
                     br,
@@ -2909,7 +3165,8 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     blocked,
                     avoid: None,
                     shelter: None,
-                    difficulty: 2, // 难度系统未接线，恒普通
+                    difficulty: svc.difficulty,
+                    waypoint,
                 };
                 let acts = brain.0.tick(&def, &p, &mut rng);
                 let mut next = MobIntent::IDLE;
@@ -2922,6 +3179,10 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                         } => {
                             next.wish = *dir * (speed * speed_mult);
                             next.jump = *jump;
+                            // A* 跳跃节点（y+1 台阶）：航点高于脚底 → 起跳。
+                            if waypoint.is_some_and(|w| w.y > pos.y + 0.5) {
+                                next.jump = true;
+                            }
                         }
                         AiAction::Look(t) => {
                             if let Some(y) = yaw.get_mut(e) {
@@ -2953,7 +3214,15 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                             d.z += jitter(rng());
                             let v = d.normalize_or_zero() * *sp;
                             let src = eye;
-                            let dmg = *base_damage;
+                            // setBaseDamageFromMob（AbstractArrow.java:718-720）：
+                            // base = power×2.0（Brain 已算）+ triangle(难度×0.11,
+                            // 0.57425) 难度噪声。
+                            let dmg = *base_damage
+                                + mcv_entity::arrow::triangle(
+                                    svc.difficulty.min(3) as f32 * 0.11,
+                                    0.57425,
+                                    &mut rng,
+                                );
                             commands.spawn_with(move |w, ar| {
                                 w.insert(
                                     ar,
@@ -2961,7 +3230,9 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                                         pos: src,
                                         vel: v,
                                         ttl_ticks: 400,
-                                        damage: dmg,
+                                        base_damage: dmg,
+                                        crit: false, // 怪箭无暴击 flag。
+                                        player_owned: false,
                                     },
                                 );
                             });
@@ -3042,11 +3313,11 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
 /// （INERTIA 0.99/tick AbstractArrow.java:59,263；重力 0.05/tick²
 /// AbstractArrow.java:339-340）；每 tick 拆 8 子步（0.2 格/步）防高速
 /// 隧穿。撞固体方块即移除（原版 onHitBlock → setInGround(true)，
-/// AbstractArrow.java:542；残留杆渲染不做）/ 命中玩家 AABB / ttl 耗尽 →
-/// 移除。伤害取 base=power×2.0（AbstractArrow.java:719 + BowItem.java:74
-/// 满拉 20 tick → power=1）；原版命中量 = ceil(当前速度×base)
-/// （AbstractArrow.java:423-432）随弹道衰减，此处用定值 →
-/// KNOWN-DIVERGENCE（近失伤害虚低 ~2 点）。
+/// AbstractArrow.java:542；残留杆渲染不做）/ 命中玩家或 mob AABB /
+/// ttl 耗尽 → 移除。**伤害曲线**（AbstractArrow.java:421-431）：
+/// `ceil(命中瞬间速度模长 × baseDamage)`——随弹道重力/空气衰减，远射
+/// 伤害降；暴击箭（满蓄力弓，BowItem.java:41）再 `+ rand(d/2+2)`
+/// （AbstractArrow.java:434-437）。
 pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
     let svc = ctx
         .resources
@@ -3061,6 +3332,11 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
     let view = WorldView {
         chunks: &svc.chunks,
     };
+    let mut rng = || fast_rand();
+    // mob 表只读视图（玩家箭命中判定用）：与 MobArrow 写视图分表不冲突，
+    // 提升到循环外避免每子步重建。
+    let bodies = world.read::<PhysBody>();
+    let kinds = world.read::<MobKind>();
     let mut arrows = world.write::<MobArrow>();
     arrows.for_each(|e, a| {
         a.vel.y -= 0.05; // 重力 0.05/tick²
@@ -3077,18 +3353,51 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
                 dead = true; // 入地/撞墙（onHitBlock setInGround，AbstractArrow.java:542）
                 break;
             }
+            // 命中量按命中瞬间速度（AbstractArrow.java:421-431）+ 暴击。
+            let mut dmg = mcv_entity::arrow::hit_damage(a.vel, a.base_damage);
+            if a.crit {
+                dmg = mcv_entity::arrow::crit_bonus(dmg, &mut rng);
+            }
             let h = mcv_game::Player::HALF;
             let p = svc.player_pos;
-            // 玩家 AABB（HALF=[0.3,0.9,0.3]，脚底 p.y → 头顶 +2h）。
-            if (a.pos.x - p.x).abs() < h[0]
+            // 玩家 AABB（HALF=[0.3,0.9,0.3]，脚底 p.y → 头顶 +2h）；玩家
+            // 自己射的箭不打自己（player_owned 跳过玩家判定）。
+            if !a.player_owned
+                && (a.pos.x - p.x).abs() < h[0]
                 && (a.pos.z - p.z).abs() < h[2]
                 && (a.pos.y - (p.y + h[1])).abs() < h[1]
             {
                 events.channel::<MobArrowHit>().send(MobArrowHit {
                     src: a.pos,
-                    damage: a.damage,
+                    damage: dmg as f32,
                 });
                 dead = true;
+                break;
+            }
+            // 玩家箭 → mob AABB（LivingEntity.getBoundingBox 相交近似）。
+            if a.player_owned {
+                for (me, body) in bodies.iter() {
+                    let Some(mk) = kinds.get(me) else {
+                        continue;
+                    };
+                    let hs = mk.0.def().half_size;
+                    if (a.pos.x - body.pos.x).abs() < hs[0]
+                        && (a.pos.z - body.pos.z).abs() < hs[2]
+                        && (a.pos.y - (body.pos.y + hs[1])).abs() < hs[1]
+                    {
+                        events
+                            .channel::<PlayerArrowHitMob>()
+                            .send(PlayerArrowHitMob {
+                                target: me,
+                                src: a.pos,
+                                damage: dmg,
+                            });
+                        dead = true;
+                        break;
+                    }
+                }
+            }
+            if dead {
                 break;
             }
         }

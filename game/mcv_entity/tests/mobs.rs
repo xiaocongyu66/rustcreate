@@ -45,6 +45,7 @@ fn percept(pos: Vec3, target: Option<Vec3>) -> Percept {
         avoid: None,
         shelter: None,
         difficulty: 2, // normal
+        waypoint: None,
     }
 }
 

@@ -257,8 +257,16 @@ fn build_crack_overlay(ov: &MiningOverlay) -> (Vec<CrackVertex>, Vec<u32>) {
 pub struct Scene<'a> {
     pub camera: &'a Camera,
     pub time: f32,
+    /// 天空亮度系数（day.json sky_light_factor；天气混合由调用方算——
+    /// WeatherAttributes SKY_LIGHT_FACTOR 向夜底 0.24 混）。
     pub day_factor: f32,
     pub sun_dir: Vec3,
+    /// 天气雾色 RGB 乘子（AtmosphericFogEnvironment.applyWeatherDarken:50-62；
+    /// 晴 = [1,1,1]）乘到地平线色上（天空 + 地形雾同源）。
+    pub fog_tint: [f32; 3],
+    /// 天气雾密度乘子（雾距收缩 AtmosphericFogEnvironment.java:70-73 的
+    /// exp 雾等价映射；晴 = 1.0）。
+    pub fog_density_mult: f32,
     /// 月相序号 0..=7（MoonPhase 序，`celestial::moon_phase` 由游戏时间算出）。
     pub moon_phase: u32,
     /// Render target size in pixels (HUD coordinate space).
@@ -1606,7 +1614,9 @@ impl Renderer {
                 scene.sun_dir.z,
                 scene.day_factor,
             ],
-            fog_params: [0.006, 0.0, cam.far * 0.95, 0.0],
+            // 雾密度：基线 0.006 × 天气乘子（雨雾距收缩的 exp 映射，
+            // AtmosphericFogEnvironment.java:70-73）。
+            fog_params: [0.006 * scene.fog_density_mult, 0.0, cam.far * 0.95, 0.0],
         };
         self.queue
             .write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&uniforms));
@@ -1623,7 +1633,13 @@ impl Renderer {
             scene.day_factor,
         ];
         sky_u[20..24].copy_from_slice(&sun_arr);
-        let hor = [0.62, 0.76, 0.95, 0.0];
+        // 地平线基色 × 天气雾色乘子（雨/雷变灰变暗，天空 + 地形雾同源）。
+        let hor = [
+            0.62 * scene.fog_tint[0],
+            0.76 * scene.fog_tint[1],
+            0.95 * scene.fog_tint[2],
+            0.0,
+        ];
         sky_u[24..28].copy_from_slice(&hor);
         // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 原版贴图是否就位
         // （0 → shader 回退程序化圆盘，仅无素材部署）。

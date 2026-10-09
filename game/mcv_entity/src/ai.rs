@@ -197,7 +197,7 @@ pub enum AiAction {
         damage: f32,
     },
     /// skeleton 射箭：dir 已含抛物线补偿（y += 水平距×0.2，AbstractSkeleton.java:170），
-    /// spread = 14 − 难度×4，base_damage ≈ 2.0（power=1 时）。
+    /// spread = 14 − 难度×4，base_damage = 2.0×power（RangedAttackGoal.java:92-93）。
     Shoot {
         dir: Vec3,
         speed: f32,
@@ -248,6 +248,11 @@ pub struct Percept {
     pub shelter: Option<Vec3>,
     /// 0=peaceful,1=easy,2=normal,3=hard。
     pub difficulty: u8,
+    /// A* 路径下一航点（审计 N-1；主控 `mob_ai_system` 维护
+    /// `MobPath` 账本）。有值时 `walk_toward` 走航点而非直线冲目标
+    /// （GroundPathNavigation.moveTo 等价）；None 回落直线（旧行为，
+    /// 寻路失败/不可达降级，MeleeAttackGoal.java:121-123 +15 节奏）。
+    pub waypoint: Option<Vec3>,
 }
 
 impl Percept {
@@ -511,11 +516,14 @@ impl Brain {
             let h = flat_dist(p.pos, t);
             let mut dir = t - p.pos;
             dir.y += h * 0.2; // AbstractSkeleton.java:170 抛物线补偿
+            // power = clamp(dist/attackRadius, 0.1, 1.0)（RangedAttackGoal
+            // .java:92-93，attackRadius=15 = BOW_RANGE）；base = power×2.0
+            // （AbstractArrow.java:718-719，难度噪声由主控生成时叠加）。
             acts.push(AiAction::Shoot {
                 dir: normalize_or_zero(dir),
                 speed: ARROW_SPEED,
                 spread: arrow_spread(p.difficulty),
-                base_damage: 2.0, // power=1 时 power×2.0（AbstractArrow.java:718-719）
+                base_damage: 2.0 * crate::arrow::ranged_power(dist, BOW_RANGE),
             });
             let interval = if p.difficulty >= 3 {
                 BOW_INTERVAL_HARD
@@ -640,9 +648,12 @@ impl Brain {
     }
 
     fn walk_toward(&self, p: &Percept, to: Vec3, speed_mult: f32) -> AiAction {
+        // 追击方向优先取 A* 航点（GroundPathNavigation.moveTo 等价）；
+        // 无航点（寻路失败/未索敌游走）→ 直线，旧行为兜底。
+        let goal = p.waypoint.unwrap_or(to);
         let jump = p.blocked || self.should_leap(p, to);
         AiAction::Walk {
-            dir: flat_dir(to - p.pos),
+            dir: flat_dir(goal - p.pos),
             speed_mult,
             jump,
         }

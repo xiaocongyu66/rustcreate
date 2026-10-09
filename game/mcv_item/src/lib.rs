@@ -2,6 +2,7 @@
 //! crafting. Constants from mc-ref/NOTES-2.md (MC 26.1 decompiled).
 
 pub mod anvil;
+pub mod bow;
 pub mod crafting;
 pub mod enchant;
 pub mod inventory;
@@ -78,6 +79,8 @@ pub enum ItemKind {
     Lapis,
     Book,
     EnchantedBook,
+    /// 弓（26.1 BowItem；右键蓄力放箭，曲线见 [`crate::bow`]）。
+    Bow,
     /// 杂物（怪物掉落：腐肉/骨头等，64 堆、无耐久、不参战）。
     Material,
 }
@@ -110,7 +113,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 42] = [
+pub static ITEMS: [ItemDef; 43] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -204,6 +207,9 @@ pub static ITEMS: [ItemDef; 42] = [
     def!("gunpowder", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("string", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("spider_eye", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 弓（26.1 Items.java BOW：耐久 384、attackSpeed 无近战面板；追加在
+    // 尾部保持旧 id 序列化稳定，同上注释）。
+    def!("bow", ItemKind::Bow, 0.0, 0.0, 384, 0),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
