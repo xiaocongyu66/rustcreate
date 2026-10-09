@@ -1813,6 +1813,7 @@ impl AppState {
             hud: &hud,
             cloud: None,
             player: None,
+            mobs: None,
             overlay: None,
             underwater: false,
             particles: None, // 菜单场景无世界粒子
@@ -2112,6 +2113,7 @@ impl AppState {
             hud: &hud,
             cloud: clouds.map(|c| (c, cloud_settings)),
             player: has_player.then_some((&models, 0)),
+            mobs: None,
             overlay,
             // 水下雾：眼位在水块内（Player.isEyeInFluid(WATER)）。
             underwater: runtime.eye_under_water(),
