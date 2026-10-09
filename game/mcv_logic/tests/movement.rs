@@ -172,6 +172,16 @@ fn loading_phase_gates_movement_input() {
     rt.input.forward = true;
     rt.touch.enabled = true;
     rt.touch.stick_vec = (0.0, -56.0); // 触屏摇杆满偏（进场后走满速）
+    // 邻域 49 块顶到 Uploaded（门开条件；同 enter_playing 的就绪路径）。
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
+            let pos = ChunkPos::new(dx, dz);
+            rt.chunks
+                .entry(pos)
+                .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
+                .advance_to(Stage::Uploaded);
+        }
+    }
     let mut guard = 0;
     while rt.phase == GamePhase::Loading {
         rt.fixed_step(1.0 / 60.0);
@@ -346,12 +356,13 @@ fn sprint_gate_blocks_low_hunger() {
 fn water_pool_slows_to_swim_speed() {
     let mut rt = GameRuntime::new_headless(7, tmp_world("pool"), GameMode::Survival);
     enter_playing(&mut rt);
-    // 平台上开一池 1 格深水（x 6..9, z 7..10），池底仍是石头。
+    // 平台上开一池 1 格深水（x 4..12, z 4..14），池底仍是石头。池要够长：
+    // 行走速度入水减速需要数米，3 格池 0.35s 就冲出去了。
     let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
     {
         let mut v = h.voxels.write().unwrap();
-        for z in 7..10usize {
-            for x in 6..9usize {
+        for z in 4..14usize {
+            for x in 4..12usize {
                 v[70 << 8 | z << 4 | x] = BlockId(5); // water（liquid=true）
             }
         }
@@ -370,5 +381,10 @@ fn water_pool_slows_to_swim_speed() {
         "水中速度 {v:.3} 不在 (0.9, 2.5)：旧实现以走路速度涉水（≈4.3）"
     );
     // 仍在池内（未因速度异常被弹出）。
-    assert!(rt.player.pos.z < 10.4, "不应冲出池：z={}", rt.player.pos.z);
+    assert!(rt.player.pos.z < 14.4, "不应冲出池：z={}", rt.player.pos.z);
+    assert!(
+        (rt.player.pos.y - 70.0).abs() < 0.02,
+        "1 格深水中应站池底：y={}",
+        rt.player.pos.y
+    );
 }
