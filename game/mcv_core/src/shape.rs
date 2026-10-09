@@ -6,6 +6,12 @@
 //! 修改任何一侧规则必须同步另外两侧，否则 Rust 逻辑/C++ 渲染会漂移。
 
 /// 方块形状（值写入 `BlockDef::shape` / C++ `BlockInfo::shape`）。
+///
+/// 本枚举的 `shape` 位是遮光判据的输入之一：`mcv_light::opacity` 按
+/// 「opaque 整方块=15 / 形状非整立方=0 / 形状整立方但非实心=1」移植 26.1
+/// `getLightDampening`（`BlockBehaviour.java:305-310`，`shape!=0` 即
+/// `propagatesSkylightDown` 触发条件，形状感知遮光 `useShapeForLightOcclusion`
+/// 的“半影”细节登记于 mcv_light，见该处 KNOWN-DIVERGENCE 注释）。
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Shape {

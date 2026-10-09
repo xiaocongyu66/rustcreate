@@ -47,24 +47,41 @@ pub struct BorderSeed {
 /// 26.1 `BlockBehaviour.getLightDampening` (consumed by
 /// `LightEngine.getOpacity` as `max(1, dampening)`):
 /// - solid-render full cubes = 15 (stone, dirt, log, …);
-/// - water = 1 (`LiquidBlock.propagatesSkylightDown == false` → damp 1;
-///   the pre-1.20.5 "water costs 3" rule is *not* 26.1 behaviour);
-/// - leaves = 1 (`LeavesBlock.getLightDampening` override);
-/// - flowers / air = 0 (`CrossCollisionBlock.propagatesSkylightDown` →
-///   damp 0; glass would land here too once registered);
+/// - non-solid-render, non-full pick shape (`propagatesSkylightDown`
+///   default = 形状非整立方, `BlockBehaviour.java:395-397`) = 0 — torch /
+///   fence / slab / stairs / cross plants（26.1 `getLightDampening` 返回值
+///   0/1 见 `BlockBehaviour.java:305-310`；栅栏/花草的父类
+///   `propagatesSkylightDown` 另有显式覆盖 `CrossCollisionBlock.java:70-72`）;
+/// - non-solid-render, full pick shape = 1 — water（fluid 非空 →
+///   `propagatesSkylightDown=false`，`LiquidBlock.java:114-116`）、
+///   glass/ice（整盒形状 noOcclusion → damp 1，即 26.1 玻璃柱逐格衰减）、
+///   leaves（26.1 `LeavesBlock.java:83-85` 显式 damp=1，同值）;
 /// - unknown ids are treated as fully opaque (15).
 ///   `mcv_core::BLOCKS` has no opacity column and must not gain one, so
-///   this table is the single source of truth.
+///   this table is the single source of truth（判据 = opaque 位≈
+///   `solidRender`=`canOcclude&&整盒遮挡形状`，`BlockBehaviour.java:512-513`；
+///   形状位来自 `mcv_core::shape`，与网格器/碰撞同源）。
+///
+/// KNOWN-DIVERGENCE: 半砖/楼梯在 26.1 是 damp=0 + `useShapeForLightOcclusion`
+/// 形状感知遮光（`SlabBlock.java:48-51`、`StairBlock.java:69-71`）——本引擎
+/// 光照无形状感知，实半遮/空半透的“半影”效果缺失（半砖顶棚不再有整柱阴影，
+/// 也不投形状影），登记为后续项。
 #[inline]
 pub const fn opacity(id: BlockId) -> u8 {
     // id.id() 掩掉状态位：带状态的体素按基础方块遮光。
-    match id.id() {
-        0 => 0,       // air
-        5 => 1,       // water
-        7 => 1,       // leaves
-        12 | 13 => 0, // flowers
-        _ => 15,      // opaque solids (and unknown ids)
+    let base = id.id() as usize;
+    if base == 0 {
+        return 0; // air：26.1 形状为空 → damp 0
     }
+    if base >= mcv_core::BLOCKS.len() {
+        return 15; // 未注册 id 保守按全挡
+    }
+    let d = &mcv_core::BLOCKS[base];
+    if d.opaque {
+        return 15; // solidRender 整方块
+    }
+    // 非实心渲染：形状非整立方 → propagatesSkylightDown → 0；整盒形状 → 1。
+    if d.shape == 0 { 1 } else { 0 }
 }
 
 /// Cached `light_emit` mirror of `mcv_core::BLOCKS`（全 1171 块，含官方

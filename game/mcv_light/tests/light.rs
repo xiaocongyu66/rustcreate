@@ -460,9 +460,12 @@ fn golden_sky_through_material_columns() {
 }
 
 /// 黄金用例 4：发光/透光常数表与 26.1 对照。
-/// 26.1 `BlockBehaviour.getLightDampening` 默认规则：
-/// 实心渲染整方块 = 15；非实心且 `propagatesSkylightDown`（玻璃、
-/// 花、空气）= 0；其余非实心（水、叶、雪层等）= 1。
+/// 26.1 `BlockBehaviour.getLightDampening`（`BlockBehaviour.java:305-310`）
+/// 默认规则：实心渲染整方块（solidRender）=15；否则
+/// `propagatesSkylightDown`（默认=拾取形状非整立方且无流体，
+/// `BlockBehaviour.java:395-397`）= 0（火把/栅栏/半砖/楼梯/花草/空气）；
+/// 其余非实心 =1（水/玻璃：整盒形状 noOcclusion；叶=显式覆盖 1，
+/// `LeavesBlock.java:83-85`）。
 /// 发光侧：当前 BLOCKS 子集（天然建材+水+花）在 26.1 全部不发光。
 #[test]
 fn golden_light_constants_match_26_1() {
@@ -485,9 +488,30 @@ fn golden_light_constants_match_26_1() {
         1,
         "树叶 damp=1（LeavesBlock 覆盖值）"
     );
-    assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（玻璃同类）");
+    // 花草：拾取形状整盒可命中，但碰撞/渲染非实心 → propagatesSkylightDown
+    // → damp=0（区别于玻璃：玻璃拾取形状整盒 → damp=1，见下）。
+    assert_eq!(opacity(BlockId(FLOWER_RED)), 0, "红花 damp=0（非整盒形状）");
     assert_eq!(opacity(BlockId(13)), 0, "黄花 damp=0");
-    assert_eq!(opacity(BlockId(99)), 15, "未注册 id 保守按全挡");
+    // 形状方块遮光（VERIFY-shapes C6）：非实心 + 形状非整立方 → 0。
+    let by_name = |want: &str| {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == want)
+            .unwrap() as u16
+    };
+    for name in ["torch", "oak_fence", "oak_slab", "oak_stairs", "short_grass"] {
+        assert_eq!(opacity(BlockId(by_name(name))), 0, "{name} damp=0");
+    }
+    // 玻璃：整盒形状 noOcclusion → solidRender=false、
+    // propagatesSkylightDown=false → damp=1（`BlockBehaviour.java:305-310,
+    // 395-397`；玻璃柱逐格衰减为 26.1 实况，26.1 起无"玻璃全透"特例）。
+    assert_eq!(opacity(BlockId(by_name("glass"))), 1, "玻璃 damp=1");
+    // 未注册 id（≥BLOCKS.len()）保守按全挡。
+    assert_eq!(
+        opacity(BlockId(mcv_core::BLOCKS.len() as u16)),
+        15,
+        "未注册 id 保守按全挡"
+    );
 
     // ---- 发光（light_emit）----
     // 26.1 参照：这些方块全部 lightLevel 0；将来注册发光方块时按
