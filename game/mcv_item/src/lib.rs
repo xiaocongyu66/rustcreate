@@ -7,7 +7,7 @@ pub mod enchant;
 pub mod inventory;
 pub mod mining;
 
-pub use inventory::{HOTBAR_SLOTS, Hotbar, drop_for_block};
+pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, drop_for_block};
 pub use mining::ToolKind;
 
 use mcv_core::BlockId;
@@ -78,6 +78,8 @@ pub enum ItemKind {
     Lapis,
     Book,
     EnchantedBook,
+    /// 杂物（怪物掉落：腐肉/骨头等，64 堆、无耐久、不参战）。
+    Material,
 }
 
 /// Item definition: baseline attack, attack speed, durability, repair tags.
@@ -108,7 +110,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 36] = [
+pub static ITEMS: [ItemDef; 42] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -194,7 +196,20 @@ pub static ITEMS: [ItemDef; 36] = [
     def!("grass", ItemKind::Block(BlockId(3)), 0.0, 0.0, 0, 0),
     def!("sand", ItemKind::Block(BlockId(4)), 0.0, 0.0, 0, 0),
     def!("leaves", ItemKind::Block(BlockId(7)), 0.0, 0.0, 0, 0),
+    // 怪物掉落杂物（drops.rs loot id 对应；64 堆、不参战、无 GUI 精灵前
+    // HUD 画通用色块）。36 起追加，旧 id 序列化稳定。
+    def!("rotten_flesh", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("bone", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("arrow", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("gunpowder", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("string", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("spider_eye", ItemKind::Material, 0.0, 0.0, 0, 0),
 ];
+
+/// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
+pub fn item_by_name(name: &str) -> Option<u16> {
+    ITEMS.iter().position(|d| d.name == name).map(|i| i as u16)
+}
 
 pub const STICK: u16 = 0;
 pub const COAL: u16 = 1;

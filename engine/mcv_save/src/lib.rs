@@ -127,6 +127,38 @@ pub struct PlayerMeta {
     pub sel_slot: u8,
     /// v3 快捷栏:(item, count, damage) × ≤9,槽序即下标;v1/v2 读为空。
     pub hotbar: Vec<(u16, u8, u16)>,
+    /// v4 主背包:(item, count, damage) × ≤27,槽序即下标;v1–v3 读为空。
+    pub main: Vec<(u16, u8, u16)>,
+}
+
+/// (item, count, damage) 列表编解码(v3 快捷栏 / v4 主背包共用)。
+fn encode_stacks(out: &mut Vec<u8>, stacks: &[(u16, u8, u16)]) {
+    out.push(stacks.len().min(255) as u8);
+    for (item, count, damage) in stacks.iter().take(255) {
+        out.extend_from_slice(&item.to_le_bytes());
+        out.push(*count);
+        out.extend_from_slice(&damage.to_le_bytes());
+    }
+}
+
+fn decode_stacks(data: &[u8], i: &mut usize, max: usize) -> Result<Vec<(u16, u8, u16)>, SaveError> {
+    let n = *data.get(*i).ok_or(SaveError::Corrupt("truncated hotbar"))? as usize;
+    let n = n.min(max);
+    *i += 1;
+    if *i + n * 5 > data.len() {
+        return Err(SaveError::Corrupt("truncated hotbar"));
+    }
+    let mut out = Vec::with_capacity(n);
+    for k in 0..n {
+        let o = *i + k * 5;
+        out.push((
+            u16::from_le_bytes([data[o], data[o + 1]]),
+            data[o + 2],
+            u16::from_le_bytes([data[o + 3], data[o + 4]]),
+        ));
+    }
+    *i += n * 5;
+    Ok(out)
 }
 
 impl LevelMeta {
@@ -135,7 +167,7 @@ impl LevelMeta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&Self::MAGIC);
-        out.extend_from_slice(&3u16.to_le_bytes()); // format version
+        out.extend_from_slice(&4u16.to_le_bytes()); // format version
         out.extend_from_slice(&self.seed.to_le_bytes());
         out.extend_from_slice(&self.day_time.to_le_bytes());
         let name = self.name.as_bytes();
@@ -152,14 +184,15 @@ impl LevelMeta {
                 out.extend_from_slice(&p.pitch.to_le_bytes());
                 out.push(u8::from(p.flying));
                 out.push(p.sel_slot);
-                // v3 快捷栏(模式字节保持在末尾,兼容旧解码位置约定)。
-                let hb = &p.hotbar[..p.hotbar.len().min(9)];
-                out.push(hb.len() as u8);
-                for (item, count, damage) in hb {
-                    out.extend_from_slice(&item.to_le_bytes());
-                    out.push(*count);
-                    out.extend_from_slice(&damage.to_le_bytes());
-                }
+                // v3 快捷栏(模式字节保持在末尾,兼容旧解码位置约定);
+                // v4 起快捷栏补齐 9 槽(空槽 (0,0,0) 占位,槽序即下标)并
+                // 追加 27 槽主背包。
+                let mut hb = p.hotbar.clone();
+                hb.resize(9, (0, 0, 0));
+                encode_stacks(&mut out, &hb[..9]);
+                let mut m = p.main.clone();
+                m.resize(27, (0, 0, 0));
+                encode_stacks(&mut out, &m[..27]);
             }
         }
         out.push(self.mode);
@@ -171,7 +204,7 @@ impl LevelMeta {
             return Err(SaveError::Corrupt("bad magic"));
         }
         let ver = u16::from_le_bytes([data[4], data[5]]);
-        if ver > 3 {
+        if ver > 4 {
             return Err(SaveError::Corrupt("unsupported meta version"));
         }
         let seed = u64::from_le_bytes(data[6..14].try_into().unwrap());
@@ -198,23 +231,17 @@ impl LevelMeta {
                     (f32_at(0), f32_at(4), f32_at(8), f32_at(12), f32_at(16));
                 let (flying, sel_slot) = (data[i + 20] != 0, data[i + 21]);
                 i += 4 * 5 + 2;
-                let mut hotbar = Vec::new();
-                if ver >= 3 {
-                    let n = *data.get(i).ok_or(SaveError::Corrupt("truncated hotbar"))? as usize;
-                    let n = n.min(9);
-                    i += 1;
-                    if i + n * 5 > data.len() {
-                        return Err(SaveError::Corrupt("truncated hotbar"));
-                    }
-                    for k in 0..n {
-                        let o = i + k * 5;
-                        hotbar.push((
-                            u16::from_le_bytes([data[o], data[o + 1]]),
-                            data[o + 2],
-                            u16::from_le_bytes([data[o + 3], data[o + 4]]),
-                        ));
-                    }
-                }
+                // v3 快捷栏、v4 主背包;更旧的档读为空。
+                let hotbar = if ver >= 3 {
+                    decode_stacks(data, &mut i, 9)?
+                } else {
+                    Vec::new()
+                };
+                let main = if ver >= 4 {
+                    decode_stacks(data, &mut i, 27)?
+                } else {
+                    Vec::new()
+                };
                 Some(PlayerMeta {
                     x,
                     y,
@@ -224,6 +251,7 @@ impl LevelMeta {
                     flying,
                     sel_slot,
                     hotbar,
+                    main,
                 })
             }
             Some(_) => return Err(SaveError::Corrupt("bad player flag")),

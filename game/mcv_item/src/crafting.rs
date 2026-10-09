@@ -31,10 +31,11 @@ pub struct CookingRecipe {
 }
 
 use crate::{
-    COBBLESTONE, DIAMOND_ITEM, DIAMOND_ORE_ITEM, IRON_INGOT, IRON_ORE_ITEM, PLANKS, STICK,
+    COBBLESTONE, DIAMOND_ITEM, DIAMOND_ORE_ITEM, IRON_INGOT, IRON_ORE_ITEM, LOG, PLANKS, STICK,
 };
 
-/// Grid empty-cell marker (item id 0 is a valid item: STICK).
+/// Grid empty-cell marker（物品 id 0 = STICK 是合法物品，空格只能用哨兵；
+/// shaped 图案里的空格是 ' '）。
 pub const EMPTY_SLOT: u16 = u16::MAX;
 
 // Item ids in the mcv_item registry:
@@ -53,51 +54,73 @@ const I_STONE_PICK: u16 = 14;
 const I_IRON_PICK: u16 = 15;
 const I_DIAMOND_PICK: u16 = 16;
 
-/// Shapeless helpers for sword-like recipes (single material + stick).
-macro_rules! sword_recipe {
-    ($mat:expr, $result:expr) => {
-        ShapelessRecipe {
-            id: "sword",
-            ingredients: &[$mat, ING_STICK, ING_STICK],
-            result: ($result, 1),
-        }
-    };
-}
-
-pub static SHAPED: [ShapedRecipe; 4] = [
+/// 26.1 数据包配方对齐（data/minecraft/recipe/*.json）：
+/// 镐 = MMM/_S_/_S_；剑 = M/M/S 竖排 1x3（2x2 放不下，必须 3x3 工作台）；
+/// 木棍 = 两板竖排 ×4；原木 → 4 板（shapeless）。
+pub static SHAPED: [ShapedRecipe; 9] = [
+    ShapedRecipe {
+        id: "stick",
+        pattern: &["M", "M"],
+        keys: &[('M', ING_PLANKS)],
+        result: (STICK, 4),
+    },
+    // 剑：材料×2 在上、棍在底（wooden/stone/iron/diamond_sword.json 同型）。
+    ShapedRecipe {
+        id: "wooden_sword",
+        pattern: &["M", "M", "S"],
+        keys: &[('M', ING_PLANKS), ('S', ING_STICK)],
+        result: (I_WOOD_SWORD, 1),
+    },
+    ShapedRecipe {
+        id: "stone_sword",
+        pattern: &["M", "M", "S"],
+        keys: &[('M', ING_COBBLE), ('S', ING_STICK)],
+        result: (I_STONE_SWORD, 1),
+    },
+    ShapedRecipe {
+        id: "iron_sword",
+        pattern: &["M", "M", "S"],
+        keys: &[('M', ING_IRON), ('S', ING_STICK)],
+        result: (I_IRON_SWORD, 1),
+    },
+    ShapedRecipe {
+        id: "diamond_sword",
+        pattern: &["M", "M", "S"],
+        keys: &[('M', ING_DIAMOND), ('S', ING_STICK)],
+        result: (I_DIAMOND_SWORD, 1),
+    },
     // pickaxe: MMM / _S_ / _S_
     ShapedRecipe {
         id: "wooden_pickaxe",
         pattern: &["MMM", " S ", " S "],
-        keys: &[('M', ING_PLANKS)],
+        keys: &[('M', ING_PLANKS), ('S', ING_STICK)],
         result: (I_WOOD_PICK, 1),
     },
     ShapedRecipe {
         id: "stone_pickaxe",
         pattern: &["MMM", " S ", " S "],
-        keys: &[('M', ING_COBBLE)],
+        keys: &[('M', ING_COBBLE), ('S', ING_STICK)],
         result: (I_STONE_PICK, 1),
     },
     ShapedRecipe {
         id: "iron_pickaxe",
         pattern: &["MMM", " S ", " S "],
-        keys: &[('M', ING_IRON)],
+        keys: &[('M', ING_IRON), ('S', ING_STICK)],
         result: (I_IRON_PICK, 1),
     },
     ShapedRecipe {
         id: "diamond_pickaxe",
         pattern: &["MMM", " S ", " S "],
-        keys: &[('M', ING_DIAMOND)],
+        keys: &[('M', ING_DIAMOND), ('S', ING_STICK)],
         result: (I_DIAMOND_PICK, 1),
     },
 ];
 
-pub static SHAPELESS: [ShapelessRecipe; 4] = [
-    sword_recipe!(ING_PLANKS, I_WOOD_SWORD),
-    sword_recipe!(ING_COBBLE, I_STONE_SWORD),
-    sword_recipe!(ING_IRON, I_IRON_SWORD),
-    sword_recipe!(ING_DIAMOND, I_DIAMOND_SWORD),
-];
+pub static SHAPELESS: [ShapelessRecipe; 1] = [ShapelessRecipe {
+    id: "planks",
+    ingredients: &[&[LOG]],
+    result: (PLANKS, 4),
+}];
 
 pub static COOKING: [CookingRecipe; 2] = [
     CookingRecipe {

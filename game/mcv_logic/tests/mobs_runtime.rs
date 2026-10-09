@@ -12,8 +12,10 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_ecs::{App, SysCtx};
-use mcv_entity::{MobArrow, MobId, MobTicks, PhysBody, spawn_mob};
-use mcv_logic::game::{MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, arrow_system, mob_ai_system};
+use mcv_entity::{MobArrow, MobId, MobTicks, spawn_mob};
+use mcv_logic::game::{
+    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, arrow_system, mob_ai_system,
+};
 
 /// 单区块世界：x,z ∈ [0,16)，y<64 实心石、64 以上空气。
 /// `lit=true` 时光照表 sky=15/block=0（露天白天代理）；否则全 0（室内代理）。
@@ -80,6 +82,9 @@ fn step(
         on_tick,
         game_ticks: 0,
         monsters_burn,
+        // 空气/单区块测试不涉昼夜：darken=0（白天代理，与 monsters_burn
+        // 入参语义一致）。
+        sky_darken: 0,
     });
     let mut ctx = SysCtx {
         world,
@@ -107,7 +112,10 @@ fn melee_restrike_takes_20_ticks_not_20_steps() {
     // 20 个**非 tick** 固定步（1/3 s）：tick 计时器不许走 → 无命中。
     for _ in 0..20 {
         step(&mut app, &chunks, player, false, false);
-        assert!(drain_melee(&mut app).is_empty(), "非 tick 步不得推进攻击冷却");
+        assert!(
+            drain_melee(&mut app).is_empty(),
+            "非 tick 步不得推进攻击冷却"
+        );
     }
     // 40 个 tick 步：命中节拍 20 tick（MeleeAttackGoal.java:136）——第 2 tick
     // 首次命中（第 1 tick 索敌转 Melee），第 22 tick 第二次。
@@ -132,13 +140,7 @@ fn far_mob_despawned_in_one_tick() {
     let chunks = air_chunk_map();
     spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
     // 玩家 192 格外（>128²）：一个 tick 步即排队 despawn。
-    step(
-        &mut app,
-        &chunks,
-        Vec3::new(8.0, 64.0, 200.0),
-        true,
-        false,
-    );
+    step(&mut app, &chunks, Vec3::new(8.0, 64.0, 200.0), true, false);
     assert_eq!(app.world.component_count::<mcv_entity::MobKind>(), 0);
 }
 
@@ -258,12 +260,7 @@ fn arrow_does_not_move_between_ticks() {
     for _ in 0..3 {
         step(&mut app, &chunks, Vec3::new(8.0, 64.0, 8.0), false, false);
     }
-    let pos = app
-        .world
-        .read::<MobArrow>()
-        .get(e)
-        .expect("箭矢应存活")
-        .pos;
+    let pos = app.world.read::<MobArrow>().get(e).expect("箭矢应存活").pos;
     assert_eq!(pos, Vec3::new(2.0, 200.0, 2.0), "非 tick 步不推进弹道");
 }
 
@@ -281,7 +278,11 @@ fn burning_damage_cadence_is_20_ticks() {
     let hp = |app: &App| app.world.read::<mcv_entity::Health>().get(e).unwrap().0;
     // Entity.java:538-540：160 % 20 == 0 → 第 1 个 tick 即扣 1。
     step(&mut app, &chunks, player, true, false);
-    assert!((hp(&app) - 19.0).abs() < 1e-3, "点燃首 tick 扣 1，实际 {}", hp(&app));
+    assert!(
+        (hp(&app) - 19.0).abs() < 1e-3,
+        "点燃首 tick 扣 1，实际 {}",
+        hp(&app)
+    );
     // 其后 19 tick 不再扣（20 tick 一次）。
     for _ in 0..19 {
         step(&mut app, &chunks, player, true, false);
@@ -316,7 +317,10 @@ fn daylight_burn_wires_through_brain() {
             break;
         }
     }
-    assert!(burned, "白天直晒僵尸必须被 Brain 点燃（burn_in_daylight 接线）");
+    assert!(
+        burned,
+        "白天直晒僵尸必须被 Brain 点燃（burn_in_daylight 接线）"
+    );
     // 夜：800 tick 不点燃。
     let mut app = harness();
     spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 70.0));
@@ -372,20 +376,15 @@ fn wall_blocks_target_acquisition() {
     }
     let player = Vec3::new(8.5, 64.0, 8.0);
     spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(13.5, 64.0, 8.0));
-    let before = {
-        let bodies = app.world.read::<PhysBody>();
-        bodies.iter().next().unwrap().1.pos
-    };
     for _ in 0..40 {
         step(&mut app, &chunks, player, true, false);
         assert!(drain_melee(&mut app).is_empty(), "隔墙不得命中");
     }
-    let after = {
-        let bodies = app.world.read::<PhysBody>();
-        bodies.iter().next().unwrap().1.pos
-    };
-    // 未索敌则不会贴到玩家面前：即便游走恰好撞墙，物理也会停在墙面
-    // x=10 外（半宽 0.3 → x ≥ 10.3）；索敌成功则必然绕不过视线而贴脸。
-    assert!(after.x >= 10.0 && after.x >= before.x - 3.0, "隔墙不索敌，实际 {:?}", after.x);
-    assert!(after.z > 6.0 && after.z < 10.0, "不绕路追击（无 A*，也不该贴脸）: {:?}", after.z);
+    // 直接断言 LOS 门的语义（不用位置断言——游走方向由全局 RNG 决定，
+    // 位置区间会 flaky）：初次索敌要求视线（TargetGoal canUse →
+    // TargetGoal.java:57-71 的 seen 判定；Brain 等价物见 ai.rs 目标获取），
+    // 隔墙 40 tick 内 Brain 必须从未获得过目标。
+    for (_, brain) in app.world.read::<mcv_entity::MobBrain>().iter() {
+        assert!(!brain.0.has_target, "隔墙不得索敌（LOS 门失效）");
+    }
 }

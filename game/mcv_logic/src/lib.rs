@@ -20,3 +20,4 @@
 //! 之上即可，子系统 crate 不需感知。
 
 pub mod game;
+pub mod ui;

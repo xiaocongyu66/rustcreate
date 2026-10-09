@@ -2,8 +2,8 @@
 
 use mcv_item::crafting::EMPTY_SLOT;
 use mcv_item::{
-    COBBLESTONE, DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS,
-    STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
+    DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS, STICK,
+    STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u32 {
@@ -136,29 +136,30 @@ fn shaped_pickaxe_and_mirror() {
 }
 
 #[test]
-fn shapeless_sword_any_order() {
-    // stick, stick, plank in odd order still crafts wooden sword
-    let grid = [
+fn sword_is_shaped_not_shapeless() {
+    // 26.1 剑是 shaped 竖排 M/M/S（1x3），不是 shapeless——打散摆放必须不出剑。
+    // （旧实现把剑当 shapeless，任何摆放都出剑，属审计 CRITICAL，此为回归锁。）
+    let scatter = [
         STICK, EMPTY_SLOT, PLANKS, EMPTY_SLOT, STICK, EMPTY_SLOT, EMPTY_SLOT, EMPTY_SLOT,
         EMPTY_SLOT,
     ];
-    assert_eq!(
-        crafting::find_result(&grid, 3),
-        Some((WOODEN_SWORD_INDEX, 1))
-    );
-    // wrong materials
-    let grid = [
-        COBBLESTONE,
-        EMPTY_SLOT,
-        PLANKS,
-        EMPTY_SLOT,
-        STICK,
-        EMPTY_SLOT,
-        EMPTY_SLOT,
-        EMPTY_SLOT,
+    assert_eq!(crafting::find_result(&scatter, 3), None, "散放不得出剑");
+    // 正确竖排（左列 板/板/棍）才出木剑。
+    let vertical = [
+        PLANKS, EMPTY_SLOT, EMPTY_SLOT, PLANKS, EMPTY_SLOT, EMPTY_SLOT, STICK, EMPTY_SLOT,
         EMPTY_SLOT,
     ];
-    assert_eq!(crafting::find_result(&grid, 3), None);
+    assert_eq!(
+        crafting::find_result(&vertical, 3),
+        Some((WOODEN_SWORD_INDEX, 1)),
+        "竖排 M/M/S 出木剑"
+    );
+    // 材料顺序反（棍在上、板在下）不符 pattern → 无。
+    let flipped = [
+        STICK, EMPTY_SLOT, EMPTY_SLOT, STICK, EMPTY_SLOT, EMPTY_SLOT, PLANKS, EMPTY_SLOT,
+        EMPTY_SLOT,
+    ];
+    assert_eq!(crafting::find_result(&flipped, 3), None);
 }
 
 #[test]

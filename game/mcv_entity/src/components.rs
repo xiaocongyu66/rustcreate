@@ -102,7 +102,8 @@ pub struct MobArrow {
     pub vel: Vec3,
     /// 剩余寿命（tick），到点移除（原版 livedAfterGround 兜底）。
     pub ttl_ticks: u32,
-    /// 命中玩家造成的基础伤害（power=1 → 2.0，AbstractArrow.java:718）。
+    /// 命中玩家造成的基础伤害（base=power×2.0=2.0，AbstractArrow.java:719；
+    /// 原版还乘当前速度 ceil(v×base)（:423-432），此处取定值 → 近似）。
     pub damage: f32,
 }
 
