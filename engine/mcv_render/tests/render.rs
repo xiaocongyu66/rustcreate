@@ -245,10 +245,13 @@ fn mining_crack_and_outline_darken_target() {
     };
     let target = OffscreenTarget::new(&device, extent);
     let chunk = ground_chunk(&device);
+    // 相机贴近目标方块（玩法语义：挖掘距离 ≤5）：quad 屏占 ~30px，
+    // LOD<0.5 落在 mip0 全分辨率裂纹上；旧机位 dist≈20 → LOD 舍入到
+    // mip1（8x8 稀疏裂纹大概率采到 alpha=0 全 discard）。
     let camera = Camera {
-        pos: Vec3::new(8.0, 110.0, 26.0),
+        pos: Vec3::new(8.0, 103.0, 14.0),
         yaw: 0.0,
-        pitch: -0.62,
+        pitch: -0.5,
         fov_y: 1.2,
         aspect: 320.0 / 240.0,
         near: 0.1,

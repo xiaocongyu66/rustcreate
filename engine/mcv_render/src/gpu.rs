@@ -1611,6 +1611,13 @@ impl Renderer {
                 );
                 if ov.crack_stage.is_some() && self.crack_layers_ok {
                     let (verts, idx) = build_crack_overlay(&ov);
+                    // TEMP-DIAG(关单前删除)
+                    eprintln!(
+                        "CRACK-DRAW verts={} idx={} layers_ok={}",
+                        verts.len(),
+                        idx.len(),
+                        self.crack_layers_ok
+                    );
                     if !idx.is_empty() {
                         self.queue.write_buffer(
                             &self.overlay_vbuf,
