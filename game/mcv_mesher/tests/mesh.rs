@@ -503,7 +503,8 @@ fn shape_faces_cull_against_opaque_neighbours() {
     }
     put(&mut c.0, 8, 8, 8, slab);
     let buf = mesher.build(&full9(&c, &side), 0).unwrap();
-    let slab_verts: Vec<_> = decode(&buf)
+    let verts = decode(&buf);
+    let slab_verts: Vec<_> = verts
         .iter()
         .filter(|v| v.tex == mcv_core::tiles::PLANKS)
         .collect();
