@@ -33,9 +33,11 @@ fn wait_terrain(rt: &mut GameRuntime, pos: ChunkPos) {
     panic!("地形未在预算内就绪");
 }
 
-/// 测试场地：压实三列石头到 y=69（顶面 y=70 供玩家与掉落物站立），玩家
-/// 脚踩 (8.0, 70, 8.5)。三列 = (8,8)（脚下）、(8,7)、(7,8)（挖矿靶列）——
-/// 掉落物落点在靶方块处，须有实体地面且在拾取盒内。
+/// 测试场地：压实三列石头到 y=69（顶面 y=70），工作区 3×3 列自 y=70 向
+/// 上全部清空（seed 地形可能天然堆高：玩家嵌进实体会被逐块顶出、越抬
+/// 越高，step_mining 的 5.5 距离守卫随即 abort——挖矿永不完成）。玩家站
+/// (8.3, 70, 8.5)：AABB x∈[8.0,8.6] 只占 x=8 列，与眼平高靶方块 (7,71,8)
+/// 不重叠（重叠会把玩家顶到靶块顶上，掉落物落在拾取盒之下收不走）。
 fn build_platform(rt: &mut GameRuntime) {
     let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
     {
@@ -45,22 +47,25 @@ fn build_platform(rt: &mut GameRuntime) {
                 v[y << 8 | z << 4 | x] = BlockId(1);
             }
         }
-        // 清空眼睛/射线走廊（地形可能天然有石头）：眼睛所在 (8,71,8) 与
-        // 瞄准路径 (7,71,8)。
-        for (x, z) in [(8usize, 8usize), (7, 8)] {
-            v[71usize << 8 | z << 4 | x] = BlockId(0);
+        for y in 70..86usize {
+            for z in 7..10usize {
+                for x in 7..10usize {
+                    v[y << 8 | z << 4 | x] = BlockId(0);
+                }
+            }
         }
     }
     h.advance_to(Stage::TerrainReady);
     h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-    rt.player.pos = Vec3::new(8.0, 70.0, 8.5);
+    rt.player.pos = Vec3::new(8.3, 70.0, 8.5);
     rt.player.vel = Vec3::ZERO;
 }
 
-/// 眼睛对准 (7,70,8) 方块中心。
+/// 眼睛对准 (7,71,8) 方块（眼平高的靶块）。瞄准点 z 取 8.499 避开
+/// atan2 负零分支（d.z=+0.0 时 -d.z=-0.0 → yaw=-π 朝 +z，射线打偏）。
 fn set_aim_at_block(rt: &mut GameRuntime) {
     let eye = rt.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
-    let d = Vec3::new(7.5, 70.5, 8.5) - eye;
+    let d = Vec3::new(7.5, 71.5, 8.499) - eye;
     rt.player.yaw = d.x.atan2(-d.z);
     rt.player.pitch = (d.y / d.length()).asin();
 }
@@ -94,7 +99,7 @@ fn survival_mining_stone_drops_and_pickup() {
     let mut rt = GameRuntime::new_headless(20261009, dir, GameMode::Survival);
     wait_terrain(&mut rt, ChunkPos::new(0, 0));
     build_platform(&mut rt);
-    set_block(&mut rt, 7, 70, 8, BlockId(1)); // 脚边石头
+    set_block(&mut rt, 7, 71, 8, BlockId(1)); // 眼平高靶块
     set_aim_at_block(&mut rt);
     // 石头掉落需要镐（has_correct_tool 门控），给选中槽木镐。
     rt.hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::WOODEN_PICKAXE_INDEX, 1);
@@ -106,7 +111,7 @@ fn survival_mining_stone_drops_and_pickup() {
     let mut mined_at = None;
     for i in 0..600 {
         rt.fixed_step(1.0 / 60.0);
-        if block_at(&rt, 7, 70, 8).0 == 0 {
+        if block_at(&rt, 7, 71, 8).0 == 0 {
             mined_at = Some(i);
             break;
         }
@@ -139,12 +144,12 @@ fn creative_mining_produces_no_drop() {
     let mut rt = GameRuntime::new_headless(20261009, dir, GameMode::Creative);
     wait_terrain(&mut rt, ChunkPos::new(0, 0));
     build_platform(&mut rt);
-    set_block(&mut rt, 7, 70, 8, BlockId(1));
+    set_block(&mut rt, 7, 71, 8, BlockId(1));
     set_aim_at_block(&mut rt);
     let cobble_before = hotbar_count(&rt, mcv_item::COBBLESTONE);
 
     rt.on_left_press(); // 创造：秒破路径
-    assert_eq!(block_at(&rt, 7, 70, 8).0, 0, "创造单击必秒破");
+    assert_eq!(block_at(&rt, 7, 71, 8).0, 0, "创造单击必秒破");
     for _ in 0..30 {
         rt.fixed_step(1.0 / 60.0);
     }

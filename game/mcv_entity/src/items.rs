@@ -152,6 +152,8 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
     let commands = &mut *ctx.commands;
     let (mut phys, mut drops) = (world.write::<PhysBody>(), world.write::<ItemDrop>());
     let view = ChunkVoxels { chunks: &dw.chunks };
+    // TODO(审计 M8)：水/岩浆浮力（xz×0.99/0.95、vy<0.06 时 +0.0005 上浮）
+    // ——需按位姿查流体方块后置 in_water 分支。
     let input = mcv_game::StepInput {
         gravity_scale: 0.5,
         ..mcv_game::StepInput::default()
