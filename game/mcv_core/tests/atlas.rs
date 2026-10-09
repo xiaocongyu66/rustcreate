@@ -63,16 +63,59 @@ fn real_assets_fill_all_real_layers() {
 }
 
 #[test]
-fn clamped_payload() {
-    // GLES 上限模拟：钳到 64 层 = 64×(16×16+8×8)×4 字节，且 mip0 前缀与全量一致
-    let (full, n_full) = atlas::generate_payload_clamped(None, atlas::LAYERS);
-    assert_eq!(n_full, atlas::LAYERS);
-    let (small, n) = atlas::generate_payload_clamped(None, 64);
-    assert_eq!(n, 64);
-    assert_eq!(small.len(), 64 * (16 * 16 + 8 * 8) * 4);
-    assert_eq!(&small[..64 * 16 * 16 * 4], &full[..64 * 16 * 16 * 4]);
-    // 钳制只截尾，不动头部真实贴图区
-    const { assert!(atlas::CRACK_BASE > 64) };
+fn split_layer_counts_shapes() {
+    // 上限 ≥ 837（lavapipe 3907 / 桌面 Vulkan）：单数组，零拆分零回归
+    assert_eq!(
+        atlas::split_layer_counts(atlas::LAYERS),
+        vec![atlas::LAYERS]
+    );
+    assert_eq!(atlas::split_layer_counts(3907), vec![atlas::LAYERS]);
+    // 刚好少一层 → 拆 2 份均分
+    assert_eq!(atlas::split_layer_counts(atlas::LAYERS - 1), vec![419, 418]);
+    // GLES 保底 256 → 4 个数组均分装满 837
+    assert_eq!(atlas::split_layer_counts(256), vec![210, 210, 210, 207]);
+    assert_eq!(atlas::split_layer_counts(512), vec![419, 418]);
+    // 连 GLES 下限都没给的异常 adapter：不越上限，截断兜底（总和 < 837）
+    assert_eq!(atlas::split_layer_counts(100), vec![100, 100, 100, 100]);
+    assert_eq!(atlas::split_layer_counts(0), vec![1, 1, 1, 1]);
+}
+
+#[test]
+fn remap_layer_boundaries() {
+    let c4 = atlas::split_layer_counts(256);
+    assert_eq!(c4, vec![210, 210, 210, 207]);
+    // 数组首/尾边界全覆盖：GRASS_TOP=336 落数组 1，CRACK_BASE=827 落数组 3
+    let cases = [
+        (0usize, (0usize, 0usize)),
+        (209, (0, 209)),
+        (210, (1, 0)),
+        (336, (1, 126)),
+        (419, (1, 209)),
+        (420, (2, 0)),
+        (629, (2, 209)),
+        (630, (3, 0)),
+        (827, (3, 197)),
+        (836, (3, 206)),
+    ];
+    for (layer, expect) in cases {
+        assert_eq!(atlas::remap_layer(layer, &c4), expect, "layer={layer}");
+    }
+    // 单数组全走 (0, l)
+    let c1 = vec![atlas::LAYERS];
+    for layer in [0usize, 1, 336, 827, 836] {
+        assert_eq!(atlas::remap_layer(layer, &c1), (0, layer));
+    }
+    // 越界钳到末数组末层（防御语义）
+    assert_eq!(atlas::remap_layer(usize::MAX, &c4), (3, 206));
+    // round-trip：每个（数组, 局部层）唯一对应一个全局层号
+    let mut acc = 0usize;
+    for (i, &cnt) in c4.iter().enumerate() {
+        for local in 0..cnt {
+            assert_eq!(atlas::remap_layer(acc + local, &c4), (i, local));
+        }
+        acc += cnt;
+    }
+    assert_eq!(acc, atlas::LAYERS);
 }
 
 #[test]

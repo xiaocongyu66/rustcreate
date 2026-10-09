@@ -64,7 +64,12 @@ fn biome_tint(entry: vec4<u32>) -> vec3<f32> {
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
-@group(0) @binding(2) var terrain_tex: texture_2d_array<f32>;
+// gpu.rs 按设备 max_texture_array_layers 在下面占位行处展开：1..=4 个
+// texture_2d_array 绑定声明 + sample_terrain 采样函数（上限 ≥ LAYERS 时
+// 为单数组 binding 2，语义与拆分前一致；GLES 保底 256 时按 layer 区间
+// if 链选数组，追加数组在 binding 5/6/7——4 固定给下方 tint_lut）。
+// 占位标记必须独占整行——replace 会整行换生成代码，行尾不能带说明文字。
+// @@TERRAIN_ARRAYS@@
 @group(0) @binding(3) var terrain_samp: sampler;
 // 生物群系染色 LUT（引擎侧 mcv_core::tint 构建）：每层
 // vec4<u32>(kind, r, g, b)。kind: 0=无 1=草 colormap 2=叶 colormap
@@ -111,7 +116,7 @@ fn vs_terrain(v: VtxIn) -> VtxOut {
 
 @fragment
 fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     if (tex.a < 0.5) {
         discard;
     }
@@ -131,7 +136,7 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_crack(v: VtxOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     if (tex.a < 0.02) {
         discard;
     }
@@ -195,7 +200,7 @@ fn vs_water(v: VtxIn) -> WaterOut {
 fn fs_water(v: WaterOut) -> @location(0) vec4<f32> {
     // 水不染色：26.1 起水贴图（water_still.png）自带颜色，原版仅方块
     // 粒子/炼药锅走 water tint（BlockColors.java:38-39），不在本次范围。
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     let fog = fog_factor(v.dist, frame.fog_params);
     let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
     let day = frame.sun_dir_day.w;

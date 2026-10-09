@@ -427,88 +427,191 @@ fn player_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
 
 const _: () = assert!(size_of::<PlayerVertex>() == PLAYER_STRIDE);
 
+/// 生成方块图集的 texture_2d_array 绑定声明 + 按 layer 区间选数组的采样
+/// 函数（terrain.wgsl / hud.wgsl 的 @@...@@ 占位由 gpu.rs 烘入，与创建的
+/// 数组 counts 同源，永不错位）。
+///
+/// 单数组（上限 ≥ atlas::LAYERS）时生成的就是一次 textureSample——与拆分前逐字节
+/// 同语义，`min(layer, N-1)` 对合法层号是恒等（仅防御 mesher 异常层号）。
+/// 多数组（GLES 保底 256）时按区间 if 链：
+/// - 分支条件是 `@interpolate(flat)` 层号，逐图元一致，textureSample 的
+///   隐式导数在各图元内仍是良定义的；
+/// - naga 30.0.1 已不对 fragment 阶段强制 uniform 控制流
+///   （naga-30.0.1 src/valid/analyzer.rs:23
+///   DISABLE_UNIFORMITY_REQ_FOR_FRAGMENT_STAGE = true），if 链内
+///   textureSample 可过 create_shader_module 校验；
+/// - 每分支 min() 把局部层号钉死在本数组内——wgpu/naga GLES 后端对数组
+///   层不做任何钳制（naga-30.0.1 src/back/glsl/writer.rs:2635-2639 裸拼
+///   layer 分量；GLSL ES 3.0 §8.8 越界层结果未定义，Mali 实测常返回
+///   透明黑 → fs_terrain alpha<0.5 discard → 「雾色平色面」），故越界
+///   在这里从源头杜绝。
+fn atlas_arrays_wgsl(counts: &[usize], bindings: &[u32], sampler: &str, fn_name: &str) -> String {
+    assert_eq!(counts.len(), bindings.len());
+    assert!(!counts.is_empty(), "图集至少要有一个数组");
+    let mut s = String::new();
+    // 占位标记写在 `// ` 注释行内，replace 只换标记本身——首行前补换行，
+    // 让残留的 `// ` 孤立成空注释行，生成的声明才不会被注释掉。
+    s.push('\n');
+    for (i, &b) in bindings.iter().enumerate() {
+        s.push_str(&format!(
+            "@group(0) @binding({b}) var terrain_tex{i}: texture_2d_array<f32>;\n"
+        ));
+    }
+    s.push_str(&format!(
+        "fn {fn_name}(uv: vec2<f32>, layer: u32) -> vec4<f32> {{\n"
+    ));
+    let mut acc = 0usize;
+    for (i, &cnt) in counts.iter().enumerate() {
+        let last = i + 1 == counts.len();
+        let local = if acc == 0 {
+            format!("min(layer, {}u)", cnt - 1)
+        } else {
+            format!("min(layer - {}u, {}u)", acc, cnt - 1)
+        };
+        if last {
+            // WGSL 规定 else 后只能是复合块或 if 语句，裸 return 不合法。
+            if i > 0 {
+                s.push_str(" {\n");
+            }
+            s.push_str(&format!(
+                "    return textureSample(terrain_tex{i}, {sampler}, uv, {local});\n"
+            ));
+            if i > 0 {
+                s.push_str("    }\n");
+            }
+        } else {
+            s.push_str(&format!(
+                "    if (layer < {}u) {{\n        return textureSample(terrain_tex{i}, {sampler}, uv, {local});\n    }} else ",
+                acc + cnt
+            ));
+        }
+        acc += cnt;
+    }
+    s.push_str("}\n");
+    s
+}
+
 impl Renderer {
+    /// 单数组图集（桌面/Vulkan 主路径）。
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
         color_format: wgpu::TextureFormat,
         assets_dir: Option<&std::path::Path>,
     ) -> Self {
+        Self::with_atlas_layer_cap(device, queue, color_format, assets_dir, None)
+    }
+
+    /// `atlas_layer_cap = Some(n)`：把单数组层数上限强制为
+    /// min(n, 设备上限)（测试钩子——CI lavapipe 上限 3907，用它模拟
+    /// GLES 256 层设备走多数组路径）。
+    pub fn with_atlas_layer_cap(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        color_format: wgpu::TextureFormat,
+        assets_dir: Option<&std::path::Path>,
+        atlas_layer_cap: Option<u32>,
+    ) -> Self {
         let max_chunks: u32 = 1024;
         let max_hud_quads: u32 = 4096;
 
-        // ---- terrain texture array ------------------------------------
-        // 真实官方贴图 827 层 + missing 哨兵 + 裂纹；GLES downlevel 上限 256
-        // → 按 device limits 钳制（app.rs 建 device 时已尽量抬到 adapter 上限，
-        // Vulkan 桌面可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
-        let max_layers = atlas::LAYERS.min(device.limits().max_texture_array_layers as usize);
-        let (payload, n_layers) = atlas::generate_payload_clamped(assets_dir, max_layers);
-        if n_layers < atlas::LAYERS {
-            log::warn!(
-                "texture array clamped {}→{} layers (device limit)",
-                atlas::LAYERS,
-                n_layers
+        // ---- terrain texture arrays ------------------------------------
+        // 真实官方贴图 827 层 + missing 哨兵 + 裂纹 10 层 = atlas::LAYERS。
+        // 设备 max_texture_array_layers < LAYERS（GLES 规范下限 256）时按
+        // atlas::split_layer_counts 拆成 N 个 texture_2d_array，
+        // terrain.wgsl/hud.wgsl 由 gpu.rs 展开 layer 区间 if 链选数组；
+        // 上限 ≥ LAYERS（桌面/Vulkan）保持单数组零分支零回归。
+        let device_max = device.limits().max_texture_array_layers;
+        let per = atlas_layer_cap.unwrap_or(device_max).min(device_max).max(1) as usize;
+        let counts = atlas::split_layer_counts(per);
+        let n_layers: usize = counts.iter().sum();
+        // 图集容量取证（2026-10-10 真机 Mali「平色面」定位）：error 级常显，
+        // 与 app.rs 的 adapter 侧 `atlas-cap` 行配对。真机 logcat 必见此行：
+        // truncated=false 且 arrays=[837] 说明设备没被卡，崩坏另有根因。
+        log::error!(
+            "atlas-cap: device max_texture_array_layers={} max_texture_dimension_2d={} atlas::LAYERS={} arrays={:?} created={} truncated={} crack_layers_ok={}",
+            device_max,
+            device.limits().max_texture_dimension_2d,
+            atlas::LAYERS,
+            counts,
+            n_layers,
+            n_layers < atlas::LAYERS,
+            n_layers > atlas::CRACK_BASE,
+        );
+        let payload = atlas::generate_payload_with_pack(assets_dir);
+        let mip0_layer_bytes = atlas::TILE_PX * atlas::TILE_PX * 4;
+        let mip1_layer_bytes = (atlas::TILE_PX / 2) * (atlas::TILE_PX / 2) * 4;
+        assert_eq!(
+            payload.len(),
+            atlas::LAYERS * (mip0_layer_bytes + mip1_layer_bytes),
+            "atlas payload 布局与拆分假设不符"
+        );
+        let mip0_total = atlas::LAYERS * mip0_layer_bytes;
+        let mut terrain_views: Vec<wgpu::TextureView> = Vec::with_capacity(counts.len());
+        let mut layer_base = 0usize;
+        for (i, &cnt) in counts.iter().enumerate() {
+            let tex = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(&format!("terrain-array{i}")),
+                size: wgpu::Extent3d {
+                    width: atlas::TILE_PX as u32,
+                    height: atlas::TILE_PX as u32,
+                    depth_or_array_layers: cnt as u32,
+                },
+                mip_level_count: atlas::MIP_LEVELS,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &payload[layer_base * mip0_layer_bytes..(layer_base + cnt) * mip0_layer_bytes],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some((atlas::TILE_PX * 4) as u32),
+                    rows_per_image: Some(atlas::TILE_PX as u32),
+                },
+                wgpu::Extent3d {
+                    width: atlas::TILE_PX as u32,
+                    height: atlas::TILE_PX as u32,
+                    depth_or_array_layers: cnt as u32,
+                },
             );
+            // mip1 必须单独上传：payload 尾部是 box 下采样结果（层序同 mip0）。
+            // 采样器 mipmap_filter=Nearest 会把 LOD≥0.5 直接舍入到 mip1，
+            // 漏传则采到未定义内容（lavapipe 清零 → 裂纹 discard、远景发黑）。
+            let mip1_off = mip0_total + layer_base * mip1_layer_bytes;
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &tex,
+                    mip_level: 1,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &payload[mip1_off..mip1_off + cnt * mip1_layer_bytes],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some((atlas::TILE_PX / 2) as u32 * 4),
+                    rows_per_image: Some((atlas::TILE_PX / 2) as u32),
+                },
+                wgpu::Extent3d {
+                    width: (atlas::TILE_PX / 2) as u32,
+                    height: (atlas::TILE_PX / 2) as u32,
+                    depth_or_array_layers: cnt as u32,
+                },
+            );
+            terrain_views.push(tex.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            }));
+            layer_base += cnt;
         }
-        let tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("terrain-array"),
-            size: wgpu::Extent3d {
-                width: atlas::TILE_PX as u32,
-                height: atlas::TILE_PX as u32,
-                depth_or_array_layers: n_layers as u32,
-            },
-            mip_level_count: atlas::MIP_LEVELS,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &payload,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((atlas::TILE_PX * 4) as u32),
-                rows_per_image: Some(atlas::TILE_PX as u32),
-            },
-            wgpu::Extent3d {
-                width: atlas::TILE_PX as u32,
-                height: atlas::TILE_PX as u32,
-                depth_or_array_layers: n_layers as u32,
-            },
-        );
-        // mip1 必须单独上传：payload 尾部 n*8*8*4 字节是 box 下采样结果。
-        // 采样器 mipmap_filter=Nearest 会把 LOD≥0.5 直接舍入到 mip1，
-        // 漏传则采到未定义内容（lavapipe 清零 → 裂纹 discard、远景发黑）。
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &tex,
-                mip_level: 1,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            &payload[n_layers * atlas::TILE_PX * atlas::TILE_PX * 4..],
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some((atlas::TILE_PX / 2) as u32 * 4),
-                rows_per_image: Some((atlas::TILE_PX / 2) as u32),
-            },
-            wgpu::Extent3d {
-                width: (atlas::TILE_PX / 2) as u32,
-                height: (atlas::TILE_PX / 2) as u32,
-                depth_or_array_layers: n_layers as u32,
-            },
-        );
-        let terrain_view = tex.create_view(&wgpu::TextureViewDescriptor {
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("terrain-sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
@@ -734,57 +837,64 @@ impl Renderer {
         });
 
         // ---- bind layouts ---------------------------------------------
+        // 追加图集数组槽（binding 5..）：仅当设备上限 < atlas::LAYERS 拆
+        // 多数组时存在（4 固定给 tint LUT，见 frame_layout_entries 尾部）。
+        let atlas_d2_array = |binding: u32| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2Array,
+                multisampled: false,
+            },
+            count: None,
+        };
+        let mut frame_layout_entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            atlas_d2_array(2),
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            // 生物群系染色 LUT（层号 → tint 类别，mcv_core::tint）。
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+        ];
+        for i in 1..terrain_views.len() {
+            frame_layout_entries.push(atlas_d2_array(4 + i as u32));
+        }
         let frame_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                // 生物群系染色 LUT（层号 → tint 类别，mcv_core::tint）。
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &frame_layout_entries,
         });
         let sky_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("sky-layout"),
@@ -819,66 +929,62 @@ impl Renderer {
                 },
             ],
         });
+        let mut hud_layout_entries = vec![
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            atlas_d2_array(3),
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+        ];
+        // 追加图集数组槽（binding 6..8）：物品图标与 terrain 同规则选数组。
+        for i in 1..terrain_views.len() {
+            hud_layout_entries.push(atlas_d2_array(5 + i as u32));
+        }
         let hud_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hud-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2Array,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 4,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 5,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-            ],
+            entries: &hud_layout_entries,
         });
 
         // unifont CJK 位图图集（text.rs 经 OnceLock 用同一份 cjk.f16 生成 quad）
@@ -999,35 +1105,45 @@ impl Renderer {
         });
 
         // ---- bind groups ----------------------------------------------
+        // terrain 图集数组槽：binding 2 = terrain_views[0]，追加数组 5/6/7
+        // （binding 4 固定给生物群系染色 LUT——tint_lut 在 terrain.wgsl 是
+        // 静态声明，不能随数组数漂移）。
+        let mut frame_bind_entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: frame_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &origins_buf,
+                    offset: 0,
+                    size: std::num::NonZeroU64::new(16),
+                }),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::TextureView(&terrain_views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::Sampler(&sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: tint_lut_buf.as_entire_binding(),
+            },
+        ];
+        for (i, view) in terrain_views.iter().enumerate().skip(1) {
+            frame_bind_entries.push(wgpu::BindGroupEntry {
+                binding: 4 + i as u32,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+        }
         let frame_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame-bind"),
             layout: &frame_bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &origins_buf,
-                        offset: 0,
-                        size: std::num::NonZeroU64::new(16),
-                    }),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&terrain_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: tint_lut_buf.as_entire_binding(),
-                },
-            ],
+            entries: &frame_bind_entries,
         });
         let sky_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("sky-bind"),
@@ -1047,43 +1163,74 @@ impl Renderer {
                 },
             ],
         });
+        // hud 图集数组槽：binding 3 = terrain_views[0]，追加数组 6/7/8。
+        let mut hud_bind_entries = vec![
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: hud_uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::TextureView(&font_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&hud_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&terrain_views[0]),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&gui_view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
+                resource: wgpu::BindingResource::TextureView(
+                    unifont_view.as_ref().expect("unifont view"),
+                ),
+            },
+        ];
+        for (i, view) in terrain_views.iter().enumerate().skip(1) {
+            hud_bind_entries.push(wgpu::BindGroupEntry {
+                binding: 5 + i as u32,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+        }
         let hud_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hud-bind"),
             layout: &hud_bind_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: hud_uniform.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&font_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&hud_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&terrain_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&gui_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(
-                        unifont_view.as_ref().expect("unifont view"),
-                    ),
-                },
-            ],
+            entries: &hud_bind_entries,
         });
 
         // ---- pipelines -------------------------------------------------
+        // 图集数组声明+采样函数按设备层数烘进 shader（与 counts 同源，见
+        // atlas_arrays_wgsl）；terrain 图集绑定在 group0 的 2(+5/6/7)
+        // （4 固定给 tint LUT），hud 在 3(+6/7/8)。
+        let terrain_arrays = atlas_arrays_wgsl(
+            &counts,
+            &[2, 5, 6, 7][..counts.len()],
+            "terrain_samp",
+            "sample_terrain",
+        );
+        let hud_arrays = atlas_arrays_wgsl(
+            &counts,
+            &[3, 6, 7, 8][..counts.len()],
+            "hud_samp",
+            "sample_terrain_icon",
+        );
+        let terrain_src =
+            include_str!("../assets/terrain.wgsl").replace("@@TERRAIN_ARRAYS@@", &terrain_arrays);
+        let hud_src =
+            include_str!("../assets/hud.wgsl").replace("@@HUD_TERRAIN_ARRAYS@@", &hud_arrays);
+        // 占位替换必须生效，否则 shader 里 sample_terrain 无定义（naga 报错
+        // 难定位到模板层），在这里直接把错抛出来。
+        assert!(!terrain_src.contains("@@"), "terrain.wgsl 占位未替换");
+        assert!(!hud_src.contains("@@"), "hud.wgsl 占位未替换");
         let frame_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("terrain"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../assets/terrain.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(terrain_src.into()),
         });
         let sky_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sky"),
@@ -1091,7 +1238,7 @@ impl Renderer {
         });
         let hud_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("hud"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("../assets/hud.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(hud_src.into()),
         });
 
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

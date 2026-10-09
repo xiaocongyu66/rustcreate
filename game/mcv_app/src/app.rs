@@ -1850,6 +1850,16 @@ impl AppState {
             force_fallback_adapter: false,
             apply_limit_buckets: false,
         }))?;
+        // 图集容量取证（真机 Mali GLES 定位「平色面」）：error 级常显，
+        // logcat 直接 grep `atlas-cap` 看设备真实上限是否容得下 837 层。
+        log::error!(
+            "atlas-cap: adapter({:?} {:?}) max_texture_array_layers={} max_texture_dimension_2d={} atlas::LAYERS={}",
+            adapter.get_info().backend,
+            adapter.get_info().name,
+            adapter.limits().max_texture_array_layers,
+            adapter.limits().max_texture_dimension_2d,
+            mcv_core::atlas::LAYERS,
+        );
         // downlevel_defaults 把 max_texture_dimension_2d 限到 2048；高刷屏
         // （如 2640 宽）configure 会直接验证失败 panic，这里放开到设备实际上限。
         let mut limits = wgpu::Limits::downlevel_defaults();
