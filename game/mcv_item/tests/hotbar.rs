@@ -75,7 +75,7 @@ fn enchanted_or_damaged_stacks_never_merge() {
 fn full_inventory_keeps_leftover() {
     // 占满全 36 格(新 add 覆盖 main 段,只满快捷栏会落进 main)。
     let mut h = Hotbar::empty();
-    let mut seed = |i: usize, h: &mut Hotbar| {
+    let seed = |i: usize, h: &mut Hotbar| {
         let mut s = ItemStack::new(COBBLESTONE, 64);
         // 每格挂附魔防合并。
         s.enchants.push(mcv_item::EnchStack {
