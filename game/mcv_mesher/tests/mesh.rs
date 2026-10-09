@@ -461,7 +461,8 @@ fn fence_post_and_arms() {
         .iter()
         .filter(|v| v.tex == mcv_core::tiles::PLANKS)
         .count();
-    assert_eq!(fence_verts, 24, "异种邻格不触发臂（石头面另计）");
+    // 异种邻格不触发臂；且立柱贴石头的 -X 面按不透明判据被剔除 → 5 面。
+    assert_eq!(fence_verts, 20, "石头邻格：无臂且 -X 面被剔除");
 }
 
 #[test]
