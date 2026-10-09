@@ -29,13 +29,47 @@ pub fn gui_scale(h: f32) -> f32 {
     (h / 240.0).floor().max(2.0)
 }
 
-/// Sun direction + day factor from day time in ticks (24000 per day, MC
-/// convention: 0 = sunrise, 6000 = noon, 12000 = sunset, 18000 = midnight).
-/// TODO(research): calibrate against MC 26.1 celestial math (NOTES-2).
+/// Sun direction + day factor from day time in ticks (24000 per day).
+///
+/// 相位对齐 26.1 `data/minecraft/timeline/day.json`：`visual/sun_angle` 在
+/// tick 6000 = 0°（正午天顶；SkyRenderer.java:274 取度数转弧度、:323-325
+/// 绕 X 旋转该角，0° 即天顶），tick 0 = 黎明（wakeup 标记 0）、12000 = 日落、
+/// 18000 = 子夜。旧实现 `angle = frac*TAU` 把天顶放在 tick 0，比原版早 1/4 天。
 pub fn sun_state(time_ticks: u64) -> (Vec3, f32) {
-    let frac = (time_ticks % 24_000) as f32 / 24_000.0;
-    let angle = frac * std::f32::consts::TAU; // 0 = sunrise (east horizon)
+    let tick = (time_ticks % 24_000) as f32;
+    // tick 6000 → 0°（天顶，dir.y = cos = 1）；6000±6000（0/12000）地平线。
+    let angle = (tick - 6_000.0) * (std::f32::consts::TAU / 24_000.0);
+    // z 分量 −0.25·sin 为既有美术倾斜（登记于 KNOWN-DIVERGENCE，非本次范围）。
     let dir = Vec3::new(-angle.sin(), angle.cos(), -0.25 * angle.sin()).normalize();
-    let day = (angle.cos() * 1.6 + 0.5).clamp(0.03, 1.0);
-    (dir, day)
+    (dir, day_factor(time_ticks))
+}
+
+/// 昼夜光照系数（渲染逐帧乘到天光上的 `day_factor`）。
+///
+/// 按 26.1 `day.json` `visual/sky_light_factor` 线性关键帧（原版曲线为
+/// keyframe 线性插值，非 cos 形）：
+/// - `[730, 11270]` 白天平台 1.0；
+/// - `11270 → 13140` 线性过渡到 0.24；
+/// - `[13140, 22860]` 夜间平台 0.24（旧实现夜底 0.03，夜面比原版暗约 3 倍）；
+/// - `22860 → 次日 730` 线性回到 1.0（跨 0 回绕段与傍晚段等长 1870 tick）。
+pub fn day_factor(time_ticks: u64) -> f32 {
+    let t = (time_ticks % 24_000) as f32;
+    const DAWN: f32 = 730.0;
+    const DUSK: f32 = 11_270.0;
+    const NIGHT: f32 = 13_140.0;
+    const NIGHT_END: f32 = 22_860.0;
+    const DARK: f32 = 0.24;
+    const SPAN: f32 = 1_870.0;
+    if t < DAWN {
+        // 22860 → 24730（=730+24000）黎明线性段。
+        DARK + (t + 24_000.0 - NIGHT_END) / SPAN * (1.0 - DARK)
+    } else if t <= DUSK {
+        1.0
+    } else if t <= NIGHT {
+        1.0 - (t - DUSK) / SPAN * (1.0 - DARK)
+    } else if t <= NIGHT_END {
+        DARK
+    } else {
+        DARK + (t - NIGHT_END) / SPAN * (1.0 - DARK)
+    }
 }

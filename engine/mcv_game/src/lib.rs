@@ -35,11 +35,23 @@ pub struct Player {
     pub sel_slot: usize,
     /// 生命值（MC 满值 20 = 10 心；0 死亡）。
     pub health: f32,
-    /// 饥饿值（满值 20；饥饿>17 缓慢回血，0 时掉血至 10 为止，和平难度规则）。
+    /// 饥饿值（满值 20；hunger≥18 慢线回血、=20 且有饱和走快线，
+    /// 0 时掉血至 10 为止，和平封顶——见 game::food_data_tick）。
     pub hunger: f32,
-    /// 受伤无敌帧（tick，MC hurtTime=10；受击方向击退 + 闪烁）。
+    /// 饥饿饱和度（26.1 FoodData.saturationLevel，FoodData.java:15；初始 5.0，
+    /// FoodConstants.java:6 START_SATURATION；exhaustion 结算先扣饱和再扣
+    /// hunger，FoodData.java:35-40）。
+    pub saturation: f32,
+    /// 受伤无敌帧（**tick** 单位，20 tick = 1s，26.1 LivingEntity.invulnerableTime，
+    /// LivingEntity.java:1206 置 20、ServerPlayer.java:576-577 每 tick −1；由
+    /// GameRuntime 在 on_tick 递减，绝不按 60 Hz 固定步计）。
     pub invulnerable: i32,
-    /// 饥饿消耗累计（步行距离，MC exhaustion 机制的粗化）。
+    /// 上次受伤结算用的原始伤害值（26.1 LivingEntity.lastHurt，LivingEntity.java:232；
+    /// 无敌帧 >10 tick 时伤害 ≤ lastHurt 整段忽略、更强只扣差值，:1196-1206）。
+    pub last_hurt: f32,
+    /// 饥饿消耗累计（26.1 FoodData.exhaustionLevel，上限 40，
+    /// FoodData.addExhaustion:100-101；增量表见 FoodConstants.java 与
+    /// GameRuntime::fixed_step）。
     pub exhaustion: f32,
 }
 
@@ -62,7 +74,9 @@ impl Default for Player {
             sel_slot: 0,
             health: 20.0,
             hunger: 20.0,
+            saturation: 5.0,
             invulnerable: 0,
+            last_hurt: 0.0,
             exhaustion: 0.0,
         }
     }

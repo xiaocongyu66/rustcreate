@@ -3,14 +3,16 @@
 
 use mcv_item::ItemStack;
 
-/// Attack cooldown scale (Player.attackStrengthScale:1710-1722):
+/// Attack cooldown scale (26.1 Player.getAttackStrengthScale:1803-1805,
+/// delay = 20/attackSpeed via getCurrentItemAttackStrengthDelay:1793-1795):
 /// (ticker + 0.5) / (20 / attackSpeed), clamped 0..1. `ticker` counts ticks
 /// (20/s); full recovery takes 20/attackSpeed ticks (1/attackSpeed s).
 pub fn attack_strength(ticker: f32, attack_speed: f32) -> f32 {
     ((ticker + 0.5) / (20.0 / attack_speed)).clamp(0.0, 1.0)
 }
 
-/// Damage scaling with cooldown (Player.java:936): 0.2 + scale² × 0.8.
+/// Damage scaling with cooldown (Player.baseDamageScaleFactor:1185-1188):
+/// 0.2 + scale² × 0.8.
 pub fn cooldown_damage_scale(scale: f32) -> f32 {
     0.2 + scale * scale * 0.8
 }
@@ -44,8 +46,8 @@ pub fn damage_after_protection(damage: f32, total_protection: u32) -> f32 {
     damage * (1.0 - total_protection.min(20) as f32 / 25.0)
 }
 
-/// Invulnerability frames (LivingEntity:1207-1214):
-/// during invulnerableTime=20, if new damage <= lastHurt → no damage;
+/// Invulnerability frames (LivingEntity.java:1196-1206):
+/// during invulnerableTime > 10, if new damage <= lastHurt → no damage;
 /// otherwise only (new - lastHurt) applies.
 pub fn invulnerable_gate(invulnerable_ticks: u32, last_hurt: f32, incoming: f32) -> Option<f32> {
     if invulnerable_ticks > 10 {
@@ -103,7 +105,10 @@ pub fn knockback_velocity(
 pub struct AttackContext {
     pub attacker_pos_eye: glam::Vec3,
     pub weapon: Option<ItemStack>,
-    /// Current attack cooldown ticker (seconds accumulated).
+    /// Current attack cooldown ticker — **ticks** (20/s)，对应 26.1
+    /// `Player.attackStrengthTicker`（Player.java:267 每 tick +1；
+    /// 满蓄力 delay = 20/attackSpeed tick，Player.java:1793-1795）。
+    /// 生产侧（GameRuntime）必须按 on_tick 累加，绝不按秒或 60 Hz 步。
     pub cooldown_ticker: f32,
     pub fall_distance: f32,
     pub on_ground: bool,
@@ -153,6 +158,11 @@ pub fn resolve_attack(ctx: &AttackContext) -> AttackOutcome {
 /// Applies hurt to a target mob (armor + protection + i-frames).
 /// ECS 化后收散点可变引用（对应 `Health`/`MobTicks::invulnerable`/`LastHurt`
 /// 组件）+ `MobDef::armor`；结算数学与原 `&mut Mob` 版逐行等价。
+///
+/// 无敌帧回写分岔（26.1 LivingEntity.java:1196-1206）：只有全额分支
+/// （invulnerableTime ≤ 10）才置 `invulnerableTime = 20`（:1206）；差值分支
+/// （:1200-1202 扣 damage−lastHurt）**不重置**无敌帧——旧实现无条件置 20，
+/// 连续强击会把 i 帧无限续期。
 pub fn apply_hurt(
     health: &mut f32,
     invulnerable: &mut u32,
@@ -161,11 +171,14 @@ pub fn apply_hurt(
     incoming: f32,
     total_protection: u32,
 ) -> Option<f32> {
+    let full_branch = *invulnerable <= 10;
     invulnerable_gate(*invulnerable, *last_hurt, incoming).map(|dmg| {
         let after_armor = damage_after_armor(dmg, armor, 0.0);
         let after_prot = damage_after_protection(after_armor, total_protection);
         *health -= after_prot;
-        *invulnerable = 20;
+        if full_branch {
+            *invulnerable = 20;
+        }
         *last_hurt = incoming;
         after_prot
     })

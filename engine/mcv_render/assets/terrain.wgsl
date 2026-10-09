@@ -20,9 +20,16 @@ fn face_shade(face_id: u32) -> f32 {
     return table[face_id];
 }
 
+// 亮度曲线（26.1 lightmap.fsh:21-42 乘序）：先 get_brightness v/(4−3v) 曲线、
+// 再乘昼夜因子 SkyFactor(=day)；旧实现先乘 day 后 pow 1.5 gamma，乘序相反，
+// 夜间被压得过暗。常数底 0.08+0.92·x 保留（对应原版 AmbientColor≈0.039 的
+// 既有映射，本次只调乘序与曲线，不动 shader 结构）。
 fn light_curve(sky: f32, block: f32, day: f32) -> f32 {
-    let l = max(sky / 15.0 * day, block / 15.0);
-    return 0.08 + 0.92 * pow(l, 1.5);
+    let s = sky / 15.0;
+    let b = block / 15.0;
+    let sb = s / (4.0 - 3.0 * s) * day;
+    let bb = b / (4.0 - 3.0 * b);
+    return 0.08 + 0.92 * max(sb, bb);
 }
 
 fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
