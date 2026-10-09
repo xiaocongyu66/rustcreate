@@ -9,6 +9,7 @@ use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat::{attack_strength, cooldown_damage_scale, invulnerable_gate};
 use mcv_item::ItemStack;
+use mcv_logic::difficulty::Difficulty;
 use mcv_logic::game::{
     ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, WorldView, block_hit_t, food_data_tick, move_exhaustion,
     pick_attack_target, ray_aabb_t,
@@ -98,18 +99,39 @@ fn sprint_costs_exhaustion_per_meter_walk_costs_zero() {
 fn exhaustion_spends_saturation_before_hunger() {
     // 4.0 恰好不触发：FoodData.java:35 是 `> 4.0F` 严格大于。
     let (mut ex, mut sat, mut food, mut hp, mut timer) = (4.0f32, 5.0f32, 20.0f32, 20.0f32, 0u32);
-    food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+    food_data_tick(
+        &mut ex,
+        &mut sat,
+        &mut food,
+        &mut hp,
+        &mut timer,
+        Difficulty::Normal,
+    );
     assert!((ex - 4.0).abs() < 1e-6 && (sat - 5.0).abs() < 1e-6);
     assert!((food - 20.0).abs() < 1e-6, "满血满食不应有副作用");
     // >4：先扣 1 饱和，hunger 不动（FoodData.java:35-40）。
     let (mut ex, mut sat, mut food, mut hp, mut timer) = (4.05f32, 5.0f32, 20.0f32, 20.0f32, 0u32);
-    food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+    food_data_tick(
+        &mut ex,
+        &mut sat,
+        &mut food,
+        &mut hp,
+        &mut timer,
+        Difficulty::Normal,
+    );
     assert!((ex - 0.05).abs() < 1e-6);
     assert!((sat - 4.0).abs() < 1e-6, "饱和先扣");
     assert!((food - 20.0).abs() < 1e-6, "饱和未尽饥饿不扣");
     // 饱和见底才扣饥饿。
     let (mut ex, mut sat, mut food, mut hp, mut timer) = (4.05f32, 0.0f32, 20.0f32, 20.0f32, 0u32);
-    food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+    food_data_tick(
+        &mut ex,
+        &mut sat,
+        &mut food,
+        &mut hp,
+        &mut timer,
+        Difficulty::Normal,
+    );
     assert!((food - 19.0).abs() < 1e-6);
 }
 
@@ -119,10 +141,24 @@ fn slow_regen_costs_six_exhaustion_per_hp() {
     //（FoodData.java:53-59 + FoodConstants.java:20 EXHAUSTION_HEAL=6.0）。
     let (mut ex, mut sat, mut food, mut hp, mut timer) = (0.0f32, 0.0f32, 18.0f32, 10.0f32, 0u32);
     for _ in 0..79 {
-        food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+        food_data_tick(
+            &mut ex,
+            &mut sat,
+            &mut food,
+            &mut hp,
+            &mut timer,
+            Difficulty::Normal,
+        );
     }
     assert!((hp - 10.0).abs() < 1e-6, "79 tick 未回血");
-    food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+    food_data_tick(
+        &mut ex,
+        &mut sat,
+        &mut food,
+        &mut hp,
+        &mut timer,
+        Difficulty::Normal,
+    );
     assert!((hp - 11.0).abs() < 1e-6, "第 80 tick 回 1");
     assert!((ex - 6.0).abs() < 1e-6, "回血代价 exhaustion+6");
 }
@@ -133,10 +169,24 @@ fn saturation_fast_regen_lane() {
     // 代价 exhaustion+min(饱和,6)（FoodData.java:45-52）。
     let (mut ex, mut sat, mut food, mut hp, mut timer) = (0.0f32, 3.0f32, 20.0f32, 10.0f32, 0u32);
     for _ in 0..9 {
-        food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+        food_data_tick(
+            &mut ex,
+            &mut sat,
+            &mut food,
+            &mut hp,
+            &mut timer,
+            Difficulty::Normal,
+        );
     }
     assert!((hp - 10.0).abs() < 1e-6);
-    food_data_tick(&mut ex, &mut sat, &mut food, &mut hp, &mut timer);
+    food_data_tick(
+        &mut ex,
+        &mut sat,
+        &mut food,
+        &mut hp,
+        &mut timer,
+        Difficulty::Normal,
+    );
     assert!((hp - 10.5).abs() < 1e-6, "回 min(3,6)/6 = 0.5");
     assert!(
         (ex - 3.0).abs() < 1e-6,

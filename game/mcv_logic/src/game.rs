@@ -128,6 +128,42 @@ impl VoxelAccess for WorldView<'_> {
     }
 }
 
+/// 粒子世界适配器（[`mcv_render::particles::ParticleWorld`]）：只借
+/// chunks，让 fixed_step 能在 `&mut self.particles` 的同时喂世界回调。
+/// 缺区块语义按引擎默认：碰撞=实心石、光=满亮（Particle.java:184-187
+/// hasChunkAt=false → 0xF000F0）。
+struct ParticleRt<'a> {
+    chunks: &'a HashMap<ChunkPos, Arc<ChunkHandle>>,
+}
+
+impl mcv_render::particles::ParticleWorld for ParticleRt<'_> {
+    fn is_solid(&self, x: i32, y: i32, z: i32) -> bool {
+        let view = WorldView {
+            chunks: self.chunks,
+        };
+        view.block(BlockPos::new(x, y, z)).def().solid
+    }
+
+    fn light_at(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
+        let p = BlockPos::new(x, y, z);
+        match self.chunks.get(&p.chunk()) {
+            Some(c) if c.stage() != Stage::Empty => {
+                let [lx, ly, lz] = p.local();
+                let v = c.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+                (v & 0xF, v >> 4)
+            }
+            _ => (15, 15),
+        }
+    }
+
+    fn is_water(&self, x: i32, y: i32, z: i32) -> bool {
+        let view = WorldView {
+            chunks: self.chunks,
+        };
+        view.block(BlockPos::new(x, y, z)).def().liquid
+    }
+}
+
 /// 边号 → 相邻区块方向：0=+X 1=-X 2=+Z 3=-Z（与 mcv_light 的边编码一致）。
 fn side_delta(side: u8) -> (i32, i32) {
     match side {
@@ -381,6 +417,9 @@ pub struct GameRuntime {
     pub difficulty: crate::difficulty::Difficulty,
     /// 天气状态机（ServerLevel.advanceWeatherCycle；[`weather::Weather`]）。
     pub weather: crate::weather::Weather,
+    /// M8a 粒子池（挖掘碎屑/破坏爆裂/溅水/暴击）：fixed_step 里 on_tick
+    /// 推进，app.rs 每帧经 Scene.particles 交 mcv_render 绘制。
+    pub particles: mcv_render::particles::ParticleEngine,
     /// 弓蓄力账本（Some=按住蓄力中的 tick 数；状态机 [`mcv_item::bow`]）。
     bow_hold: Option<u32>,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
@@ -672,6 +711,7 @@ impl GameRuntime {
             mode,
             difficulty: crate::difficulty::Difficulty::Normal,
             weather: crate::weather::Weather::new(),
+            particles: mcv_render::particles::ParticleEngine::new(),
             bow_hold: None,
             hardcore_death: false,
             render_dist: RENDER_DIST,
@@ -1567,6 +1607,12 @@ impl GameRuntime {
             self.time_ticks += n; // 26.1 ServerClockManager 每 tick +1
             // 天气推进（ServerLevel.advanceWeatherCycle:694-755）。
             self.weather.tick(&mut spawn_rng());
+            // 粒子推进（26.1 ParticleEngine.tick 每 game tick 一次；
+            // 世界回调仅借 chunks，与 &mut particles 字段互斥无冲突）。
+            let pw = ParticleRt {
+                chunks: &self.chunks,
+            };
+            self.particles.tick(&pw);
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
@@ -1667,6 +1713,17 @@ impl GameRuntime {
         let hits: Vec<MobMeleeHit> = self.mobs_app.events.channel::<MobMeleeHit>().take();
         for h in hits {
             self.hurt_player(h.damage.max(1.0), Some(h.src));
+            // 受击暴击十字（DamageIndicator 变体，CritParticle.java:26-47
+            // 经 CombatTracker 触发；胸口高度 +1.0，纯指示无初速）。
+            self.particles.spawn_crit(
+                h.src.x as f64,
+                (h.src.y + 1.0) as f64,
+                h.src.z as f64,
+                0.0,
+                0.0,
+                0.0,
+                true,
+            );
         }
         let arrows: Vec<MobArrowHit> = self.mobs_app.events.channel::<MobArrowHit>().take();
         for h in arrows {
@@ -1746,6 +1803,19 @@ impl GameRuntime {
                     [p.x, p.y + 0.5, p.z],
                     [p.x, p.y, p.z],
                     0.8,
+                );
+                // 溅水两波粒子（Entity.doPlayEffect/doWaterSplashEffect
+                // Entity.java:1594-1622：波 1+width·20 粒，width=0.6）。
+                self.particles.spawn_water_splash(
+                    p.x as f64,
+                    (p.y + 0.5) as f64,
+                    p.z as f64,
+                    [
+                        self.player.vel.x as f64,
+                        self.player.vel.y as f64,
+                        self.player.vel.z as f64,
+                    ],
+                    0.6,
                 );
             }
             self.was_in_water = in_water;
@@ -1855,6 +1925,7 @@ impl GameRuntime {
                     &mut p.hunger,
                     &mut p.health,
                     &mut self.food_tick_timer,
+                    self.difficulty,
                 );
             }
         }
@@ -2047,8 +2118,17 @@ impl GameRuntime {
             (self.player.pos.x / 16.0).floor() as i32,
             (self.player.pos.z / 16.0).floor() as i32,
         );
-        let cfg = spawner::SpawnConfig::default();
-        let darken = sky_darken(self.time_ticks);
+        // 和平不刷怪（Monster.checkMonsterSpawnRules 的
+        // `getDifficulty() != PEACEFUL`，Monster.java:112）；雷暴把天空亮度
+        // 压暗再判（Level.getRawBrightness 的 darken 参数经
+        // Weather.sky_darken：雨/雷暴 11/12 级暗化，
+        // Monster.isDarkEnoughToSpawn :87 用压暗后的 getBrightness 对比
+        // random.nextInt(32)）。
+        let cfg = spawner::SpawnConfig {
+            peaceful: self.difficulty.is_peaceful(),
+            ..Default::default()
+        };
+        let darken = self.weather.sky_darken(sky_darken(self.time_ticks));
         for _ in 0..2 {
             // random loaded chunk within spawn range
             let dx = (fast_rand() % (2 * spawner::SPAWN_RANGE_CHUNKS as u32 + 1)) as i32
@@ -2396,6 +2476,12 @@ impl GameRuntime {
         })
     }
 
+    /// 固定步余量（partialTickTime 0..1，26.1 Minecraft.getFrameTime 语义）：
+    /// 渲染层做粒子/实体帧间插值用。
+    pub fn tick_frac(&self) -> f32 {
+        self.tick_frac as f32
+    }
+
     /// Mouse look.
     ///
     /// 加载态不生效：26.1 LevelLoadingScreen 是活动 Screen，MouseHandler
@@ -2527,6 +2613,13 @@ impl GameRuntime {
         // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
         // heightmap 维护（26.1 destroy → checkBlock）。
         relight_block_edit(&self.chunks, target, old.0, 0);
+        // 破坏爆裂碎屑（ClientLevel.addDestroyBlockEffect:942-973：满块
+        // 0.25 密度 4×4×4=64 粒，取被破坏方块图集层的 1/4 随机小矩形）。
+        self.particles.spawn_block_crack(
+            [target.x as f64, target.y as f64, target.z as f64],
+            old.0,
+            0,
+        );
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
@@ -2673,21 +2766,47 @@ impl GameRuntime {
         }
         // 每 tick 重射线（原版客户端 hitResult 每 tick 重算；超出 reach 打不中
         // → None → continue_tick 内 ABORT，取代旧"中心距 >5.5 才中止"）。
-        let hit = dda_hit(
+        let ray = dda_hit(
             &view,
             eye,
             dir,
             reach,
             mcv_game::blockshapes::RayTarget::Pick,
-        )
-        .map(|(p, _)| (p, view.block(p)))
-        .filter(|(_, b)| b.0 != 0)
-        .map(|(p, b)| MineHit {
-            pos: p,
-            per_tick: self.mine_per_tick(&view, b),
+        );
+        // 保留命中面（面号 0..5 = +X,-X,+Y,-Y,+Z,-Z）：未挖穿的每个 tick
+        // 在命中面撒碎屑（Minecraft.java:1619 → addBreakingBlockEffect）。
+        let mut face = 0u8;
+        let target = ray.map(|(p, n)| {
+            face = match (n[0], n[1], n[2]) {
+                (1, ..) => 0,
+                (-1, ..) => 1,
+                (_, 1, _) => 2,
+                (_, -1, _) => 3,
+                (_, _, 1) => 4,
+                _ => 5,
+            };
+            p
         });
-        if let MineTick::Broken(p) = self.mine.continue_tick(hit) {
-            self.destroy_block(p);
+        let hit = target
+            .map(|p| (p, view.block(p)))
+            .filter(|(_, b)| b.0 != 0)
+            .map(|(p, b)| MineHit {
+                pos: p,
+                per_tick: self.mine_per_tick(&view, b),
+            });
+        match self.mine.continue_tick(hit) {
+            MineTick::Broken(p) => self.destroy_block(p),
+            MineTick::Idle => {
+                if let Some(p) = target {
+                    let b = view.block(p).0;
+                    self.particles.spawn_hit(
+                        [p.x as f64, p.y as f64, p.z as f64],
+                        face,
+                        b,
+                        [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                    );
+                }
+            }
         }
     }
 
@@ -3996,12 +4115,14 @@ pub fn food_data_tick(
     hunger: &mut f32,
     health: &mut f32,
     tick_timer: &mut u32,
+    difficulty: crate::difficulty::Difficulty,
 ) {
     if *exhaustion > 4.0 {
         *exhaustion -= 4.0;
         if *saturation > 0.0 {
             *saturation = (*saturation - 1.0).max(0.0);
-        } else {
+        } else if !difficulty.is_peaceful() {
+            // 和平只耗饱和不扣饥饿（FoodData.java:39 `else if (difficulty != PEACEFUL)`）。
             *hunger = (*hunger - 1.0).max(0.0);
         }
     }
@@ -4024,7 +4145,9 @@ pub fn food_data_tick(
     } else if *hunger <= 0.0 {
         *tick_timer += 1;
         if *tick_timer >= 80 {
-            if *health > 10.0 {
+            // 封顶表（FoodData.java:63 `health > 10 || HARD || (health > 1 && NORMAL)`，
+            // 和平/简单只掉到 10）——旧「一律封顶 10」登记偏差已消解。
+            if crate::difficulty::starve_can_hurt(*health, difficulty) {
                 *health -= 1.0;
             }
             *tick_timer = 0;

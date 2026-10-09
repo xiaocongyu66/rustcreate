@@ -1815,7 +1815,7 @@ impl AppState {
             player: None,
             overlay: None,
             underwater: false,
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            particles: None, // 菜单场景无世界粒子
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -2115,7 +2115,8 @@ impl AppState {
             overlay,
             // 水下雾：眼位在水块内（Player.isEyeInFluid(WATER)）。
             underwater: runtime.eye_under_water(),
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            // M8a 主接线：粒子池 + 帧内插值余量（Scene 生命周期借用）。
+            particles: Some((&runtime.particles, runtime.tick_frac())),
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);
