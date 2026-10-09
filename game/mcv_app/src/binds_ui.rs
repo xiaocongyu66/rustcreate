@@ -562,7 +562,7 @@ mod screen_tests {
     fn draw_smoke_without_sprites() {
         let mut kb = KeyBindsScreen::new(Lang::Zh);
         kb.on_open(&ctx());
-        let mut map = KeyMap::default();
+        let map = KeyMap::default();
         kb.refresh_rows(&map);
         let mut g = UiGraphics::new(&ctx(), 42);
         kb.draw(&mut g, None);

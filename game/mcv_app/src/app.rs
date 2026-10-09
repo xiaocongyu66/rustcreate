@@ -1507,7 +1507,7 @@ impl ApplicationHandler for AppState {
                                 .as_any()
                                 .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
                         {
-                            let consumed = kb.key_input(vk, &mut self.keymap);
+                            let consumed = kb.key_input(Some(vk), &mut self.keymap);
                             if esc && !consumed {
                                 close = true;
                             }

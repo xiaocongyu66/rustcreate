@@ -362,15 +362,18 @@ impl ContainerScreen {
             None if outside => SLOT_OUTSIDE,
             None => -1,
         };
-        if self.doubleclick && slot.is_some() && button == 0 {
+        if self.doubleclick
+            && button == 0
+            && let Some(si) = slot
+        {
             // 双击：收拢同类（PICKUP_ALL）；shift = 同容器同物快移（:458-475）
             if shift {
-                let group = self.slots[slot.unwrap()].group;
+                let group = self.slots[si].group;
                 let moved = self.last_quick_moved.clone();
                 if !moved.is_empty() {
                     for i in 0..self.slots.len() {
                         if self.slots[i].group == group
-                            && Some(i) != slot
+                            && i != si
                             && !self.items[i].is_empty()
                             && self.items[i].kind == moved.kind
                             && self.can_item_quick_replace(i, &moved, true)
@@ -622,12 +625,13 @@ impl ContainerScreen {
     }
 
     fn do_quickcraft(&mut self, slot_index: i32, mask: u8) {
-        // :336-399
+        // :336-399。前两个分支都只做 reset（原版为 else-if 链，此处合并
+        // 条件以过 clippy::if_same_then_else，行为不变）
         let expected = self.quickcraft_status;
         self.quickcraft_status = get_quickcraft_header(mask);
-        if (expected != 1 || self.quickcraft_status != 2) && expected != self.quickcraft_status {
-            self.reset_quickcraft();
-        } else if self.carried.is_empty() {
+        if ((expected != 1 || self.quickcraft_status != 2) && expected != self.quickcraft_status)
+            || self.carried.is_empty()
+        {
             self.reset_quickcraft();
         } else if self.quickcraft_status == 0 {
             self.quickcraft_type = get_quickcraft_type(mask);
@@ -824,18 +828,20 @@ impl ContainerScreen {
                 start
             };
             while if backwards { dest >= start } else { dest < end } {
-                if dest < self.items.len() && dest != skip {
-                    if self.items[dest].is_empty() && self.may_place(dest, stack) {
-                        let cap = self.slot_cap(stack.kind);
-                        let n = stack.count.min(cap);
-                        self.items[dest] = StackRef {
-                            kind: stack.kind,
-                            count: n,
-                        };
-                        stack.count -= n;
-                        changed = true;
-                        break;
-                    }
+                if dest < self.items.len()
+                    && dest != skip
+                    && self.items[dest].is_empty()
+                    && self.may_place(dest, stack)
+                {
+                    let cap = self.slot_cap(stack.kind);
+                    let n = stack.count.min(cap);
+                    self.items[dest] = StackRef {
+                        kind: stack.kind,
+                        count: n,
+                    };
+                    stack.count -= n;
+                    changed = true;
+                    break;
                 }
                 dest = if backwards {
                     dest.wrapping_sub(1)

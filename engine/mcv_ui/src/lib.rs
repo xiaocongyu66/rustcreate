@@ -35,3 +35,4 @@ pub mod widget;
 pub use context::{Rect, UiContext, UiGraphics, calculate_scale, scaled_len};
 pub use screen::{KeyEvent, Screen, ScreenStack, key};
 pub use slot::{MenuCmd, StackRef};
+pub use widget::{UiEvent, WidgetSet};
