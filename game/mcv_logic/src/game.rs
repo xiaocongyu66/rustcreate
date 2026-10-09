@@ -145,6 +145,15 @@ pub struct GameRuntime {
     pub player: Player,
     pub input: InputState,
     pub time_ticks: u64,
+    /// 60 Hz 固定步 → 20 Hz 原版 tick 的小数累加器（原版每 tick +1，
+    /// 帧率耦合的 `(dt*20) as u64` 截断在 60 fps 下恒为 0，时间冻结）。
+    tick_frac: f64,
+    /// 全局 20 Hz tick 计数（与 time_ticks 分开：time_ticks 可被睡觉/指令
+    /// 跳转，game_ticks 单调只增，做系统节流用）。
+    pub game_ticks: u64,
+    /// 本固定步是否跨过至少一个 tick 边界——按原版 tick 计时的计时器
+    /// （无敌帧、攻击冷却、AI 节奏）必须在此为真时 +1，不许按 60 Hz 步计。
+    pub on_tick: bool,
     pub mesher: Box<dyn ChunkMesher>,
     pub save_dir: std::path::PathBuf,
     render_chunks: Vec<RenderChunk>,
@@ -197,6 +206,19 @@ pub enum CameraType {
 /// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
 const THIRD_PERSON_DIST: f32 = 4.0;
 
+/// 60 Hz 固定步 → 20 Hz 原版 tick 累加：返回本步跨过的 tick 数（0 或 1
+/// 为常态），小数留在 `frac`。`dt ≥ 0.2 s` 的 burst（卡顿/后台回归）封顶
+/// 4 tick，防级联。原版逻辑全部按 tick 计时（20 tick/s），任何按 60 Hz
+/// 步数或按秒累加的 tick 计时器都慢/快 3~20 倍。
+fn accumulate_ticks(frac: &mut f64, dt: f32) -> u64 {
+    *frac += (dt * 20.0) as f64;
+    let n = *frac as u64;
+    if n > 0 {
+        *frac -= n as f64;
+    }
+    n.min(4)
+}
+
 impl GameRuntime {
     pub fn new(
         seed: u64,
@@ -232,6 +254,9 @@ impl GameRuntime {
             player: Player::default(),
             input: InputState::default(),
             time_ticks: 6_000, // noon start
+            tick_frac: 0.0,
+            game_ticks: 0,
+            on_tick: false,
             mesher: Box::new(CxxMesher::new(256 << 20, uploader)),
             save_dir,
             render_chunks: Vec::new(),
@@ -731,6 +756,13 @@ impl GameRuntime {
     }
 
     pub fn fixed_step(&mut self, dt: f32) {
+        // ---- 20 Hz tick 基建（原版 tick 语义的唯一换算点）----
+        let n = accumulate_ticks(&mut self.tick_frac, dt);
+        self.on_tick = n > 0;
+        if self.on_tick {
+            self.game_ticks += n;
+            self.time_ticks += n; // 26.1 ServerClockManager 每 tick +1
+        }
         self.apply_touch_input();
         if self.dead {
             // 死亡界面：尸体不响应输入，仅重力继续
@@ -1936,5 +1968,36 @@ fn step_event(vid: u16) -> Option<&'static str> {
         2 | 3 | 7 | 11 => Some("block.grass.step"),
         6 | 8 => Some("block.wood.step"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::accumulate_ticks;
+
+    #[test]
+    fn sixty_hertz_steps_map_to_twenty_hertz_ticks() {
+        let d = 1.0f32 / 60.0;
+        let mut frac = 0.0f64;
+        assert_eq!(accumulate_ticks(&mut frac, d), 0);
+        assert_eq!(accumulate_ticks(&mut frac, d), 0);
+        assert_eq!(
+            accumulate_ticks(&mut frac, d),
+            1,
+            "每 3 个固定步 = 1 原版 tick"
+        );
+        // 一秒（60 步）恰好 20 tick——(dt*20) as u64 截断版恒 0 的回归锁。
+        let mut sec = 0.0f64;
+        let total: u64 = (0..60).map(|_| accumulate_ticks(&mut sec, d)).sum();
+        assert_eq!(total, 20, "60 fps 下每秒必须走满 20 tick");
+        // 帧率不敏感：240 fps（每步 1/240 s）同样 20 tick/s。
+        let mut fast = 0.0f64;
+        let total: u64 = (0..240)
+            .map(|_| accumulate_ticks(&mut fast, 1.0 / 240.0))
+            .sum();
+        assert_eq!(total, 20);
+        // burst 封顶 4（卡顿/后台回归防级联）。
+        let mut burst = 0.0f64;
+        assert_eq!(accumulate_ticks(&mut burst, 10.0), 4);
     }
 }
