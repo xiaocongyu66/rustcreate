@@ -25,6 +25,12 @@ namespace {
  * grows toward ~1000 blocks. */
 constexpr uint16_t kBarrier = 0xFFFF;
 
+/* 体素 u16 打包（同 mcv_core::BlockId）：bit0-11 = 方块 id，bit12-15 =
+ * 状态 nibble（半砖上下/楼梯朝向）。kBarrier 经 MCV_ID 得 0x0FFF（未注册
+ * → kUnknown 不透明），且拦截先行于取模，哨兵语义不变。 */
+#define MCV_ID(v) ((v) &0x0FFFu)
+#define MCV_STATE(v) (((v) >> 12) & 0xFu)
+
 /* UV units per block edge: 65535 / 16, so a full 16-block quad fills the
  * u16 range exactly (repeat wrap comes from the sampler, values & 0xFFFF). */
 constexpr float kUvPerBlock = 4095.9375f;
@@ -164,11 +170,13 @@ uint16_t block_at(const Neighborhood& n, int x, int y, int z) {
 constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}, 0};
 
 const BlockInfo& block_info(uint16_t id) {
-    return id < kBlocksCount ? kBlocks[id] : kUnknown;
+    const uint16_t base = MCV_ID(id);
+    return base < kBlocksCount ? kBlocks[base] : kUnknown;
 }
 
-bool is_opaque(uint16_t id) {
-    return id >= kBarrier || block_info(id).opaque;
+/* 入参为原始体素值（可含状态位；kBarrier 先行拦截）。 */
+bool is_opaque(uint16_t raw) {
+    return raw >= kBarrier || block_info(raw).opaque;
 }
 
 /* Low nibble = block light, high nibble = sky light (mcv_core::ChunkLight).
@@ -392,10 +400,11 @@ void build_pass(const Neighborhood& n, bool water_pass,
                     for (int u = 0; u < g.gu; ++u) {
                         int x, y, z;
                         cell_coords(axis, layer, u, v, &x, &y, &z);
-                        const uint16_t id = block_at(n, x, y, z);
-                        if (id >= kBarrier) {
+                        const uint16_t raw = block_at(n, x, y, z);
+                        if (raw >= kBarrier) {
                             continue;
                         }
+                        const uint16_t id = MCV_ID(raw);
                         const int nx = x + nx_step;
                         const int ny = y + ny_step;
                         const int nz = z + nz_step;
@@ -405,10 +414,11 @@ void build_pass(const Neighborhood& n, bool water_pass,
                         uint8_t wave = 0;
                         if (water_pass) {
                             /* water vs water (or barrier) shows nothing */
-                            if (id == kWater && nb < kBarrier && nb != kWater) {
+                            if (id == kWater && nb < kBarrier &&
+                                MCV_ID(nb) != kWater) {
                                 visible = true;
                                 if (face == kFacePy) {
-                                    wave = nb == kAir ? 1 : 0;
+                                    wave = MCV_ID(nb) == kAir ? 1 : 0;
                                 }
                             }
                         } else {

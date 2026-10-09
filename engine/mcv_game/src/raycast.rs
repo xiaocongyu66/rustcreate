@@ -20,7 +20,7 @@ pub const REACH: f32 = 4.5;
 /// 是否可被射线命中：固体方块或花；水与空气穿透。
 fn hittable(id: BlockId) -> bool {
     let d = id.def();
-    d.solid || id.0 == FLOWER_RED || id.0 == FLOWER_YELLOW
+    d.solid || id.id() == FLOWER_RED || id.id() == FLOWER_YELLOW
 }
 
 /// 从 `origin` 沿 `dir`（自动归一化）步进 voxel 网格，返回第一个命中方块

@@ -57,7 +57,8 @@ pub struct BorderSeed {
 ///   this table is the single source of truth.
 #[inline]
 pub const fn opacity(id: BlockId) -> u8 {
-    match id.0 {
+    // id.id() 掩掉状态位：带状态的体素按基础方块遮光。
+    match id.id() {
         0 => 0,       // air
         5 => 1,       // water
         7 => 1,       // leaves
@@ -80,7 +81,7 @@ static BLOCKS_EMIT: [u8; mcv_core::BLOCKS.len()] = {
 
 #[inline]
 fn light_emit(id: BlockId) -> u8 {
-    match BLOCKS_EMIT.get(id.0 as usize) {
+    match BLOCKS_EMIT.get(id.id() as usize) {
         Some(v) => *v,
         None => 0,
     }

@@ -50,6 +50,25 @@ fn rle_u16_escape_run_boundary_id() {
     assert_eq!(dec, vox);
 }
 
+/// 状态位往返：RLE 按原始 u16 两字节编码，bit12-15 状态 nibble（上半砖/
+/// 楼梯朝向）必须与方块 id 一起无损存读。
+#[test]
+fn rle_roundtrip_preserves_state_nibble() {
+    let mut vox = vec![0u16; 65536];
+    // acacia_slab(26) 上半 (state=1) | acacia_stairs(27) facing=2+top (state=6)
+    let slab_top: u16 = 26 | (1 << 12);
+    let stair: u16 = 27 | (6 << 12);
+    vox[..300].fill(slab_top); // >255 长跑走转义路径
+    vox[300..400].fill(stair);
+    vox[500] = slab_top;
+    let enc = rle_encode(&vox);
+    let mut dec = vec![0u16; 65536];
+    rle_decode(&enc, &mut dec).expect("decode");
+    assert_eq!(dec, vox);
+    assert_eq!(dec[0], slab_top);
+    assert_eq!(dec[350] >> 12, 6);
+}
+
 #[test]
 fn rle_rejects_truncated() {
     let mut dec = vec![0u16; 16];

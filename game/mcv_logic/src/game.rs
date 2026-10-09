@@ -1169,7 +1169,15 @@ impl GameRuntime {
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
-            handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
+            // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
+            // 网格与碰撞按 mcv_core::BlockId::state 读取。
+            let st = placement_state(
+                mcv_core::shape::shape(new_id.0),
+                normal,
+                self.input.sneak,
+                self.player.yaw,
+            );
+            handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id.with_state(st);
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
@@ -1437,7 +1445,7 @@ impl GameRuntime {
                 let iy = height - 19.0 * s;
                 match stack.def().kind {
                     mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                        mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                        mcv_core::BLOCKS[bid.id() as usize].tiles[2],
                         ix,
                         iy,
                         16.0 * s,
@@ -1543,7 +1551,7 @@ impl GameRuntime {
                 if !stack.is_empty() {
                     match stack.def().kind {
                         mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                            mcv_core::BLOCKS[bid.id() as usize].tiles[2],
                             x + 5.0,
                             y0 + 5.0,
                             slot - 10.0,
@@ -1847,6 +1855,67 @@ fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
 
 /// Temporary inline Amanatides-Woo DDA; replaced by mcv_game::raycast when
 /// the physics module merges.
+/// 放置时按形状计算状态 nibble（写进体素 bit12-15，规则见 mcv_core）。
+/// `normal` = 命中面外法线（+Y 表示点了顶面）；`sneak` 潜行翻转上下；
+/// Stairs 朝向取玩家水平视线反方向（楼梯台阶朝玩家升起）。
+fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f32) -> u8 {
+    match shape {
+        mcv_core::Shape::Slab => u8::from((normal[1] == -1) != sneak),
+        mcv_core::Shape::Stairs => {
+            // 视线水平分量 (sin yaw, -cos yaw)；取反后归到四向。
+            let (fx, fz) = (-yaw.sin(), yaw.cos());
+            let facing = if fz.abs() >= fx.abs() {
+                if fz > 0.0 { 0 } else { 1 } // +Z / -Z
+            } else if fx > 0.0 {
+                2 // +X
+            } else {
+                3 // -X
+            };
+            facing | (u8::from((normal[1] == 1) != sneak) << 2)
+        }
+        _ => 0,
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::placement_state;
+    use mcv_core::Shape;
+
+    #[test]
+    fn slab_top_bit() {
+        // 点顶面（法线 +Y）→ 下半砖；点底面 → 上半砖；潜行翻转。
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], false, 0.0), 0);
+        assert_eq!(placement_state(Shape::Slab, [0, -1, 0], false, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], true, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [1, 0, 0], false, 0.0), 0);
+    }
+
+    #[test]
+    fn stairs_facing_is_player_back() {
+        // yaw=0 视线 -Z，反方向 +Z → facing=0；yaw=π/2 视线 +X → facing=3。
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], false, 0.0), 0 | 4);
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
+            3 | 4
+        );
+        assert_eq!(placement_state(Shape::Stairs, [0, 0, 1], false, 0.0) & 4, 0);
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], true, 0.0) & 4, 0);
+        // yaw=π 视线 +Z，反方向 -Z → facing=1。
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 0, -1], false, std::f32::consts::PI) & 3,
+            1
+        );
+    }
+
+    #[test]
+    fn other_shapes_zero() {
+        for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
+            assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
+        }
+    }
+}
+
 fn dda_hit(
     view: &WorldView,
     origin: Vec3,
@@ -1920,7 +1989,7 @@ fn dda_hit(
 /// 12/13花）。调用点按动作拼 `.place` / `.break` 后缀；26.1 无 dig/dirt 组，
 /// 泥土/草/沙共用 block.grass 音组。
 fn block_group(vid: u16) -> Option<&'static str> {
-    match vid {
+    match vid & mcv_core::ID_MASK {
         1 | 9 | 10 => Some("block.stone"),
         2 | 3 | 4 | 7 | 11 => Some("block.grass"),
         6 | 8 => Some("block.wood"),
@@ -1931,7 +2000,7 @@ fn block_group(vid: u16) -> Option<&'static str> {
 /// 脚步材质 → 26.1 sounds.json 事件名：草方块踩草地音，沙/石踩石头音，
 /// 木板/原木踩木头音。
 fn step_event(vid: u16) -> Option<&'static str> {
-    match vid {
+    match vid & mcv_core::ID_MASK {
         1 | 4 | 9 | 10 => Some("block.stone.step"),
         2 | 3 | 7 | 11 => Some("block.grass.step"),
         6 | 8 => Some("block.wood.step"),

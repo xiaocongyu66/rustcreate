@@ -167,9 +167,30 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
 pub static BLOCKS: [BlockDef; GEN_BLOCKS.len()] = gen_blocks();
 
 impl BlockId {
+    /// 低 12 位真实方块 id（丢弃状态 nibble）。C++ 侧 kBarrier(0xFFFF)
+    /// 掩码后是 0x0FFF——未注册 id，两侧都按"未知=不透明"处理，哨兵语义
+    /// 不变；kBarrier 只存在于 C++ 邻块视图，Rust 体素数组永不写入。
+    #[inline]
+    pub const fn id(self) -> u16 {
+        self.0 & ID_MASK
+    }
+
+    /// 状态 nibble（bit12-15）：Slab bit0=上半砖；Stairs bit0-1 朝向
+    /// (0=+Z 1=-Z 2=+X 3=-X)、bit2=上半占位。其余形状恒 0。
+    #[inline]
+    pub const fn state(self) -> u8 {
+        ((self.0 >> STATE_SHIFT) & 0xF) as u8
+    }
+
+    /// 把 `state`（低 4 位有效）写入状态位，保留本值低 12 位为方块 id。
+    #[inline]
+    pub const fn with_state(self, state: u8) -> Self {
+        Self((self.0 & ID_MASK) | (((state & 0xF) as u16) << STATE_SHIFT))
+    }
+
     #[inline]
     pub fn def(self) -> &'static BlockDef {
-        &BLOCKS[self.0 as usize]
+        &BLOCKS[self.id() as usize]
     }
 }
 

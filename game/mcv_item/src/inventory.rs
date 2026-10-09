@@ -126,7 +126,7 @@ impl Hotbar {
 /// 石头掉圆石、煤矿掉煤炭、钻石矿掉钻石;无对应物品的方块不掉落
 /// (TODO(registry):圆石/泥土/沙等方块与粗铁物品进注册表后补全)。
 pub fn drop_for_block(id: BlockId) -> Option<ItemStack> {
-    let name = mcv_core::BLOCKS[id.0 as usize].name;
+    let name = mcv_core::BLOCKS[id.id() as usize].name;
     let item = match name {
         // 方块表 id 9 的注册名是 "cobble"(blocks_gen),非原版 cobblestone。
         "stone" | "cobble" => COBBLESTONE,
