@@ -537,7 +537,21 @@ fn cjk_text_stays_within_line_box() {
     let target = OffscreenTarget::new(&device, extent);
 
     // 中英混排一行：CJK 走 unifont（tex=3），ASCII 走字体图集（tex=0）。
-    let hud = mcv_render::text::text_quads("中文Aa", 20.0, 100.0, 1.0, [1.0, 1.0, 1.0, 1.0]);
+    // 先垫一块深色 HUD 矩形，隔离天空/雾背景色对「白色像素」统计的干扰。
+    let mut hud = vec![mcv_render::text::rect(
+        10.0,
+        80.0,
+        80.0,
+        50.0,
+        [0.05, 0.05, 0.08, 1.0],
+    )];
+    hud.extend(mcv_render::text::text_quads(
+        "中文Aa",
+        20.0,
+        100.0,
+        1.0,
+        [1.0, 1.0, 1.0, 1.0],
+    ));
     let (sun, day) = mcv_render::sun_state(6000);
     let camera = Camera {
         pos: Vec3::new(8.0, 110.0, 26.0),
