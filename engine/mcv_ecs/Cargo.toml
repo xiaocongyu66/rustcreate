@@ -1,6 +1,6 @@
 [package]
 name = "mcv_ecs"
-description = "极简 ECS 底座:实体生命周期 + sparse-set 组件存储 + 分表借用查询(无调度器/无插件/无事件总线)"
+description = "引擎级 ECS:实体生命周期 + sparse-set 存储 + 分表借用查询 + 双阶段调度/事件总线/延迟命令/插件装配(Godot 语义)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

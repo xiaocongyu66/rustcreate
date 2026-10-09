@@ -1,11 +1,21 @@
-//! 极简 ECS(引擎层原语):实体生命周期 + sparse-set 组件存储 + 分表借用查询。
+//! 引擎级 ECS(实体生命周期 + sparse-set 存储 + 调度/事件/插件,Godot 语义):
+//! 实体生命周期 + sparse-set 组件存储 + 分表借用查询 + [`Schedule`] 双阶段
+//! 调度(固定步 1/60 + 可变帧)+ [`Events`](events::Events) 类型化事件总线
+//! + [`CommandQueue`] 帧末延迟变更 + [`Plugin`] 装配。
 //!
 //! 与 Bevy 的取舍(有意为之,不是没做到):
 //! - **sparse set 而非 archetype 分表**:实体数百量级下 archetype 的迭代
 //!   顺序优势不可感知,而组件集每次变动付一次迁移代价;sparse set 插入/
 //!   删除 O(1) 且不迁移,迭代走密集索引同样紧凑。
-//! - **系统 = 普通函数**,拿 World 的 `read`/`write` 表视图自己写循环——
-//!   不做调度器、插件 trait、事件总线;出现真实消费方再加,接口形状已兼容。
+//! - **调度取 Godot 模型**:系统启动期注册、注册顺序即执行顺序(ClassDB 的
+//!   "注册在启动、运行期冻结");`_physics_process`/`_process` 双阶段;信号
+//!   走帧批次双缓冲而非逐槽直连;结构性变更走 CallQueue 式帧末队列。查询
+//!   仍是普通函数拿 `read`/`write` 表视图写循环——没有编译期 query 推导,
+//!   借用冲突由 RefCell 运行期把关。
+//! - **宿主状态走 [`Resources`](resources::Resources) 快照**:每步宿主
+//!   `insert` 一份所有权快照(如区块表克隆 + 玩家位姿)供系统只读——借用
+//!   进不了 `TypeId` 键表,所有权快照简单且不逃逸;`Arc` 化的区块数据
+//!   本就是共享的,克隆只是加计数。
 //! - **零 `unsafe`**:组件表的独占借用靠每表 `RefCell` 运行时互斥——同一张
 //!   表同时 `write` 两次直接 panic,语义等同 Bevy 的 query 冲突检查(区别
 //!   只是编译期→运行期,系统本就单线程顺序执行)。
@@ -40,6 +50,20 @@
 //! assert_eq!(w.get_ref::<Pos>(e).unwrap().0, 3.0);
 //! assert!(w.get_ref::<Pos>(dead).is_none());
 //! ```
+
+pub mod app;
+pub mod commands;
+pub mod events;
+pub mod plugin;
+pub mod resources;
+pub mod schedule;
+
+pub use app::App;
+pub use commands::CommandQueue;
+pub use events::{EventBus, Events};
+pub use plugin::{Plugin, plain_plugin};
+pub use resources::Resources;
+pub use schedule::{DEFAULT_FIXED_DT, MAX_CATCHUP_STEPS, Schedule, Stage, SysCtx, System};
 
 use std::any::{Any, TypeId};
 use std::cell::{Ref, RefCell, RefMut};

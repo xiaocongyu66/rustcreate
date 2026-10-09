@@ -151,8 +151,9 @@ pub struct GameRuntime {
     render_chunks: Vec<RenderChunk>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
-    /// 运行时 mob 集合（ECS：组件见 mcv_entity::components，装配走 spawn_mob）。
-    pub mobs: mcv_ecs::World,
+    /// 运行时 mob 集合（ECS App：World + 调度 + 事件总线；组件见
+    /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
+    pub mobs_app: mcv_ecs::App,
     pub attack_ticker: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
@@ -208,7 +209,7 @@ impl GameRuntime {
             render_chunks: Vec::new(),
             spawned: false,
             border_synced: HashMap::new(),
-            mobs: mcv_ecs::World::new(),
+            mobs_app: mcv_ecs::App::new(),
             attack_ticker: 20.0, // ready
             spawn_cooldown: 0,
             player_xp: 0,
@@ -224,7 +225,10 @@ impl GameRuntime {
             dead: false,
             fall_y: None,
         };
-        mcv_entity::register_mob_components(&mut rt.mobs);
+        mcv_entity::register_mob_components(&mut rt.mobs_app.world);
+        // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
+        rt.mobs_app
+            .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
         rt
     }
 
@@ -678,95 +682,34 @@ impl GameRuntime {
             self.try_natural_spawn();
         }
 
-        // ---- mob AI + physics ----
-        // ECS 系统模式：一次取齐全部表视图跑 for_each，释放后才能动 World
-        // 生命周期（despawn 需独占）。WorldView 内联构造：字段分离借用
-        // （&self.chunks 与 &mut self.mobs/player 无冲突），不持长命 view，
-        // 中途才能调 &mut self 方法
-        let player_pos = self.player.pos;
-        let day = self.day_factor();
-        let mut melee_hits: Vec<(Vec3, f32)> = Vec::new();
+        // ---- mob AI + physics（ECS 调度：固定步驱动一次 Fixed 阶段）----
+        // 系统上下文借自 mobs_app 各字段（disjoint 借用）；区块表克隆与
+        // 玩家位姿每步 insert 进 Resources 快照（Arc 计数级克隆，体素数据
+        // 共享）。近战命中走事件（信号语义）：run_stage 阶段末排空命令、
+        // 翻转事件之后，GameRuntime 统一结算成玩家伤害。
         {
-            let w = &self.mobs;
-            let (mut phys, kind, mut ticks, mut yaw) = (
-                w.write::<PhysBody>(),
-                w.read::<MobKind>(),
-                w.write::<MobTicks>(),
-                w.write::<Yaw>(),
-            );
-            phys.for_each(|e, body| {
-                let tk = match ticks.get_mut(e) {
-                    Some(t) => t,
-                    None => return,
-                };
-                tk.invulnerable = tk.invulnerable.saturating_sub(1);
-                let Some(&MobKind(id)) = kind.get(e) else {
-                    return;
-                };
-                let def = *id.def();
-                let idle = tk.idle_ticks;
-                let mut pos = body.pos;
-                let to_player = player_pos - pos;
-                let dist_sqr = to_player.length_squared();
-                let speed = speed_m_s(def.speed_attr);
-                let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
-                    // chase
-                    let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
-                    if let Some(y) = yaw.get_mut(e) {
-                        y.0 = dir.z.atan2(dir.x);
-                    }
-                    dir * speed
-                } else {
-                    // wander: random direction changes on idle ticks
-                    if idle % 120 == 0
-                        && (fast_rand() & 3) == 0
-                        && let Some(y) = yaw.get_mut(e)
-                    {
-                        y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
-                    }
-                    let heading = yaw.get(e).map_or(0.0, |y| y.0);
-                    Vec3::new(heading.sin(), 0.0, -heading.cos()) * speed * 0.3
-                };
-                let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
-                let input = mcv_game::StepInput {
-                    wish_dir: if melee { Vec3::ZERO } else { wish },
-                    jump: body.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
-                    in_water: false,
-                    sneak: false,
-                };
-                // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
-                let mut eng = body.body();
-                step_entity(
-                    &WorldView {
-                        chunks: &self.chunks,
-                    },
-                    &mut eng,
-                    def.half_size,
-                    &input,
-                );
-                body.set_body(&eng);
-                pos = body.pos;
-                tk.idle_ticks += 1;
-                // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
-                if melee && tk.invulnerable == 0 {
-                    tk.invulnerable = 20;
-                    melee_hits.push((pos, def.attack_damage));
-                }
+            let mcv_ecs::App {
+                world,
+                resources,
+                events,
+                commands,
+                schedule,
+            } = &mut self.mobs_app;
+            resources.insert(MobServices {
+                chunks: self.chunks.clone(),
+                player_pos: self.player.pos,
             });
+            let mut ctx = mcv_ecs::SysCtx {
+                world,
+                resources,
+                events,
+                commands,
+            };
+            schedule.run_stage(mcv_ecs::Stage::Fixed, &mut ctx);
         }
-        // 死亡清理（原 retain 等价）：视图释放后再 despawn（级联清表需独占）。
-        let dead: Vec<mcv_ecs::Entity> = self
-            .mobs
-            .read::<Health>()
-            .iter()
-            .filter(|(_, h)| h.0 <= 0.0)
-            .map(|(e, _)| e)
-            .collect();
-        for e in dead {
-            self.mobs.despawn(e);
-        }
-        for (src, dmg) in melee_hits {
-            self.hurt_player(dmg.max(1.0), Some(src));
+        let hits: Vec<MobMeleeHit> = self.mobs_app.events.channel::<MobMeleeHit>().take();
+        for h in hits {
+            self.hurt_player(h.damage.max(1.0), Some(h.src));
         }
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
@@ -891,7 +834,6 @@ impl GameRuntime {
                 self.player.flying = self.mode == GameMode::Creative;
             }
         }
-        let _ = day;
     }
 
     fn day_factor(&self) -> f32 {
@@ -910,7 +852,8 @@ impl GameRuntime {
             .map(|(_, cap, _, _)| *cap)
             .unwrap_or(0);
         let monsters = self
-            .mobs
+            .mobs_app
+            .world
             .read::<MobKind>()
             .iter()
             .filter(|(_, k)| k.0.def().hostile)
@@ -978,7 +921,7 @@ impl GameRuntime {
                         [MobId::COW, MobId::PIG, MobId::SHEEP][(rng() as usize) % 3]
                     };
                     p.y = y;
-                    spawn_mob(&mut self.mobs, id, p);
+                    spawn_mob(&mut self.mobs_app.world, id, p);
                     break;
                 }
             }
@@ -1011,7 +954,7 @@ impl GameRuntime {
         // 准星射线选目标：read 视图迭代，视图释放后才允许 despawn（需独占）。
         let mut best: Option<(mcv_ecs::Entity, f32)> = None;
         {
-            let bodies = self.mobs.read::<PhysBody>();
+            let bodies = self.mobs_app.world.read::<PhysBody>();
             for (e, body) in bodies.iter() {
                 let to = body.pos + glam::Vec3::new(0.0, 1.0, 0.0) - eye;
                 let dist = to.length();
@@ -1028,10 +971,10 @@ impl GameRuntime {
         if let Some((target, _)) = best {
             {
                 let (kind, mut health, mut ticks, mut last_hurt) = (
-                    self.mobs.read::<MobKind>(),
-                    self.mobs.write::<Health>(),
-                    self.mobs.write::<MobTicks>(),
-                    self.mobs.write::<LastHurt>(),
+                    self.mobs_app.world.read::<MobKind>(),
+                    self.mobs_app.world.write::<Health>(),
+                    self.mobs_app.world.write::<MobTicks>(),
+                    self.mobs_app.world.write::<LastHurt>(),
                 );
                 if let (Some(&MobKind(id)), Some(hp), Some(tk), Some(lh)) = (
                     kind.get(target),
@@ -1055,7 +998,7 @@ impl GameRuntime {
                 }
             }
             if let Some((e, xp)) = slain {
-                self.mobs.despawn(e);
+                self.mobs_app.world.despawn(e);
                 self.player_xp += xp;
             }
         }
@@ -1402,6 +1345,109 @@ impl GameRuntime {
         quads.extend(text::text_quads(&line, 8.0, 8.0, 1.5, [1.0, 1.0, 1.0, 0.9]));
         quads
     }
+}
+
+/// mob AI 系统的单步只读快照：区块表克隆（物理步进的地形）+ 玩家位姿
+/// （追踪目标）。每固定步 `insert` 进 Resources——克隆只是加 Arc 计数，
+/// 体素/光照数据仍与原表共享。
+#[derive(Clone)]
+struct MobServices {
+    chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    player_pos: Vec3,
+}
+
+/// 近战命中事件（信号）：AI 系统发射，GameRuntime 在固定步末 drain 后结算
+/// 玩家伤害——系统与玩家状态之间不共享可变借用。
+#[derive(Clone, Copy)]
+struct MobMeleeHit {
+    src: Vec3,
+    damage: f32,
+}
+
+/// mob AI + 物理固定步系统：一次取齐全部表视图跑 for_each；结构性变更
+/// （死亡 despawn）走延迟命令，命中走事件。逻辑与原内联版一一对应。
+fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
+    let svc = ctx
+        .resources
+        .get::<MobServices>()
+        .expect("mob_ai：MobServices 快照未注入 Resources");
+    // disjoint 字段借用：表视图挂 world，命令/事件各自独立可写。
+    let world: &mcv_ecs::World = ctx.world;
+    let commands = &mut *ctx.commands;
+    let events = &mut *ctx.events;
+    let (mut phys, kind, mut ticks, mut yaw, health) = (
+        world.write::<PhysBody>(),
+        world.read::<MobKind>(),
+        world.write::<MobTicks>(),
+        world.write::<Yaw>(),
+        world.read::<Health>(),
+    );
+    phys.for_each(|e, body| {
+        let tk = match ticks.get_mut(e) {
+            Some(t) => t,
+            None => return,
+        };
+        tk.invulnerable = tk.invulnerable.saturating_sub(1);
+        let Some(&MobKind(id)) = kind.get(e) else {
+            return;
+        };
+        let def = *id.def();
+        let idle = tk.idle_ticks;
+        let mut pos = body.pos;
+        let to_player = svc.player_pos - pos;
+        let dist_sqr = to_player.length_squared();
+        let speed = speed_m_s(def.speed_attr);
+        let wish = if def.hostile && dist_sqr < def.follow_range * def.follow_range {
+            // chase
+            let dir = Vec3::new(to_player.x, 0.0, to_player.z).normalize_or_zero();
+            if let Some(y) = yaw.get_mut(e) {
+                y.0 = dir.z.atan2(dir.x);
+            }
+            dir * speed
+        } else {
+            // wander: random direction changes on idle ticks
+            if idle % 120 == 0
+                && (fast_rand() & 3) == 0
+                && let Some(y) = yaw.get_mut(e)
+            {
+                y.0 = (idle as f32 * 0.7) % std::f32::consts::TAU;
+            }
+            let heading = yaw.get(e).map_or(0.0, |y| y.0);
+            Vec3::new(heading.sin(), 0.0, -heading.cos()) * speed * 0.3
+        };
+        let melee = def.hostile && def.attack_damage > 0.0 && dist_sqr < 2.25;
+        let input = mcv_game::StepInput {
+            wish_dir: if melee { Vec3::ZERO } else { wish },
+            jump: body.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
+            in_water: false,
+            sneak: false,
+        };
+        // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
+        let mut eng = body.body();
+        step_entity(
+            &WorldView {
+                chunks: &svc.chunks,
+            },
+            &mut eng,
+            def.half_size,
+            &input,
+        );
+        body.set_body(&eng);
+        pos = body.pos;
+        tk.idle_ticks += 1;
+        // invulnerable 复用为近战冷却：命中后置 20 tick（1s，26.1 僵尸节奏）
+        if melee && tk.invulnerable == 0 {
+            tk.invulnerable = 20;
+            events.channel::<MobMeleeHit>().send(MobMeleeHit {
+                src: pos,
+                damage: def.attack_damage,
+            });
+        }
+        // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后 retain）。
+        if health.get(e).is_some_and(|h| h.0 <= 0.0) {
+            commands.despawn(e);
+        }
+    });
 }
 
 /// Global XOR-shift rand for spawn jitter (deterministic per sequence).

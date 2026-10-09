@@ -843,9 +843,9 @@ impl AppState {
             if cwd.is_dir() {
                 return Some(cwd);
             }
-            return std::env::current_exe()
+            std::env::current_exe()
                 .ok()
-                .and_then(|p| p.parent().map(|d| d.join(REL)));
+                .and_then(|p| p.parent().map(|d| d.join(REL)))
         }
         #[cfg(target_os = "android")]
         None
