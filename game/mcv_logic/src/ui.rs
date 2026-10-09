@@ -201,11 +201,11 @@ mod tests {
         cs.click_grid(0, true);
         assert!(cs.cursor.is_empty());
         assert_eq!(cs.grid[0].count, 30);
-        // 同物部分堆:整段填,封顶 64,余量留光标。
+        // 同物部分堆:整段填,封顶 64,余量留光标(vanilla:30+50→64/16)。
         cs.cursor = stack(COBBLESTONE, 50);
         cs.click_grid(0, true);
-        assert_eq!(cs.grid[0].count, 60);
-        assert_eq!(cs.cursor.count, 20);
+        assert_eq!(cs.grid[0].count, 64);
+        assert_eq!(cs.cursor.count, 16);
         // 满 64 后左键变纯交换。
         cs.grid[0].count = 64;
         cs.cursor = stack(PLANKS, 5);
@@ -319,7 +319,8 @@ mod tests {
 
     #[test]
     fn creative_give_counts_and_page_bounds() {
-        let list: Vec<u16> = (0..80u16).collect(); // 假物品 id(仅 max_stack 查询)
+        // 真物品 id 取模复用(max_stack 查 ITEMS，越界会 panic)。
+        let list: Vec<u16> = (0..80u16).map(|i| i % 36).collect();
         let cp = CreativePicker::new();
         assert_eq!(cp.pages(list.len()), 3);
         // 末页大小。
@@ -331,8 +332,8 @@ mod tests {
         assert_eq!(last.page, 2);
         assert!(last.click(8, true, &list).is_none());
         assert!(last.click(35, true, &list).is_none());
-        assert_eq!(last.click(0, true, &list), Some((72, 64)));
-        assert_eq!(last.click(0, false, &list), Some((72, 1)));
+        assert_eq!(last.click(0, true, &list), Some((0, 64)));
+        assert_eq!(last.click(0, false, &list), Some((0, 1)));
         // 空列表:1 页,全 None。
         assert_eq!(cp.pages(0), 1);
         assert!(cp.click(0, true, &[]).is_none());
