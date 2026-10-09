@@ -89,11 +89,7 @@ pub fn fence_connects(nb: BlockId) -> bool {
 /// `world` 在 `p` 处方块的**碰撞**盒（世界坐标），返回写入 `out` 的盒数。
 /// 全立方固体=整格；火把/花草=无碰撞；形状方块按上表数值。
 #[inline]
-pub fn collision_boxes(
-    world: &dyn VoxelAccess,
-    p: BlockPos,
-    out: &mut ShapeBoxes,
-) -> usize {
+pub fn collision_boxes(world: &dyn VoxelAccess, p: BlockPos, out: &mut ShapeBoxes) -> usize {
     push_boxes(world.block(p), world, p, RayTarget::Collide, out)
 }
 
@@ -172,10 +168,10 @@ pub fn push_boxes(
             // (dx, dz, 臂盒)——臂沿 (dx,dz) 方向从格边到中心、断面对齐柱。
             const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
             const ARMS: [(f32, f32, f32, f32); 4] = [
-                (0.5, 0.375, 1.0, 0.625),   // +X：x 0.5..1，z 对齐柱
-                (0.0, 0.375, 0.5, 0.625),   // -X
-                (0.375, 0.5, 0.625, 1.0),   // +Z：z 0.5..1，x 对齐柱
-                (0.375, 0.0, 0.625, 0.5),   // -Z
+                (0.5, 0.375, 1.0, 0.625), // +X：x 0.5..1，z 对齐柱
+                (0.0, 0.375, 0.5, 0.625), // -X
+                (0.375, 0.5, 0.625, 1.0), // +Z：z 0.5..1，x 对齐柱
+                (0.375, 0.0, 0.625, 0.5), // -Z
             ];
             for i in 0..DIRS.len() {
                 let (dx, dz) = DIRS[i];
@@ -299,9 +295,7 @@ mod tests {
 
     #[test]
     fn slab_stairs_torch_box_counts() {
-        let w = Mem {
-            m: HashMap::new(),
-        };
+        let w = Mem { m: HashMap::new() };
         let p = BlockPos::new(0, 0, 0);
         let mut out = [EMPTY_AABB; MAX_SHAPE_BOXES];
         let mut id = BlockId(id_of("oak_slab"));

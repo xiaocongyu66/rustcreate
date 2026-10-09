@@ -26,6 +26,12 @@ enum Screen {
     Paused,
     /// 死亡界面（26.1 deathScreen）：游戏画面 + 红罩 + 重生/标题按钮。
     Death,
+    /// 按键重映射界面（MC KeyBindsScreen）。
+    KeyBinds,
+    /// 合成界面（随身 2x2 / 工作台 3x3 + 36 格背包），游戏画面做底。
+    Crafting,
+    /// 创造模式取物页（分页），游戏画面做底。
+    Creative,
 }
 
 /// 菜单按钮：命中测试用。
@@ -124,8 +130,16 @@ struct AppState {
     clouds: Option<mcv_render::Clouds>,
     /// 走路动画状态：(相位, 幅值)
     walk_anim: (f32, f32),
-    /// 键位映射（MC KeyBindingRegistry 对应物；重映射 UI 属波4）
+    /// 键位映射（MC KeyBindingRegistry 对应物；持久化 keybindings.txt）
     keymap: mcv_game::keymap::KeyMap,
+    /// 键位重映射捕获状态机（见 binds_ui）
+    binds: crate::binds_ui::BindCapture,
+    /// 合成界面状态（仅 Screen::Crafting 期间 Some）。
+    craft: Option<mcv_logic::ui::CraftScreen>,
+    /// 创造取物页状态（仅 Screen::Creative 期间 Some）。
+    creative: Option<mcv_logic::ui::CreativePicker>,
+    /// 合成/创造界面命中矩形（每帧随 craft_ui 重建）。
+    craft_hot: Vec<crate::craft_ui::HotRect>,
     /// Android 应用私有目录（internal_data_path），存档放这里
     #[cfg(target_os = "android")]
     android_data: Option<std::path::PathBuf>,
@@ -150,6 +164,37 @@ struct SurfacePair {
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
     max_extent: u32,
+}
+
+/// 抓/放鼠标（进游戏 Confined+隐藏，开界面/暂停 None+显示）。
+fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
+    let Some(w) = window else { return };
+    let _ = w.set_cursor_grab(if grab {
+        winit::window::CursorGrabMode::Confined
+    } else {
+        winit::window::CursorGrabMode::None
+    });
+    w.set_cursor_visible(!grab);
+}
+
+/// 关合成界面：网格 + 光标物品全部归还背包（ui.rs 的守恒红线）；
+/// `add` 已覆盖全 36 格（Inventory.add 语义），满栏时丢弃余量并告警
+/// （drops 分支合入后改为世界掉落物）。
+fn close_craft(craft: &mut Option<mcv_logic::ui::CraftScreen>, rt: &mut GameRuntime) {
+    let Some(cs) = craft.take() else { return };
+    for st in cs.close() {
+        if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
+            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+        }
+    }
+}
+
+/// 工作台方块 id：按注册名查（blocks_gen），查不到回退已知值 252。
+fn crafting_table_id() -> u16 {
+    mcv_core::BLOCKS
+        .iter()
+        .position(|b| b.name == "crafting_table")
+        .unwrap_or(252) as u16
 }
 
 impl AppState {
@@ -677,6 +722,159 @@ impl AppState {
                     [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
+                // 键位重映射入口（追加于 arm 末尾，最小化并行分支冲突面）
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "keybinds",
+                    x,
+                    y4 + btn_h + gap,
+                    btn_w,
+                    btn_h,
+                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Entry),
+                    s,
+                    [0.2, 0.14, 0.3, 0.85],
+                    false,
+                );
+            }
+            Screen::KeyBinds => {
+                use mcv_game::keymap::Action;
+                let lang = self.lang();
+                q.extend(text::text_quads_centered(
+                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Title),
+                    w * 0.5,
+                    12.0 * s,
+                    s,
+                    [1.0, 1.0, 1.0, 1.0],
+                ));
+                // 16 行动作行 + 底部三按钮；行高自适应窗口高度
+                let top = 26.0 * s;
+                let y_btn = h - (btn_h + 4.0 * s);
+                let avail = (y_btn - 8.0 * s - top).max(16.0 * s);
+                let row_h = (avail / Action::ALL.len() as f32).min(16.0 * s);
+                for (i, a) in Action::ALL.iter().enumerate() {
+                    let y = top + i as f32 * row_h;
+                    let capturing = self.binds.state == crate::binds_ui::Capture::Capturing(*a);
+                    let conflict = self.binds.conflict == Some(*a);
+                    // 行背景：button 贴图染色（捕获=青，冲突=红）；缺素材回退纯色
+                    let tint = if conflict {
+                        [1.0, 0.5, 0.5, 1.0]
+                    } else if capturing {
+                        [0.6, 0.85, 1.0, 1.0]
+                    } else {
+                        [1.0, 1.0, 1.0, 1.0]
+                    };
+                    match gui {
+                        Some(g) => q.extend(g.nine_slice(
+                            if capturing { "button_hl" } else { "button" },
+                            x,
+                            y,
+                            btn_w,
+                            row_h,
+                            3,
+                            s,
+                            tint,
+                        )),
+                        None => q.push(text::rect(
+                            x,
+                            y,
+                            btn_w,
+                            row_h,
+                            if conflict {
+                                [0.35, 0.12, 0.12, 0.9]
+                            } else {
+                                [0.12, 0.13, 0.17, 0.85]
+                            },
+                        )),
+                    }
+                    // 左动作名 + 右当前键；过宽时等比缩小（mc_button 同款策略）
+                    let label = crate::binds_ui::action_label(lang, *a);
+                    let key = if capturing {
+                        crate::binds_ui::ui_text(lang, crate::binds_ui::Text::PressKey)
+                    } else {
+                        self.keymap.get(*a).display()
+                    };
+                    let max_w = (btn_w - 8.0 * s).max(8.0);
+                    let lw = text::text_width(label, s);
+                    let kw = text::text_width(key, s);
+                    let ts = if lw + kw > max_w {
+                        s * max_w / (lw + kw)
+                    } else {
+                        s
+                    };
+                    let ty = y + (row_h - 8.0 * ts) * 0.5;
+                    let label_col = if capturing {
+                        [0.7, 0.9, 1.0, 1.0]
+                    } else if conflict {
+                        [1.0, 0.55, 0.55, 1.0]
+                    } else {
+                        [1.0, 1.0, 1.0, 1.0]
+                    };
+                    q.extend(text::text_quads(label, x + 4.0 * s, ty, ts, label_col));
+                    q.extend(text::text_quads(
+                        key,
+                        x + btn_w - 4.0 * s - text::text_width(key, ts),
+                        ty,
+                        ts,
+                        [1.0, 1.0, 1.0, 1.0],
+                    ));
+                    self.menu_hot.push(MenuButton {
+                        id: crate::binds_ui::BIND_IDS[i],
+                        x,
+                        y,
+                        w: btn_w,
+                        h: row_h,
+                    });
+                }
+                // 底部：恢复默认 / 保存 / 返回（一行三等分）
+                let bw3 = (btn_w - gap * 2.0) / 3.0;
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "bind_reset",
+                    x,
+                    y_btn,
+                    bw3,
+                    btn_h,
+                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Restore),
+                    s,
+                    [0.3, 0.15, 0.13, 0.85],
+                    false,
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "bind_save",
+                    x + bw3 + gap,
+                    y_btn,
+                    bw3,
+                    btn_h,
+                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Save),
+                    s,
+                    [0.13, 0.3, 0.16, 0.85],
+                    false,
+                );
+                Self::mc_button(
+                    &mut q,
+                    &mut self.menu_hot,
+                    gui,
+                    hover,
+                    "bind_back",
+                    x + (bw3 + gap) * 2.0,
+                    y_btn,
+                    bw3,
+                    btn_h,
+                    crate::i18n::t(lang, "gui.back"),
+                    s,
+                    [0.15, 0.16, 0.2, 0.82],
+                    false,
+                );
             }
             Screen::Paused => {
                 let lang = self.lang();
@@ -797,7 +995,8 @@ impl AppState {
                     false,
                 );
             }
-            Screen::InGame => {}
+            // 游戏内画面由 redraw 路径渲染；合成/创造界面由 craft_ui 叠加。
+            Screen::InGame | Screen::Crafting | Screen::Creative => {}
         }
         q
     }
@@ -866,6 +1065,49 @@ impl AppState {
             .ok()
             .and_then(|p| p.parent().map(|d| d.join("saves")))
             .unwrap_or_else(|| std::path::PathBuf::from("saves"))
+    }
+
+    /// options.txt：saves 根目录下，与世界文件夹同级。
+    fn options_path(&self) -> std::path::PathBuf {
+        self.saves_root().join("options.txt")
+    }
+
+    /// keybindings.txt：与 options.txt 同目录。
+    fn keybinds_path(&self) -> std::path::PathBuf {
+        self.saves_root().join("keybindings.txt")
+    }
+
+    /// 从磁盘读入设置与键位并应用；文件缺失 → 保持默认值。
+    fn load_persisted(&mut self) {
+        let o = crate::options::Options::load(&self.options_path());
+        self.set_dist = o.render_dist;
+        self.set_sens = o.sens;
+        self.set_clouds = o.clouds as usize;
+        self.set_lang = o.lang as usize;
+        if let Ok(text) = std::fs::read_to_string(self.keybinds_path()) {
+            self.keymap = mcv_game::keymap::KeyMap::from_text(&text);
+        }
+    }
+
+    /// 落盘 options.txt（设置按钮改动、退出时均触发）。
+    fn save_options(&self) {
+        let o = crate::options::Options {
+            render_dist: self.set_dist,
+            sens: self.set_sens,
+            clouds: (self.set_clouds % 3) as u8,
+            lang: (self.set_lang % 2) as u8,
+        };
+        if let Err(e) = o.save(&self.options_path()) {
+            log::warn!("options.txt save failed: {e}");
+        }
+    }
+
+    /// 落盘 keybindings.txt（退出时或键位界面手动保存）。
+    fn save_keybinds(&self) {
+        let text = self.keymap.to_text();
+        if let Err(e) = crate::options::write_text(&self.keybinds_path(), &text) {
+            log::warn!("keybindings.txt save failed: {e}");
+        }
     }
 
     fn refresh_worlds(&mut self) {
@@ -966,6 +1208,9 @@ impl AppState {
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }
+        // 退出到菜单：设置与键位一并落盘
+        self.save_options();
+        self.save_keybinds();
         self.screen = Screen::Main;
         self.refresh_worlds();
         if let Some(w) = self.window.clone() {
@@ -1052,6 +1297,25 @@ impl AppState {
             (Screen::Settings, "clouds") => self.set_clouds = (self.set_clouds + 1) % 3,
             (Screen::Settings, "lang") => self.set_lang = (self.set_lang + 1) % 2,
             (Screen::Settings, "back") => self.screen = Screen::Main,
+            (Screen::Settings, "keybinds") => {
+                self.binds.cancel();
+                self.screen = Screen::KeyBinds;
+            }
+            (Screen::KeyBinds, "bind_reset") => {
+                self.keymap.restore_default();
+                self.binds.cancel();
+            }
+            (Screen::KeyBinds, "bind_save") => self.save_keybinds(),
+            (Screen::KeyBinds, "bind_back") => {
+                self.binds.cancel();
+                self.screen = Screen::Settings;
+            }
+            (Screen::KeyBinds, id) => {
+                // 动作行点击 → 进入捕获，下一次按键重绑
+                if let Some(i) = crate::binds_ui::bind_index_of(id) {
+                    self.binds.begin(mcv_game::keymap::Action::ALL[i]);
+                }
+            }
             (Screen::Paused, "resume") => self.screen = Screen::InGame,
             (Screen::Paused, "savequit") => self.quit_to_menu(false),
             (Screen::Death, "respawn") => {
@@ -1066,6 +1330,103 @@ impl AppState {
             }
             (Screen::Death, "death_title") => self.quit_to_menu(false),
             _ => {}
+        }
+        // 设置按钮改动 → 立即落盘 options.txt
+        if self.screen == Screen::Settings
+            && matches!(
+                id,
+                "dist+" | "dist-" | "sens+" | "sens-" | "clouds" | "lang"
+            )
+        {
+            self.save_options();
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// 合成/创造帧：构建面板 quad 并刷新命中表 `craft_hot`。
+    /// 必须在 runtime 可变借用之前调用。
+    fn craft_ui(&mut self, w: f32, h: f32) -> Vec<mcv_render::HudQuad> {
+        let gui = self.renderer.as_ref().and_then(|r| r.gui());
+        let hover = self.last_cursor.map(|(x, y)| (x as f32, y as f32));
+        let Some(rt) = self.runtime.as_ref() else {
+            self.craft_hot.clear();
+            return Vec::new();
+        };
+        let (q, rects) = match self.screen {
+            Screen::Crafting => match &self.craft {
+                Some(c) => crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover),
+                None => (Vec::new(), Vec::new()),
+            },
+            Screen::Creative => match &self.creative {
+                Some(cp) => crate::craft_ui::creative_quads(cp, &rt.hotbar, gui, w, h),
+                None => (Vec::new(), Vec::new()),
+            },
+            _ => (Vec::new(), Vec::new()),
+        };
+        self.craft_hot = rects;
+        q
+    }
+
+    /// 合成/创造界面点击：id 前缀路由（g/i/c + 序号，res/close/prev/next）。
+    /// `left` = false 为右键（拆半/单个放，触屏恒 true）。
+    fn handle_craft_pointer(&mut self, x: f64, y: f64, left: bool) {
+        let (px, py) = (x as f32, y as f32);
+        let Some(hit) = self
+            .craft_hot
+            .iter()
+            .find(|r| px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h)
+            .map(|r| r.id)
+        else {
+            return;
+        };
+        match hit {
+            "close" => {
+                if let Some(rt) = self.runtime.as_mut() {
+                    close_craft(&mut self.craft, rt);
+                }
+                self.creative = None;
+                self.screen = Screen::InGame;
+                set_cursor(&self.window, true);
+            }
+            "res" => {
+                if let Some(c) = self.craft.as_mut() {
+                    c.take_result(!left);
+                }
+            }
+            "prev" | "next" => {
+                if let Some(cp) = self.creative.as_mut() {
+                    let step = if hit == "next" { 1 } else { -1 };
+                    let p = cp.page as isize + step;
+                    cp.set_page(p.max(0) as usize, crate::craft_ui::ALL_ITEMS.len());
+                }
+            }
+            id => {
+                let idx = |p: char| id.strip_prefix(p).and_then(|s| s.parse::<usize>().ok());
+                if let Some(i) = idx('g') {
+                    if let Some(c) = self.craft.as_mut() {
+                        c.click_grid(i, left);
+                    }
+                } else if let Some(i) = idx('i') {
+                    if let (Some(c), Some(rt)) = (self.craft.as_mut(), self.runtime.as_mut()) {
+                        c.click_inv(i, left, &mut rt.hotbar);
+                    }
+                } else if let Some(i) = idx('c') {
+                    let give = self
+                        .creative
+                        .as_ref()
+                        .and_then(|cp| cp.click(i, left, &crate::craft_ui::ALL_ITEMS));
+                    if let Some((item, n)) = give
+                        && let Some(rt) = self.runtime.as_mut()
+                    {
+                        let st = mcv_item::ItemStack::new(item, n);
+                        if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
+                            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+                        }
+                    }
+                }
+            }
         }
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
@@ -1143,10 +1504,8 @@ impl ApplicationHandler for AppState {
                         log::warn!("skin load failed: {e}");
                     }
                 }
-                self.set_dist = 8;
-                self.set_sens = 1.0;
-                self.set_lang = 0;
-                self.set_clouds = 2;
+                // 设置与键位：从 options.txt / keybindings.txt 读入（缺失 → 默认）
+                self.load_persisted();
                 // splash：本会话随机一条 + 动画时钟
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1191,6 +1550,8 @@ impl ApplicationHandler for AppState {
                     runtime.save_dirty(None);
                     runtime.save_meta();
                 }
+                self.save_options();
+                self.save_keybinds();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {
@@ -1213,6 +1574,23 @@ impl ApplicationHandler for AppState {
                     },
                 ..
             } => {
+                // 键位界面：键盘只服务重映射捕获，不回灌游戏/暂停逻辑
+                if self.screen == Screen::KeyBinds {
+                    if state == ElementState::Pressed
+                        && let Some(vk) = mcv_platform::keybind::vkey_of(code)
+                    {
+                        if matches!(self.binds.state, crate::binds_ui::Capture::Capturing(_)) {
+                            self.binds.key_down(&mut self.keymap, vk);
+                        } else if vk == mcv_game::keymap::VKey::Escape {
+                            // 未在捕获时 Esc = 退出键位界面（MC 行为）
+                            self.screen = Screen::Settings;
+                        }
+                        if let Some(w) = self.window.as_ref() {
+                            w.request_redraw();
+                        }
+                    }
+                    return;
+                }
                 let Some(runtime) = self.runtime.as_mut() else {
                     return;
                 };
@@ -1222,9 +1600,32 @@ impl ApplicationHandler for AppState {
                 if pressed && let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
                     runtime.player.sel_slot = slot;
                 }
-                // F5 切视角不在 MC 键位表内（本引擎扩展），保持硬编码
+                // F5 切视角不在 MC 键位表内(GT引擎扩展),保持硬编码
                 if pressed && code == KeyCode::F5 {
                     runtime.cycle_camera();
+                }
+                // E 开/关背包(MC E=inventory)：生存/极限 = 随身 2x2 合成页，
+                // 创造 = 取物页。
+                if pressed && code == KeyCode::KeyE {
+                    match self.screen {
+                        Screen::InGame => {
+                            if runtime.mode == GameMode::Creative {
+                                self.screen = Screen::Creative;
+                                self.creative = Some(mcv_logic::ui::CreativePicker::default());
+                            } else {
+                                self.screen = Screen::Crafting;
+                                self.craft = Some(mcv_logic::ui::CraftScreen::new(2));
+                            }
+                            set_cursor(&self.window, false);
+                        }
+                        Screen::Crafting | Screen::Creative => {
+                            close_craft(&mut self.craft, runtime);
+                            self.creative = None;
+                            self.screen = Screen::InGame;
+                            set_cursor(&self.window, true);
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(vk) = mcv_platform::keybind::vkey_of(code) {
                     match self.keymap.action_for(vk) {
@@ -1241,17 +1642,26 @@ impl ApplicationHandler for AppState {
                         Some(Action::Pause) if pressed => match self.screen {
                             Screen::InGame => {
                                 self.screen = Screen::Paused;
-                                if let Some(w) = self.window.as_ref() {
-                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                    w.set_cursor_visible(true);
-                                }
+                                set_cursor(&self.window, false);
                             }
-                            Screen::Paused => self.screen = Screen::InGame,
+                            Screen::Paused => {
+                                self.screen = Screen::InGame;
+                                set_cursor(&self.window, true);
+                            }
+                            // 关合成/创造界面：归还网格 + 光标物品后回游戏。
+                            Screen::Crafting | Screen::Creative => {
+                                close_craft(&mut self.craft, runtime);
+                                self.creative = None;
+                                self.screen = Screen::InGame;
+                                set_cursor(&self.window, true);
+                            }
                             Screen::Worlds | Screen::Create | Screen::Settings => {
                                 self.screen = Screen::Main
                             }
                             Screen::Death => {} // MC：死亡界面 Esc 无效
                             Screen::Main => event_loop.exit(),
+                            // 键位界面的按键在入口已被拦截，此为穷尽性兜底
+                            Screen::KeyBinds => self.screen = Screen::Settings,
                         },
                         // Inventory(F)/Debug(F3)/Screenshot(F2)/PickBlock：
                         // 引擎侧功能属波4（背包/F3/截图），先接分发留位
@@ -1268,6 +1678,15 @@ impl ApplicationHandler for AppState {
                 self.last_cursor = Some((position.x, position.y));
             }
             WindowEvent::Touch { .. } => {
+                if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+                    // 合成/创造界面：触摸按下 = 左键点击
+                    if let WindowEvent::Touch(t) = &event
+                        && t.phase == winit::event::TouchPhase::Started
+                    {
+                        self.handle_craft_pointer(t.location.x, t.location.y, true);
+                    }
+                    return;
+                }
                 if self.screen != Screen::InGame {
                     // 菜单：触摸按下 = 点击
                     if let WindowEvent::Touch(t) = &event
@@ -1284,6 +1703,15 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // 合成/创造界面：左键=交换/取物，右键=拆半/单个放。
+                if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+                    if state == ElementState::Pressed
+                        && let Some(cur) = self.last_cursor
+                    {
+                        self.handle_craft_pointer(cur.0, cur.1, button == MouseButton::Left);
+                    }
+                    return;
+                }
                 if self.screen != Screen::InGame {
                     if state == ElementState::Pressed
                         && button == MouseButton::Left
@@ -1311,7 +1739,17 @@ impl ApplicationHandler for AppState {
                     }
                     MouseButton::Right => {
                         runtime.input.placing = pressed;
-                        if pressed {
+                        // 右键工作台 = 开 3x3 合成界面（26.1 CraftingTableBlock
+                        // 打开容器），拦截在放置之前；其余方块走放置。
+                        let on_table = pressed
+                            && runtime
+                                .look_block()
+                                .is_some_and(|(_, id)| id == crafting_table_id());
+                        if on_table {
+                            self.screen = Screen::Crafting;
+                            self.craft = Some(mcv_logic::ui::CraftScreen::new(3));
+                            set_cursor(&self.window, false);
+                        } else if pressed {
                             runtime.interact(true);
                         }
                     }
@@ -1500,7 +1938,10 @@ impl AppState {
         if self.quit_requested {
             return; // window_event 在 RedrawRequested 后处理退出
         }
-        if !matches!(self.screen, Screen::InGame | Screen::Paused | Screen::Death) {
+        if !matches!(
+            self.screen,
+            Screen::InGame | Screen::Paused | Screen::Death | Screen::Crafting | Screen::Creative
+        ) {
             self.redraw_menu();
             return;
         }
@@ -1511,6 +1952,16 @@ impl AppState {
                 None => Vec::new(),
             }
         } else {
+            Vec::new()
+        };
+        // 合成/创造：面板 quad + 命中表（同样须在 runtime 可变借用之前）
+        let craft_menu = if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            match self.surface.as_ref() {
+                Some(sp) => self.craft_ui(sp.config.width as f32, sp.config.height as f32),
+                None => Vec::new(),
+            }
+        } else {
+            self.craft_hot.clear();
             Vec::new()
         };
         let (Some(sp), Some(runtime), Some(window)) = (
@@ -1543,6 +1994,13 @@ impl AppState {
             runtime.fixed_step(1.0 / 60.0);
             self.step_accum -= 1.0 / 60.0;
         }
+        // 开着背包死亡：面板直接收起（网格/光标物品随死亡丢弃，
+        // 世界掉落物实体待 drops 分支），再走下面的死亡界面切换。
+        if runtime.dead && matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            self.craft = None;
+            self.creative = None;
+            self.screen = Screen::InGame;
+        }
         // 死亡 → 切死亡界面（显示 26.1 deathScreen，需鼠标点按钮）
         if runtime.dead && self.screen == Screen::InGame {
             self.screen = Screen::Death;
@@ -1551,7 +2009,8 @@ impl AppState {
                 w.set_cursor_visible(true);
             }
         }
-        runtime.time_ticks += (dt * 20.0) as u64; // 20 ticks/s
+        // 时间推进已收进 fixed_step 的 tick 累加器（(dt*20) as u64 在
+        // 60 fps 下截断恒 0，昼夜曾因此冻结）。
         runtime.stream();
 
         // periodic world save (30 s)
@@ -1581,10 +2040,15 @@ impl AppState {
             sp.config.height as f32,
             self.renderer.as_ref().and_then(|r| r.gui()),
             self.screen != Screen::Death,
+            // 合成/创造面板自带 36 格（含快捷栏行），不再重复画底部快捷栏
+            !matches!(self.screen, Screen::Crafting | Screen::Creative),
         );
         if matches!(self.screen, Screen::Paused | Screen::Death) {
             // 暂停/死亡：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
             hud.extend(pause_menu);
+        }
+        if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            hud.extend(craft_menu);
         }
         let chunks: Vec<mcv_render::RenderChunk> = runtime.render_chunks().to_vec();
         // 云（官方 CloudStatus 映射到模块设置；云距跟随渲染距离，MC renderDistance 语义）

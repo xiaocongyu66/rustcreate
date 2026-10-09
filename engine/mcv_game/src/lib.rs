@@ -14,7 +14,7 @@ pub use mining::{
     progress_per_tick, requires_correct_tool,
 };
 pub use physics::{Aabb, Axis, Entity, StepInput, move_axis, step, step_entity};
-pub use raycast::{REACH, raycast};
+pub use raycast::{CREATIVE_REACH, REACH, raycast};
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkPos};

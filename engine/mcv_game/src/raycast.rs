@@ -14,6 +14,10 @@ use crate::blockshapes::{self, RayTarget};
 /// 替换此前调用方的 5.0 临时值（mcv_app 迁移时改传本常数）。
 pub const REACH: f32 = 4.5;
 
+/// 创造模式交互到达距离（米）：26.1 创造靠属性修饰抬到 **5.0**
+/// （生存 [`REACH`] 4.5 不变）。挖掘/放置按 GameMode 选其一。
+pub const CREATIVE_REACH: f32 = 5.0;
+
 /// 从 `origin` 沿 `dir`（自动归一化）步进 voxel 网格，返回第一个命中方块
 /// 及进入面法线（指向射线来向一侧，如从上方进入 -Y 面 → `[0, 1, 0]`）。
 /// 超过 `max_dist` 未命中返回 `None`。

@@ -181,6 +181,7 @@ fn meta_roundtrip() {
             sel_slot: 4,
             // 中间空槽以 (0,0,0) 占位，槽序即下标。
             hotbar: vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)],
+            main: vec![(0, 0, 0); 26].into_iter().chain([(1, 5, 0)]).collect(),
         }),
     };
     let bytes = meta.encode();
@@ -193,11 +194,14 @@ fn meta_roundtrip() {
     assert_eq!(p.z, -3.25);
     assert!(p.flying);
     assert_eq!(p.sel_slot, 4);
-    assert_eq!(p.hotbar, vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)]);
+    assert_eq!(p.hotbar.len(), 9, "v4 起快捷栏补齐 9 槽");
+    assert_eq!(p.hotbar[..3], vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)]);
+    assert_eq!(p.main.len(), 27);
+    assert_eq!(p.main[26], (1, 5, 0), "主背包尾槽保序");
 
-    // 版本 4 必须拒绝。
+    // 版本 5 必须拒绝。
     let mut future = bytes.clone();
-    future[4] = 4;
+    future[4] = 5;
     assert!(LevelMeta::decode(&future).is_err());
 
     let bare = LevelMeta {
@@ -232,4 +236,36 @@ fn meta_v2_backcompat() {
     let p = back.player.expect("player");
     assert_eq!(p.sel_slot, 7);
     assert!(p.hotbar.is_empty(), "v1/v2 读为空快捷栏");
+    assert!(p.main.is_empty(), "v1/v2 读为空主背包");
+}
+
+#[test]
+fn meta_v3_backcompat() {
+    // 手写 v3 字节流(快捷栏存在、主背包字段不存在):必须照常解码,
+    // main 读为空。
+    let mut v: Vec<u8> = Vec::new();
+    v.extend_from_slice(b"MCV1");
+    v.extend_from_slice(&3u16.to_le_bytes());
+    v.extend_from_slice(&9u64.to_le_bytes());
+    v.extend_from_slice(&500u64.to_le_bytes());
+    v.extend_from_slice(&[1, b'x']);
+    v.push(1); // player present
+    for f in [1.0f32, 2.0, 3.0, 4.0, 5.0] {
+        v.extend_from_slice(&f.to_le_bytes());
+    }
+    v.push(0); // flying
+    v.push(2); // sel_slot
+    v.push(2); // hotbar len（v3 旧式：只写非空前缀）
+    v.extend_from_slice(&7u16.to_le_bytes());
+    v.push(1);
+    v.extend_from_slice(&0u16.to_le_bytes());
+    v.extend_from_slice(&9u16.to_le_bytes());
+    v.push(3);
+    v.extend_from_slice(&2u16.to_le_bytes());
+    v.push(0); // mode = survival（末尾字节约定）
+    let back = LevelMeta::decode(&v).expect("v3 decodes");
+    assert_eq!(back.mode, 0);
+    let p = back.player.expect("player");
+    assert_eq!(p.hotbar, vec![(7, 1, 0), (9, 3, 2)]);
+    assert!(p.main.is_empty(), "v3 读为空主背包");
 }

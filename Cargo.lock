@@ -1391,6 +1391,7 @@ dependencies = [
  "mcv_audio",
  "mcv_core",
  "mcv_game",
+ "mcv_item",
  "mcv_logic",
  "mcv_platform",
  "mcv_render",

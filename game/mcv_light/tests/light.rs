@@ -499,7 +499,13 @@ fn golden_light_constants_match_26_1() {
             .position(|b| b.name == want)
             .unwrap() as u16
     };
-    for name in ["torch", "oak_fence", "oak_slab", "oak_stairs", "short_grass"] {
+    for name in [
+        "torch",
+        "oak_fence",
+        "oak_slab",
+        "oak_stairs",
+        "short_grass",
+    ] {
         assert_eq!(opacity(BlockId(by_name(name))), 0, "{name} damp=0");
     }
     // 玻璃：整盒形状 noOcclusion → solidRender=false、
