@@ -1,7 +1,8 @@
 //! Terrain texture array: layers `0..MANIFEST_LAYERS` 是真实方块贴图
 //! （tiles_manifest.json 字典序，运行时从资源根 `textures/block/*.png` 读盘），
-//! 特殊程序化层（挖掘裂纹等）排在 `CRACK_BASE..`。真实贴图缺失时回退到
+//! 特殊层（挖掘裂纹）排在 `CRACK_BASE..`。真实贴图缺失时回退到
 //! 程序化噪声（原始调色板，逐层配方见 LEGACY_RECIPES），保证不崩。
+//! 裂纹层同样优先读原版 `textures/block/destroy_stage_0..9.png`。
 
 use crate::tiles;
 use std::path::Path;
@@ -9,8 +10,10 @@ use std::path::Path;
 pub const TILE_PX: usize = 16;
 /// 真实贴图层数，与 tiles_manifest.json 的 tile_index_to_file 长度一致。
 pub const MANIFEST_LAYERS: usize = 827;
-/// 挖掘裂纹叠加层数（4 档）。
-pub const CRACK_LAYERS: usize = 4;
+/// 挖掘裂纹叠加层数（10 档）。原版 26.1 为 destroy_stage_0..9 十张
+/// （jar MANIFEST 名录），档位映射 `(int)(destroyProgress * 10)`（
+/// MultiPlayerGameMode.java:551）。
+pub const CRACK_LAYERS: usize = 10;
 /// 裂纹 stage s 的数组层号。特殊层统一放在真实贴图之后。
 pub const CRACK_BASE: usize = MANIFEST_LAYERS;
 /// 图集总层数（= mcv_render::gpu 创建 texture array 的 depth_or_array_layers）。
@@ -306,7 +309,8 @@ fn paint_recipe(p: &mut Painter, name: &str, r: &Recipe) {
     }
 }
 
-/// 裂纹 stage（0..CRACK_LAYERS）：递增的暗色像素网。
+/// 裂纹 stage（0..CRACK_LAYERS）的程序化回退：递增的暗色像素网。
+/// 仅在原版 destroy_stage_*.png 缺失时兜底（无素材部署模式）。
 fn paint_crack(p: &mut Painter, stage: usize) {
     for y in 0..TILE_PX as u32 {
         for x in 0..TILE_PX as u32 {
@@ -375,7 +379,8 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
 
 /// Full upload payload: mip0 + mip1 contiguous. 真实贴图从
 /// `<assets_dir>/textures/block/*.png`（资源根 = assets/minecraft）读盘
-/// 覆盖（目录不存在 = 纯程序化，兼容无素材部署）。
+/// 覆盖（目录不存在 = 纯程序化，兼容无素材部署）；挖掘裂纹层读原版
+/// destroy_stage_0..9（[`load_crack_stages`]）。
 pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
     let mut mip0 = vec![0u8; LAYERS * TILE_PX * TILE_PX * 4];
     generate_layers(&mut mip0);
@@ -387,6 +392,10 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
                 MANIFEST_LAYERS,
                 dir.display()
             );
+        }
+        let c = load_crack_stages(dir, &mut mip0);
+        if c > 0 {
+            log::info!("atlas: {c}/{} vanilla destroy stages", CRACK_LAYERS);
         }
     }
     let mut mip1 = vec![0u8; LAYERS * 8 * 8 * 4];
@@ -400,7 +409,7 @@ pub fn generate_payload() -> Vec<u8> {
     generate_payload_with_pack(None)
 }
 
-/// 层数钳制（GLES `MAX_ARRAY_TEXTURE_LAYERS` 常为 256 < 831）：
+/// 层数钳制（GLES `MAX_ARRAY_TEXTURE_LAYERS` 常为 256 < 837）：
 /// 钳到 `n` 层时返回实际可用的 mip0+mip1 载荷与数组层数。
 /// tiles 引用被钳掉的层时 wgpu 在采样器边界内回绕/钳位（贴图上屏，不崩）。
 /// 建议 gpu.rs 用 `min(LAYERS, limits.max_texture_layers())` 调用。
@@ -505,6 +514,29 @@ pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
             continue;
         };
         if decode_into_layer(&bytes, &path, idx, layers) {
+            count += 1;
+        }
+    }
+    count
+}
+
+/// 加载原版挖掘裂纹 10 档到 `CRACK_BASE + s` 层。原版 jar 内路径即
+/// `textures/block/destroy_stage_0..9.png`（16x16，黑色裂纹 + alpha），
+/// 档位公式 `(int)(destroyProgress * 10)`（MultiPlayerGameMode.java:551）。
+/// 缺哪档保留该档程序化回退（无素材部署不崩）。返回覆盖档数。
+pub fn load_crack_stages(dir: &Path, layers: &mut [u8]) -> u32 {
+    assert!(layers.len() >= LAYERS * TILE_PX * TILE_PX * 4);
+    let blocks = dir.join(BLOCKS_SUBDIR);
+    if !blocks.is_dir() {
+        return 0;
+    }
+    let mut count = 0u32;
+    for s in 0..CRACK_LAYERS {
+        let path = blocks.join(format!("destroy_stage_{s}.png"));
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if decode_into_layer(&bytes, &path, CRACK_BASE + s, layers) {
             count += 1;
         }
     }

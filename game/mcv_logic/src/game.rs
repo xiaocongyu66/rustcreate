@@ -2315,7 +2315,8 @@ impl GameRuntime {
     }
 
     /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
-    /// 给裂纹档位（progress×4 取整，0..3）；未挖掘时准星 DDA 目标只描边。
+    /// 给裂纹档位（原版 10 档：`(int)(destroyProgress * 10)`，
+    /// MultiPlayerGameMode.java:551）；未挖掘时准星 DDA 目标只描边。
     /// 面暴露 = 邻格空气；面光照取邻格（与 mesher 面光照同规则）。
     pub fn mining_overlay(&self) -> Option<mcv_render::gpu::MiningOverlay> {
         let view = WorldView {
@@ -2365,7 +2366,8 @@ impl GameRuntime {
             }
         }
         let stage = if mining {
-            Some(((self.mine.progress * 4.0) as u32).min(3))
+            // 原版 10 档映射（MultiPlayerGameMode.java:551）。
+            Some(((self.mine.progress * 10.0).clamp(0.0, 9.0)) as u32)
         } else {
             None
         };

@@ -83,6 +83,39 @@ const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
 const EXTRA_SPRITES: [(&str, &str, u32, u32); 1] =
     [("menu_background", "gui/menu_background.png", 32, 32)];
 
+/// 容器面板条目类型：名字、路径、逻辑宽高、源裁剪矩形 (sx, sy, sw, sh)。
+type PanelSprite = (&'static str, &'static str, u32, u32, u32, u32, u32, u32);
+
+/// 容器面板(原版整幅 blit,非九宫格):名字、路径、逻辑尺寸、源裁剪矩形。
+/// 原版渲染 = `graphics.blit(GUI_TEXTURED, <面板贴图>, xo, yo, 0, 0,
+/// imageWidth, imageHeight, 256, 256)`(AbstractContainerScreen 定位
+/// ((width-imageWidth)/2, (height-imageHeight)/2),:89-90;InventoryScreen.java:98、
+/// CraftingScreen.java:35),即从 256x256 纹理取左上 176x166 画到面板左上角。
+/// 面板贴图自带槽位凹槽——命中即不再程序化画槽底。缺文件跳过(调用方回退
+/// 程序化面板)。
+const PANEL_SPRITES: [PanelSprite; 2] = [
+    (
+        "inv_panel",
+        "gui/container/inventory.png",
+        176,
+        166,
+        0,
+        0,
+        176,
+        166,
+    ),
+    (
+        "craft_panel",
+        "gui/container/crafting_table.png",
+        176,
+        166,
+        0,
+        0,
+        176,
+        166,
+    ),
+];
+
 /// logo 实际绘制行数(MC 纹理 256x64 只显示上 44 行)。
 pub const LOGO_VISIBLE_H: u32 = 44;
 
@@ -145,6 +178,40 @@ impl SpriteSheet {
         }
         for (name, file, w, h) in EXTRA_SPRITES {
             loaded.extend(decode(name, file, w, h));
+        }
+        // 容器面板 best-effort:源裁剪矩形内近邻取样(256x256 容器贴图取
+        // 左上 176x166,同原版 blit 源矩形)。
+        let panels_before = loaded.len();
+        for (name, file, w, h, sx, sy, sw, sh) in PANEL_SPRITES {
+            let path = dir.join("textures").join(file);
+            let Ok(bytes) = std::fs::read(&path) else {
+                continue;
+            };
+            let Ok(img) = image::load_from_memory(&bytes)
+                .map_err(|e| log::warn!("gui: decode {}: {e}", path.display()))
+            else {
+                continue;
+            };
+            let rgba = img.to_rgba8();
+            let (iw, ih) = (rgba.width(), rgba.height());
+            if sx + sw > iw || sy + sh > ih || sw == 0 || sh == 0 {
+                log::warn!("gui: panel crop out of range: {}", path.display());
+                continue;
+            }
+            let mut crop = vec![0u8; (sw * sh * 4) as usize];
+            let raw = rgba.as_raw();
+            let row_bytes = (sw * 4) as usize;
+            for y in 0..sh {
+                let s = (((sy + y) * iw + sx) * 4) as usize;
+                let d = ((y * sw) * 4) as usize;
+                crop[d..d + row_bytes].copy_from_slice(&raw[s..s + row_bytes]);
+            }
+            let mut buf = vec![0u8; (w * h * 4) as usize];
+            resample(&crop, sw, sh, w, h, &mut buf);
+            loaded.push((name, buf, w, h));
+        }
+        if loaded.len() - panels_before < PANEL_SPRITES.len() {
+            log::warn!("gui: container panels missing, craft screen uses fallback");
         }
         // 竖排:宽度取最大(256),总高向上取整到 2 的幂
         let sheet_w = loaded.iter().map(|(_, _, w, _)| *w).max().unwrap_or(0);
