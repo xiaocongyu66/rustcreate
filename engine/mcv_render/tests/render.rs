@@ -1069,7 +1069,15 @@ fn four_mobs_paint_with_vanilla_textures() {
     let (device, queue, mut renderer) = setup();
     let target = OffscreenTarget::new(&device, extent);
     let chunk = ground_chunk(&device);
-    let base = frame(&device, &queue, &mut renderer, &target, &chunk, &camera, None);
+    let base = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk,
+        &camera,
+        None,
+    );
     let with = frame(
         &device,
         &queue,
@@ -1080,7 +1088,10 @@ fn four_mobs_paint_with_vanilla_textures() {
         Some(&instances),
     );
     let (diff, bbox) = a_diff_pixels(&base, &with);
-    assert!(diff > 400, "四生物应共同遮挡 >400px，实测 {diff}（bbox {bbox:?}）");
+    assert!(
+        diff > 400,
+        "四生物应共同遮挡 >400px，实测 {diff}（bbox {bbox:?}）"
+    );
 
     // 逐型单独出场：每种都必须有自己的像素（贴图/网格路由按 kind 正确）。
     for (i, (k, _)) in placements.iter().enumerate() {
@@ -1114,14 +1125,25 @@ fn four_mobs_paint_with_vanilla_textures() {
         "生物像素色数 {}/亮峰 {max_lum}：疑似程序化纯色贴图而非原版素材",
         colors.len()
     );
-    assert!(max_lum > 150, "生物像素全暗（亮峰 {max_lum}）：疑似黑占位贴图");
+    assert!(
+        max_lum > 150,
+        "生物像素全暗（亮峰 {max_lum}）：疑似黑占位贴图"
+    );
 
     // 素材红线：缺素材 renderer 下 mobs 必须与不画逐像素一致（短路 no-op，
     // 无任何程序化假生物）。
     let (device2, queue2, mut renderer2) = setup_with_assets(None);
     let target2 = OffscreenTarget::new(&device2, extent);
     let chunk2 = ground_chunk(&device2);
-    let base2 = frame(&device2, &queue2, &mut renderer2, &target2, &chunk2, &camera, None);
+    let base2 = frame(
+        &device2,
+        &queue2,
+        &mut renderer2,
+        &target2,
+        &chunk2,
+        &camera,
+        None,
+    );
     let with2 = frame(
         &device2,
         &queue2,
