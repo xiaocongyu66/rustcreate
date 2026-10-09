@@ -66,10 +66,10 @@ impl Options {
                     }
                 }
                 "sens" => {
-                    if let Ok(f) = v.parse::<f32>() {
-                        if f.is_finite() {
-                            o.sens = f.clamp(0.25, 3.0);
-                        }
+                    if let Ok(f) = v.parse::<f32>()
+                        && f.is_finite()
+                    {
+                        o.sens = f.clamp(0.25, 3.0);
                     }
                 }
                 "clouds" => {
