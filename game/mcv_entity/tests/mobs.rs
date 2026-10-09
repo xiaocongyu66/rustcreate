@@ -709,7 +709,7 @@ fn knockback_formula() {
 #[test]
 fn despawn_bands_match_mob_java_655_678() {
     let mut never = make_seq(vec![7]); // 7 % 800 != 0 → 随机门永不命中
-    // >128² 立即移除（despawnDistance=128，MobCategory.java:9）。
+    // >128² 立即移除（despawnDistance=128，MobCategory.java:7）。
     assert!(should_despawn(
         129.0 * 129.0,
         0,

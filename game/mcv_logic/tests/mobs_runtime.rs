@@ -298,13 +298,16 @@ fn daylight_burn_wires_through_brain() {
     // Mob.java:498-505，固定 RNG 在 mcv_entity 层单测已断言公式）。这里
     // 断言**接线面**：白天直晒下多 tick 后最终 fire_ticks>0 或已被点燃
     // 扣过血；夜晚（monsters_burn=false）永不自燃。
-    let player = Vec3::new(8.0, 64.0, 100.0);
+    // 僵尸与玩家都必须落在唯一已加载区块（x/z<16）内：缺区块读回
+    // 全黑（chunk_light 保守值），摆放区外会让本测试永远点不着。
+    let player = Vec3::new(8.0, 64.0, 13.0);
     let mut burned = false;
     // 全局 fast_rand 无法注入：跑足量 tick 让 4% 概率门命中。
     let mut app = harness();
-    // 天光 15 = 露天代理（Mob.java:504 canSeeSky(眼) 的判据源）。
+    // 天光 15 = 露天代理（Mob.java:504 canSeeSky(眼) 的判据源，
+    // BlockAndLightGetter.java:18-20 sky≥15）。
     let chunks = world_chunk(true);
-    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 70.0));
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 3.0));
     for _ in 0..400 {
         step(&mut app, &chunks, player, true, true);
         if app
@@ -323,7 +326,7 @@ fn daylight_burn_wires_through_brain() {
     );
     // 夜：800 tick 不点燃。
     let mut app = harness();
-    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 70.0));
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 3.0));
     for _ in 0..800 {
         step(&mut app, &chunks, player, true, false);
         assert!(
@@ -342,8 +345,8 @@ fn indoor_mob_never_ignites() {
     // canSeeSky）不成立 → 永不点燃。
     let mut app = harness();
     let chunks = air_chunk_map();
-    let player = Vec3::new(8.0, 64.0, 100.0);
-    spawn_mob(&mut app.world, MobId::SKELETON, Vec3::new(8.0, 64.0, 70.0));
+    let player = Vec3::new(8.0, 64.0, 13.0);
+    spawn_mob(&mut app.world, MobId::SKELETON, Vec3::new(8.0, 64.0, 3.0));
     for _ in 0..800 {
         step(&mut app, &chunks, player, true, true);
         assert!(
@@ -363,7 +366,7 @@ fn indoor_mob_never_ignites() {
 #[test]
 fn wall_blocks_target_acquisition() {
     let mut app = harness();
-    let mut chunks = air_chunk_map();
+    let chunks = air_chunk_map();
     {
         let h = chunks.get(&ChunkPos::new(0, 0)).unwrap();
         let mut vox = h.voxels.write().unwrap();

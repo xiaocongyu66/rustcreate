@@ -48,7 +48,7 @@ pub struct SpawnRule {
     pub hostile: bool,
 }
 
-/// MobCategory.java:11 — MONSTER despawnDistance=128（`>128²` 立即移除，
+/// MobCategory.java:7 — MONSTER despawnDistance=128（`>128²` 立即移除，
 /// Mob.java:662-666）。
 pub const DESPAWN_DIST: i32 = 128;
 /// MobCategory.java:21/57 — noDespawnDistance=32（`<32²` 清 idle 账本；

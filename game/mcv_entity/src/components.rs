@@ -1,7 +1,8 @@
 //! Mob 的 ECS 组件拆分（结构迁移自原单体 `Mob`，数值/AI 逻辑不变）：
-//! 每只怪 = `MobKind` + `PhysBody` + `Health` + `Yaw` + `MobTicks` + `LastHurt`
-//! + `MobBrain`（20 Hz 状态机，[`crate::ai::Brain`]）+ `MobIntent`（上一 tick
-//! 的移动指令，供 60 Hz 物理步进复用）。箭矢 = `MobArrow`（简化投射物）。
+//! 每只怪 = `MobKind` + `PhysBody` + `Health` + `Yaw` + `MobTicks` +
+//! `LastHurt`，再加 `MobBrain`（20 Hz 状态机，[`crate::ai::Brain`]）与
+//! `MobIntent`（上一 tick 的移动指令，供 60 Hz 物理步进复用）。
+//! 箭矢 = `MobArrow`（简化投射物）。
 
 use crate::ai::Brain;
 use crate::defs::MobId;

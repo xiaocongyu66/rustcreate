@@ -2558,12 +2558,10 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
             }
             let h = mcv_game::Player::HALF;
             let p = svc.player_pos;
-            if a.pos.x > p.x - h[0]
-                && a.pos.x < p.x + h[0]
-                && a.pos.z > p.z - h[2]
-                && a.pos.z < p.z + h[2]
-                && a.pos.y > p.y
-                && a.pos.y < p.y + h[1] * 2.0
+            // 玩家 AABB（HALF=[0.3,0.9,0.3]，脚底 p.y → 头顶 +2h）。
+            if (a.pos.x - p.x).abs() < h[0]
+                && (a.pos.z - p.z).abs() < h[2]
+                && (a.pos.y - (p.y + h[1])).abs() < h[1]
             {
                 events.channel::<MobArrowHit>().send(MobArrowHit {
                     src: a.pos,
