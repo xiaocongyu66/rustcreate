@@ -163,12 +163,10 @@ pub struct GameRuntime {
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
     pub attack_ticker: f32,
-    /// 进度挖掘状态（26.1 ServerPlayerGameMode 的 destroyPos/destroyProgress/
-    /// gameTicks 三件套）：仅生存/极限走 START→CONTINUE→STOP 状态机，创造秒破。
-    mine_pos: Option<BlockPos>,
-    mine_per_tick: f32,
-    mine_progress: f32,
-    mine_tick_acc: f32,
+    /// 挖掘状态机（26.1 MultiPlayerGameMode 的 destroyBlockPos/destroyProgress/
+    /// destroyDelay 三件套）：生存/极限走 START→CONTINUE→ABORT，创造走按住
+    /// 连秒破冷却；仅 `on_tick` 为真的固定步推进（原版每 tick 一次 continue）。
+    mine: MineMachine,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -205,6 +203,139 @@ pub enum CameraType {
 
 /// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
 const THIRD_PERSON_DIST: f32 = 4.0;
+
+/// 方块交互距离（26.1 `Attributes.BLOCK_INTERACTION_RANGE` 基值 4.5，
+/// `Attributes.java:22-23`；创造 +0.5 加法修饰 = 5.0，`ServerPlayer.java:215-216`
+/// `CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER` ADD_VALUE）。挖掘/放置/选中
+/// 射线一律传本函数，替换此前散落的硬编码 5.0。服务端 START/STOP 另有
+/// +1.0 容差（`ServerPlayerGameMode.java:153`）且按住期间不查距离——那是
+/// 联网防作弊复核，单机一体无客户端上报语义，按住期间按原版客户端行为
+/// 每 tick 以基值重射线（打不中即 ABORT）。
+pub fn block_interaction_reach(mode: GameMode) -> f32 {
+    if mode == GameMode::Creative {
+        mcv_game::raycast::REACH + 0.5
+    } else {
+        mcv_game::raycast::REACH
+    }
+}
+
+/// 生存挖掘单 tick 继续的输入：准星射线命中的非空气方块 + **该 tick 现算**
+/// 的每 tick 进度速率。原版每 tick 重算 `getDestroyProgress`
+/// （`ServerPlayerGameMode.tick()` :107-130 → `Player.getDestroySpeed`
+/// Player.java:586-614），空中/入水当 tick 即变速，不许起手缓存速率。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MineHit {
+    pub pos: BlockPos,
+    pub per_tick: f32,
+}
+
+/// [`MineMachine::continue_tick`] 的结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MineTick {
+    Idle,
+    /// 本 tick 挖穿（调用方负责写空气 + 掉落 + 音效）。
+    Broken(BlockPos),
+}
+
+/// 挖掘状态机（26.1 客户端 `MultiPlayerGameMode` 的 destroyBlockPos/
+/// destroyProgress/destroyDelay 三件套，:79,308-311）。纯逻辑、无世界访问：
+/// 射线与 per-tick 速率由 `GameRuntime::step_mining` 每 tick 现算喂入，
+/// 且只由 `GameRuntime::on_tick` 门驱动——原版按住期间是**每 tick** 一次
+/// `continueDestroyBlock`（`Minecraft.continueAttack`，Minecraft.java:
+/// 1606-1628），60 Hz 固定步按 dt 连加会让进度偏 3×，故按 tick 离散推进。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MineMachine {
+    /// START 目标（原版 destroyBlockPos）；None = 未在挖。
+    pub pos: Option<BlockPos>,
+    /// 最近一 tick 使用的速率（overlay/调试展示；判定不依赖缓存值）。
+    pub per_tick: f32,
+    /// 累积进度（原版 destroyProgress；≥1 破坏）。
+    pub progress: f32,
+    /// 破坏后冷却（原版 destroyDelay，5 tick；仅正常挖穿与创造连破置位）。
+    pub delay: u32,
+}
+
+impl MineMachine {
+    /// START_DESTROY_BLOCK（生存分支，`MultiPlayerGameMode.java:147-205`）：
+    /// 换目标即隐式 ABORT 旧 + 进度清零重算。返回 Some(pos) = insta-mine
+    /// （per ≥ 1 起手即破，`ServerPlayerGameMode.java:210-212`）；秒破**不**
+    /// 置冷却——原版 destroyDelay=5 只在正常挖穿（:282）与创造（:167/:232）
+    /// 置位，起手秒破（花类）不置。
+    pub fn start(&mut self, pos: BlockPos, per_tick: f32) -> Option<BlockPos> {
+        self.pos = Some(pos);
+        self.per_tick = per_tick;
+        // START 当 tick 计入 1 份进度：服务端进度公式为 per×(ticksSpent+1)
+        // （ServerPlayerGameMode.incrementDestroyProgress :132-142）。
+        self.progress = per_tick;
+        if per_tick >= 1.0 {
+            self.abort();
+            return Some(pos);
+        }
+        None
+    }
+
+    /// ABORT（26.1 stopDestroyBlock → 发 ABORT_DESTROY_BLOCK，
+    /// `MultiPlayerGameMode.java:207-222`；服务端 ABORT 分支只清状态、不
+    /// 破坏，`ServerPlayerGameMode.java:239-249`）：进度作废。delay 不清
+    /// （原版同款——冷却是节奏计数，留给后续 CONTINUE 自行衰减）。
+    pub fn abort(&mut self) {
+        self.pos = None;
+        self.per_tick = 0.0;
+        self.progress = 0.0;
+    }
+
+    /// CONTINUE_DESTROY_BLOCK 生存分支，每 tick 一次
+    /// （`MultiPlayerGameMode.java:224-286`）。`hit` 为 None = 准星射线打不
+    /// 中非空方块（移出 reach/移开/目标被破坏变空）——原版此时走
+    /// stopDestroyBlock = ABORT（Minecraft.java:1624-1626；或 continue 内
+    /// 目标变空气 isDestroying=false，:244-248）。
+    pub fn continue_tick(&mut self, hit: Option<MineHit>) -> MineTick {
+        if self.delay > 0 {
+            // destroyDelay 先减且本 tick 不推进（:226-228）：正常挖穿后置 5，
+            // 第 6 个 tick 才对新目标 START —— "5 tick 冷却再开下一块"。
+            self.delay -= 1;
+            return MineTick::Idle;
+        }
+        let Some(h) = hit else {
+            self.abort();
+            return MineTick::Idle;
+        };
+        if self.pos != Some(h.pos) {
+            // 换目标（含冷却减尽后对新目标的自动重启——continue 落到
+            // startDestroyBlock，:285-286）：ABORT 旧进度 + START 新目标。
+            self.abort();
+            if let Some(p) = self.start(h.pos, h.per_tick) {
+                return MineTick::Broken(p);
+            }
+            return MineTick::Idle;
+        }
+        // 同目标续挖：速率用本 tick 现算值（空中/水下随条件实时变化）。
+        self.per_tick = h.per_tick;
+        self.progress += h.per_tick;
+        if self.progress >= 1.0 {
+            // 原版阈值是 `>= 1.0F`（:274），旧实现的 `> 1.0` 会漏掉恰好
+            // 1.0 的情形，按源码收紧。
+            let pos = h.pos;
+            self.abort();
+            self.delay = 5;
+            return MineTick::Broken(pos);
+        }
+        MineTick::Idle
+    }
+
+    /// 创造按住每 tick（`MultiPlayerGameMode.java:230-242`）：冷却减尽后
+    /// 秒破准星方块并再置 destroyDelay=5。返回 Some(pos) = 本 tick 破坏。
+    /// 按下瞬间的首破由调用方（on_left_press）负责并置初始 delay（:157-167）。
+    pub fn creative_tick(&mut self, hit: Option<BlockPos>) -> Option<BlockPos> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return None;
+        }
+        let pos = hit?;
+        self.delay = 5;
+        Some(pos)
+    }
+}
 
 /// 60 Hz 固定步 → 20 Hz 原版 tick 累加：返回本步跨过的 tick 数（0 或 1
 /// 为常态），小数留在 `frac`。`dt ≥ 0.2 s` 的 burst（卡顿/后台回归）封顶
@@ -264,10 +395,7 @@ impl GameRuntime {
             border_synced: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
             attack_ticker: 20.0, // ready
-            mine_pos: None,
-            mine_per_tick: 0.0,
-            mine_progress: 0.0,
-            mine_tick_acc: 0.0,
+            mine: MineMachine::default(),
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -1025,13 +1153,18 @@ impl GameRuntime {
     }
 
     /// 左键按下入口（桌面鼠标/触摸按下边沿共用）：先攻准星下的 mob，
-    /// 未命中则创造秒破、生存/极限进入进度挖掘 START。
+    /// 未命中则创造秒破、生存/极限进入进度挖掘 START。**按住**期间的连挖
+    /// 不在这里——那是 `fixed_step` 每 tick 驱动的 `step_mining`
+    /// （原版 Minecraft.continueAttack，Minecraft.java:1606-1628）。
     pub fn on_left_press(&mut self) {
         if self.try_attack() {
             return;
         }
         if self.mode == GameMode::Creative {
+            // 创造按下 = 立即秒破 + destroyDelay=5（MultiPlayerGameMode:157-167），
+            // 后续按住连破由 step_mining 的 creative_tick 接管。
             self.interact(false);
+            self.mine.delay = 5;
             return;
         }
         self.start_mining();
@@ -1142,11 +1275,20 @@ impl GameRuntime {
         }
     }
 
-    #[allow(dead_code)] // wired into physics once mcv_game::step merges
+    /// 身体（脚上 0.5 格）在水中——物理步输入（游泳/浮沉）用。
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
         let b = BlockPos::new(p.x as i32, (p.y + 0.5) as i32, p.z as i32);
         view.block(b).def().liquid
+    }
+
+    /// 眼睛是否在水中（26.1 `Player.isEyeInFluid(WATER)`，Player.java:607：
+    /// 水下挖掘惩罚按**眼位**判定，与物理用的脚位版 in_water 区分）。
+    /// 接 per-tick 速率惩罚链（原 mcv_game::mining 惩罚实现的 live 路径版）。
+    fn eye_in_water(&self, view: &WorldView) -> bool {
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let c = eye.floor().as_ivec3();
+        view.block(BlockPos::new(c.x, c.y, c.z)).def().liquid
     }
 
     /// Mouse look.
@@ -1164,7 +1306,9 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, normal)) = dda_hit(&view, eye, dir, 5.0) else {
+        // 交互距离按模式取 26.1 block_interaction_range（生存 4.5 / 创造 5.0）。
+        let Some((hit, normal)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))
+        else {
             return;
         };
         if !place {
@@ -1263,82 +1407,99 @@ impl GameRuntime {
         (!s.is_empty()).then(|| s.clone())
     }
 
-    /// 生存/极限 START（26.1 START_DESTROY_BLOCK）：首 tick 进度即计入，
-    /// ≥1 走 "insta mine" 秒破；不可破坏方块（进度 0）直接无事。
+    /// 本 tick 条件下的 per-tick 挖掘速率（26.1 每 tick 重算：
+    /// `ServerPlayerGameMode.tick()` :107-130 → `Player#getDestroySpeed`
+    /// Player.java:586-614——空中 ÷5（:611-612）、眼在水中 ×0.2（:607-608））。
+    fn mine_per_tick(&self, view: &WorldView, block: BlockId) -> f32 {
+        mcv_item::mining::progress_per_tick_env(
+            block,
+            self.held_stack().as_ref(),
+            self.player.on_ground,
+            self.eye_in_water(view),
+        )
+    }
+
+    /// 生存/极限 START（26.1 START_DESTROY_BLOCK，MultiPlayerGameMode:147-205）：
+    /// 起手射线按交互距离（生存 4.5），速率含当前空中/水下惩罚，
+    /// 首 tick 进度即计入，≥1 走 "insta mine" 秒破；不可破坏方块（进度 0）
+    /// 直接无事。
     fn start_mining(&mut self) {
         let view = WorldView {
             chunks: &self.chunks,
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, _)) = dda_hit(&view, eye, dir, 5.0) else {
+        let Some((hit, _)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode)) else {
             return;
         };
         let block = view.block(hit);
         if block.0 == 0 {
             return;
         }
-        let held = self.held_stack();
-        let per = mcv_item::mining::progress_per_tick(block, held.as_ref());
+        let per = self.mine_per_tick(&view, block);
         if per <= 0.0 {
             return; // 不可破坏（基岩）
         }
-        self.mine_pos = Some(hit);
-        self.mine_per_tick = per;
-        self.mine_progress = per;
-        self.mine_tick_acc = 1.0;
-        if per >= 1.0 {
-            self.destroy_block(hit);
-            self.cancel_mining();
+        if let Some(p) = self.mine.start(hit, per) {
+            self.destroy_block(p);
         }
     }
 
-    /// 松开：26.1 STOP_DESTROY_BLOCK 补判——perTick×(已耗 tick+1) ≥ 0.7 时
-    /// 判破坏成功（快速点击也能挖掉快碎的方块）。
+    /// 松开左键 = 原版 stopDestroyBlock：发 ABORT_DESTROY_BLOCK、进度**作废**
+    /// （MultiPlayerGameMode.java:207-222；服务端 ABORT 分支只清状态不破坏，
+    /// ServerPlayerGameMode.java:239-249）。旧"perTick×(tick+1) ≥ 0.7 补判
+    /// 破坏"删除——0.7 阈值只存在于服务端复核**客户端完成上报**的 STOP 包
+    /// （ServerPlayerGameMode.java:216-236），玩家中途主动松手从不破坏；本
+    /// 引擎无客户端上报，主动松手一律作废。
     pub fn on_left_release(&mut self) {
-        let Some(pos) = self.mine_pos else {
-            return;
-        };
-        let total = self.mine_per_tick * (self.mine_tick_acc + 1.0);
-        self.cancel_mining();
-        if total >= 0.7 {
-            self.destroy_block(pos);
-        }
+        self.mine.abort();
     }
 
+    /// 兼容入口：攻击实体等旁路取消进度挖掘（语义 = ABORT，见 on_left_release）。
     fn cancel_mining(&mut self) {
-        self.mine_pos = None;
-        self.mine_progress = 0.0;
-        self.mine_per_tick = 0.0;
-        self.mine_tick_acc = 0.0;
+        self.mine.abort();
     }
 
-    /// CONTINUE_DESTROY_BLOCK：按住期间逐 tick 累加（fixed dt=1/60 = 0.5
-    /// tick，×20 还原），进度 >1 破坏；目标消失或超出交互距离则 ABORT。
-    fn step_mining(&mut self, dt: f32) {
-        let Some(pos) = self.mine_pos else {
-            return;
-        };
+    /// 原版 Minecraft.continueAttack（Minecraft.java:1606-1628）：左键**按住
+    /// 状态**驱动，每 tick 重射线一次——不是按下边沿一次性。`on_tick` 门 =
+    /// 每 20 Hz tick 推进一次（60 Hz 按 dt 连加会偏 3×）。行为：
+    /// 生存 = 同目标续挖（速率每 tick 现算）/ 换目标 ABORT+START / 挖穿后
+    /// 5-tick 冷却自动开下一目标；创造 = 冷却减尽后每 tick 秒破准星目标。
+    fn step_mining(&mut self, _dt: f32) {
         if !self.input.mining {
-            // 桌面松开已在 on_left_release 补判，这里是防御路径。
-            self.cancel_mining();
+            // 松开边沿已在 on_left_release 走 ABORT，这里是防御路径
+            // （死亡清输入等）。
+            self.mine.abort();
+            return;
+        }
+        if !self.on_tick {
+            // 本固定步未跨 tick 边界：原版一个 tick 只 continue 一次。
             return;
         }
         let view = WorldView {
             chunks: &self.chunks,
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
-        let center = Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5);
-        if view.block(pos).0 == 0 || (center - eye).length() > 5.5 {
-            self.cancel_mining();
+        let dir = self.camera(1.0).dir();
+        let reach = block_interaction_reach(self.mode);
+        if self.mode == GameMode::Creative {
+            let hit = dda_hit(&view, eye, dir, reach).map(|(p, _)| p);
+            if let Some(p) = self.mine.creative_tick(hit) {
+                self.destroy_block(p);
+            }
             return;
         }
-        let ticks = dt * 20.0;
-        self.mine_progress += self.mine_per_tick * ticks;
-        self.mine_tick_acc += ticks;
-        if self.mine_progress > 1.0 {
-            self.destroy_block(pos);
-            self.cancel_mining();
+        // 每 tick 重射线（原版客户端 hitResult 每 tick 重算；超出 reach 打不中
+        // → None → continue_tick 内 ABORT，取代旧"中心距 >5.5 才中止"）。
+        let hit = dda_hit(&view, eye, dir, reach)
+            .map(|(p, _)| (p, view.block(p)))
+            .filter(|(_, b)| b.0 != 0)
+            .map(|(p, b)| MineHit {
+                pos: p,
+                per_tick: self.mine_per_tick(&view, b),
+            });
+        if let MineTick::Broken(p) = self.mine.continue_tick(hit) {
+            self.destroy_block(p);
         }
     }
 
@@ -1356,20 +1517,20 @@ impl GameRuntime {
         (v & 0xF, v >> 4)
     }
 
-    /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定 mine_pos 并按进度
+    /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
     /// 给裂纹档位（progress×4 取整，0..3）；未挖掘时准星 DDA 目标只描边。
     /// 面暴露 = 邻格空气；面光照取邻格（与 mesher 面光照同规则）。
     pub fn mining_overlay(&self) -> Option<mcv_render::gpu::MiningOverlay> {
         let view = WorldView {
             chunks: &self.chunks,
         };
-        let mining = self.mine_pos.is_some();
-        let target = match self.mine_pos {
+        let mining = self.mine.pos.is_some();
+        let target = match self.mine.pos {
             Some(p) => p,
             None => {
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let dir = self.camera(1.0).dir();
-                let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+                let (hit, _) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))?;
                 hit
             }
         };
@@ -1401,7 +1562,7 @@ impl GameRuntime {
             }
         }
         let stage = if mining {
-            Some(((self.mine_progress * 4.0) as u32).min(3))
+            Some(((self.mine.progress * 4.0) as u32).min(3))
         } else {
             None
         };
