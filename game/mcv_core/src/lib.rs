@@ -263,6 +263,7 @@ const fn name_eq(a: &str, b: &str) -> bool {
 /// - 实心整方块 15；水/叶/冰 1；玻璃/花/火把/板/梯/栅栏/格栅 0；
 /// - tinted_glass 例外 15（TintedGlassBlock.java:25-27）；
 /// - 本表只覆盖注册表；越界 id 由 `mcv_light::opacity` 保守按 15。
+///
 /// 消费方：`mcv_light::opacity`（传播代价 `max(1, damp)`，
 /// LightEngine.java:77-79 语义）与天光源柱截断（column_top 判据，
 /// ChunkSkyLightSources.java:140-148）。
