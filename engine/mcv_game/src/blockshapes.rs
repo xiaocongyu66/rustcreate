@@ -239,6 +239,9 @@ pub fn clip_ray(
 
 /// 格 `p` 内、参数区间 `[t0, t1]` 上按 `mode` 的射线命中（首盒序无关，
 /// 盒互不重叠；取最小 t）。
+// 参数即一格 DDA 命中的全部输入（世界/格/射线/参数区间/判据/进入面），
+// 其中射线五项原样透传给 clip_ray，打包结构体反而模糊调用点，显式放行上限。
+#[allow(clippy::too_many_arguments)]
 pub fn hit_in_cell(
     world: &dyn VoxelAccess,
     p: BlockPos,
@@ -256,10 +259,10 @@ pub fn hit_in_cell(
     };
     let mut best: Option<(f32, [i32; 3])> = None;
     for b in &boxes[..n] {
-        if let Some((t, nrm)) = clip_ray(origin, dir, t0, t1, b, entry_normal) {
-            if best.is_none_or(|(bt, _)| t < bt) {
-                best = Some((t, nrm));
-            }
+        if let Some((t, nrm)) = clip_ray(origin, dir, t0, t1, b, entry_normal)
+            && best.is_none_or(|(bt, _)| t < bt)
+        {
+            best = Some((t, nrm));
         }
     }
     best
