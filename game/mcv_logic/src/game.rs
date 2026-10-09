@@ -793,6 +793,24 @@ impl GameRuntime {
         self.render_dist.min(3)
     }
 
+    /// 出生搜索窗（区块 (0,0) ± [`Self::load_radius`]）是否全部
+    /// TerrainReady。投放等齐窗再搜：只看 (0,0) 时邻块往往还在生成，
+    /// 海景种子下搜索窗退化为单块全洋面、直接走兜底把玩家扔在海上；
+    /// 窗就绪（TerrainReady）严格先于加载门放行（门要求同半径
+    /// Uploaded，见 loading_progress_parts），故不推迟进世界。中心恒
+    /// (0,0)：投放期间玩家仍在哨兵位 ZERO（26.1 出生区块即采样器选定
+    /// 的 spawnChunk，MinecraftServer.java:489）。
+    fn spawn_window_ready(&self) -> bool {
+        let r = self.load_radius();
+        (-r..=r).all(|dx| {
+            (-r..=r).all(|dz| {
+                self.chunks
+                    .get(&ChunkPos::new(dx, dz))
+                    .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+            })
+        })
+    }
+
     /// 出生点邻域（玩家所在区块为中心、半径 [`Self::load_radius`]）的
     /// 加载统计：`(已就绪数, 总数)`。就绪 = 状态机走到 [`Stage::Uploaded`]
     /// （网格已建并上传 GPU；真实网格器建网格成功处推进该状态，无头路径
@@ -916,10 +934,27 @@ impl GameRuntime {
         };
         match mcv_save::LevelMeta::decode(&bytes) {
             Ok(meta) => {
-                self.seed = meta.seed;
+                if meta.seed != self.seed {
+                    self.seed = meta.seed;
+                    // 调度器在 assemble 时按构造 seed 建池，而 on_world_pick
+                    // （app.rs）传入的是当前时钟、并非存档 seed；此处不改写
+                    // 的话，重进旧世界后所有新请求区块都会用错 seed 生成，
+                    // 与存档地形接不上（边界断崖、按存档坐标落位悬空）。
+                    // 重建即丢弃旧池中在途结果：load_meta 只在进世界装配期
+                    // 调用，stream 尚未请求过区块，无丢失。
+                    self.scheduler = mcv_worldgen::TerrainScheduler::new(
+                        self.seed,
+                        mcv_core::world_worker_count(),
+                    );
+                }
                 self.time_ticks = meta.day_time;
                 self.mode = GameMode::from_u8(meta.mode);
                 if let Some(p) = meta.player {
+                    // 存档位置恢复即不走出生投放（stream 投放块以
+                    // pos==ZERO 为待投放哨兵）。spawned 故意保持 false：
+                    // 若在这里置 true，开局即退出的存档（meta 里 pos 还是
+                    // ZERO）下次进入会永久冻结在哨兵位、永不投放——ZERO
+                    // 位置交由投放路径处理才是全状态正确的。
                     self.player.pos = Vec3::new(p.x, p.y, p.z);
                     self.player.yaw = p.yaw;
                     self.player.pitch = p.pitch;
@@ -1145,16 +1180,34 @@ impl GameRuntime {
             }
         }
 
-        // spawn drop: once the spawn chunk has terrain, place the player on
-        // the surface (unless a saved position was loaded)
+        // 出生投放（26.1 setInitialSpawn + PlayerSpawnFinder 等价，判定见
+        // find_spawn_slot / spawn_column_feet_y 注释）：待投放哨兵 = pos
+        // 为 ZERO 且 !spawned（respawn():766-767 双复位，重进也走这里；
+        // load_meta 恢复的存档位置 pos≠ZERO，不进本分支）。
+        //
+        // 触发时机：出生区块 TerrainReady **且** 搜索窗（±load_radius）
+        // 全部 TerrainReady，或 30s 加载超时已转 Playing（用已就绪子集
+        // 兜底，不无限冻结）。旧实现只等 (0,0)：海景种子下邻块尚未就绪
+        // 时搜索窗退化为单块全洋面，玩家被扔在海底；窗就绪严格先于加载
+        // 门放行（门要求同半径 Uploaded ⊇ TerrainReady），不推迟进世界。
         if !self.spawned
             && self.player.pos == Vec3::ZERO
             && let Some(handle) = self.chunks.get(&ChunkPos::new(0, 0))
             && (handle.stage() as u8) >= (Stage::TerrainReady as u8)
+            && (self.spawn_window_ready() || self.phase == GamePhase::Playing)
         {
-            let hm = handle.heightmap.read().unwrap();
-            let y = hm[(8 << 4) | 8];
-            self.player.pos = Vec3::new(8.5, f32::from(y) + 1.0, 8.5);
+            // 列搜索（MinecraftServer.setInitialSpawn:504-521 区块螺旋 +
+            // getSpawnPosInChunk 全列扫描）：拒绝水列与脚/头无空间列。
+            // 旧实现直接取 (8,8) 列 hm+1 落点，海面列会把玩家放进海底
+            // 沙地上（真机「复活在沙子底下、满屏沙」根因）。
+            let slot = find_spawn_slot(&self.chunks, self.load_radius()).unwrap_or_else(|| {
+                // 全窗无合法列（窗口全海洋）：26.1 fixupSpawnHeight
+                // （PlayerSpawnFinder.java:89-104）兜底——建议列 (8,8)
+                // 最高实体/流体顶 +1，海面即落在水面之上，不再埋入。
+                let voxels = handle.voxels.read().unwrap();
+                Vec3::new(8.5, fixup_spawn_feet_y(&voxels, 8, 8) as f32, 8.5)
+            });
+            self.player.pos = slot;
             self.spawned = true;
         }
         // light init on newly-terrain-ready chunks (budgeted, main thread)
@@ -3157,6 +3210,129 @@ fn player_aabb(pos: &Vec3) -> (Vec3, Vec3) {
     )
 }
 
+// ---- 出生投放（26.1 setInitialSpawn / PlayerSpawnFinder 等价）----
+//
+// 原版世界出生点选定链（MinecraftServer.java:480-521 setInitialSpawn）：
+// 建议点 = 出生区块第 (8,8) 列地表；随后按区块螺旋（±5，Mth.square(11)）
+// 逐块调 `getSpawnPosInChunk` 全列扫描，首个合法列即出生点；全窗无合法
+// 列才保留建议点并按 fixupSpawnHeight（PlayerSpawnFinder.java:89-104）
+// 校正。列合法性 = getOverworldRespawnPos（PlayerSpawnFinder.java
+// :148-176：海面列拒绝 + 满顶面地面）+ noCollisionNoLiquid（:80
+// /:106-108，玩家盒 0.6×1.8 = 脚、头两格无碰撞且不在流体里）。
+// 本组函数以「已 TerrainReady 的搜索窗」复刻同一机制；搜索半径取
+// load_radius（3）而非原版 5：窗即加载门窗（见 stream 投放块注释），
+// 之外区块未就绪不可判。
+
+/// 单列投放判定：合法返回脚底 y（= 地面方块顶），不合法返回 None。
+///
+/// 入参 `hm` 为本仓 heightmap（recompute_heightmap / terrain.cpp pass 3：
+/// 最高非「空气/流体/damp0」方块 y + 1），故地面方块 y = hm-1；跳过集
+/// 与原版对照：流体不计（OCEAN_FLOOR 语义，lib.rs recompute 注释），
+/// 花/火把/玻璃等 damp0 不计——原版逐格向下扫的 isFaceFull(:170) 由
+/// 下面的地面形状判定 + 脚头空间判定共同承载。
+fn spawn_column_feet_y(voxels: &[BlockId], hm: &[u8; 256], lx: usize, lz: usize) -> Option<i32> {
+    let gy = i32::from(hm[(lz << 4) | lx]) - 1;
+    // gy<0：hm=0（仅 y=255 顶环绕可致，recompute 的 u8 上界遗留）；gy>253：
+    // gy+2 头位越出世界顶。两者皆无脚头空间可言。全空列走不到这里——
+    // recompute 对空列回落 hm=1、地面判定（下方）已经拒绝。
+    if !(0..=253).contains(&gy) {
+        return None;
+    }
+    // 掩状态 nibble（半砖/楼梯朝向），按基础方块查表。
+    let def = |y: i32| -> Option<&'static mcv_core::BlockDef> {
+        mcv_core::BLOCKS.get(voxels[(y as usize) << 8 | lz << 4 | lx].id() as usize)
+    };
+    // 地面须满顶面实体（isFaceFull(shape, UP)，:170）：台阶/楼梯/十字
+    // 作地面会令玩家盒悬空或嵌盒，弃列。
+    if !def(gy).is_some_and(|d| d.solid && d.shape == mcv_core::shape::Shape::Cube as u8) {
+        return None;
+    }
+    // 海面列拒绝（:156-159 `surface <= topY && surface > ocean_floor` 的
+    // 等价谓词）：地面上方出现流体即海/湖床列。生成期流体只会成片压在
+    // 实心地面上（terrain.cpp:308-309 水格生成、:318 水不参与雕刻），
+    // 玩家又不可放置流体（创造栏水不入栏，assemble 注释），故向上扫到
+    // 首个实体即可停——海底洞穴顶板这类「水上有盖」列同样被拒（原版
+    // 向下扫遇流体即 break，:166）。
+    let mut y = gy + 1;
+    while y <= 255 {
+        match def(y) {
+            Some(d) if d.liquid => return None,
+            Some(d) if d.solid => break,
+            _ => y += 1,
+        }
+    }
+    // 脚 + 头两格 passable（noCollisionNoLiquid :106-108）：非实体且非
+    // 流体；花/火把等无碰撞装饰放行（26.1 花列同样可作为出生列）。
+    // 未注册 id 按实体处理（拒），与 OPACITY 的 unwrap_or(15) 同保守。
+    let passable = |y: i32| def(y).is_some_and(|d| !d.solid && !d.liquid);
+    (passable(gy + 1) && passable(gy + 2)).then_some(gy + 1)
+}
+
+/// 出生点列搜索：出生区块 (0,0) 起 ±radius 区块螺旋（转向式与
+/// MinecraftServer.java:513-517 同式），先到先得；未就绪区块跳过（调用
+/// 方保证窗就绪或已超时兜底）。出生区块先试建议列 (8,8)（:498 建议点
+/// 语义，保持本仓 (8.5,·,8.5) 出生约定——虚空兜底与 respawn 旧落点均
+/// 引用该列）；其余列 x 外 z 内 = getSpawnPosInChunk
+/// （PlayerSpawnFinder.java:183-190）列序。
+fn find_spawn_slot(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, radius: i32) -> Option<Vec3> {
+    let (mut ox, mut oz) = (0i32, 0i32);
+    let (mut dx, mut dz) = (0i32, -1i32);
+    for _ in 0..((2 * radius + 1) * (2 * radius + 1)) {
+        if (-radius..=radius).contains(&ox)
+            && (-radius..=radius).contains(&oz)
+            && let Some(h) = chunks.get(&ChunkPos::new(ox, oz))
+            && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+        {
+            let voxels = h.voxels.read().unwrap();
+            let hm = h.heightmap.read().unwrap();
+            if ox == 0
+                && oz == 0
+                && let Some(y) = spawn_column_feet_y(&voxels, &hm, 8, 8)
+            {
+                return Some(Vec3::new(8.5, y as f32, 8.5));
+            }
+            for lx in 0..16usize {
+                for lz in 0..16usize {
+                    if let Some(y) = spawn_column_feet_y(&voxels, &hm, lx, lz) {
+                        return Some(Vec3::new(
+                            (ox * 16) as f32 + lx as f32 + 0.5,
+                            y as f32,
+                            (oz * 16) as f32 + lz as f32 + 0.5,
+                        ));
+                    }
+                }
+            }
+        }
+        // 螺旋转向（MinecraftServer.java:513-517 逐字）：到拐角换向，
+        // 否则沿当前方向推进一格。
+        if ox == oz || (ox < 0 && ox == -oz) || (ox > 0 && ox == 1 - oz) {
+            let old = dx;
+            dx = -dz;
+            dz = old;
+        }
+        ox += dx;
+        oz += dz;
+    }
+    None
+}
+
+/// fixupSpawnHeight（PlayerSpawnFinder.java:89-104）收敛等价：从建议点
+/// 向上爬过所有「有碰撞或流体」的阻挡、再落回顶面，净效果 = 列内最高
+/// 实体/流体方块顶 +1（花/火把无碰撞不阻拦，同原版 noCollision）。空列
+/// （生成数据不存在）回落世界底 1。仅作全窗无合法列的兜底：全海洋窗口
+/// 落在水面之上（掉落游泳），不再埋入沙底。
+fn fixup_spawn_feet_y(voxels: &[BlockId], lx: usize, lz: usize) -> i32 {
+    for y in (0..256usize).rev() {
+        if mcv_core::BLOCKS
+            .get(voxels[y << 8 | lz << 4 | lx].id() as usize)
+            .is_some_and(|d| d.solid || d.liquid)
+        {
+            return y as i32 + 1;
+        }
+    }
+    1
+}
+
 fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
     debug_assert_eq!(ids.len(), 65536);
     bytemuck::cast_slice::<u16, BlockId>(ids)
@@ -3833,25 +4009,38 @@ mod tests {
             "重生重进加载态（26.1 handleRespawn → startWaitingForNewLevel）"
         );
         assert_eq!(rt.player.pos, Vec3::ZERO, "复活点位待出生点投放");
-        // 出生区块地形就绪 → stream 投放到地表（heightmap 落地，不再从
-        // y=200 自由落体）。
-        let spawn = rt
-            .chunks
-            .entry(ChunkPos::new(0, 0))
-            .or_insert_with(|| lit_chunk(0, 0, 69))
-            .clone();
+        assert!(
+            !rt.spawned,
+            "respawn 双复位（pos=ZERO + spawned=false）后重走投放"
+        );
+        // 搜索窗（±3）全部地形就绪 → stream 投放到地表（脚踩 heightmap
+        // 顶 = gy+1，26.1 pos.above()，不再从 y=200 自由落体、也不再有
+        // hm+1 的悬空一格）。
+        for dx in -3i32..=3 {
+            for dz in -3i32..=3 {
+                rt.chunks
+                    .entry(ChunkPos::new(dx, dz))
+                    .or_insert_with(|| lit_chunk(dx, dz, 69));
+            }
+        }
         rt.stream();
-        let surface = f32::from(spawn.heightmap.read().unwrap()[(8 << 4) | 8]) + 1.0;
+        let surface =
+            f32::from(rt.chunks[&ChunkPos::new(0, 0)].heightmap.read().unwrap()[(8 << 4) | 8]);
         assert_eq!(
             rt.player.pos,
             Vec3::new(8.5, surface, 8.5),
-            "复活落点 = 出生点地表"
+            "复活落点 = 出生点地表（脚位 = heightmap 顶）"
         );
+        assert!(rt.spawned, "投放完成置位");
         // 邻域就绪后放行。
         fill_neighborhood(&mut rt);
         rt.fixed_step(1.0 / 60.0);
         assert_eq!(rt.phase, GamePhase::Playing);
     }
+
+    // 出生投放专项测试见 spawn_tests.rs（本 mod 子模块，标准嵌套路径
+    // src/game/tests/，共用无头装配 headless_rt / lit_chunk）。
+    mod spawn_tests;
 }
 
 #[cfg(test)]
