@@ -1144,6 +1144,17 @@ impl GameRuntime {
 
     /// Break / place at the crosshair. Uses a temporary inline DDA until the
     /// physics module merges; the voxel write path is final.
+    /// 视线 5 格命中的方块(位置, 方块 id)——壳层拦截工作台等交互方块用。
+    pub fn look_block(&self) -> Option<(BlockPos, u16)> {
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let dir = self.camera(1.0).dir();
+        let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+        Some((hit, view.block(hit).0))
+    }
+
     pub fn interact(&mut self, place: bool) {
         let view = WorldView {
             chunks: &self.chunks,
@@ -1405,12 +1416,15 @@ impl GameRuntime {
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），
     /// `gui` 为 None 时整体回退旧程序化绘制；触屏摇杆程序化，
     /// `show_touch`（死亡界面等场景传 false 隐藏摇杆）。
+    /// `show_hotbar` = false 时不画快捷栏（合成/创造界面自带 36 格面板，
+    /// 避免底部快捷栏与面板内快捷栏重复）。
     pub fn build_hud(
         &self,
         width: f32,
         height: f32,
         gui: Option<&mcv_render::gui::SpriteSheet>,
         show_touch: bool,
+        show_hotbar: bool,
     ) -> Vec<HudQuad> {
         let mut quads = Vec::new();
         let s = mcv_render::gui_scale(height);
@@ -1428,77 +1442,79 @@ impl GameRuntime {
             ) {
                 quads.push(q);
             }
-            // 快捷栏：hotbar.png 182x22，选中框 24x23（外扩 1px）
-            quads.extend(g.sprite_full(
-                "hotbar",
-                width * 0.5 - 91.0 * s,
-                height - 22.0 * s,
-                182.0 * s,
-                22.0 * s,
-                white,
-            ));
-            quads.extend(g.sprite_full(
-                "hotbar_sel",
-                width * 0.5 - 92.0 * s + sel as f32 * 20.0 * s,
-                height - 23.0 * s,
-                24.0 * s,
-                23.0 * s,
-                white,
-            ));
-            // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
-            // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
-            for (i, stack) in self.hotbar.slots.iter().enumerate() {
-                if stack.is_empty() {
-                    continue;
-                }
-                let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
-                let iy = height - 19.0 * s;
-                match stack.def().kind {
-                    mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                        mcv_core::BLOCKS[bid.0 as usize].tiles[2],
-                        ix,
-                        iy,
-                        16.0 * s,
-                    )),
-                    _ => quads.extend(g.sprite_full(
-                        stack.def().name,
-                        ix,
-                        iy,
-                        16.0 * s,
-                        16.0 * s,
-                        white,
-                    )),
-                }
-                if stack.count > 1 {
-                    let t = stack.count.to_string();
-                    let tw = text::text_width(&t, s);
-                    quads.extend(text::text_quads(
-                        &t,
-                        ix + 18.0 * s - tw,
-                        iy + 11.0 * s,
-                        s,
-                        white,
-                    ));
-                }
-                // renderSlot 耐久条：黑底 13x1 + 绿→红渐变前景，位于图标下沿。
-                if stack.damage > 0 {
-                    let max = stack.max_damage().max(1) as f32;
-                    let f = 1.0 - stack.damage as f32 / max;
-                    let bar = (13.0 - stack.damage as f32 * 13.0 / max).max(0.0) * s;
-                    quads.push(text::rect(
-                        ix + s,
-                        iy + 12.0 * s,
-                        13.0 * s,
-                        s,
-                        [0.0, 0.0, 0.0, 1.0],
-                    ));
-                    quads.push(text::rect(
-                        ix + s,
-                        iy + 12.0 * s,
-                        bar,
-                        s,
-                        [f * 0.392, f, 0.0, 1.0],
-                    ));
+            if show_hotbar {
+                // 快捷栏：hotbar.png 182x22，选中框 24x23（外扩 1px）
+                quads.extend(g.sprite_full(
+                    "hotbar",
+                    width * 0.5 - 91.0 * s,
+                    height - 22.0 * s,
+                    182.0 * s,
+                    22.0 * s,
+                    white,
+                ));
+                quads.extend(g.sprite_full(
+                    "hotbar_sel",
+                    width * 0.5 - 92.0 * s + sel as f32 * 20.0 * s,
+                    height - 23.0 * s,
+                    24.0 * s,
+                    23.0 * s,
+                    white,
+                ));
+                // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
+                // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
+                for (i, stack) in self.hotbar.slots.iter().enumerate() {
+                    if stack.is_empty() {
+                        continue;
+                    }
+                    let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
+                    let iy = height - 19.0 * s;
+                    match stack.def().kind {
+                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                            ix,
+                            iy,
+                            16.0 * s,
+                        )),
+                        _ => quads.extend(g.sprite_full(
+                            stack.def().name,
+                            ix,
+                            iy,
+                            16.0 * s,
+                            16.0 * s,
+                            white,
+                        )),
+                    }
+                    if stack.count > 1 {
+                        let t = stack.count.to_string();
+                        let tw = text::text_width(&t, s);
+                        quads.extend(text::text_quads(
+                            &t,
+                            ix + 18.0 * s - tw,
+                            iy + 11.0 * s,
+                            s,
+                            white,
+                        ));
+                    }
+                    // renderSlot 耐久条：黑底 13x1 + 绿→红渐变前景，位于图标下沿。
+                    if stack.damage > 0 {
+                        let max = stack.max_damage().max(1) as f32;
+                        let f = 1.0 - stack.damage as f32 / max;
+                        let bar = (13.0 - stack.damage as f32 * 13.0 / max).max(0.0) * s;
+                        quads.push(text::rect(
+                            ix + s,
+                            iy + 12.0 * s,
+                            13.0 * s,
+                            s,
+                            [0.0, 0.0, 0.0, 1.0],
+                        ));
+                        quads.push(text::rect(
+                            ix + s,
+                            iy + 12.0 * s,
+                            bar,
+                            s,
+                            [f * 0.392, f, 0.0, 1.0],
+                        ));
+                    }
                 }
             }
             // 心（左上）与饥饿（右上镜像）：Gui.renderHealth/renderFood 规则，
@@ -1538,63 +1554,65 @@ impl GameRuntime {
                 2.0,
                 [1.0, 1.0, 1.0, 0.75],
             ));
-            let slot = 40.0;
-            let total = slot * 9.0;
-            let x0 = width * 0.5 - total * 0.5;
-            let y0 = height - slot - 8.0;
-            quads.push(text::rect(
-                x0 - 2.0,
-                y0 - 2.0,
-                total + 4.0,
-                slot + 4.0,
-                [0.1, 0.1, 0.1, 0.6],
-            ));
-            for (i, stack) in self.hotbar.slots.iter().enumerate() {
-                let x = x0 + i as f32 * slot;
+            if show_hotbar {
+                let slot = 40.0;
+                let total = slot * 9.0;
+                let x0 = width * 0.5 - total * 0.5;
+                let y0 = height - slot - 8.0;
                 quads.push(text::rect(
-                    x + 1.0,
-                    y0 + 1.0,
-                    slot - 2.0,
-                    slot - 2.0,
-                    [0.25, 0.25, 0.28, 0.8],
+                    x0 - 2.0,
+                    y0 - 2.0,
+                    total + 4.0,
+                    slot + 4.0,
+                    [0.1, 0.1, 0.1, 0.6],
                 ));
-                if !stack.is_empty() {
-                    match stack.def().kind {
-                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
-                            x + 5.0,
-                            y0 + 5.0,
-                            slot - 10.0,
-                        )),
-                        // 无图集时非方块物品只画通用色块。
-                        _ => quads.push(text::rect(
-                            x + (slot - 20.0) * 0.5,
-                            y0 + (slot - 20.0) * 0.5,
-                            20.0,
-                            20.0,
-                            [0.55, 0.5, 0.42, 0.95],
-                        )),
+                for (i, stack) in self.hotbar.slots.iter().enumerate() {
+                    let x = x0 + i as f32 * slot;
+                    quads.push(text::rect(
+                        x + 1.0,
+                        y0 + 1.0,
+                        slot - 2.0,
+                        slot - 2.0,
+                        [0.25, 0.25, 0.28, 0.8],
+                    ));
+                    if !stack.is_empty() {
+                        match stack.def().kind {
+                            mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                                mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                                x + 5.0,
+                                y0 + 5.0,
+                                slot - 10.0,
+                            )),
+                            // 无图集时非方块物品只画通用色块。
+                            _ => quads.push(text::rect(
+                                x + (slot - 20.0) * 0.5,
+                                y0 + (slot - 20.0) * 0.5,
+                                20.0,
+                                20.0,
+                                [0.55, 0.5, 0.42, 0.95],
+                            )),
+                        }
+                        if stack.count > 1 {
+                            let t = stack.count.to_string();
+                            let tw = text::text_width(&t, 1.0);
+                            quads.extend(text::text_quads(
+                                &t,
+                                x + slot - 3.0 - tw,
+                                y0 + slot - 12.0,
+                                1.0,
+                                white,
+                            ));
+                        }
                     }
-                    if stack.count > 1 {
-                        let t = stack.count.to_string();
-                        let tw = text::text_width(&t, 1.0);
-                        quads.extend(text::text_quads(
-                            &t,
-                            x + slot - 3.0 - tw,
-                            y0 + slot - 12.0,
-                            1.0,
-                            white,
+                    if i == sel {
+                        quads.push(text::rect(
+                            x - 1.0,
+                            y0 - 1.0,
+                            slot + 2.0,
+                            2.0,
+                            [1.0, 1.0, 1.0, 0.9],
                         ));
                     }
-                }
-                if i == sel {
-                    quads.push(text::rect(
-                        x - 1.0,
-                        y0 - 1.0,
-                        slot + 2.0,
-                        2.0,
-                        [1.0, 1.0, 1.0, 0.9],
-                    ));
                 }
             }
         }

@@ -1,6 +1,7 @@
 //! Platform shell: desktop binary and Android cdylib share [`app::run`].
 
 pub mod app;
+pub mod craft_ui;
 pub mod i18n;
 
 #[cfg(target_os = "android")]

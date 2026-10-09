@@ -5,7 +5,7 @@
 //! 物品守恒是硬约束:`close()` 必须归还网格 + 光标的全部物品。
 
 use mcv_item::crafting::{self, EMPTY_SLOT};
-use mcv_item::{Hotbar, ItemStack};
+use mcv_item::{HOTBAR_SLOTS, Hotbar, ItemStack, MAIN_SLOTS};
 
 /// 合成界面状态。`width` = 2(随身)或 3(工作台),grid 行优先 w×w。
 #[derive(Clone, Debug)]
@@ -23,6 +23,66 @@ fn can_merge(a: &ItemStack, b: &ItemStack) -> bool {
         && a.enchants.is_empty()
         && b.enchants.is_empty()
         && Hotbar::max_stack(a.item) > 1
+}
+
+/// 单槽交互(网格槽与背包槽共用),`cursor` 为光标手持物。
+/// 左键:光标↔槽交换;同物可堆时先整段填入(封顶 max_stack,余量留光标)。
+/// 右键:光标空 → 槽取一半(vanilla 上取整);光标有物 → 往槽放 1。
+fn click_slot(slot: &mut ItemStack, cursor: &mut ItemStack, left: bool) {
+    if left {
+        if cursor.is_empty() && slot.is_empty() {
+            return;
+        }
+        if !cursor.is_empty()
+            && !slot.is_empty()
+            && can_merge(cursor, slot)
+            && slot.count < Hotbar::max_stack(slot.item)
+        {
+            // 整段填进部分堆:移 min(cursor, 槽余量)。
+            let max = Hotbar::max_stack(slot.item);
+            let mv = cursor.count.min(max - slot.count);
+            slot.count += mv;
+            cursor.count -= mv;
+            if cursor.count == 0 {
+                *cursor = ItemStack::empty();
+            }
+            return;
+        }
+        std::mem::swap(cursor, slot);
+        return;
+    }
+    // 右键
+    if cursor.is_empty() {
+        if slot.is_empty() {
+            return;
+        }
+        // 取一半(奇数上取整,vanilla pickUp 语义)。
+        let take = slot.count.div_ceil(2);
+        let mut c = slot.clone();
+        c.count = take;
+        slot.count -= take;
+        if slot.count == 0 {
+            *slot = ItemStack::empty();
+        }
+        *cursor = c;
+    } else {
+        let max = Hotbar::max_stack(cursor.item);
+        if slot.is_empty() {
+            let mut one = cursor.clone();
+            one.count = 1;
+            *slot = one;
+            cursor.count -= 1;
+            if cursor.count == 0 {
+                *cursor = ItemStack::empty();
+            }
+        } else if can_merge(cursor, slot) && slot.count < max {
+            slot.count += 1;
+            cursor.count -= 1;
+            if cursor.count == 0 {
+                *cursor = ItemStack::empty();
+            }
+        }
+    }
 }
 
 impl CraftScreen {
@@ -50,68 +110,21 @@ impl CraftScreen {
             .map(|(item, count)| ItemStack::new(item, count))
     }
 
-    /// 点击网格槽。`left` = true 左键,false 右键。
-    /// 左键:光标↔槽交换;同物可堆时先整段填入(封顶 max_stack,余量留光标)。
-    /// 右键:光标空 → 槽取一半(vanilla 上取整);光标有物 → 往槽放 1。
+    /// 点击网格槽(左/右键语义见 [`click_slot`])。
     pub fn click_grid(&mut self, i: usize, left: bool) {
         if i >= self.grid.len() {
             return;
         }
-        let slot = &mut self.grid[i];
-        if left {
-            if self.cursor.is_empty() && slot.is_empty() {
-                return;
-            }
-            if !self.cursor.is_empty()
-                && !slot.is_empty()
-                && can_merge(&self.cursor, slot)
-                && slot.count < Hotbar::max_stack(slot.item)
-            {
-                // 整段填进部分堆:移 min(cursor, 槽余量)。
-                let max = Hotbar::max_stack(slot.item);
-                let mv = self.cursor.count.min(max - slot.count);
-                slot.count += mv;
-                self.cursor.count -= mv;
-                if self.cursor.count == 0 {
-                    self.cursor = ItemStack::empty();
-                }
-                return;
-            }
-            std::mem::swap(&mut self.cursor, slot);
+        click_slot(&mut self.grid[i], &mut self.cursor, left);
+    }
+
+    /// 点击背包全局槽(0..8 快捷栏、9..35 主背包,`Hotbar::slot_mut` 同序;
+    /// 左/右键语义见 [`click_slot`])。越界无操作。
+    pub fn click_inv(&mut self, i: usize, left: bool, hb: &mut Hotbar) {
+        if i >= HOTBAR_SLOTS + MAIN_SLOTS {
             return;
         }
-        // 右键
-        if self.cursor.is_empty() {
-            if slot.is_empty() {
-                return;
-            }
-            // 取一半(奇数上取整,vanilla pickUp 语义)。
-            let take = slot.count.div_ceil(2);
-            let mut c = slot.clone();
-            c.count = take;
-            slot.count -= take;
-            if slot.count == 0 {
-                *slot = ItemStack::empty();
-            }
-            self.cursor = c;
-        } else {
-            let max = Hotbar::max_stack(self.cursor.item);
-            if slot.is_empty() {
-                let mut one = self.cursor.clone();
-                one.count = 1;
-                *slot = one;
-                self.cursor.count -= 1;
-                if self.cursor.count == 0 {
-                    self.cursor = ItemStack::empty();
-                }
-            } else if can_merge(&self.cursor, slot) && slot.count < max {
-                slot.count += 1;
-                self.cursor.count -= 1;
-                if self.cursor.count == 0 {
-                    self.cursor = ItemStack::empty();
-                }
-            }
-        }
+        click_slot(hb.slot_mut(i), &mut self.cursor, left);
     }
 
     /// 从结果槽取物:仅当光标为空、或光标与结果同物且能装下。成功则经合成
@@ -235,6 +248,46 @@ mod tests {
         cs.click_grid(3, false);
         assert_eq!(cs.grid[3].count, 2);
         assert_eq!(cs.cursor.count, 1);
+    }
+
+    #[test]
+    fn click_inv_swaps_merges_and_bounds() {
+        let mut cs = CraftScreen::new(2);
+        let mut hb = Hotbar::empty();
+        // 左键:光标↔快捷栏槽交换。
+        hb.slots[0] = stack(COBBLESTONE, 10);
+        cs.cursor = stack(PLANKS, 3);
+        cs.click_inv(0, true, &mut hb);
+        assert_eq!(cs.cursor.item, COBBLESTONE);
+        assert_eq!(hb.slots[0].item, PLANKS);
+        // main 段(全局索引 9+)可达:右键往同物部分堆 +1。
+        hb.main[0] = stack(STICK, 40);
+        cs.cursor = stack(STICK, 30);
+        cs.click_inv(9, false, &mut hb);
+        assert_eq!(hb.main[0].count, 41);
+        assert_eq!(cs.cursor.count, 29);
+        // 越界无操作。
+        cs.click_inv(36, true, &mut hb);
+        assert_eq!(cs.cursor.count, 29);
+        // 守恒不变式:网格 + 光标 + 36 背包同物计数。
+        let total = |hb: &Hotbar| -> u32 {
+            hb.all_slots()
+                .iter()
+                .filter(|s| s.item == STICK)
+                .map(|s| s.count as u32)
+                .sum::<u32>()
+                + if cs.cursor.item == STICK {
+                    cs.cursor.count as u32
+                } else {
+                    0
+                }
+                + cs.grid
+                    .iter()
+                    .filter(|s| s.item == STICK)
+                    .map(|s| s.count as u32)
+                    .sum::<u32>()
+        };
+        assert_eq!(total(&hb), 70, "70 根木棍一颗不少");
     }
 
     #[test]

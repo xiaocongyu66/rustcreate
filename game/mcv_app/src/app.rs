@@ -26,6 +26,10 @@ enum Screen {
     Paused,
     /// 死亡界面（26.1 deathScreen）：游戏画面 + 红罩 + 重生/标题按钮。
     Death,
+    /// 合成界面（随身 2x2 / 工作台 3x3 + 36 格背包），游戏画面做底。
+    Crafting,
+    /// 创造模式取物页（分页），游戏画面做底。
+    Creative,
 }
 
 /// 菜单按钮：命中测试用。
@@ -126,6 +130,12 @@ struct AppState {
     walk_anim: (f32, f32),
     /// 键位映射（MC KeyBindingRegistry 对应物；重映射 UI 属波4）
     keymap: mcv_game::keymap::KeyMap,
+    /// 合成界面状态（仅 Screen::Crafting 期间 Some）。
+    craft: Option<mcv_logic::ui::CraftScreen>,
+    /// 创造取物页状态（仅 Screen::Creative 期间 Some）。
+    creative: Option<mcv_logic::ui::CreativePicker>,
+    /// 合成/创造界面命中矩形（每帧随 craft_ui 重建）。
+    craft_hot: Vec<crate::craft_ui::HotRect>,
     /// Android 应用私有目录（internal_data_path），存档放这里
     #[cfg(target_os = "android")]
     android_data: Option<std::path::PathBuf>,
@@ -150,6 +160,36 @@ struct SurfacePair {
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
     max_extent: u32,
+}
+
+/// 抓/放鼠标（进游戏 Confined+隐藏，开界面/暂停 None+显示）。
+fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
+    let Some(w) = window else { return };
+    let _ = w.set_cursor_grab(if grab {
+        winit::window::CursorGrabMode::Confined
+    } else {
+        winit::window::CursorGrabMode::None
+    });
+    w.set_cursor_visible(!grab);
+}
+
+/// 关合成界面：网格 + 光标物品全部归还背包（ui.rs 的守恒红线）；
+/// 背包满时丢弃余量并告警（drops 分支合入后改为世界掉落物）。
+fn close_craft(craft: &mut Option<mcv_logic::ui::CraftScreen>, rt: &mut GameRuntime) {
+    let Some(cs) = craft.take() else { return };
+    for st in cs.close() {
+        if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
+            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+        }
+    }
+}
+
+/// 工作台方块 id：按注册名查（blocks_gen），查不到回退已知值 252。
+fn crafting_table_id() -> u16 {
+    mcv_core::BLOCKS
+        .iter()
+        .position(|b| b.name == "crafting_table")
+        .unwrap_or(252) as u16
 }
 
 impl AppState {
@@ -797,7 +837,8 @@ impl AppState {
                     false,
                 );
             }
-            Screen::InGame => {}
+            // 游戏内画面由 redraw 路径渲染；合成/创造界面由 craft_ui 叠加。
+            Screen::InGame | Screen::Crafting | Screen::Creative => {}
         }
         q
     }
@@ -1072,6 +1113,94 @@ impl AppState {
         }
     }
 
+    /// 合成/创造帧：构建面板 quad 并刷新命中表 `craft_hot`。
+    /// 必须在 runtime 可变借用之前调用。
+    fn craft_ui(&mut self, w: f32, h: f32) -> Vec<mcv_render::HudQuad> {
+        let gui = self.renderer.as_ref().and_then(|r| r.gui());
+        let hover = self.last_cursor.map(|(x, y)| (x as f32, y as f32));
+        let Some(rt) = self.runtime.as_ref() else {
+            self.craft_hot.clear();
+            return Vec::new();
+        };
+        let (q, rects) = match self.screen {
+            Screen::Crafting => match &self.craft {
+                Some(c) => crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover),
+                None => (Vec::new(), Vec::new()),
+            },
+            Screen::Creative => match &self.creative {
+                Some(cp) => crate::craft_ui::creative_quads(cp, &rt.hotbar, gui, w, h),
+                None => (Vec::new(), Vec::new()),
+            },
+            _ => (Vec::new(), Vec::new()),
+        };
+        self.craft_hot = rects;
+        q
+    }
+
+    /// 合成/创造界面点击：id 前缀路由（g/i/c + 序号，res/close/prev/next）。
+    /// `left` = false 为右键（拆半/单个放，触屏恒 true）。
+    fn handle_craft_pointer(&mut self, x: f64, y: f64, left: bool) {
+        let (px, py) = (x as f32, y as f32);
+        let Some(hit) = self
+            .craft_hot
+            .iter()
+            .find(|r| px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h)
+            .map(|r| r.id)
+        else {
+            return;
+        };
+        match hit {
+            "close" => {
+                if let Some(rt) = self.runtime.as_mut() {
+                    close_craft(&mut self.craft, rt);
+                }
+                self.creative = None;
+                self.screen = Screen::InGame;
+                set_cursor(&self.window, true);
+            }
+            "res" => {
+                if let Some(c) = self.craft.as_mut() {
+                    c.take_result();
+                }
+            }
+            "prev" | "next" => {
+                if let Some(cp) = self.creative.as_mut() {
+                    let step = if hit == "next" { 1 } else { -1 };
+                    let p = cp.page as isize + step;
+                    cp.set_page(p.max(0) as usize, crate::craft_ui::ALL_ITEMS.len());
+                }
+            }
+            id => {
+                let idx = |p: char| id.strip_prefix(p).and_then(|s| s.parse::<usize>().ok());
+                if let Some(i) = idx('g') {
+                    if let Some(c) = self.craft.as_mut() {
+                        c.click_grid(i, left);
+                    }
+                } else if let Some(i) = idx('i') {
+                    if let (Some(c), Some(rt)) = (self.craft.as_mut(), self.runtime.as_mut()) {
+                        c.click_inv(i, left, &mut rt.hotbar);
+                    }
+                } else if let Some(i) = idx('c') {
+                    let give = self
+                        .creative
+                        .as_ref()
+                        .and_then(|cp| cp.click(i, left, &crate::craft_ui::ALL_ITEMS));
+                    if let Some((item, n)) = give
+                        && let Some(rt) = self.runtime.as_mut()
+                    {
+                        let st = mcv_item::ItemStack::new(item, n);
+                        if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
+                            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
     /// Worlds 界面：点击某个世界进入。idx 由 UI 构建时写进 menu_hot 之外的旁路表。
     fn on_world_pick(&mut self, idx: usize) {
         let Some(entry) = self.worlds.get(idx) else {
@@ -1222,9 +1351,32 @@ impl ApplicationHandler for AppState {
                 if pressed && let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
                     runtime.player.sel_slot = slot;
                 }
-                // F5 切视角不在 MC 键位表内（本引擎扩展），保持硬编码
+                // F5 切视角不在 MC 键位表内(GT引擎扩展),保持硬编码
                 if pressed && code == KeyCode::F5 {
                     runtime.cycle_camera();
+                }
+                // E 开/关背包(MC E=inventory)：生存/极限 = 随身 2x2 合成页，
+                // 创造 = 取物页。
+                if pressed && code == KeyCode::KeyE {
+                    match self.screen {
+                        Screen::InGame => {
+                            if runtime.mode == GameMode::Creative {
+                                self.screen = Screen::Creative;
+                                self.creative = Some(mcv_logic::ui::CreativePicker::default());
+                            } else {
+                                self.screen = Screen::Crafting;
+                                self.craft = Some(mcv_logic::ui::CraftScreen::new(2));
+                            }
+                            set_cursor(&self.window, false);
+                        }
+                        Screen::Crafting | Screen::Creative => {
+                            close_craft(&mut self.craft, runtime);
+                            self.creative = None;
+                            self.screen = Screen::InGame;
+                            set_cursor(&self.window, true);
+                        }
+                        _ => {}
+                    }
                 }
                 if let Some(vk) = mcv_platform::keybind::vkey_of(code) {
                     match self.keymap.action_for(vk) {
@@ -1241,12 +1393,19 @@ impl ApplicationHandler for AppState {
                         Some(Action::Pause) if pressed => match self.screen {
                             Screen::InGame => {
                                 self.screen = Screen::Paused;
-                                if let Some(w) = self.window.as_ref() {
-                                    let _ = w.set_cursor_grab(winit::window::CursorGrabMode::None);
-                                    w.set_cursor_visible(true);
-                                }
+                                set_cursor(&self.window, false);
                             }
-                            Screen::Paused => self.screen = Screen::InGame,
+                            Screen::Paused => {
+                                self.screen = Screen::InGame;
+                                set_cursor(&self.window, true);
+                            }
+                            // 关合成/创造界面：归还网格 + 光标物品后回游戏。
+                            Screen::Crafting | Screen::Creative => {
+                                close_craft(&mut self.craft, runtime);
+                                self.creative = None;
+                                self.screen = Screen::InGame;
+                                set_cursor(&self.window, true);
+                            }
                             Screen::Worlds | Screen::Create | Screen::Settings => {
                                 self.screen = Screen::Main
                             }
@@ -1268,6 +1427,15 @@ impl ApplicationHandler for AppState {
                 self.last_cursor = Some((position.x, position.y));
             }
             WindowEvent::Touch { .. } => {
+                if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+                    // 合成/创造界面：触摸按下 = 左键点击
+                    if let WindowEvent::Touch(t) = &event
+                        && t.phase == winit::event::TouchPhase::Started
+                    {
+                        self.handle_craft_pointer(t.location.x, t.location.y, true);
+                    }
+                    return;
+                }
                 if self.screen != Screen::InGame {
                     // 菜单：触摸按下 = 点击
                     if let WindowEvent::Touch(t) = &event
@@ -1284,6 +1452,15 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // 合成/创造界面：左键=交换/取物，右键=拆半/单个放。
+                if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+                    if state == ElementState::Pressed
+                        && let Some(cur) = self.last_cursor
+                    {
+                        self.handle_craft_pointer(cur.0, cur.1, button == MouseButton::Left);
+                    }
+                    return;
+                }
                 if self.screen != Screen::InGame {
                     if state == ElementState::Pressed
                         && button == MouseButton::Left
@@ -1311,7 +1488,17 @@ impl ApplicationHandler for AppState {
                     }
                     MouseButton::Right => {
                         runtime.input.placing = pressed;
-                        if pressed {
+                        // 右键工作台 = 开 3x3 合成界面（26.1 CraftingTableBlock
+                        // 打开容器），拦截在放置之前；其余方块走放置。
+                        let on_table = pressed
+                            && runtime
+                                .look_block()
+                                .is_some_and(|(_, id)| id == crafting_table_id());
+                        if on_table {
+                            self.screen = Screen::Crafting;
+                            self.craft = Some(mcv_logic::ui::CraftScreen::new(3));
+                            set_cursor(&self.window, false);
+                        } else if pressed {
                             runtime.interact(true);
                         }
                     }
@@ -1500,7 +1687,10 @@ impl AppState {
         if self.quit_requested {
             return; // window_event 在 RedrawRequested 后处理退出
         }
-        if !matches!(self.screen, Screen::InGame | Screen::Paused | Screen::Death) {
+        if !matches!(
+            self.screen,
+            Screen::InGame | Screen::Paused | Screen::Death | Screen::Crafting | Screen::Creative
+        ) {
             self.redraw_menu();
             return;
         }
@@ -1511,6 +1701,16 @@ impl AppState {
                 None => Vec::new(),
             }
         } else {
+            Vec::new()
+        };
+        // 合成/创造：面板 quad + 命中表（同样须在 runtime 可变借用之前）
+        let craft_menu = if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            match self.surface.as_ref() {
+                Some(sp) => self.craft_ui(sp.config.width as f32, sp.config.height as f32),
+                None => Vec::new(),
+            }
+        } else {
+            self.craft_hot.clear();
             Vec::new()
         };
         let (Some(sp), Some(runtime), Some(window)) = (
@@ -1542,6 +1742,13 @@ impl AppState {
         while self.step_accum >= 1.0 / 60.0 {
             runtime.fixed_step(1.0 / 60.0);
             self.step_accum -= 1.0 / 60.0;
+        }
+        // 开着背包死亡：面板直接收起（网格/光标物品随死亡丢弃，
+        // 世界掉落物实体待 drops 分支），再走下面的死亡界面切换。
+        if runtime.dead && matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            self.craft = None;
+            self.creative = None;
+            self.screen = Screen::InGame;
         }
         // 死亡 → 切死亡界面（显示 26.1 deathScreen，需鼠标点按钮）
         if runtime.dead && self.screen == Screen::InGame {
@@ -1581,10 +1788,15 @@ impl AppState {
             sp.config.height as f32,
             self.renderer.as_ref().and_then(|r| r.gui()),
             self.screen != Screen::Death,
+            // 合成/创造面板自带 36 格（含快捷栏行），不再重复画底部快捷栏
+            !matches!(self.screen, Screen::Crafting | Screen::Creative),
         );
         if matches!(self.screen, Screen::Paused | Screen::Death) {
             // 暂停/死亡：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
             hud.extend(pause_menu);
+        }
+        if matches!(self.screen, Screen::Crafting | Screen::Creative) {
+            hud.extend(craft_menu);
         }
         let chunks: Vec<mcv_render::RenderChunk> = runtime.render_chunks().to_vec();
         // 云（官方 CloudStatus 映射到模块设置；云距跟随渲染距离，MC renderDistance 语义）
