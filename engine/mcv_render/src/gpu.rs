@@ -67,7 +67,7 @@ impl MeshUploader {
         // Vulkan 容忍但 GLES hal 直接报 "Buffer is expected to be unmapped"
         // （Android 真机走 GL 回退时进世界首个网格上传即 fatal，2026-10-10）。
         {
-            let mut view = vb.as_slice(..).get_mapped_range_mut().expect("vb mapped");
+            let mut view = vb.slice(..).get_mapped_range_mut().expect("vb mapped");
             view[..v.len()].copy_from_slice(v);
         }
         vb.unmap();
@@ -79,7 +79,7 @@ impl MeshUploader {
         });
         let ib_bytes = bytemuck::cast_slice::<u32, u8>(i);
         {
-            let mut view = ib.as_slice(..).get_mapped_range_mut().expect("ib mapped");
+            let mut view = ib.slice(..).get_mapped_range_mut().expect("ib mapped");
             view[..ib_bytes.len()].copy_from_slice(ib_bytes);
         }
         ib.unmap();
