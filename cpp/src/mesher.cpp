@@ -62,6 +62,8 @@ struct BlockInfo {
     bool liquid;
     bool geom; /* emits geometry in the opaque pass */
     uint16_t tiles[6]; /* [+X, -X, +Y, -Y, +Z, -Z] */
+    uint8_t shape; /* mcv_core::Shape: 0 cube 1 cross 2 torch 3 fence 4
+                    * slab 5 stairs（按注册名分类，见 blocks_gen.inc） */
 };
 
 /* Generated from the same ci/gen-blocks.py run as mcv_core::BLOCKS, so id
@@ -159,7 +161,7 @@ uint16_t block_at(const Neighborhood& n, int x, int y, int z) {
 
 /* Bounds-checked registry access for the (now u16-wide) id space: unknown
  * ids are treated as fully opaque, mirroring mcv_light::opacity. */
-constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}};
+constexpr BlockInfo kUnknown{true, false, false, {0, 0, 0, 0, 0, 0}, 0};
 
 const BlockInfo& block_info(uint16_t id) {
     return id < kBlocksCount ? kBlocks[id] : kUnknown;
