@@ -10,7 +10,8 @@ pub trait Plugin {
 /// 函数即插件:`add_plugin(plain_plugin(|app| { ... }))`。
 /// 重复 build(不应发生)只执行首次——闭包只有一份。
 pub fn plain_plugin(f: impl FnOnce(&mut App) + 'static) -> impl Plugin {
-    struct Plain(std::cell::RefCell<Option<Box<dyn FnOnce(&mut App)>>>);
+    type Build = Box<dyn FnOnce(&mut App)>;
+    struct Plain(std::cell::RefCell<Option<Build>>);
     impl Plugin for Plain {
         fn build(&self, app: &mut App) {
             if let Some(f) = self.0.borrow_mut().take() {

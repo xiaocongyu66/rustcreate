@@ -42,8 +42,8 @@ fn systems_run_in_registration_order_fixed_before_variable() {
     app.init_resource::<Order>();
     for (name, stage) in [
         ("var", Stage::Variable),
-        ("fix_b", Stage::Fixed),
         ("fix_a", Stage::Fixed),
+        ("fix_b", Stage::Fixed),
     ] {
         app.add_system(stage, name, move |ctx: &mut mcv_ecs::SysCtx| {
             ctx.resources.get_mut::<Order>().unwrap().0.push(name);
@@ -106,6 +106,8 @@ fn deferred_spawn_and_despawn_apply_at_stage_end() {
 #[test]
 fn host_state_snapshot_reaches_systems() {
     let mut app = App::new();
+    // 整组替换 schedule 会清掉已注册系统:先换步长,再注册。
+    app.schedule = mcv_ecs::Schedule::new().with_fixed_dt(1.0);
     app.resources.insert(2.0f32); // 单例资源:配置
     app.resources.insert(Vec::<u32>::new()); // 系统侧收集器
     app.add_system(Stage::Fixed, "use_snapshot", |ctx: &mut mcv_ecs::SysCtx| {
@@ -115,7 +117,6 @@ fn host_state_snapshot_reaches_systems() {
             .unwrap()
             .push(gain as u32);
     });
-    app.schedule = mcv_ecs::Schedule::new().with_fixed_dt(1.0);
     assert_eq!(app.update(2.5), 2);
     assert_eq!(*app.resources.get::<Vec<u32>>().unwrap(), vec![2, 2]);
 }

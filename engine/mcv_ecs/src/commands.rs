@@ -4,8 +4,10 @@
 
 use crate::{Component, Entity, World};
 
+type Cmd = Box<dyn FnOnce(&mut World)>;
+
 pub struct CommandQueue {
-    q: Vec<Box<dyn FnOnce(&mut World)>>,
+    q: Vec<Cmd>,
 }
 
 impl CommandQueue {
