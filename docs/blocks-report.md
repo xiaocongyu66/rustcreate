@@ -45,7 +45,7 @@
 
 | 方块 | kind | 逐面贴图 | 校验 |
 |---|---|---|---|
-| grass_block(id3 grass) | 0 | side×4 / **up=grass_block_top** / down=dirt | ✅ 官方 grass_block.json 即 top/side/bottom；注：原版顶图为灰度、靠生物群系 colormap 染色（引擎暂不实现 tint，见限制） |
+| grass_block(id3 grass) | 0 | side×4 / **up=grass_block_top** / down=dirt | ✅ 官方 grass_block.json 即 top/side/bottom；注：原版顶图为灰度、靠生物群系 colormap 染色（引擎已实现：mcv_core::tint + terrain.wgsl plains 基线） |
 | snow_grass(id11) | 0 | **grass_block_snow**×4 / up=grass_block_top / down=dirt | ✅ 官方 grass_block_snow.json（cube_bottom_top: bottom=dirt, side=grass_block_snow, top=grass_block_top） |
 | oak_log(id6 log) | 0 | side=oak_log×4，**up/down=oak_log_top（年轮）** | ✅ 顶/侧 md5 不同，像素均值明显偏浅（151,121,73 vs 109,85,50）= 年轮面 |
 | poppy(id12 flower_red) | 1(cross) | 六面=poppy | ✅ cross 模板；PIL alpha_min≈34（透明背景正确）；旧表 6 面同贴图保持不变 |
@@ -65,7 +65,7 @@
 
 ## 已知限制（均写入生成文件头注释）
 
-1. `tintindex` 生物群系染色（草侧面 overlay、叶）未由渲染管线实现，贴图按原样入表。
+1. `tintindex` 生物群系染色已由渲染管线按 tile 层实现（草顶/羊齿/树叶三族，mcv_core::tint 注册表 + terrain.wgsl LUT 乘 plains 基线色）；草侧面 grass_block_side（未配 overlay 双层模型）按原版无 tint 贴图显示。
 2. `model_kind=1` 暂按全方块渲染（网格器未实现 model_kind）；任务书建议 cross 顶底留空，但现网格器渲染 6 面且 tile 0 为可见品红调试层，留空会闪品红，故按"做不到就六面同贴图占位"处理。
 3. 朝向/半高/多部件几何（楼梯、板、栅栏、furnace facing 等）需要网格器按 model_kind+state 扩展后才能正确显示，本表已保留分类信息。
 4. 26 个铜栏杆/链/灯笼 weathering 变体与 item_frame 属性走默认回退（对渲染无影响，仅硬度/发光为默认值）。

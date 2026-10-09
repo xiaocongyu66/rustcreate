@@ -1,5 +1,5 @@
 {
- "note": "tiles_manifest: 纹理数组层索引(按文件名字典序)→贴图。由 ci/gen-blocks.py 生成。贴图不入库，运行时从资源根 assets/minecraft/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。",
+ "note": "tiles_manifest: 纹理数组层索引(按文件名字典序)→贴图。由 ci/gen-blocks.py 生成。贴图不入库，运行时从资源根 assets/minecraft/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。层 827 = missing 哨兵（无对应文件，运行时固定原版 missingno 品红标记）。",
  "texture_root": "assets/minecraft/textures/block",
  "tile_index_to_file": [
   "acacia_door_bottom",
@@ -828,7 +828,8 @@
   "yellow_stained_glass",
   "yellow_stained_glass_pane_top",
   "yellow_terracotta",
-  "yellow_wool"
+  "yellow_wool",
+  "missing_no_texture"
  ],
  "file_to_virtual_path": {
   "acacia_door_bottom": "block/acacia_door_bottom.png",

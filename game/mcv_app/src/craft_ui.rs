@@ -17,9 +17,11 @@
 //!   "Inventory" 标签 y = 166-94 = 72（:83）。颜色 0xFF404040。
 //! - 面板贴图自带槽位凹槽与合成箭头：命中面板精灵时不再程序化画槽底/箭头。
 //!
-//! 精灵表缺失（无素材部署）时回退程序化面板（同布局纯色矩形）。
-//! 创造取物界面原版用分页 tab 贴图（CreativeModeInventoryScreen），暂不
-//! 对齐，保持程序化面板。
+//! 素材红线（2026-10 任务 #53）：精灵表缺失（无素材部署）时**不画程序化
+//! 灰板面板/槽底/假图标**，改为显示原版素材加载失败提示文字（槽位命中
+//! 矩形保留，交互不失效）。创造取物界面原版用分页 tab 贴图
+//! （CreativeModeInventoryScreen），暂不对齐，保留引擎自有布局（见遗留
+//! 清单，待 tab 贴图对齐任务处理）。
 
 use mcv_item::{Hotbar, ItemKind, ItemStack};
 use mcv_logic::ui::{CraftScreen, CreativePicker};
@@ -60,9 +62,12 @@ const SLOT: f32 = 18.0;
 const ICON: f32 = 16.0;
 // 面板内格子区左上角（槽命中矩形取 18x18，含凹槽 1px 边）。
 const PAD: f32 = 4.0;
-// 原版容器底色 #C6C6C6 / 槽内色 #8B8B8B（仅无素材回退路径使用）。
+// 原版容器底色 #C6C6C6 / 槽内色 #8B8B8B（仅创造取物界面自有布局使用；
+// 合成/背包的素材缺失路径不再画程序化面板，见 craft_quads）。
 const PANEL: [f32; 4] = [0.776, 0.776, 0.776, 0.95];
 const SLOT_BG: [f32; 4] = [0.545, 0.545, 0.545, 1.0];
+// 素材加载失败提示字色（红）。
+const MISSING: [f32; 4] = [1.0, 0.3, 0.3, 1.0];
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 // 原版标签字色 -12566464 = #404040（renderLabels）。
 const LABEL: [f32; 4] = [0.251, 0.251, 0.251, 1.0];
@@ -85,16 +90,13 @@ fn item_quads(
             y,
             size,
         )),
-        _ => match g {
-            Some(g) => q.extend(g.sprite_full(stack.def().name, x, y, size, size, WHITE)),
-            None => q.push(text::rect(
-                x + size * 0.15,
-                y + size * 0.15,
-                size * 0.7,
-                size * 0.7,
-                [0.55, 0.5, 0.42, 0.95],
-            )),
-        },
+        // 非方块物品：取 GUI 精灵表；精灵表缺失时直接跳过该图标
+        // （素材红线：不画程序化假图标）。
+        _ => {
+            if let Some(g) = g {
+                q.extend(g.sprite_full(stack.def().name, x, y, size, size, WHITE));
+            }
+        }
     }
     if stack.count > 1 {
         let t = stack.count.to_string();
@@ -129,8 +131,8 @@ fn item_quads(
     q
 }
 
-/// 一格槽：`x,y` 为槽左上角屏幕坐标。`with_bg`=面板贴图缺失时补程序化槽底
-/// （原版槽位凹槽直接烤在面板贴图里，AbstractContainerScreen 无逐槽底绘制）。
+/// 一格槽：`x,y` 为槽左上角屏幕坐标。原版槽位凹槽直接烤在面板贴图里
+/// （AbstractContainerScreen 无逐槽底绘制），无贴图时不补程序化槽底。
 #[allow(clippy::too_many_arguments)]
 fn slot(
     q: &mut Vec<HudQuad>,
@@ -141,11 +143,7 @@ fn slot(
     s: f32,
     stack: Option<&ItemStack>,
     g: Option<&SpriteSheet>,
-    with_bg: bool,
 ) {
-    if with_bg {
-        q.push(text::rect(x + s, y + s, ICON * s, ICON * s, SLOT_BG));
-    }
     if let Some(st) = stack.filter(|st| !st.is_empty()) {
         q.extend(item_quads(st, g, x + s, y + s, ICON * s, s));
     }
@@ -160,7 +158,7 @@ fn slot(
 
 /// 面板下段：27 主背包（全局 9..35，面板内 (8,84) 起）+ 9 快捷栏
 /// （全局 0..8，(8,142) 起 = 84+58，AbstractContainerMenu.java:86-90）。
-#[allow(clippy::too_many_arguments)] // 原版布局参数天然多（面板原点+双区+回退开关）
+#[allow(clippy::too_many_arguments)] // 原版布局参数天然多（面板原点+双区）
 fn inv_section(
     q: &mut Vec<HudQuad>,
     hot: &mut Vec<HotRect>,
@@ -169,26 +167,15 @@ fn inv_section(
     py: f32,
     s: f32,
     g: Option<&SpriteSheet>,
-    with_bg: bool,
 ) {
     for (i, st) in hb.main.iter().enumerate() {
         let x = px + (8.0 + (i % 9) as f32 * SLOT) * s;
         let y = py + (84.0 + (i / 9) as f32 * SLOT) * s;
-        slot(q, hot, INV_IDS[9 + i], x, y, s, Some(st), g, with_bg);
+        slot(q, hot, INV_IDS[9 + i], x, y, s, Some(st), g);
     }
     for (i, st) in hb.slots.iter().enumerate() {
         let x = px + (8.0 + i as f32 * SLOT) * s;
-        slot(
-            q,
-            hot,
-            INV_IDS[i],
-            x,
-            py + 142.0 * s,
-            s,
-            Some(st),
-            g,
-            with_bg,
-        );
+        slot(q, hot, INV_IDS[i], x, py + 142.0 * s, s, Some(st), g);
     }
 }
 
@@ -225,16 +212,22 @@ pub fn craft_quads(
     let pw = PANEL_W * s;
     let ph = PANEL_H * s;
     let (px, py) = ((w - pw) * 0.5, (h - ph) * 0.5);
-    // 面板：原版整幅贴图；缺失回退程序化底色（同时补程序化槽底）。
+    // 面板：原版整幅贴图；缺失 → 显示原版素材加载失败提示（素材红线：
+    // 不画程序化灰板面板/槽底/箭头）。
     let panel = match cw {
         3 => ("craft_panel", (30.0, 17.0), (124.0, 35.0), "Crafting", 29.0),
         _ => ("inv_panel", (98.0, 18.0), (154.0, 28.0), "Crafting", 97.0),
     };
     let panel_sprite = g.and_then(|g| g.sprite_full(panel.0, px, py, pw, ph, WHITE));
-    let with_bg = panel_sprite.is_none();
     match panel_sprite {
         Some(pq) => q.push(pq),
-        None => q.push(text::rect(px, py, pw, ph, PANEL)),
+        None => q.extend(text::text_quads(
+            "missing textures: gui/container/*.png",
+            px,
+            py - 14.0 * s,
+            s,
+            MISSING,
+        )),
     }
     // 标签：合成段标题（titleLabelY=6 默认，x 见 craft_ui 模块注释）+ 背包段。
     q.extend(text::text_quads(
@@ -257,19 +250,9 @@ pub fn craft_quads(
     for (i, gid) in GRID_IDS.iter().enumerate().take(cw * cw) {
         let x = px + (gx + (i % cw) as f32 * SLOT) * s;
         let y = py + (gy + (i / cw) as f32 * SLOT) * s;
-        slot(
-            &mut q,
-            &mut hot,
-            gid,
-            x,
-            y,
-            s,
-            craft.grid.get(i),
-            g,
-            with_bg,
-        );
+        slot(&mut q, &mut hot, gid, x, y, s, craft.grid.get(i), g);
     }
-    // 结果槽（合成箭头烤在面板贴图内，仅回退时补画）
+    // 结果槽（合成箭头烤在面板贴图内）
     let (rx, ry) = panel.2;
     let res = craft.result();
     slot(
@@ -281,19 +264,9 @@ pub fn craft_quads(
         s,
         res.as_ref(),
         g,
-        with_bg,
     );
-    if with_bg {
-        q.extend(text::text_quads(
-            ">",
-            px + (rx - 12.0) * s,
-            py + (ry + 4.0) * s,
-            s,
-            LABEL,
-        ));
-    }
     // 背包段
-    inv_section(&mut q, &mut hot, hb, px, py, s, g, with_bg);
+    inv_section(&mut q, &mut hot, hb, px, py, s, g);
     // 光标手持物跟随鼠标
     if !craft.cursor.is_empty()
         && let Some((mx, my)) = pointer
@@ -311,7 +284,9 @@ pub fn craft_quads(
 }
 
 /// 创造取物界面：4x9 物品页 + 翻页 + 36 格背包。
-/// 原版创造界面为 tab 贴图组合（CreativeModeInventoryScreen），保持程序化面板。
+/// 原版创造界面为 tab 贴图组合（CreativeModeInventoryScreen）；本界面为
+/// 引擎自有布局（KNOWN-DIVERGENCE，待 tab 贴图对齐任务），纯色矩形为
+/// 界面底板而非对原版贴图的伪装。
 pub fn creative_quads(
     cre: &CreativePicker,
     hb: &Hotbar,
@@ -339,7 +314,7 @@ pub fn creative_quads(
         let x = px + PAD * s + (k % 9) as f32 * SLOT * s;
         let y = py + PAD * s + (k / 9) as f32 * SLOT * s;
         let fake = ItemStack::new(item, 1);
-        slot(&mut q, &mut hot, CRE_IDS[k], x, y, s, Some(&fake), g, true);
+        slot(&mut q, &mut hot, CRE_IDS[k], x, y, s, Some(&fake), g);
     }
     // 翻页行：< page/total >
     let row_y = py + PAD * s + picker_h * s + 4.0 * s;
@@ -377,12 +352,12 @@ pub fn creative_quads(
     for (i, st) in hb.main.iter().enumerate() {
         let x = px + PAD * s + (i % 9) as f32 * SLOT * s;
         let y = py + (PAD + picker_h + 26.0) * s + (i / 9) as f32 * SLOT * s;
-        slot(&mut q, &mut hot, INV_IDS[9 + i], x, y, s, Some(st), g, true);
+        slot(&mut q, &mut hot, INV_IDS[9 + i], x, y, s, Some(st), g);
     }
     let hb_y = py + (PAD + picker_h + 26.0) * s + 3.0 * SLOT * s + 6.0 * s;
     for (i, st) in hb.slots.iter().enumerate() {
         let x = px + PAD * s + i as f32 * SLOT * s;
-        slot(&mut q, &mut hot, INV_IDS[i], x, hb_y, s, Some(st), g, true);
+        slot(&mut q, &mut hot, INV_IDS[i], x, hb_y, s, Some(st), g);
     }
     (q, hot)
 }
@@ -429,5 +404,32 @@ mod tests {
         assert_eq!((r.x, r.y), (px + 98.0 * s, py + 18.0 * s));
         let r = hot.iter().find(|r| r.id == "res").unwrap();
         assert_eq!((r.x, r.y), (px + 154.0 * s, py + 28.0 * s));
+    }
+
+    /// 素材红线（2026-10 任务 #53）：精灵表缺失（g=None）时不画程序化
+    /// 灰板面板——应出现素材加载失败提示文字（面板区上方），且不存在
+    /// 覆盖整个面板区的纯色矩形。
+    #[test]
+    fn missing_sprites_show_failure_hint_not_gray_panel() {
+        let hb = Hotbar::default();
+        let craft = CraftScreen::new(3);
+        let (w, h) = (640.0, 480.0);
+        let s = gui_scale(h);
+        let (q, _) = craft_quads(&craft, &hb, None, w, h, None);
+        let pw = PANEL_W * s;
+        let ph = PANEL_H * s;
+        let px = (w - pw) * 0.5;
+        let py = (h - ph) * 0.5;
+        // 无整幅灰板面板 quad。
+        assert!(
+            !q.iter()
+                .any(|c| (c.w - pw).abs() < f32::EPSILON && (c.h - ph).abs() < f32::EPSILON),
+            "素材缺失时不应有整幅面板矩形"
+        );
+        // 有提示文字 quad（位于面板上缘之外、面板左缘对齐）。
+        assert!(
+            q.iter().any(|c| c.y < py && c.x <= px + 1.0),
+            "素材缺失时应有加载失败提示文字"
+        );
     }
 }

@@ -6,7 +6,7 @@
 // true（形状模板网格器按 shape 出几何）；其余立方实体/其他液体 = solid or liquid。
 // shape: mcv_core::Shape 判别值 0立方 1十字 2火把 3栅栏 4半砖 5楼梯，
 // 按注册名分类（shape_of_name，与 game/mcv_core/src/shape.rs 同源）。
-    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // air
+    {false, false, false, {827, 827, 827, 827, 827, 827}, 0},  // air
     {true, false, true, {707, 707, 707, 707, 707, 707}, 0},  // stone
     {true, false, true, {274, 274, 274, 274, 274, 274}, 0},  // dirt
     {true, false, true, {333, 333, 336, 274, 333, 333}, 0},  // grass
@@ -21,7 +21,7 @@
     {false, false, true, {574, 574, 574, 574, 574, 574}, 1},  // flower_red
     {false, false, true, {230, 230, 230, 230, 230, 230}, 1},  // flower_yellow
     {false, false, true, {4, 4, 4, 4, 4, 4}, 0},  // acacia_button
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // acacia_door
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // acacia_door
     {false, false, true, {4, 4, 4, 4, 4, 4}, 3},  // acacia_fence
     {false, false, true, {4, 4, 4, 4, 4, 4}, 0},  // acacia_fence_gate
     {false, false, true, {713, 713, 713, 713, 713, 713}, 0},  // acacia_hanging_sign
@@ -74,7 +74,7 @@
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_hanging_sign
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_sign
     {true, false, true, {36, 36, 37, 35, 36, 36}, 0},  // barrel
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // barrier
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // barrier
     {true, false, true, {38, 38, 39, 39, 38, 38}, 0},  // basalt
     {false, false, true, {40, 40, 40, 40, 40, 40}, 0},  // beacon
     {true, false, true, {44, 44, 45, 42, 44, 43}, 0},  // bee_nest
@@ -182,7 +182,7 @@
     {true, false, true, {125, 124, 126, 235, 123, 125}, 0},  // cartography_table
     {true, false, true, {584, 584, 586, 586, 584, 127}, 0},  // carved_pumpkin
     {false, false, true, {129, 129, 130, 128, 129, 129}, 0},  // cauldron
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // cave_air
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // cave_air
     {false, false, true, {131, 131, 131, 131, 131, 131}, 0},  // cave_vines
     {false, false, true, {132, 132, 132, 132, 132, 132}, 0},  // cave_vines_plant
     {true, false, true, {135, 135, 135, 135, 133, 134}, 0},  // chain_command_block
@@ -527,7 +527,7 @@
     {false, false, true, {403, 403, 403, 403, 403, 403}, 0},  // leaf_litter
     {false, false, true, {404, 404, 405, 492, 404, 404}, 0},  // lectern
     {false, false, true, {406, 406, 406, 168, 406, 406}, 0},  // lever
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // light
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // light
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_bed
     {false, false, true, {407, 407, 407, 407, 407, 407}, 0},  // light_blue_candle
@@ -1000,7 +1000,7 @@
     {true, false, true, {735, 735, 735, 735, 735, 735}, 0},  // stripped_warped_hyphae
     {true, false, true, {735, 735, 736, 736, 735, 735}, 0},  // stripped_warped_stem
     {true, false, true, {737, 737, 737, 737, 737, 737}, 0},  // structure_block
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // structure_void
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // structure_void
     {false, false, true, {738, 738, 738, 738, 738, 738}, 0},  // sugar_cane
     {false, false, true, {739, 739, 739, 739, 739, 739}, 0},  // sunflower
     {true, false, true, {740, 740, 740, 740, 740, 740}, 0},  // suspicious_gravel
@@ -1040,7 +1040,7 @@
     {false, false, true, {772, 772, 773, 770, 772, 771}, 0},  // vault
     {true, false, true, {774, 774, 775, 775, 774, 774}, 0},  // verdant_froglight
     {false, false, true, {776, 776, 776, 776, 776, 776}, 0},  // vine
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // void_air
+    {false, false, true, {827, 827, 827, 827, 827, 827}, 0},  // void_air
     {false, false, true, {755, 755, 755, 755, 755, 755}, 0},  // wall_torch
     {false, false, true, {781, 781, 781, 781, 781, 781}, 0},  // warped_button
     {false, false, true, {777, 777, 777, 777, 777, 777}, 0},  // warped_door
