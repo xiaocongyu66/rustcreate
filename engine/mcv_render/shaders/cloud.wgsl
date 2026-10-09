@@ -63,9 +63,10 @@ fn vs_clouds(
     let direction = flags & FLAG_MASK_DIR;
     let is_inside_face = (flags & FLAG_INSIDE_FACE) != 0u;
     let use_top_color = (flags & FLAG_USE_TOP_COLOR) != 0u;
-    // x = (x>>1)<<1 | EXTRA_X(bit7)；z 的补位在 bit6
-    cell_x = (cell_x << 1) | ((flags >> 7u) & 1u);
-    cell_z = (cell_z << 1) | ((flags >> 6u) & 1u);
+    // x = (x>>1)<<1 | EXTRA_X(bit7)；z 的补位在 bit6。
+    // 位段是 u32、cell 是 s8 扩出的 i32，naga 拒绝混合符号性位或——显式转 i32。
+    cell_x = (cell_x << 1) | i32((flags >> 7u) & 1u);
+    cell_z = (cell_z << 1) | i32((flags >> 6u) & 1u);
 
     // 内壁面反转绕序（26.1: vertices[dir*4 + (inside ? 3-q : q)]）
     let q = select(quad_vertex, 3u - quad_vertex, is_inside_face);

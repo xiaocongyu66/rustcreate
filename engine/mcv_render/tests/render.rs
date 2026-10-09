@@ -341,3 +341,60 @@ fn vec4_identity() {
     let v = Vec4::ONE;
     assert_eq!(v.w, 1.0);
 }
+
+/// 云管线回归锁（2026-10-10 真机闪退：cloud.wgsl `i32 | u32` 混合符号性
+/// 位或被 naga 拒绝，Android 真机 create_shader_module fatal）。既有离屏
+/// 测试全部 `cloud: None`，云管线从未在 CI 编译过。`Clouds::new` 内
+/// `create_shader_module("cloud")` 即校验点；绘制断言用「云开/云关同机位
+/// 同帧」的确定性像素差分（clouds.png 编译期嵌入，相位由固定 time/cam
+/// 决定，逐位可复现），相机仰视、无地形，天空带必被云面覆盖。
+#[test]
+fn cloud_pipeline_compiles_and_paints_sky() {
+    let (device, queue, mut renderer) = setup();
+    let clouds = mcv_render::Clouds::new(&device, &queue);
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    // 相机在云层（底 192.33）下方仰视：pitch>0 朝上（同 terrain 测试的
+    // pitch<0 俯地约定）。无地形、空 HUD，纯天空 + 云。
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 8.0),
+        yaw: 0.0,
+        pitch: 1.1,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 512.0,
+    };
+    let empty_hud: &[HudQuad] = &[];
+    let frame = |cloud_on: bool| -> Vec<u8> {
+        let scene = Scene {
+            camera: &camera,
+            time: 0.0,
+            day_factor: 1.0,
+            sun_dir: Vec3::Y,
+            width: 320.0,
+            height: 240.0,
+            chunks: &[],
+            hud: empty_hud,
+            cloud: cloud_on.then_some((&clouds, mcv_render::CloudSettings::default())),
+            player: None,
+            overlay: None,
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut encoder);
+        queue.submit([encoder.finish()]);
+        target.read_pixels(&device)
+    };
+    let (off, on) = (frame(false), frame(true));
+    let (n, bbox) = a_diff_pixels(&off, &on);
+    // 云图约半覆盖视场：57° 视锥内天空带 320×240 像素里过半应被云重绘。
+    assert!(
+        n > 320 * 240 / 20,
+        "云开/云关天空带几乎无差（diff={n}, bbox={bbox:?}）——云管线可能被静默跳过"
+    );
+}
