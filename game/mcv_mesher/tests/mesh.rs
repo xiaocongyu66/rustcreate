@@ -107,6 +107,18 @@ fn block_table_tex_parity_with_mcv_core() {
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
+    // 生成表 geom=false 的隐形方块（屏障/光源/空气族/结构空位/气泡柱）：原版
+    // 不可见、不产几何（ci/gen-blocks.py INVISIBLE_GEOM；生成表侧由
+    // mcv_core/tests/blocks_table.rs attribute_hotspots_match_java 锁定）。
+    // 2026-10-10 M7a 审计前它们顶着「层 0 贴图」出全盒占位，现期望 0 面。
+    const INVISIBLE: [&str; 6] = [
+        "barrier",
+        "light",
+        "cave_air",
+        "void_air",
+        "structure_void",
+        "bubble_column",
+    ];
     for id in 1u16..mcv_core::BLOCKS.len() as u16 {
         if id == 5 {
             // water belongs to the water pass
@@ -114,17 +126,21 @@ fn block_table_tex_parity_with_mcv_core() {
         }
         put(&mut c.0, 8, 8, 8, id);
         let buf = mesher.build(&full9(&c, &side), 0).unwrap();
-        let expected = match mcv_core::shape::Shape::from_u8(mcv_core::BLOCKS[id as usize].shape) {
-            mcv_core::shape::Shape::Cross => (8, 24),
-            mcv_core::shape::Shape::Stairs => (48, 72),
-            _ => (24, 36),
+        let def = &mcv_core::BLOCKS[id as usize];
+        let expected = if INVISIBLE.contains(&def.name) {
+            (0, 0)
+        } else {
+            match mcv_core::shape::Shape::from_u8(def.shape) {
+                mcv_core::shape::Shape::Cross => (8, 24),
+                mcv_core::shape::Shape::Stairs => (48, 72),
+                _ => (24, 36),
+            }
         };
         assert_eq!(buf.counts(), expected, "block {id} face count");
         for v in decode(&buf) {
             let face = (v.flags & 7) as usize;
             assert_eq!(
-                v.tex as usize,
-                mcv_core::BLOCKS[id as usize].tiles[face] as usize,
+                v.tex as usize, def.tiles[face] as usize,
                 "block {id} face {face} tex layer"
             );
         }
