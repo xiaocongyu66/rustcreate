@@ -435,13 +435,18 @@ impl Renderer {
         // 可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
         let max_layers = atlas::LAYERS.min(device.limits().max_texture_array_layers as usize);
         let (payload, n_layers) = atlas::generate_payload_clamped(assets_dir, max_layers);
-        if n_layers < atlas::LAYERS {
-            log::warn!(
-                "texture array clamped {}→{} layers (device limit)",
-                atlas::LAYERS,
-                n_layers
-            );
-        }
+        // 图集容量取证（2026-10-10 真机 Mali「平色面」定位）：error 级常显，
+        // 与 app.rs 的 adapter 侧 `atlas-cap` 行配对。真机 logcat 必见此行——
+        // truncated=true 才说明截断真发生；false 则崩坏另有根因。
+        log::error!(
+            "atlas-cap: device max_texture_array_layers={} max_texture_dimension_2d={} atlas::LAYERS={} created={} truncated={} crack_layers_ok={}",
+            device.limits().max_texture_array_layers,
+            device.limits().max_texture_dimension_2d,
+            atlas::LAYERS,
+            n_layers,
+            n_layers < atlas::LAYERS,
+            n_layers > atlas::CRACK_BASE,
+        );
         let tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("terrain-array"),
             size: wgpu::Extent3d {
