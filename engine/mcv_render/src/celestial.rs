@@ -77,16 +77,21 @@ pub fn load_payload(assets_dir: &Path) -> Option<Vec<u8>> {
     let root = assets_dir.join("textures/environment/celestial");
     let mut payload = vec![0u8; CELESTIAL_LAYERS * CELESTIAL_PX * CELESTIAL_PX * 4];
     let sun = std::fs::read(root.join("sun.png")).ok()?;
-    decode_layer(
+    // decode_layer 返回 bool（成功与否），失败即整体放弃（回退程序化天体）。
+    if !decode_layer(
         &sun,
         &root.join("sun.png"),
         SUN_LAYER as usize,
         &mut payload,
-    )?;
+    ) {
+        return None;
+    }
     for (i, name) in MOON_FILES.iter().enumerate() {
         let p = root.join("moon").join(format!("{name}.png"));
         let bytes = std::fs::read(&p).ok()?;
-        decode_layer(&bytes, &p, MOON_LAYER_BASE as usize + i, &mut payload)?;
+        if !decode_layer(&bytes, &p, MOON_LAYER_BASE as usize + i, &mut payload) {
+            return None;
+        }
     }
     Some(payload)
 }
