@@ -1577,9 +1577,20 @@ impl Renderer {
             pass.set_bind_group(0, &self.sky_bind, &[]);
             pass.draw(0..3, 0..1);
 
-            // clouds: sky 之后、不透明之前（26.1 RenderPassOrder）
+            // clouds: sky 之后、不透明之前（26.1 RenderPassOrder）。
+            // 云顶点是**相机相对**坐标（offset=(−xInCell, bottomY−eyeY, −zInCell)，
+            // CloudRenderer.java:151/198——26.1 相机相对管线里 ModelViewMat 不含
+            // 平移）。地形走世界空间 vp，云必须换无平移视图（eye 置原点），
+            // 否则平移二次叠加把整片云推出视锥（离屏测试 diff=0 的根因）。
             if let Some((clouds, settings)) = scene.cloud {
-                clouds.draw(&mut pass, &vp.to_cols_array_2d(), eye, scene.time, settings);
+                let vp_rel = cam.proj() * glam::Mat4::look_at_rh(Vec3::ZERO, cam.dir(), Vec3::Y);
+                clouds.draw(
+                    &mut pass,
+                    &vp_rel.to_cols_array_2d(),
+                    eye,
+                    scene.time,
+                    settings,
+                );
             }
 
             // opaque
