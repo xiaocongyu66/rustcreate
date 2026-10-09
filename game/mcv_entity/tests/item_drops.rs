@@ -47,7 +47,7 @@ fn lcg(seed: u64) -> impl FnMut() -> u32 {
 fn setup(player_pos: Vec3) -> mcv_ecs::App {
     let mut app = mcv_ecs::App::new();
     // f32 累加 1/60 有舍入漂移，tick 率直接取引擎常数保证步数精确。
-    app.schedule = mcv_ecs::Schedule::with_fixed_dt(mcv_game::consts::FIXED_DT);
+    app.schedule = mcv_ecs::Schedule::new().with_fixed_dt(mcv_game::consts::FIXED_DT);
     register_drop_components(&mut app.world);
     app.add_system(mcv_ecs::Stage::Fixed, "item_physics", item_physics_system);
     app.add_system(mcv_ecs::Stage::Fixed, "item_merge", item_merge_system);
@@ -266,7 +266,7 @@ fn merge_conserves_count() {
     }
     let mut total = 0u32;
     let mut max_age = 0u32;
-    for e in ids {
+    for &e in &ids {
         if let Some(d) = app.world.get_ref::<ItemDrop>(e) {
             total += d.count as u32;
             max_age = max_age.max(d.age);

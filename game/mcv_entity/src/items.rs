@@ -226,8 +226,9 @@ pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
         if count_i == 0 || count_i >= max {
             continue;
         }
-        for j in (i + 1)..list.len() {
-            let (ej, pj, item_j, count_j, age_j) = list[j];
+        // 可变切片迭代（clippy needless_range_loop：j 仅用于索引 list）。
+        for slot in list[i + 1..].iter_mut() {
+            let (ej, pj, item_j, count_j, age_j) = *slot;
             if item_j != item_i || count_j == 0 {
                 continue;
             }
@@ -240,8 +241,8 @@ pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
             }
             count_i += mv;
             age_i = age_i.max(age_j);
-            list[j].3 -= mv;
-            if list[j].3 == 0 {
+            slot.3 -= mv;
+            if slot.3 == 0 {
                 commands.despawn(ej);
             } else {
                 commands.push(move |w| {
