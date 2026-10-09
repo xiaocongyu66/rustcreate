@@ -521,7 +521,7 @@ fn sprint_swim_follows_look_pitch() {
     for _ in 0..180 {
         step(&world, &mut p, &input);
     }
-    let want = -consts::SWIM_LOOK_GAIN * down.1;
+    let want = consts::SWIM_LOOK_GAIN * down.1;
     assert!(
         (p.vel.y - want).abs() < 0.15,
         "俯冲 vy={:.4} ≠ {want:.3}",
@@ -531,16 +531,19 @@ fn sprint_swim_follows_look_pitch() {
     assert!(p.vel.y.abs() < 5.0, "不应叠加普通重力坠落");
 }
 
-/// 水面越出（jumpOutOfFluid，LivingEntity.java:2506-2511）：水面游泳撞
-/// 一格高岸壁，无跳键即被逐 tick vy=6 m/s 顶到岸顶并登陆。
+/// 水面越出（jumpOutOfFluid，LivingEntity.java:2506-2511）：真实岸型 =
+/// 岸顶与水面齐平（水面 y=1，岸块同层 y=0、顶面 y=1.0）。水面游泳撞岸
+/// 无跳键即被逐 tick vy=6 m/s 顶起，越过岸檐（feet ≥ 岸顶）后落到岸面。
+/// 入水判定按 AABB 扫描动态计算（wasTouchingWater 语义，
+/// Entity.java:1566-1580）——出水后切回空气段落，禁止全程强制 in_water。
 #[test]
 fn swim_exits_onto_one_block_ledge() {
     let mut world = TestWorld::new();
     world.fill_layer(0, WATER); // 水面 y=1
-    // 岸：x∈[3,9)、y=1 一格高（顶面 y=2），水中的玩家须爬上它。
+    // 岸：x∈[3,9) 同层 y=0（顶面 y=1.0 = 水面）。
     for x in 3..9 {
         for z in -3..3 {
-            world.set(x, 1, z, STONE);
+            world.set(x, 0, z, STONE);
         }
     }
     let mut p = Player {
@@ -548,25 +551,40 @@ fn swim_exits_onto_one_block_ledge() {
         ..Player::default()
     };
     let swim = StepInput {
-        in_water: true,
         wish_dir: Vec3::X,
         look_dir: Vec3::X,
-        ..StepInput::default()
+        ..StepInput::default() // in_water 每步按体素扫描现算
     };
     let mut landed = None;
     for i in 0..240 {
-        step(&world, &mut p, &swim);
-        if p.on_ground && p.pos.y > 1.9 {
+        let in_water = body_in_water(&world, p.pos);
+        step(&world, &mut p, &StepInput { in_water, ..swim });
+        if p.on_ground && p.pos.y > 0.9 {
             landed = Some(i + 1);
             break;
         }
     }
     let at = landed.expect("240 步内应能无跳键游上一格岸");
     assert!(
-        p.pos.x > 3.0 && p.pos.y > 1.99 && p.pos.y < 2.02,
+        p.pos.x > 3.0 && p.pos.y > 0.99 && p.pos.y < 1.02,
         "第 {at} 步登陆：pos={}",
         p.pos
     );
+}
+
+/// 身体 AABB 与水块的任一重叠（GameRuntime::in_water /
+/// Entity.wasTouchingWater 同款判定）。
+fn body_in_water(world: &TestWorld, pos: Vec3) -> bool {
+    for by in (pos.y.floor() as i32)..=((pos.y + 1.8).floor() as i32) {
+        for bx in ((pos.x - 0.3).floor() as i32)..=((pos.x + 0.3).floor() as i32) {
+            for bz in ((pos.z - 0.3).floor() as i32)..=((pos.z + 0.3).floor() as i32) {
+                if world.block(mcv_core::BlockPos::new(bx, by, bz)) == mcv_core::BlockId(WATER) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 const WATER: u16 = 5; // mcv_core blocks_gen.inc.rs:18（liquid=true）

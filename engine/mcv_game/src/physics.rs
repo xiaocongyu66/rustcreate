@@ -3,8 +3,11 @@
 //! 出处：仓库外反编译参照 `src-26.1/`（Minecraft 26.1）；
 //! 常数换算与峰高对照见 `mc-ref/NOTES-physics.md`。
 //!
-//! 积分顺序（显式 Euler）：每步先用当前速度做碰撞位移（X→Z→Y），
-//! 再积分外力更新速度供下一步使用。跳跃首步以完整
+//! 积分顺序（显式 Euler）：每步先用当前速度做碰撞位移——轴序对齐原版
+//! collideWithShapes（Entity.java:1174-1184 + Direction.axisStepOrder
+//! Direction.java:379-381）：**Y 恒最先**，水平两轴按 |vx| < |vz| 取
+//! Z→X 否则 X→Z——先落定再水平，落到台阶/岸檐口时落在顶面而非被水平
+//! 钳位弹回。随后积分外力更新速度供下一步使用。跳跃首步以完整
 //! [`consts::JUMP_SPEED`] 位移，峰值 ≈ v²/2g + v0·dt/2 = 1.173 m
 //! （连续解析 1.1025，MC tick 制离散 1.2522；三者均 > 1.0，
 //! 保证可上一格台阶，见 tests/physics_calib.rs::jump_onto_one_block；
@@ -314,9 +317,8 @@ impl Default for StepInput {
 
 /// 推进一个固定步长（[`consts::FIXED_DT`]）的玩家物理。
 ///
-/// 顺序：碰撞位移（X→Z→Y，-Y 命中且此前下落 → `on_ground`），
-/// 再按 flying / 水 / 空气三种模式积分速度。
-/// 固定步长推进一个通用实体（怪物/掉落物/投射物）。
+/// 顺序：碰撞位移（Y 先行 + 水平 |vx|<|vz| 序，见模块注；-Y 命中且此前
+/// 下落 → `on_ground`），再按 flying / 水 / 空气三种模式积分速度。
 pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], input: &StepInput) {
     let dt = consts::FIXED_DT;
     let speed = if e.on_ground { 1.0 } else { 0.2 };
@@ -338,10 +340,17 @@ pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], inpu
     let dx = e.vel.x * dt;
     let dz = e.vel.z * dt;
     let dy = e.vel.y * dt;
-    move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::X, dx);
-    move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Z, dz);
+    // 轴序同 `step`：Y 恒最先（Entity.java:1174-1184），水平按
+    // |vx| < |vz| 取 (Z,X) 否则 (X,Z)（Direction.java:379-381）。
     let was_falling = e.vel.y < 0.0;
     let hit_y = move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Y, dy);
+    if dx.abs() < dz.abs() {
+        move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Z, dz);
+        move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::X, dx);
+    } else {
+        move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::X, dx);
+        move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Z, dz);
+    }
     // move_box 仅在钳位（碰撞）路径写回 pos，无碰撞自由移动只推进盒体
     // ——悬空实体（下落中的掉落物/跳跃中的怪物）pos 会冻结在原地。与
     // `step`（玩家路径）同款：步末统一从盒体回填 feet-center。
@@ -357,14 +366,24 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
     let dt = consts::FIXED_DT;
     let mut aabb = Aabb::from_player(player.pos);
 
-    // --- 碰撞位移 ---
-    let hit_x = move_axis(world, player, &mut aabb, Axis::X, player.vel.x * dt);
-    let hit_z = move_axis(world, player, &mut aabb, Axis::Z, player.vel.z * dt);
-    let horizontal_collision = hit_x || hit_z;
+    // --- 碰撞位移（轴序 = 原版 collideWithShapes，Entity.java:1174-1184）---
+    // Y 恒最先（Direction.axisStepOrder，Direction.java:379-381），水平两轴
+    // 按 |vx| < |vz| 取 Z→X 否则 X→Z。先落定再水平：下落到台阶/岸檐口时
+    // 落在其顶面，而非先被水平钳位从檐口上弹回（水中贴岸登陆依赖此序）。
     let falling = player.vel.y < 0.0;
     let hit_y = move_axis(world, player, &mut aabb, Axis::Y, player.vel.y * dt);
     // -Y 命中且此前在下落 → 站在地面；否则离地。
     player.on_ground = falling && hit_y;
+    let hit_x;
+    let hit_z;
+    if player.vel.x.abs() < player.vel.z.abs() {
+        hit_z = move_axis(world, player, &mut aabb, Axis::Z, player.vel.z * dt);
+        hit_x = move_axis(world, player, &mut aabb, Axis::X, player.vel.x * dt);
+    } else {
+        hit_x = move_axis(world, player, &mut aabb, Axis::X, player.vel.x * dt);
+        hit_z = move_axis(world, player, &mut aabb, Axis::Z, player.vel.z * dt);
+    }
+    let horizontal_collision = hit_x || hit_z;
     player.pos = Vec3::new(
         (aabb.min.x + aabb.max.x) * 0.5,
         aabb.min.y,
