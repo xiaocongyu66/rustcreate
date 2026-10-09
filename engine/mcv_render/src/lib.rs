@@ -9,6 +9,8 @@ pub mod frustum;
 pub mod gpu;
 pub mod gui;
 pub mod offscreen;
+pub mod particle_renderer;
+pub mod particles;
 pub mod player_mesh;
 pub mod text;
 pub mod unifont;
@@ -17,6 +19,8 @@ pub use camera::Camera;
 pub use cloud::{CloudSettings, Clouds};
 pub use gpu::{FrameUniforms, HudQuad, PlayerUniforms, RenderChunk, Renderer, Scene};
 pub use offscreen::OffscreenTarget;
+pub use particle_renderer::ParticleRenderer;
+pub use particles::ParticleEngine;
 pub use player_mesh::{
     PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };

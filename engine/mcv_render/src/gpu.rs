@@ -11,6 +11,8 @@ use crate::celestial;
 use crate::font;
 use crate::frustum::Frustum;
 use crate::gui::SpriteSheet;
+use crate::particle_renderer::ParticleRenderer;
+use crate::particles::ParticleEngine;
 use crate::player_mesh::{self, PART_COUNT, PLAYER_STRIDE, PlayerVertex, SKIN_LAYERS};
 use mcv_core::atlas;
 
@@ -272,6 +274,9 @@ pub struct Scene<'a> {
     pub player: Option<(&'a [glam::Mat4; PART_COUNT], u32)>,
     /// 挖掘裂纹 + 选中描边；None = 准星无目标。
     pub overlay: Option<MiningOverlay>,
+    /// 粒子引擎：(池, 帧内 tick 进度 partialTickTime 0..1)；None 不画
+    /// （crack overlay 后、水前，26.1 translucent 序）。
+    pub particles: Option<(&'a ParticleEngine, f32)>,
 }
 
 pub struct Renderer {
@@ -313,6 +318,9 @@ pub struct Renderer {
     /// 原版天体贴图（sun + moon/<phase>）是否就位；false = 无素材部署，
     /// fs_sky 回退程序化天体圆盘。
     celestial_loaded: bool,
+    /// 粒子渲染（独立小 draw；纹理/管线在 ParticleRenderer 内）。
+    particles: ParticleRenderer,
+    particle_bind: wgpu::BindGroup,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -930,6 +938,13 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        // ---- particles -------------------------------------------------
+        // 粒子渲染器（原版 textures/particle 贴图 + 程序化回退）；
+        // frame uniform 复用 frame_buf，方块图集/sampler 复用 terrain 的。
+        let particles = ParticleRenderer::new(&device, &queue, color_format, assets_dir);
+        let particle_bind =
+            particles.build_bind_group(&device, &frame_buf, &terrain_view, &sampler);
+
         // ---- bind groups ----------------------------------------------
         let frame_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame-bind"),
@@ -1467,6 +1482,8 @@ impl Renderer {
             outline_vbuf,
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
             celestial_loaded,
+            particles,
+            particle_bind,
             max_chunks,
             max_hud_quads,
         }
@@ -1764,6 +1781,22 @@ impl Renderer {
                 pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
                 pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
                 pass.draw(0..24, 0..1);
+            }
+
+            // 粒子：裂纹 overlay 后、水前（26.1 translucent 序；
+            // ParticleEngine.tick 是 20Hz 固定步，提取/绘制在渲染帧）。
+            if let Some((engine, partial_tick)) = scene.particles {
+                self.particles.draw(
+                    &mut pass,
+                    &self.particle_bind,
+                    crate::particle_renderer::DrawCtx {
+                        engine,
+                        cam,
+                        day: scene.day_factor,
+                        partial_tick,
+                    },
+                    &self.queue,
+                );
             }
 
             // water: far to near

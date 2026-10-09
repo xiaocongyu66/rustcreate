@@ -1843,6 +1843,7 @@ impl AppState {
             cloud: None,
             player: None,
             overlay: None,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -2125,6 +2126,7 @@ impl AppState {
             cloud: clouds.map(|c| (c, cloud_settings)),
             player: has_player.then_some((&models, 0)),
             overlay,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);
