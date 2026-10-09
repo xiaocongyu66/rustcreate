@@ -10,7 +10,9 @@
 //! - 工具只覆盖已注册方块子集；未知方块按徒手无要求处理
 //!   （TODO(registry):原版 mineable/* 标签全量进表后由数据驱动）。
 
-use crate::{ItemKind, ItemStack, ToolMaterial};
+use crate::{
+    COPPER, DIAMOND, GOLD, IRON, ItemKind, ItemStack, NETHERITE, STONE_M, ToolMaterial, WOOD,
+};
 use mcv_core::BlockId;
 
 /// 可挖工具种类（原版 `mineable/*` 标签）。剑对树叶/南瓜的加速未注册，跳过。
@@ -24,13 +26,13 @@ pub enum ToolKind {
 /// 挖掘层级（原版 ToolTiers：木/金=1、石=2、铁=3、钻/下界=4；本引擎自加
 /// 铜工具插在石铁之间 = 2.5 取整 → 3）。
 pub fn mining_tier(m: ToolMaterial) -> u8 {
-    if m == ToolMaterial::WOOD || m == ToolMaterial::GOLD {
+    if m == WOOD || m == GOLD {
         1
-    } else if m == ToolMaterial::STONE {
+    } else if m == STONE_M {
         2
-    } else if m == ToolMaterial::COPPER {
+    } else if m == COPPER {
         3
-    } else if m == ToolMaterial::IRON {
+    } else if m == IRON {
         4
     } else {
         // DIAMOND / NETHERITE

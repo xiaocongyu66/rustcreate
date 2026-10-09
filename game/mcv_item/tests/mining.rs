@@ -90,12 +90,13 @@ fn tier_gate_on_ore_drops() {
         tool(WOODEN_PICKAXE_INDEX).as_ref()
     ));
     assert!(!has_correct_tool(COAL_ORE, None));
-    // 层级不足时慢速可破（/100），不是不可破。
+    // 层级不足仍慢速可破（/100），且速度按种类匹配吃镐速（26.1：层级只管
+    // 掉落正确性，不管速度）——木镐挖铁矿 = 2/3/100 → 150 tick。
     let p = progress_per_tick(IRON_ORE, tool(WOODEN_PICKAXE_INDEX).as_ref());
-    assert!(
-        p > 0.0
-            && (ticks_to_break(IRON_ORE, tool(WOODEN_PICKAXE_INDEX).as_ref()) - 300.0).abs() < 1e-3
-    );
+    assert!(p > 0.0);
+    assert!((ticks_to_break(IRON_ORE, tool(WOODEN_PICKAXE_INDEX).as_ref()) - 150.0).abs() < 1e-3);
+    // 徒手铁矿（速度 1、错工具）：100×3 = 300 tick。
+    assert!((ticks_to_break(IRON_ORE, None) - 300.0).abs() < 1e-3);
 }
 
 #[test]
