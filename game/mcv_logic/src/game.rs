@@ -1719,10 +1719,10 @@ impl GameRuntime {
                 // 冲刺提速 4.317→5.612 m/s（LivingEntity.java:156-158 +30%）；
                 // 潜行在 step 内优先于冲刺（蹲下即退冲刺）。
                 sprint: sprinting,
-                // 冲刺跳的水平增补沿**视线水平分量**（LivingEntity.java
-                // :2349-2351 用 yaw 而非移动意图）；冲刺游泳的竖直转向用
-                // 其俯仰分量（Player.java:1383-1392）。与 wish_dir 解耦。
-                look_dir: look,
+                // 冲刺跳的水平增补沿 **yaw 朝向**（LivingEntity.java:2349-2351
+                // 只用 yaw，与俯仰无关）；冲刺游泳的竖直转向用俯仰分量
+                // （Player.java:1383-1392）。水平=f、竖直=look.y 的合成。
+                look_dir: Vec3::new(f.x, look.y, f.z),
                 gravity_scale: 1.0,
             };
             mcv_game::step(
