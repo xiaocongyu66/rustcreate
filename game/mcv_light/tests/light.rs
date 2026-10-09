@@ -933,7 +933,7 @@ impl PairWorld {
             let other = if which == CHUNK_A { CHUNK_B } else { CHUNK_A };
             let obit = if side < 2 { 1 - side } else { 5 - side };
             let edge = {
-                let mut c = self.chunks[which as usize].chunk();
+                let c = self.chunks[which as usize].chunk();
                 extract_edge(&c, side)
             };
             for op in [1u8, 0u8] {
@@ -1072,8 +1072,10 @@ fn border_emitter_survives_neighbour_dark_edge() {
     p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X)]);
     assert_eq!(blk_p(&p, 16, 45, 8), 15, "重复 REMOVE 后萤石仍在");
     assert_eq!(blk_p(&p, 17, 45, 8), 14);
-    // 天光通道不受方块光回播影响。
-    assert_eq!(sky_p(&p, 16, 45, 8), 15);
+    // 天光 nibble：萤石是不透明整方块（OPACITY 规则① damp=15），所在格
+    // 天光恒 0（源柱在其上方截断）；相邻空气格保持满照度。
+    assert_eq!(sky_p(&p, 16, 45, 8), 0, "不透明发光体格内无天光");
+    assert_eq!(sky_p(&p, 17, 45, 8), 15, "相邻空气格天光满照度");
 }
 
 /// 用例 4：玻璃隧道跨界、遮光体（收口石壁）在亮侧（B）挖开——B 的边界
