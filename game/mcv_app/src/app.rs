@@ -868,6 +868,49 @@ impl AppState {
             .unwrap_or_else(|| std::path::PathBuf::from("saves"))
     }
 
+    /// options.txt：saves 根目录下，与世界文件夹同级。
+    fn options_path(&self) -> std::path::PathBuf {
+        self.saves_root().join("options.txt")
+    }
+
+    /// keybindings.txt：与 options.txt 同目录。
+    fn keybinds_path(&self) -> std::path::PathBuf {
+        self.saves_root().join("keybindings.txt")
+    }
+
+    /// 从磁盘读入设置与键位并应用；文件缺失 → 保持默认值。
+    fn load_persisted(&mut self) {
+        let o = crate::options::Options::load(&self.options_path());
+        self.set_dist = o.render_dist;
+        self.set_sens = o.sens;
+        self.set_clouds = o.clouds as usize;
+        self.set_lang = o.lang as usize;
+        if let Ok(text) = std::fs::read_to_string(self.keybinds_path()) {
+            self.keymap = mcv_game::keymap::KeyMap::from_text(&text);
+        }
+    }
+
+    /// 落盘 options.txt（设置按钮改动、退出时均触发）。
+    fn save_options(&self) {
+        let o = crate::options::Options {
+            render_dist: self.set_dist,
+            sens: self.set_sens,
+            clouds: (self.set_clouds % 3) as u8,
+            lang: (self.set_lang % 2) as u8,
+        };
+        if let Err(e) = o.save(&self.options_path()) {
+            log::warn!("options.txt save failed: {e}");
+        }
+    }
+
+    /// 落盘 keybindings.txt（退出时或键位界面手动保存）。
+    fn save_keybinds(&self) {
+        let text = self.keymap.to_text();
+        if let Err(e) = crate::options::write_text(&self.keybinds_path(), &text) {
+            log::warn!("keybindings.txt save failed: {e}");
+        }
+    }
+
     fn refresh_worlds(&mut self) {
         self.worlds.clear();
         let root = self.saves_root();
@@ -966,6 +1009,9 @@ impl AppState {
                 let _ = std::fs::remove_dir_all(&dir);
             }
         }
+        // 退出到菜单：设置与键位一并落盘
+        self.save_options();
+        self.save_keybinds();
         self.screen = Screen::Main;
         self.refresh_worlds();
         if let Some(w) = self.window.clone() {
@@ -1067,6 +1113,15 @@ impl AppState {
             (Screen::Death, "death_title") => self.quit_to_menu(false),
             _ => {}
         }
+        // 设置按钮改动 → 立即落盘 options.txt
+        if self.screen == Screen::Settings
+            && matches!(
+                id,
+                "dist+" | "dist-" | "sens+" | "sens-" | "clouds" | "lang"
+            )
+        {
+            self.save_options();
+        }
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
@@ -1143,10 +1198,8 @@ impl ApplicationHandler for AppState {
                         log::warn!("skin load failed: {e}");
                     }
                 }
-                self.set_dist = 8;
-                self.set_sens = 1.0;
-                self.set_lang = 0;
-                self.set_clouds = 2;
+                // 设置与键位：从 options.txt / keybindings.txt 读入（缺失 → 默认）
+                self.load_persisted();
                 // splash：本会话随机一条 + 动画时钟
                 let seed = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -1191,6 +1244,8 @@ impl ApplicationHandler for AppState {
                     runtime.save_dirty(None);
                     runtime.save_meta();
                 }
+                self.save_options();
+                self.save_keybinds();
                 event_loop.exit();
             }
             WindowEvent::Resized(size) => {

@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod i18n;
+pub mod options;
 
 #[cfg(target_os = "android")]
 pub mod android_assets;
