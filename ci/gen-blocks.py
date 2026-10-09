@@ -336,7 +336,12 @@ def parse_java_blocks():
         if "candleProperties(" in body:
             e["strength"] = 0.1
             e["no_occlusion"] = True
-            e["light"] = 3  # CandleBlock.LIGHT_EMISSION = 3 * candles
+            # 烛发光仅限【没有显式 lightLevel】的方块：body 窗口会延伸到下一个
+            # 常量之前的私有辅助方法（candleProperties() 定义夹在 FIREFLY_BUSH
+            # 与后继常量之间），曾把 firefly_bush 的 lightLevel→2
+            # （Blocks.java:5846）误覆盖成 3。
+            if e["light"] is None:
+                e["light"] = 3  # CandleBlock.LIGHT_EMISSION = 3 * candles
         if "flowerPotProperties(" in body:
             e["instabreak"] = True
             e["no_occlusion"] = True
