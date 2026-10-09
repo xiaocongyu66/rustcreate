@@ -14,6 +14,7 @@
 //!   - EASY → `min(d/2 + 1, d)`；
 //!   - NORMAL → 不变；
 //!   - HARD → `d × 3/2`。
+//!
 //!   **不存在** `Mob.getAttackDamageScale`（全树 grep 无此符号，派单说法
 //!   有误）——难度对 mob 伤害的影响就集中在 Player.hurtServer 这一处。
 //! - **和平清怪**：`Mob.checkDespawn`（Mob.java:656-658）— PEACEFUL 且

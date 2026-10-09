@@ -2902,9 +2902,10 @@ pub struct MobServices {
     /// Timelines.java:80-85；天气混合 WeatherAttributes.java:13/:26）——
     /// magic light / 亮度门读天光前必须扣减（LevelReader.java:163-170）。
     pub sky_darken: u8,
-    /// 难度 id（Difficulty.java:28-30 快照）：和平清怪/不索敌（Mob.java:656
-    /// + LivingEntity.java:928）、skeleton 射速/散布（AbstractSkeleton
-    /// .java:51-54,170）、箭 base 噪声（AbstractArrow.java:718-720）。
+    /// 难度 id（Difficulty.java:28-30 快照）：和平清怪/不索敌见
+    /// Mob.java:656 与 LivingEntity.java:928；skeleton 射速/散布见
+    /// AbstractSkeleton.java:51-54,170；箭 base 噪声见
+    /// AbstractArrow.java:718-720。
     pub difficulty: u8,
     /// 玩家创造态快照：创造玩家不被索敌（LivingEntity.java:928
     /// canBeSeenAsEnemy 的本仓等价门，审计 N-5）。
