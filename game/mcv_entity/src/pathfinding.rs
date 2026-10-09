@@ -111,8 +111,6 @@ struct Node {
     parent: Option<(i32, i32, i32)>,
     closed: bool,
     in_open: bool,
-    /// best-h 降级账本（Target.updateBest，Target.java:24-33）。
-    best_h: f32,
 }
 
 /// 邻居候选：坐标 + 步距（欧氏）+ PathType malus。
@@ -149,7 +147,6 @@ pub fn find_path<V: VoxelAccess>(
             parent: None,
             closed: false,
             in_open: true,
-            best_h: h0,
         },
     );
     open.push((
@@ -221,10 +218,10 @@ pub fn find_path<V: VoxelAccess>(
                 best_h = h;
                 best = key;
             }
-            if let Some(n) = nodes.get(&key) {
-                if n.closed || (n.in_open && g_cur + dist + malus >= n.g) {
-                    continue;
-                }
+            if let Some(n) = nodes.get(&key)
+                && (n.closed || (n.in_open && g_cur + dist + malus >= n.g))
+            {
+                continue;
             }
             let n = nodes.entry(key).or_insert(Node {
                 g: f32::INFINITY,
@@ -232,7 +229,6 @@ pub fn find_path<V: VoxelAccess>(
                 parent: None,
                 closed: false,
                 in_open: false,
-                best_h: h,
             });
             n.parent = Some(cur);
             n.g = g_cur + dist + malus;

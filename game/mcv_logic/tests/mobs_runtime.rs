@@ -12,10 +12,10 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_ecs::{App, SysCtx};
-use mcv_entity::{MobArrow, MobId, MobTicks, spawn_mob};
+use mcv_entity::{MobArrow, MobId, MobKind, MobPath, MobTicks, spawn_mob};
 use mcv_logic::game::{
-    MobArrowHit, MobExplosionHit, MobMeleeHit, MobPath, MobServices, PlayerArrowHitMob,
-    arrow_system, mob_ai_system,
+    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, PlayerArrowHitMob, arrow_system,
+    mob_ai_system,
 };
 
 /// 单区块世界：x,z ∈ [0,16)，y<64 实心石、64 以上空气。
