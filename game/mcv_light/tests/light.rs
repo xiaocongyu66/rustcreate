@@ -571,7 +571,7 @@ fn opacity_full_table_matches_26_1() {
     assert_eq!(opacity(BlockId(id("tinted_glass"))), 15, "遮光玻璃应 15");
     // 整方块形状 + noOcclusion 的 damp=1 例外（表内 model_kind=1，规则④
     // 会误给 0，gen_opacity 显式覆盖）：潜影盒 ShulkerBoxBlock.java:159-161、
-    // 粘液/蜂蜜块 Blocks.java:2562/4913、紫颂植株 PipeBlock.java:59-61。
+    // 粘液/蜂蜜块 Blocks.java:2561/4913、紫颂植株 PipeBlock.java:59-61。
     for n in [
         "shulker_box",
         "white_shulker_box",

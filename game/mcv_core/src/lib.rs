@@ -218,7 +218,7 @@ const fn gen_opacity(t: &GenBlock) -> u8 {
     //      propagatesSkylightDown=false → damp 1（截断源柱，15→14 逐格衰减，
     //      不能按规则④给 0）。依据：潜影盒 ShulkerBoxBlock.java:159-161 覆写
     //      false + Blocks.java:5948-5954（noOcclusion，getShape=Shapes.block()）；
-    //      粘液块/蜂蜜块 Blocks.java:2562/4913（noOcclusion，形状取默认整方块，
+    //      粘液块/蜂蜜块 Blocks.java:2561/4913（noOcclusion，形状取默认整方块，
     //      HoneyBlock 仅覆写 getCollisionShape）；紫颂植株 PipeBlock.java:59-61
     //      覆写 false（chorus_plant 属 PipeBlock 系）。
     if name_eq(name, "shulker_box")
