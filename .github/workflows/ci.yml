@@ -47,6 +47,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install ALSA dev headers (tinyaudio Linux backend)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      # 全量原版音效树不入 git:test 前按 sha1 从 Mojang CDN 拉取,
+      # 使 sounds_exist 的全树 ogg 校验真实发生。
+      - name: Fetch vanilla sounds (sounds.json + ogg tree)
+        run: bash ci/fetch-sounds.sh sounds
       - run: cargo test --workspace --locked
 
   render-headless:

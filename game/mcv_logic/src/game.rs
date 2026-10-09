@@ -250,11 +250,8 @@ impl GameRuntime {
             }
         }
         let pos = [p.pos.x, p.pos.y, p.pos.z];
-        let id = [
-            mcv_audio::SoundId::PlayerHurt1,
-            mcv_audio::SoundId::PlayerHurt2,
-        ][fast_rand() as usize & 1];
-        self.audio.play_at(id, pos, pos, 1.0);
+        // 26.1 sounds.json 事件:变体随机交给音效表按权重抽取。
+        self.audio.play_event("entity.player.hurt", pos, pos, 1.0);
     }
 
     /// 死亡界面「重生」：满状态回出生点上方。
@@ -830,8 +827,8 @@ impl GameRuntime {
             if self.player.on_ground && was_air {
                 if fall_v < -3.0 {
                     let p = self.player.pos;
-                    self.audio.play_at(
-                        mcv_audio::SoundId::LandFall,
+                    self.audio.play_event(
+                        "entity.player.small_fall",
                         [p.x, p.y, p.z],
                         [p.x, p.y, p.z],
                         0.5,
@@ -855,9 +852,9 @@ impl GameRuntime {
                 }
                 .block(BlockPos::new(p.x as i32, (p.y - 0.5) as i32, p.z as i32))
                 .0;
-                if let Some(sid) = step_sound(under) {
+                if let Some(event) = step_event(under) {
                     self.audio
-                        .play_at(sid, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
+                        .play_event(event, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
                 }
             }
             // ---- 生存统计（26.1 和平难度规则，粗化 exhaustion）----
@@ -1129,15 +1126,20 @@ impl GameRuntime {
             let snd_vid = if place { new_id.0 } else { old.0 };
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-            if old.0 != 0 || place {
-                if let Some(sid) = dig_sound(snd_vid) {
-                    let p = [
-                        target.x as f32 + 0.5,
-                        target.y as f32 + 0.5,
-                        target.z as f32 + 0.5,
-                    ];
-                    self.audio.play_at(sid, p, [eye.x, eye.y, eye.z], 1.0);
-                }
+            if (old.0 != 0 || place)
+                && let Some(group) = block_group(snd_vid)
+            {
+                let p = [
+                    target.x as f32 + 0.5,
+                    target.y as f32 + 0.5,
+                    target.z as f32 + 0.5,
+                ];
+                let event = if place {
+                    format!("{group}.place")
+                } else {
+                    format!("{group}.break")
+                };
+                self.audio.play_event(&event, p, [eye.x, eye.y, eye.z], 1.0);
             }
         }
     }
@@ -1507,26 +1509,26 @@ fn dda_hit(
     None
 }
 
-/// 挖掘/放置音效材质映射（BLOCKS 表序：0air 1stone 2dirt 3grass 4sand 5water
-/// 6log 7leaves 8planks 9cobble 10bedrock 11snow_grass 12/13花）。
-/// 26.1 素材库无 dig/dirt 组，泥土/草/沙共用 grass 音组（见 mcv_audio 注释）。
-fn dig_sound(vid: u16) -> Option<mcv_audio::SoundId> {
-    use mcv_audio::SoundId as S;
+/// 挖掘/放置音效材质 → 26.1 sounds.json 事件前缀（BLOCKS 表序：0air 1stone
+/// 2dirt 3grass 4sand 5water 6log 7leaves 8planks 9cobble 10bedrock 11snow_grass
+/// 12/13花）。调用点按动作拼 `.place` / `.break` 后缀；26.1 无 dig/dirt 组，
+/// 泥土/草/沙共用 block.grass 音组。
+fn block_group(vid: u16) -> Option<&'static str> {
     match vid {
-        1 | 9 | 10 => Some(S::DigStone),
-        2 | 3 | 4 | 7 | 11 => Some(S::DigDirt),
-        6 | 8 => Some(S::DigWood),
+        1 | 9 | 10 => Some("block.stone"),
+        2 | 3 | 4 | 7 | 11 => Some("block.grass"),
+        6 | 8 => Some("block.wood"),
         _ => None,
     }
 }
 
-/// 脚步材质映射：草方块踩草地音，沙/石踩石头音，木板/原木踩木头音。
-fn step_sound(vid: u16) -> Option<mcv_audio::SoundId> {
-    use mcv_audio::SoundId as S;
+/// 脚步材质 → 26.1 sounds.json 事件名：草方块踩草地音，沙/石踩石头音，
+/// 木板/原木踩木头音。
+fn step_event(vid: u16) -> Option<&'static str> {
     match vid {
-        1 | 4 | 9 | 10 => Some(S::StepStone),
-        2 | 3 | 7 | 11 => Some(S::StepGrass),
-        6 | 8 => Some(S::StepWood),
+        1 | 4 | 9 | 10 => Some("block.stone.step"),
+        2 | 3 | 7 | 11 => Some("block.grass.step"),
+        6 | 8 => Some("block.wood.step"),
         _ => None,
     }
 }

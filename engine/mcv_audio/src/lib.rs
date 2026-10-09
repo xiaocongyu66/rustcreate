@@ -1,6 +1,8 @@
 //! # mcv_audio —— 纯 Rust 游戏音效播放器
 //!
 //! 面向方块脚步 / 挖掘 / 放置 / 跳跃落地等行为音效,给主控接线用。
+//! 音效按**原版 MC sounds.json 事件名**寻址(如 `block.stone.step`),全量
+//! 事件表在 [`SoundTable`] 里加载期解析。
 //!
 //! ## 技术选型
 //! - **输出后端:[`tinyaudio`] 2.x**。上游 2.0 起为纯 Rust 重写:Android 走 AAudio
@@ -9,8 +11,8 @@
 //!   输出格式为 IEEE float PCM,混音全程 f32,不存在 16-bit 转换环节。
 //! - **解码:[`symphonia`] 0.5**(纯 Rust),开 `ogg + vorbis + wav + pcm` feature,
 //!   覆盖开发期素材(ogg)并兼容 wav / mp3(mp3 可按需加 feature)。
-//! - **混音**:简单 f32 叠加 + 主增益 + 输出限幅;同一 id 一次性播放 80ms 节流,
-//!   循环声部按 id 幂等 —— 挖掘持续音不会叠加倍增爆音。
+//! - **混音**:简单 f32 叠加 + 主增益 + 输出限幅;同一变体一次性播放 80ms 节流,
+//!   循环声部按事件名幂等 —— 挖掘持续音不会叠加倍增爆音。
 //! - **线程模型**:游戏线程 [`SoundLoader`] 解析素材(IO/解码/LRU/节流),把
 //!   [`AudioCmd`] 推入 [`mcv_sync::Spsc`] 无锁环;音频回调线程独占 [`Mixer`]
 //!   消费——回调热路径零锁零分配。主增益走 `AtomicU32` 位镜像,音量滑条
@@ -18,18 +20,18 @@
 //!
 //! ## 接线速览(主控)
 //! ```no_run
-//! use mcv_audio::{AudioManager, SoundId};
+//! use mcv_audio::AudioManager;
 //!
 //! # fn main() -> Result<(), mcv_audio::AudioError> {
 //! let audio = AudioManager::open(mcv_audio::default_sounds_dir())?; // 失败也可退回 AudioManager::silent()
 //! // 方块破坏进度圈:每 tick 起一次循环,停止/完成时 loop_stop
-//! audio.loop_start(SoundId::DigStone, 1.0);
-//! audio.loop_stop(SoundId::DigStone);
+//! audio.loop_start("block.stone.hit", 1.0);
+//! audio.loop_stop("block.stone.hit");
 //! // 一次性 3D 事件:脚步/落地/受伤,16 格线性衰减
-//! audio.play_at(SoundId::StepGrass, [10.5, 64.0, -3.5], [10.0, 64.0, -4.0], 0.6);
-//! audio.play_at(SoundId::DigStone, [10.0, 63.0, -3.0], [10.0, 64.0, -4.0], 1.0); // 放置(石质同素材)
+//! audio.play_event("block.grass.step", [10.5, 64.0, -3.5], [10.0, 64.0, -4.0], 0.6);
+//! audio.play_event("block.stone.place", [10.0, 63.0, -3.0], [10.0, 64.0, -4.0], 1.0);
 //! // 无衰减 UI 音(经验球、升级)
-//! audio.play_ui(SoundId::XpOrb, 0.8);
+//! audio.play_ui("entity.experience_orb.pickup", 0.8);
 //! audio.set_master_gain(0.8);
 //! # Ok(())
 //! # }
@@ -37,11 +39,15 @@
 //!
 //! ## 素材
 //! 素材目录为顶层 `sounds/`(与 `texturepack/` 同等待遇:开发期 Mojang 原版资产,
-//! 发布前删除)。[`SoundId`] 枚举与文件一一对应;素材缺失时所有播放调用都是 no-op
+//! 发布前删除)。全量原版音效树(4564 个 ogg + `sounds.json`)不入 git,由
+//! `ci/fetch-sounds.sh` 在构建时从 Mojang CDN 按 sha1 拉取,保留原版目录树
+//! (`sounds/dig/stone1.ogg` 等);仓库内另保留 12 个扁平开发音效文件,重构后
+//! 引擎不再直接消费它们。素材或 `sounds.json` 缺失时所有播放调用都是 no-op
 //! (仅首次告警),不会 panic。
 pub mod decode;
 pub mod loader;
 pub mod mixer;
+pub mod table;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,6 +57,7 @@ use std::time::Instant;
 pub use decode::{SoundData, decode_to_stereo};
 pub use loader::{CACHE_MAX, SAME_ID_MIN_INTERVAL, SoundLoader};
 pub use mixer::{MAX_VOICES, Mixer};
+pub use table::{SoundEvent, SoundTable, Variant};
 
 /// 3D 音效线性衰减半径(格)。距离 ≥ 该值时衰减为 0。与原版线性滚存一致。
 pub const DEFAULT_ATTENUATION_RADIUS: f32 = 16.0;
@@ -61,100 +68,12 @@ pub const OUTPUT_CHANNELS: usize = 2;
 /// 每个输出回调的每声道帧数(1024/44100 ≈ 23ms 延迟粒度)。
 pub const OUTPUT_BUFFER_FRAMES: usize = 1024;
 
-/// 一个可播放的音效 id,与 `sounds/` 下文件一一对应。
-///
-/// 文件名是 26.1 资源索引(index 30)内 ogg 资产路径的扁平化,`vanilla_path()`
-/// 给出原始资产路径备查。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SoundId {
-    /// 石头挖掘/放置 —— `dig_stone1.ogg`(原版 dig/stone1)。
-    DigStone,
-    /// 泥土/草地挖掘 —— `dig_grass1.ogg`。
-    /// 注意:26.1 素材库**没有** dig/dirt1,原版泥土与草地共用 grass 音组。
-    DigDirt,
-    /// 木头挖掘/放置 —— `dig_wood1.ogg`。
-    DigWood,
-    /// 石头脚步 —— `step_stone1.ogg`。
-    StepStone,
-    /// 草地脚步 —— `step_grass1.ogg`。
-    StepGrass,
-    /// 木头脚步 —— `step_wood1.ogg`。
-    StepWood,
-    /// 弓箭发射 —— `random_bow.ogg`。
-    BowShot,
-    /// 经验球拾取(UI)—— `random_orb.ogg`。
-    XpOrb,
-    /// 玩家受伤(变体 1)—— `damage_hit1.ogg`。
-    PlayerHurt1,
-    /// 玩家受伤(变体 2)—— `damage_hit2.ogg`。
-    PlayerHurt2,
-    /// 通用实体受伤 —— `damage_hit3.ogg`。26.1 已无 entity/generic/hurt,
-    /// 取同组第三变体作开发期占位。
-    EntityHurt,
-    /// 落地/摔落 —— `damage_fallsmall.ogg`(原版小fall damage即落地音)。
-    LandFall,
-}
-
-impl SoundId {
-    /// 全部变体(遍历用,测试与工具)。
-    pub const ALL: &'static [SoundId] = &[
-        SoundId::DigStone,
-        SoundId::DigDirt,
-        SoundId::DigWood,
-        SoundId::StepStone,
-        SoundId::StepGrass,
-        SoundId::StepWood,
-        SoundId::BowShot,
-        SoundId::XpOrb,
-        SoundId::PlayerHurt1,
-        SoundId::PlayerHurt2,
-        SoundId::EntityHurt,
-        SoundId::LandFall,
-    ];
-
-    /// `sounds/` 目录内的文件名。
-    pub fn file_name(self) -> &'static str {
-        match self {
-            SoundId::DigStone => "dig_stone1.ogg",
-            SoundId::DigDirt => "dig_grass1.ogg",
-            SoundId::DigWood => "dig_wood1.ogg",
-            SoundId::StepStone => "step_stone1.ogg",
-            SoundId::StepGrass => "step_grass1.ogg",
-            SoundId::StepWood => "step_wood1.ogg",
-            SoundId::BowShot => "random_bow.ogg",
-            SoundId::XpOrb => "random_orb.ogg",
-            SoundId::PlayerHurt1 => "damage_hit1.ogg",
-            SoundId::PlayerHurt2 => "damage_hit2.ogg",
-            SoundId::EntityHurt => "damage_hit3.ogg",
-            SoundId::LandFall => "damage_fallsmall.ogg",
-        }
-    }
-
-    /// 26.1 资源索引内的原始资产路径(相对 jar 虚拟 `assets/minecraft/`)。
-    pub fn vanilla_path(self) -> &'static str {
-        match self {
-            SoundId::DigStone => "sounds/dig/stone1.ogg",
-            SoundId::DigDirt => "sounds/dig/grass1.ogg",
-            SoundId::DigWood => "sounds/dig/wood1.ogg",
-            SoundId::StepStone => "sounds/step/stone1.ogg",
-            SoundId::StepGrass => "sounds/step/grass1.ogg",
-            SoundId::StepWood => "sounds/step/wood1.ogg",
-            SoundId::BowShot => "sounds/random/bow.ogg",
-            SoundId::XpOrb => "sounds/random/orb.ogg",
-            SoundId::PlayerHurt1 => "sounds/damage/hit1.ogg",
-            SoundId::PlayerHurt2 => "sounds/damage/hit2.ogg",
-            SoundId::EntityHurt => "sounds/damage/hit3.ogg",
-            SoundId::LandFall => "sounds/damage/fallsmall.ogg",
-        }
-    }
-}
-
-/// 音效系统错误(仅 `AudioManager::open` 会返回;播放路径一律 no-op)。
+/// 音效系统错误(仅 `SoundTable::load` / `AudioManager::open` 会返回;播放路径一律 no-op)。
 #[derive(Debug)]
 pub enum AudioError {
     /// 素材文件读取失败。
     Io(std::io::Error),
-    /// symphonia 探测/解码失败。
+    /// symphonia 探测/解码失败,或 sounds.json 结构非法。
     Decode(String),
     /// 容器内没有可用音频轨。
     NoAudioTrack,
@@ -235,13 +154,19 @@ pub enum AudioCmd {
     /// 起声部:PCM 已解码;衰减/增益合法性/一次性节流已在游戏线程
     /// ([`SoundLoader`])判定完毕,循环幂等由音频线程 ([`Mixer::apply`])把关。
     Play {
-        id: SoundId,
+        /// 变体路径(如 `dig/stone1`):解码缓存与节流键。
+        key: String,
         sound: Arc<SoundData>,
+        /// 已预乘变体音量的最终增益。
         gain: f32,
+        /// 变体音高乘子(混音端改播放速率)。
+        pitch: f32,
         looping: bool,
+        /// 仅循环声部有值:起循环的事件名,音频线程按它做幂等与 StopLoop 匹配。
+        loop_event: Option<String>,
     },
-    /// 停止指定 id 的循环声部。
-    StopLoop { id: SoundId },
+    /// 停止指定事件名的循环声部。
+    StopLoop { event: String },
 }
 
 /// 命令环容量(向上取 2 的幂):命令频率是人类操作级,256 绰绰有余;
@@ -292,7 +217,7 @@ impl AudioManager {
         })
     }
 
-    /// 静音模式:不建后端设备,播放调用 no-op(连素材都不解析)。
+    /// 静音模式:不建后端设备,播放调用 no-op(素材表仍解析,便于告警可见)。
     /// 适合无头测试或后端失败后的降级;`master_gain()` 仍可读。
     pub fn silent(sounds_dir: impl Into<PathBuf>) -> Self {
         // Consumer 就地丢弃:无消费者,而 silent 的播放方法直接 return,永不入环。
@@ -310,51 +235,53 @@ impl AudioManager {
         self.device.is_none()
     }
 
-    /// 3D 一次性播放:`pos` 处发声,`listener` 处收听,16 格线性衰减。
+    /// 3D 一次性播放事件:`pos` 处发声,`listener` 处收听,16 格线性衰减。
     ///
-    /// `gain` 为额外增益(1.0 = 原音量)。素材缺失/被节流时静默 no-op。
-    pub fn play_at(&self, id: SoundId, pos: [f32; 3], listener: [f32; 3], gain: f32) {
+    /// `gain` 为额外增益(1.0 = 原音量)。事件缺失/素材缺失/被节流时静默 no-op。
+    pub fn play_event(&self, event: &str, pos: [f32; 3], listener: [f32; 3], gain: f32) {
         if self.device.is_none() {
             return;
         }
-        if let Ok(mut l) = self.loader.lock() {
-            if let Some(cmd) = l.play_at(id, pos, listener, gain, Instant::now()) {
-                let _ = self.cmds.push(cmd);
-            }
+        if let Ok(mut l) = self.loader.lock()
+            && let Some(cmd) = l.play_at(event, pos, listener, gain, Instant::now())
+        {
+            let _ = self.cmds.push(cmd);
         }
     }
 
     /// 2D(UI)播放:无距离衰减,用于经验球/升级/按钮音。
-    pub fn play_ui(&self, id: SoundId, gain: f32) {
+    pub fn play_ui(&self, event: &str, gain: f32) {
         if self.device.is_none() {
             return;
         }
-        if let Ok(mut l) = self.loader.lock() {
-            if let Some(cmd) = l.play_ui(id, gain, Instant::now()) {
-                let _ = self.cmds.push(cmd);
-            }
+        if let Ok(mut l) = self.loader.lock()
+            && let Some(cmd) = l.play_ui(event, gain, Instant::now())
+        {
+            let _ = self.cmds.push(cmd);
         }
     }
 
-    /// 循环播放(挖掘持续音)。同一 id 重复调用幂等,不会叠加声部造成爆音
-    /// (幂等判定在音频线程)。
-    pub fn loop_start(&self, id: SoundId, gain: f32) {
+    /// 循环播放(挖掘持续音)。同一事件重复调用幂等,不会叠加声部造成爆音
+    /// (幂等判定在音频线程,按事件名)。
+    pub fn loop_start(&self, event: &str, gain: f32) {
         if self.device.is_none() {
             return;
         }
-        if let Ok(mut l) = self.loader.lock() {
-            if let Some(cmd) = l.loop_start(id, gain, Instant::now()) {
-                let _ = self.cmds.push(cmd);
-            }
+        if let Ok(mut l) = self.loader.lock()
+            && let Some(cmd) = l.loop_start(event, gain, Instant::now())
+        {
+            let _ = self.cmds.push(cmd);
         }
     }
 
-    /// 停止指定 id 的循环(挖掘完成/中断/方块消失)。
-    pub fn loop_stop(&self, id: SoundId) {
+    /// 停止指定事件名的循环(挖掘完成/中断/方块消失)。
+    pub fn loop_stop(&self, event: &str) {
         if self.device.is_none() {
             return;
         }
-        let _ = self.cmds.push(AudioCmd::StopLoop { id });
+        let _ = self.cmds.push(AudioCmd::StopLoop {
+            event: event.to_string(),
+        });
     }
 
     /// 主音量(音量滑条接线点)。推荐 [0.0, 1.0]。原子直写,无锁。

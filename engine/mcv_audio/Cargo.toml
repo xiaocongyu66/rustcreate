@@ -12,5 +12,7 @@ tinyaudio = "2.0"
 # 锁 0.5.5:0.6.x 改了 feature 组织与 API 面,本 crate 按 0.5.5 签名编写。
 symphonia = { version = "0.5.5", default-features = false, features = ["ogg", "vorbis", "wav", "pcm"] }
 log = { workspace = true }
+# 解析原版 sounds.json(全量音效事件表,手解析 Value、不用 derive)。
+serde_json = { workspace = true }
 # 游戏线程 → 音频回调线程的无锁命令环。
 mcv_sync = { workspace = true }
