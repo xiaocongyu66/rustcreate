@@ -8,24 +8,35 @@
 //! [`Unifont::atlas_rgba`] 铺成纹理/HUD 图集层,并把 quads 拼进
 //! `Scene::hud`(与 [`crate::text`] 的 ascii 路径并行使用)。
 //!
-//! 排版规则(MC unifontprovider 惯例):全角 advance = 12(= 2×半角 6,
-//! 即 ascii 字体均值宽的两倍),半角 advance = 6;缺字渲染空心框,
-//! advance 按目标宽度取(全角空位 12 / 半角 8,未知按 12)。
-//! ASCII(<0x80)不在本字体内,由 [`crate::text`] 渲染。
+//! 排版规则(对齐原版 UnihexProvider.java:288-351):advance =
+//! 位图宽/2 + 1(第 298 行,全角 16px → 9,半角 8px → 5);绘制尺寸 =
+//! 位图 / oversample(第 319-331 行 getOversample()=2.0、
+//! getPixelHeight()=16,GlyphBitmap.java:20-30 的 right/bottom 均除以
+//! oversample),即全角画 8x8、半角画 4x8,与 ASCII(BitmapProvider 8x8、
+//! oversample 1)同处 Font.java:37 lineHeight=9 的行高体系,不放大。
+//! 缺字渲染空心框(advance 按全角 9),空格按 SpaceProvider 4(与
+//! font.rs 宽度表一致)。ASCII(<0x80)不在本字体内,由 [`crate::text`]
+//! 渲染。
 
 use crate::gpu::HudQuad;
 use std::collections::HashMap;
 
-/// 位图字形高度(像素,未乘 scale)。
+/// 位图字形高度(unifont 像素,UnihexProvider.java:38 GLYPH_HEIGHT=16;
+/// 图集格存原始位图,绘制高度 = GLYPH_H / OVERSAMPLE = 8)。
 pub const GLYPH_H: f32 = 16.0;
-/// 全角字形位图宽。
+/// unifont 采样过采样率(UnihexProvider.java:320 getOversample()=2.0):
+/// quad 尺寸 = 位图像素 / 2(GlyphBitmap.java:20-30)。
+pub const OVERSAMPLE: f32 = 2.0;
+/// 全角字形位图宽(unifont 像素;绘制宽 = FULL_W / OVERSAMPLE = 8)。
 pub const FULL_W: f32 = 16.0;
-/// 半角字形位图宽。
+/// 半角字形位图宽(unifont 像素;绘制宽 = HALF_W / OVERSAMPLE = 4)。
 pub const HALF_W: f32 = 8.0;
-/// 全角推进宽度(= 2×半角,MC 规则)。
-pub const FULL_ADVANCE: f32 = 12.0;
-/// 半角推进宽度。
-pub const HALF_ADVANCE: f32 = 6.0;
+/// 全角推进宽度 = 位图宽/2 + 1(UnihexProvider.java:298)。
+pub const FULL_ADVANCE: f32 = 9.0;
+/// 半角推进宽度 = 位图宽/2 + 1(UnihexProvider.java:298)。
+pub const HALF_ADVANCE: f32 = 5.0;
+/// 空格推进宽度(SpaceProvider/default.json,与 font.rs 宽度表一致)。
+pub const SPACE_ADVANCE: f32 = 4.0;
 /// 图集每行字形数;图集布局 = RGBA8,(COLS × rows) 像素,格 = 16x16,
 /// 行主序;最后一个格是缺字空心框。
 pub const ATLAS_COLS: usize = 256;
@@ -183,20 +194,22 @@ impl Unifont {
         })
     }
 
-    /// 字符串尺寸(屏幕像素,已乘 scale)。高度恒为一行。
+    /// 字符串尺寸(屏幕像素,已乘 scale)。高度 = 字形绘制高
+    /// (GLYPH_H / OVERSAMPLE = 8,GlyphBitmap.java:28-29),原版一行
+    /// 行框为 lineHeight 9(Font.java:37),字形不超行框。
     pub fn measure(&self, s: &str, scale: f32) -> (f32, f32) {
         let w: f32 = s
             .chars()
             .map(|c| {
                 let cp = c as u32;
                 if cp == b' ' as u32 {
-                    HALF_ADVANCE
+                    SPACE_ADVANCE
                 } else {
                     self.glyph_or_box(cp).advance
                 }
             })
             .sum();
-        (w * scale, GLYPH_H * scale)
+        (w * scale, GLYPH_H / OVERSAMPLE * scale)
     }
 
     /// `measure` 的宽度分量。
@@ -204,8 +217,11 @@ impl Unifont {
         self.measure(s, scale).0
     }
 
-    /// 整段文字的 glyph quad 列表(无阴影;16 高的中文字形加 MC 式 1px
-    /// 阴影效果差,故不做)。缺字渲染空心框,不中断。
+    /// 整段文字的 glyph quad 列表(无阴影;UnihexProvider 阴影偏移为
+    /// 0.5px,与 ASCII 的 1px 体系不同,故不做)。quad 尺寸 = 位图 /
+    /// OVERSAMPLE(UnihexProvider.java:319-331 + GlyphBitmap.java:20-30,
+    /// 全角 8x8、半角 4x8,顶对齐 y..y+8,与 ASCII 同行高)。缺字渲染
+    /// 空心框,不中断。
     pub fn push_quads(
         &self,
         s: &str,
@@ -219,7 +235,7 @@ impl Unifont {
         for ch in s.chars() {
             let cp = ch as u32;
             if cp == b' ' as u32 {
-                cx += HALF_ADVANCE * scale;
+                cx += SPACE_ADVANCE * scale;
                 continue;
             }
             let g = self.glyph_or_box(cp);
@@ -227,8 +243,8 @@ impl Unifont {
             out.push(HudQuad {
                 x: cx,
                 y,
-                w: w * scale,
-                h: GLYPH_H * scale,
+                w: w / OVERSAMPLE * scale,
+                h: GLYPH_H / OVERSAMPLE * scale,
                 uv: self.cell_uv(g.cell),
                 color,
                 tex: self.atlas_tex,
