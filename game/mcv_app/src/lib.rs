@@ -1,7 +1,9 @@
 //! Platform shell: desktop binary and Android cdylib share [`app::run`].
 
 pub mod app;
+pub mod binds_ui;
 pub mod i18n;
+pub mod options;
 
 #[cfg(target_os = "android")]
 pub mod android_assets;
