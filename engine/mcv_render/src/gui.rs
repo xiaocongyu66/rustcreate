@@ -75,6 +75,9 @@ const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
     ("wooden_shovel", "item/wooden_shovel.png", 16, 16),
 ];
 
+/// 容器面板条目类型：名字、路径、逻辑宽高、源裁剪矩形 (sx, sy, sw, sh)。
+type PanelSprite = (&'static str, &'static str, u32, u32, u32, u32, u32, u32);
+
 /// 容器面板(原版整幅 blit,非九宫格):名字、路径、逻辑尺寸、源裁剪矩形。
 /// 原版渲染 = `graphics.blit(GUI_TEXTURED, <面板贴图>, xo, yo, 0, 0,
 /// imageWidth, imageHeight, 256, 256)`(AbstractContainerScreen 定位
@@ -82,7 +85,7 @@ const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
 /// CraftingScreen.java:35),即从 256x256 纹理取左上 176x166 画到面板左上角。
 /// 面板贴图自带槽位凹槽——命中即不再程序化画槽底。缺文件跳过(调用方回退
 /// 程序化面板)。
-const PANEL_SPRITES: [(&str, &str, u32, u32, u32, u32, u32, u32); 2] = [
+const PANEL_SPRITES: [PanelSprite; 2] = [
     (
         "inv_panel",
         "gui/container/inventory.png",

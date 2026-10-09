@@ -118,7 +118,7 @@ fn vanilla_crack_stages_load() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft");
     let mut layers = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
     let n = atlas::load_crack_stages(&dir, &mut layers);
-    assert_eq!(n, atlas::CRACK_LAYERS, "10 档原版裂纹应全部加载");
+    assert_eq!(n, atlas::CRACK_LAYERS as u32, "10 档原版裂纹应全部加载");
     let tile = atlas::TILE_PX * atlas::TILE_PX * 4;
     let crack_alpha = |s: usize, i: usize| layers[(atlas::CRACK_BASE + s) * tile + i * 4 + 3];
     // stage 0 有不透明裂纹像素（原版贴图 alpha>0），且逐档裂纹像素数不减。
