@@ -55,7 +55,14 @@ pub fn wrap(s: &str, max_w: f32, scale: f32) -> Vec<String> {
             }
             continue;
         }
-        let candidate_w = text_width(&format!("{line}{word}"), scale);
+        // 候选宽含连接空格（StringSplitter 量 line + ' ' + word；
+        // 少算空格会放出超宽行）
+        let joined = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        let candidate_w = text_width(&joined, scale);
         if line.is_empty() && text_width(word, scale) > max_w {
             // 词本身超宽 → 逐字硬断
             let mut chunk = String::new();
@@ -88,57 +95,71 @@ pub fn wrap(s: &str, max_w: f32, scale: f32) -> Vec<String> {
 mod tests {
     use super::*;
 
-    // 宽度锚点（测试进程用 mcv_render 回退 8x8 字体，无 Renderer 干扰）：
-    // 'R'=8 'e'=7 's'=7 't'=7 'o'=8 'r'=7 空格=4 'D'=8 'f'=7 'a'=8 'u'=8
-    // 'l'=6 → "Restore Defaults" = 113、"Restore Defaul" = 99；
-    // CJK 走 cjk.f16 全宽 advance=9（unifont.rs FULL_ADVANCE）。
-    // ASCII 有 MC 素材环境不一致的风险，故锚定回退字体并在 CI 同源。
+    // 宽度期望全部用 text_width 动态测量（任务 #53 素材红线后回退
+    // 8x8 字体已删：测试进程未装载 ascii.png 时宽度表为常数 9/字，
+    // 装载后为 MC 原版 advance——两种环境断言均须成立，故不锚定
+    // 具体宽度数值，阈值由被测函数同款 text_width 算出）。
 
     #[test]
     fn clip_head_ascii_and_cjk() {
+        // 恰好放得下全宽 → 原样返回
         assert_eq!(
-            clip_head("Restore Defaults", 113.0, 1.0),
+            clip_head("Restore Defaults", text_width("Restore Defaults", 1.0), 1.0),
             "Restore Defaults"
         );
-        assert_eq!(clip_head("Restore Defaults", 100.0, 1.0), "Restore Defaul");
+        // 阈值取前 14 字符宽 → 截到该处（下一字符 advance > 0）
+        let th = text_width("Restore Defaul", 1.0);
+        assert_eq!(clip_head("Restore Defaults", th, 1.0), "Restore Defaul");
         // 首字符都放不下 → 空
-        assert_eq!(clip_head("Restore", 3.0, 1.0), "");
+        assert_eq!(clip_head("Restore", text_width("R", 1.0) - 1.0, 1.0), "");
         // 中文逐字断（中文溢出的统一解法：放不下就截）
-        assert_eq!(clip_head("按键绑定界面标题", 20.0, 1.0), "按键");
-        assert_eq!(
-            clip_head("按键绑定界面标题", 200.0, 1.0),
-            "按键绑定界面标题"
-        );
+        let cjk = "按键绑定界面标题";
+        assert_eq!(clip_head(cjk, text_width("按键", 1.0), 1.0), "按键");
+        assert_eq!(clip_head(cjk, text_width("按键绑", 1.0) - 1.0, 1.0), "按键");
+        assert_eq!(clip_head(cjk, text_width(cjk, 1.0), 1.0), cjk);
     }
 
     #[test]
     fn clip_tail_keeps_suffix() {
         assert_eq!(
-            clip_tail("Restore Defaults", 400.0, 1.0),
+            clip_tail("Restore Defaults", text_width("Restore Defaults", 1.0), 1.0),
             "Restore Defaults"
         );
-        assert_eq!(clip_tail("按键绑定界面标题", 20.0, 1.0), "标题");
-        assert_eq!(clip_tail("Restore", 3.0, 1.0), "");
+        assert_eq!(
+            clip_tail("按键绑定界面标题", text_width("标题", 1.0), 1.0),
+            "标题"
+        );
+        assert_eq!(
+            clip_tail("按键绑定界面标题", text_width("面标题", 1.0) - 1.0, 1.0),
+            "标题"
+        );
+        assert_eq!(clip_tail("Restore", text_width("e", 1.0) - 1.0, 1.0), "");
     }
 
     #[test]
     fn wrap_at_word_boundaries() {
-        // "aaaa"=32，"aaaa bbbb"=68 > 40 → 一行一词
-        let lines = wrap("aaaa bbbb cccc dddd", 40.0, 1.0);
+        // 阈值 = 单词宽：一行一词（词间空格使两词连排必超宽）
+        let th = text_width("aaaa", 1.0);
+        let lines = wrap("aaaa bbbb cccc dddd", th, 1.0);
         assert_eq!(lines, vec!["aaaa", "bbbb", "cccc", "dddd"]);
         let one = wrap("aaaa", 400.0, 1.0);
         assert_eq!(one, vec!["aaaa"]);
+        // 两词放得下 → 同行带空格
+        let two = wrap("aaaa bbbb", text_width("aaaa bbbb", 1.0), 1.0);
+        assert_eq!(two, vec!["aaaa bbbb"]);
         let empty = wrap("", 400.0, 1.0);
         assert_eq!(empty, vec![""]);
     }
 
     #[test]
     fn wrap_hard_breaks_oversized_cjk() {
-        // 无空格长串 → 逐字断（每 2 字一行：18 ≤ 24 < 27）
-        let lines = wrap("一二三四五六七八九十", 24.0, 1.0);
+        // 无空格长串 → 逐字断；阈值取 2 字宽（CJK advance 全宽均一，
+        // 3 字必超）
+        let th = text_width("一二", 1.0);
+        let lines = wrap("一二三四五六七八九十", th, 1.0);
         assert_eq!(lines, vec!["一二", "三四", "五六", "七八", "九十"]);
         for l in &lines {
-            assert!(text_width(l, 1.0) <= 24.0);
+            assert!(text_width(l, 1.0) <= th);
         }
         assert_eq!(lines.concat(), "一二三四五六七八九十");
     }
