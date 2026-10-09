@@ -1801,7 +1801,8 @@ impl AppState {
                 w.set_cursor_visible(true);
             }
         }
-        runtime.time_ticks += (dt * 20.0) as u64; // 20 ticks/s
+        // 时间推进已收进 fixed_step 的 tick 累加器（(dt*20) as u64 在
+        // 60 fps 下截断恒 0，昼夜曾因此冻结）。
         runtime.stream();
 
         // periodic world save (30 s)
