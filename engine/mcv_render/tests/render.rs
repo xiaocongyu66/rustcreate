@@ -305,6 +305,8 @@ fn terrain_multi_array_grass_render() {
         camera: &camera,
         time: 0.0,
         day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
         sun_dir: sun,
         moon_phase: 0,
         width: 320.0,
@@ -314,6 +316,8 @@ fn terrain_multi_array_grass_render() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
+        particles: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -836,6 +840,8 @@ fn missing_assets_never_paint_fake_pixels() {
         camera: &camera,
         time: 0.0,
         day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
         sun_dir: sun,
         moon_phase: 0,
         width: 320.0,
@@ -845,6 +851,8 @@ fn missing_assets_never_paint_fake_pixels() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
+        particles: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -914,6 +922,8 @@ fn missing_assets_never_paint_fake_pixels() {
         camera: &camera_up,
         time: 0.0,
         day_factor: 1.0,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
         sun_dir: Vec3::Y, // 太阳在正天顶（对照真实素材测试的同机位）
         moon_phase: 0,
         width: 320.0,
@@ -923,6 +933,8 @@ fn missing_assets_never_paint_fake_pixels() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
+        particles: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);

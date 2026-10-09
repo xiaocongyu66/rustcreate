@@ -140,6 +140,8 @@ fn render(
         camera: &cam,
         time: 0.0,
         day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
         sun_dir: sun,
         moon_phase: 0,
         width: 320.0,
@@ -149,6 +151,7 @@ fn render(
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
         particles: particles.map(|p| (p, 0.0_f32)),
     };
     let mut enc = device.create_command_encoder(&Default::default());
