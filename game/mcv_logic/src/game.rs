@@ -1205,7 +1205,7 @@ impl GameRuntime {
                 // （PlayerSpawnFinder.java:89-104）兜底——建议列 (8,8)
                 // 最高实体/流体顶 +1，海面即落在水面之上，不再埋入。
                 let voxels = handle.voxels.read().unwrap();
-                Vec3::new(8.5, fixup_spawn_feet_y(&voxels, 8, 8) as f32, 8.5)
+                Vec3::new(8.5, fixup_spawn_feet_y(&voxels[..], 8, 8) as f32, 8.5)
             });
             self.player.pos = slot;
             self.spawned = true;
@@ -3230,7 +3230,7 @@ fn player_aabb(pos: &Vec3) -> (Vec3, Vec3) {
 /// 与原版对照：流体不计（OCEAN_FLOOR 语义，lib.rs recompute 注释），
 /// 花/火把/玻璃等 damp0 不计——原版逐格向下扫的 isFaceFull(:170) 由
 /// 下面的地面形状判定 + 脚头空间判定共同承载。
-fn spawn_column_feet_y(voxels: &[BlockId], hm: &[u8; 256], lx: usize, lz: usize) -> Option<i32> {
+fn spawn_column_feet_y(voxels: &[BlockId], hm: &[u8], lx: usize, lz: usize) -> Option<i32> {
     let gy = i32::from(hm[(lz << 4) | lx]) - 1;
     // gy<0：hm=0（仅 y=255 顶环绕可致，recompute 的 u8 上界遗留）；gy>253：
     // gy+2 头位越出世界顶。两者皆无脚头空间可言。全空列走不到这里——
@@ -3287,13 +3287,13 @@ fn find_spawn_slot(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, radius: i32) ->
             let hm = h.heightmap.read().unwrap();
             if ox == 0
                 && oz == 0
-                && let Some(y) = spawn_column_feet_y(&voxels, &hm, 8, 8)
+                && let Some(y) = spawn_column_feet_y(&voxels[..], &hm[..], 8, 8)
             {
                 return Some(Vec3::new(8.5, y as f32, 8.5));
             }
             for lx in 0..16usize {
                 for lz in 0..16usize {
-                    if let Some(y) = spawn_column_feet_y(&voxels, &hm, lx, lz) {
+                    if let Some(y) = spawn_column_feet_y(&voxels[..], &hm[..], lx, lz) {
                         return Some(Vec3::new(
                             (ox * 16) as f32 + lx as f32 + 0.5,
                             y as f32,

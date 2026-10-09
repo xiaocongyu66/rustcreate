@@ -51,13 +51,13 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
     let v = floor_voxels(20);
     let hm = hm_of(&v);
     // 净空地面：gy=20（hm 21 −1），脚位 = gy+1 = 21（26.1 pos.above()）。
-    assert_eq!(spawn_column_feet_y(&v, &hm, 8, 8), Some(21));
+    assert_eq!(spawn_column_feet_y(&v[..], &hm[..], 8, 8), Some(21));
 
     // 脚位实体（玻璃 damp=0 不抬 hm）：脚被堵 → 拒列。
     let mut v2 = v.clone();
     v2[lidx(8, 21, 8)] = BlockId(GLASS);
     assert_eq!(
-        spawn_column_feet_y(&v2, &hm, 8, 8),
+        spawn_column_feet_y(&v2[..], &hm[..], 8, 8),
         None,
         "脚位被玻璃堵住须拒列"
     );
@@ -66,7 +66,7 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
     let mut v3 = v.clone();
     v3[lidx(8, 40, 8)] = BlockId(GLASS);
     assert_eq!(
-        spawn_column_feet_y(&v3, &hm, 8, 8),
+        spawn_column_feet_y(&v3[..], &hm[..], 8, 8),
         Some(21),
         "高空棚下可投"
     );
@@ -74,7 +74,11 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
     // 花：无碰撞非流体 → 可站在其中（26.1 花列放行）。
     let mut v4 = v.clone();
     v4[lidx(8, 21, 8)] = BlockId(FLOWER_RED);
-    assert_eq!(spawn_column_feet_y(&v4, &hm, 8, 8), Some(21), "花列放行");
+    assert_eq!(
+        spawn_column_feet_y(&v4[..], &hm[..], 8, 8),
+        Some(21),
+        "花列放行"
+    );
 
     // 水列（海面/湖床）：地面上方出现流体 → 拒；浅水与齐海平面深水同判
     // （PlayerSpawnFinder.java:156-159 / :166 遇流体即弃）。
@@ -85,7 +89,7 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
         }
         let hm_w = hm_of(&vw);
         assert_eq!(
-            spawn_column_feet_y(&vw, &hm_w, 8, 8),
+            spawn_column_feet_y(&vw[..], &hm_w[..], 8, 8),
             None,
             "水顶 {water_top} 的水列须拒"
         );
@@ -95,12 +99,20 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
     let mut v5 = v.clone();
     v5[lidx(8, 21, 8)] = BlockId(STONE);
     let hm5 = hm_of(&v5);
-    assert_eq!(spawn_column_feet_y(&v5, &hm5, 8, 8), Some(22), "堆顶可投");
+    assert_eq!(
+        spawn_column_feet_y(&v5[..], &hm5[..], 8, 8),
+        Some(22),
+        "堆顶可投"
+    );
 
     // 全空列：recompute 回落 hm=1 → gy=0=空气，地面判定拒绝。
     let empty = Box::new([BlockId(0); 65536]);
     let hm_e = hm_of(&empty);
-    assert_eq!(spawn_column_feet_y(&empty, &hm_e, 8, 8), None, "全空列拒");
+    assert_eq!(
+        spawn_column_feet_y(&empty[..], &hm_e[..], 8, 8),
+        None,
+        "全空列拒"
+    );
 }
 
 // ---- a：搜索窗级判定（经 stream() 全路径）----
