@@ -588,3 +588,33 @@ fn body_in_water(world: &TestWorld, pos: Vec3) -> bool {
 }
 
 const WATER: u16 = 5; // mcv_core blocks_gen.inc.rs:18（liquid=true）
+
+/// 水平游泳稳态：1.6（非冲刺）/3.6（冲刺）m/s。通用地面/空气收敛必须被
+/// 水路**替换**——若两套一阶滞后叠加，稳态会被顶到 ≈3.5（回归锁）。
+#[test]
+fn swim_horizontal_terminal_table() {
+    let world = TestWorld::new();
+    let table: [(bool, f32, &str); 2] = [
+        (false, consts::SWIM_SPEED, "游泳"),
+        (true, consts::SWIM_SPRINT_SPEED, "冲刺游泳"),
+    ];
+    for (sprint, want, tag) in table {
+        let mut p = Player {
+            pos: Vec3::new(0.5, 50.0, 0.5),
+            ..Player::default()
+        };
+        let input = StepInput {
+            in_water: true,
+            sprint,
+            ..walk_x(1.0)
+        };
+        for _ in 0..240 {
+            step(&world, &mut p, &input);
+        }
+        assert!(
+            (p.vel.x - want).abs() / want < 0.02,
+            "{tag} 水平稳态 {:.4} ≠ {want:.3}",
+            p.vel.x
+        );
+    }
+}

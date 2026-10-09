@@ -429,40 +429,11 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
         return;
     }
 
-    // 水平加速：一阶滞后朝目标速度收敛（「每 tick 先加输入再乘阻」的
-    // 等价连续式），不越冲、松手同曲线减速。
-    let (target_speed, k) = if player.on_ground {
-        let s = if input.sneak {
-            consts::SNEAK_SPEED
-        } else if input.sprint {
-            consts::SPRINT_SPEED
-        } else {
-            consts::WALK_SPEED
-        };
-        // 地面：阻力 0.546/tick（0.6×0.91，LivingEntity.java:2424-2425）
-        // → k = −20·ln 0.546。
-        (s, consts::GROUND_CONVERGE_K)
-    } else {
-        // 空中：moveRelative 输入 0.02（冲刺 0.026）块/tick（Player.java:1955）
-        // + 阻力 0.91/tick → 稳态 4.044/5.258 m/s（略低于地面目标——原版
-        // 空中控速本就更弱）；潜行对输入 ×0.3（LocalPlayer.java:714）。
-        let s = if input.sneak {
-            consts::AIR_TERMINAL * 0.3
-        } else if input.sprint {
-            consts::AIR_TERMINAL_SPRINT
-        } else {
-            consts::AIR_TERMINAL
-        };
-        (s, consts::AIR_CONVERGE_K)
-    };
-    let target_h = wish * target_speed;
-    let conv = 1.0 - (-k * dt).exp();
-    player.vel.x += (target_h.x - player.vel.x) * conv;
-    player.vel.z += (target_h.z - player.vel.z) * conv;
-
     if input.in_water {
         // ---- 水中（travelInWater，LivingEntity.java:2459-2486）----
-        // 水平：moveRelative 0.02 块/tick（:2461）+ 阻力 0.8（:2466-2368，
+        // **替换**通用地面/空气收敛——水中无地面摩擦体系，两套一阶滞后
+        // 叠加会打架（实测稳态被顶到 3.5 m/s）。
+        // 水平：moveRelative 0.02 块/tick（:2461）+ 阻力 0.8（:2366-2368，
         // sprinting 0.9 :2460）→ 一阶滞后收敛到 1.6（冲刺 3.6）m/s。
         let (h_sp, h_k) = if input.sprint {
             (consts::SWIM_SPRINT_SPEED, consts::SWIM_SPRINT_DRAG_K)
@@ -500,7 +471,41 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
         if horizontal_collision && headroom_clear(world, player.pos, 0.6) {
             player.vel.y = consts::SWIM_EXIT_SPEED;
         }
-    } else if player.on_ground && input.jump {
+        return;
+    }
+
+    // 水平加速：一阶滞后朝目标速度收敛（「每 tick 先加输入再乘阻」的
+    // 等价连续式），不越冲、松手同曲线减速。
+    let (target_speed, k) = if player.on_ground {
+        let s = if input.sneak {
+            consts::SNEAK_SPEED
+        } else if input.sprint {
+            consts::SPRINT_SPEED
+        } else {
+            consts::WALK_SPEED
+        };
+        // 地面：阻力 0.546/tick（0.6×0.91，LivingEntity.java:2424-2425）
+        // → k = −20·ln 0.546。
+        (s, consts::GROUND_CONVERGE_K)
+    } else {
+        // 空中：moveRelative 输入 0.02（冲刺 0.026）块/tick（Player.java:1955）
+        // + 阻力 0.91/tick → 稳态 4.044/5.258 m/s（略低于地面目标——原版
+        // 空中控速本就更弱）；潜行对输入 ×0.3（LocalPlayer.java:714）。
+        let s = if input.sneak {
+            consts::AIR_TERMINAL * 0.3
+        } else if input.sprint {
+            consts::AIR_TERMINAL_SPRINT
+        } else {
+            consts::AIR_TERMINAL
+        };
+        (s, consts::AIR_CONVERGE_K)
+    };
+    let target_h = wish * target_speed;
+    let conv = 1.0 - (-k * dt).exp();
+    player.vel.x += (target_h.x - player.vel.x) * conv;
+    player.vel.z += (target_h.z - player.vel.z) * conv;
+
+    if player.on_ground && input.jump {
         // 地面跳跃：JUMP_STRENGTH 0.42 块/tick = 8.4 m/s
         // （Attributes.java:48-49 + LivingEntity.java:2344-2348，覆盖本步
         // 重力，下一步离地）。
