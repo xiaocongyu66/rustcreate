@@ -272,6 +272,9 @@ pub struct Scene<'a> {
     pub player: Option<(&'a [glam::Mat4; PART_COUNT], u32)>,
     /// 挖掘裂纹 + 选中描边；None = 准星无目标。
     pub overlay: Option<MiningOverlay>,
+    /// 眼睛在水中（Player.isEyeInFluid(WATER)）：帧雾切水下参数
+    /// （26.1 水下视距骤减；GameRuntime::eye_under_water 喂入）。
+    pub underwater: bool,
 }
 
 pub struct Renderer {
@@ -1606,7 +1609,13 @@ impl Renderer {
                 scene.sun_dir.z,
                 scene.day_factor,
             ],
-            fog_params: [0.006, 0.0, cam.far * 0.95, 0.0],
+            // 雾：常规 = 原既有值；水下 = 高密度短视距（26.1 水下能见度
+            // 骤减；fog_factor = exp2(-dist·x)，x=0.05 → 20 m 处透过 0.5）。
+            fog_params: if scene.underwater {
+                [0.05, 0.0, 32.0, 0.0]
+            } else {
+                [0.006, 0.0, cam.far * 0.95, 0.0]
+            },
         };
         self.queue
             .write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&uniforms));
