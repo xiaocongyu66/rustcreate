@@ -1166,6 +1166,9 @@ impl AppState {
         };
         let uploader = mcv_render::gpu::MeshUploader::new(device);
         let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
+        // 新世界：关屏延迟 500ms（26.1 Minecraft.java:2083 doWorldLoad
+        // `new LevelLoadTracker(newWorld ? 500L : 0L)`）。
+        runtime.begin_load(true);
         if mode == GameMode::Creative {
             runtime.player.flying = true;
         }
@@ -1451,7 +1454,10 @@ impl AppState {
             }
         };
         let uploader = mcv_render::gpu::MeshUploader::new(device);
-        let runtime = GameRuntime::new(seed, uploader, dir, mode);
+        let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
+        // 载入存档：closeDelay = 0（26.1 `new LevelLoadTracker()` 默认值，
+        // 与新世界的 500ms 区分，Minecraft.java:2083）。
+        runtime.begin_load(false);
         self.enter_game(runtime);
     }
 }
@@ -1588,17 +1594,24 @@ impl ApplicationHandler for AppState {
                 };
                 let pressed = state == ElementState::Pressed;
                 use mcv_game::keymap::Action;
+                // 加载态（26.1 LevelLoadingScreen 活动）：快捷栏/背包/切视角/
+                // 移动/暂停全部不响应——原版 Screen 非 null 时游戏键不派发，
+                // 且 LevelLoadingScreen.shouldCloseOnEsc=false（:64-67）。
+                let loading = runtime.phase == mcv_logic::game::GamePhase::Loading;
                 // 快捷栏：MC 是 9 个独立键位，本引擎键位表单动作单键，暂直绑
-                if pressed && let Some(slot) = mcv_platform::keybind::hotbar_slot(code) {
+                if pressed
+                    && !loading
+                    && let Some(slot) = mcv_platform::keybind::hotbar_slot(code)
+                {
                     runtime.player.sel_slot = slot;
                 }
                 // F5 切视角不在 MC 键位表内(GT引擎扩展),保持硬编码
-                if pressed && code == KeyCode::F5 {
+                if pressed && !loading && code == KeyCode::F5 {
                     runtime.cycle_camera();
                 }
                 // E 开/关背包(MC E=inventory)：生存/极限 = 随身 2x2 合成页，
                 // 创造 = 取物页。
-                if pressed && code == KeyCode::KeyE {
+                if pressed && !loading && code == KeyCode::KeyE {
                     match self.screen {
                         Screen::InGame => {
                             if runtime.mode == GameMode::Creative {
@@ -1621,17 +1634,17 @@ impl ApplicationHandler for AppState {
                 }
                 if let Some(vk) = mcv_platform::keybind::vkey_of(code) {
                     match self.keymap.action_for(vk) {
-                        Some(Action::Forward) => runtime.input.forward = pressed,
-                        Some(Action::Back) => runtime.input.back = pressed,
-                        Some(Action::Left) => runtime.input.left = pressed,
-                        Some(Action::Right) => runtime.input.right = pressed,
-                        Some(Action::Jump) => runtime.input.jump = pressed,
-                        Some(Action::Sneak) => runtime.input.sneak = pressed,
-                        Some(Action::Sprint) => runtime.input.sprint = pressed,
-                        Some(Action::FlyToggle) if pressed => {
+                        Some(Action::Forward) if !loading => runtime.input.forward = pressed,
+                        Some(Action::Back) if !loading => runtime.input.back = pressed,
+                        Some(Action::Left) if !loading => runtime.input.left = pressed,
+                        Some(Action::Right) if !loading => runtime.input.right = pressed,
+                        Some(Action::Jump) if !loading => runtime.input.jump = pressed,
+                        Some(Action::Sneak) if !loading => runtime.input.sneak = pressed,
+                        Some(Action::Sprint) if !loading => runtime.input.sprint = pressed,
+                        Some(Action::FlyToggle) if pressed && !loading => {
                             runtime.player.flying = !runtime.player.flying;
                         }
-                        Some(Action::Pause) if pressed => match self.screen {
+                        Some(Action::Pause) if pressed && !loading => match self.screen {
                             Screen::InGame => {
                                 self.screen = Screen::Paused;
                                 set_cursor(&self.window, false);
@@ -1716,6 +1729,11 @@ impl ApplicationHandler for AppState {
                 let Some(runtime) = self.runtime.as_mut() else {
                     return;
                 };
+                // 加载态：不派发攻击/放置（26.1 Screen 非 null 时
+                // MouseHandler 不作用于游戏，continueAttack 亦然）。
+                if runtime.phase == mcv_logic::game::GamePhase::Loading {
+                    return;
+                }
                 let pressed = state == ElementState::Pressed;
                 match button {
                     MouseButton::Left => {
@@ -1956,6 +1974,8 @@ impl AppState {
             self.craft_hot.clear();
             Vec::new()
         };
+        // 加载画面标题文案（lang() 借 &self，须在 runtime 可变借用之前取好）
+        let lang = self.lang();
         let (Some(sp), Some(runtime), Some(window)) = (
             self.surface.as_mut(),
             self.runtime.as_mut(),
@@ -2027,14 +2047,33 @@ impl AppState {
 
         let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
         let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
-        let mut hud = runtime.build_hud(
-            sp.config.width as f32,
-            sp.config.height as f32,
-            self.renderer.as_ref().and_then(|r| r.gui()),
-            self.screen != Screen::Death,
-            // 合成/创造面板自带 36 格（含快捷栏行），不再重复画底部快捷栏
-            !matches!(self.screen, Screen::Crafting | Screen::Creative),
-        );
+        // 进世界加载画面（26.1 LevelLoadingScreen）：盖在游戏画面上的
+        // 独立 HUD（不画游戏 HUD/触屏按钮，玩家此刻不应看到血条快捷栏）。
+        let loading = runtime.phase == mcv_logic::game::GamePhase::Loading;
+        let mut hud = if loading {
+            let (grid_radius, grid) = runtime.loading_grid();
+            let model = crate::loading_ui::LoadScreenModel {
+                progress: runtime.loading_progress_smoothed(),
+                grid_radius,
+                grid,
+                title: crate::i18n::t(lang, "multiplayer.downloadingTerrain").to_string(),
+            };
+            crate::loading_ui::quads(
+                sp.config.width as f32,
+                sp.config.height as f32,
+                &model,
+                self.renderer.as_ref().and_then(|r| r.gui()),
+            )
+        } else {
+            runtime.build_hud(
+                sp.config.width as f32,
+                sp.config.height as f32,
+                self.renderer.as_ref().and_then(|r| r.gui()),
+                self.screen != Screen::Death,
+                // 合成/创造面板自带 36 格（含快捷栏行），不再重复画底部快捷栏
+                !matches!(self.screen, Screen::Crafting | Screen::Creative),
+            )
+        };
         if matches!(self.screen, Screen::Paused | Screen::Death) {
             // 暂停/死亡：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
             hud.extend(pause_menu);

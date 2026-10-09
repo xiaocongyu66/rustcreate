@@ -24,6 +24,7 @@
  "deathScreen.title": "你死了！",
  "deathScreen.respawn": "重生",
  "deathScreen.titleScreen": "标题屏幕",
+ "multiplayer.downloadingTerrain": "加载地形中…",
  "mcv.selectWorld.title": "选择世界",
  "mcv.createWorld.create": "创建世界",
  "mcv.mode.survival": "生存",

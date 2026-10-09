@@ -3,11 +3,11 @@
 //! delay 后拾取入栏；创造秒破零掉落；交互到达距离按模式 4.5/5.0；
 //! 玩家死亡掉全部物品（40 tick 延迟）。
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkPos, Stage};
-use mcv_logic::game::{GameMode, GameRuntime};
+use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
+use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
 
 /// 唯一临时存档目录（测试并行安全）。
 fn tmp_world(tag: &str) -> PathBuf {
@@ -31,6 +31,32 @@ fn wait_terrain(rt: &mut GameRuntime, pos: ChunkPos) {
         std::thread::sleep(std::time::Duration::from_millis(1));
     }
     panic!("地形未在预算内就绪");
+}
+
+/// 加载态收尾：把出生点邻域（半径 3，49 块 = 26.1 EXPECTED_PLAYER_CHUNKS
+/// = Mth.square(7)，LevelLoadProgressTracker.java:15）全部顶到 Uploaded
+/// 并步进到游玩态。真实路径 = 网格建好上传后 stream 推进 Uploaded
+/// （game.rs mesh 循环 advance_to）；无头 NullMesher 不产网格，按
+/// mobs_runtime.rs:44 同款手工推进。
+fn finish_loading(rt: &mut GameRuntime) {
+    rt.player.pos = Vec3::new(8.3, 70.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
+            let pos = ChunkPos::new(dx, dz);
+            rt.chunks
+                .entry(pos)
+                .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
+                .advance_to(Stage::Uploaded);
+        }
+    }
+    for _ in 0..10 {
+        rt.fixed_step(1.0 / 60.0);
+        if rt.phase == GamePhase::Playing {
+            return;
+        }
+    }
+    panic!("加载态未在预算步内转游玩态");
 }
 
 /// 测试场地：压实三列石头到 y=69（顶面 y=70），工作区 3×3 列自 y=70 向
@@ -99,6 +125,7 @@ fn survival_mining_stone_drops_and_pickup() {
     let mut rt = GameRuntime::new_headless(20261009, dir, GameMode::Survival);
     wait_terrain(&mut rt, ChunkPos::new(0, 0));
     build_platform(&mut rt);
+    finish_loading(&mut rt);
     set_block(&mut rt, 7, 71, 8, BlockId(1)); // 眼平高靶块
     set_aim_at_block(&mut rt);
     // 石头掉落需要镐（has_correct_tool 门控），给选中槽木镐。
@@ -144,6 +171,7 @@ fn creative_mining_produces_no_drop() {
     let mut rt = GameRuntime::new_headless(20261009, dir, GameMode::Creative);
     wait_terrain(&mut rt, ChunkPos::new(0, 0));
     build_platform(&mut rt);
+    finish_loading(&mut rt);
     set_block(&mut rt, 7, 71, 8, BlockId(1));
     set_aim_at_block(&mut rt);
     let cobble_before = hotbar_count(&rt, mcv_item::COBBLESTONE);

@@ -75,6 +75,14 @@ const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
     ("wooden_shovel", "item/wooden_shovel.png", 16, 16),
 ];
 
+/// 其他 best-effort 精灵(缺文件只跳过该条,不拖垮整表)。
+/// menu_background:进世界加载画面背景(26.1 Screen.java:404-420
+/// extractMenuBackgroundTexture 以 32×32 平铺全屏,LevelLoadingScreen
+/// Reason.OTHER 背景的组成部分;panorama 立方渲染器本仓未做,见
+/// loading_ui.rs 模块注释)。
+const EXTRA_SPRITES: [(&str, &str, u32, u32); 1] =
+    [("menu_background", "gui/menu_background.png", 32, 32)];
+
 /// logo 实际绘制行数(MC 纹理 256x64 只显示上 44 行)。
 pub const LOGO_VISIBLE_H: u32 = 44;
 
@@ -134,6 +142,9 @@ impl SpriteSheet {
         let items = loaded.len() - items_before;
         if items < ITEM_SPRITES.len() {
             log::warn!("gui: {}/{} item icons missing", items, ITEM_SPRITES.len());
+        }
+        for (name, file, w, h) in EXTRA_SPRITES {
+            loaded.extend(decode(name, file, w, h));
         }
         // 竖排:宽度取最大(256),总高向上取整到 2 的幂
         let sheet_w = loaded.iter().map(|(_, _, w, _)| *w).max().unwrap_or(0);
