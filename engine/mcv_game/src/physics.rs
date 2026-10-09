@@ -275,6 +275,9 @@ pub struct StepInput {
     /// 为 `+30%` ADD_MULTIPLIED_TOTAL，LivingEntity.java:156-158）。潜行优先于
     /// 冲刺（原版蹲下即退冲刺）。调用方负责饥饿门（food>6，见 GameRuntime）。
     pub sprint: bool,
+    /// 重力缩放（生物 1.0；掉落物 0.5 = 原版 ItemEntity.getDefaultGravity
+    /// 0.04 块/tick² 相对 Entity 默认 0.08 的比值 → 16 m/s²）。
+    pub gravity_scale: f32,
 }
 
 impl Default for StepInput {
@@ -285,6 +288,7 @@ impl Default for StepInput {
             in_water: false,
             sneak: false,
             sprint: false,
+            gravity_scale: 1.0,
         }
     }
 }
@@ -301,7 +305,7 @@ pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], inpu
     let accel = if e.on_ground { 60.0 } else { 8.0 };
     e.vel.x += (target.x - e.vel.x).clamp(-accel * dt, accel * dt);
     e.vel.z += (target.z - e.vel.z).clamp(-accel * dt, accel * dt);
-    e.vel.y -= consts::GRAVITY * dt;
+    e.vel.y -= consts::GRAVITY * input.gravity_scale * dt;
     e.vel.y *= (-consts::AIR_DRAG_K * dt).exp();
 
     let mut b = Aabb {
@@ -319,6 +323,14 @@ pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], inpu
     move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Z, dz);
     let was_falling = e.vel.y < 0.0;
     let hit_y = move_box(world, &mut e.pos, &mut e.vel, &mut b, Axis::Y, dy);
+    // move_box 仅在钳位（碰撞）路径写回 pos，无碰撞自由移动只推进盒体
+    // ——悬空实体（下落中的掉落物/跳跃中的怪物）pos 会冻结在原地。与
+    // `step`（玩家路径）同款：步末统一从盒体回填 feet-center。
+    e.pos = Vec3::new(
+        (b.min.x + b.max.x) * 0.5,
+        b.min.y,
+        (b.min.z + b.max.z) * 0.5,
+    );
     e.on_ground = hit_y && was_falling;
 }
 

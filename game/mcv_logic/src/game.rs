@@ -166,12 +166,10 @@ pub struct GameRuntime {
     /// FoodData.tickTimer（26.1 FoodData.java:17）：回血快线 10 tick、慢线与
     /// 饥饿掉血 80 tick 的共享节拍（每 on_tick 走一格）。
     food_tick_timer: u32,
-    /// 进度挖掘状态（26.1 ServerPlayerGameMode 的 destroyPos/destroyProgress/
-    /// gameTicks 三件套）：仅生存/极限走 START→CONTINUE→STOP 状态机，创造秒破。
-    mine_pos: Option<BlockPos>,
-    mine_per_tick: f32,
-    mine_progress: f32,
-    mine_tick_acc: f32,
+    /// 挖掘状态机（26.1 MultiPlayerGameMode 的 destroyBlockPos/destroyProgress/
+    /// destroyDelay 三件套）：生存/极限走 START→CONTINUE→ABORT，创造走按住
+    /// 连秒破冷却；仅 `on_tick` 为真的固定步推进（原版每 tick 一次 continue）。
+    mine: MineMachine,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -209,6 +207,139 @@ pub enum CameraType {
 /// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
 const THIRD_PERSON_DIST: f32 = 4.0;
 
+/// 方块交互距离（26.1 `Attributes.BLOCK_INTERACTION_RANGE` 基值 4.5，
+/// `Attributes.java:22-23`；创造 +0.5 加法修饰 = 5.0，`ServerPlayer.java:215-216`
+/// `CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER` ADD_VALUE）。挖掘/放置/选中
+/// 射线一律传本函数，替换此前散落的硬编码 5.0。服务端 START/STOP 另有
+/// 1.0 容差（`ServerPlayerGameMode.java:153`）且按住期间不查距离——那是
+/// 联网防作弊复核，单机一体无客户端上报语义，按住期间按原版客户端行为
+/// 每 tick 以基值重射线（打不中即 ABORT）。
+pub fn block_interaction_reach(mode: GameMode) -> f32 {
+    if mode == GameMode::Creative {
+        mcv_game::raycast::REACH + 0.5
+    } else {
+        mcv_game::raycast::REACH
+    }
+}
+
+/// 生存挖掘单 tick 继续的输入：准星射线命中的非空气方块 + **该 tick 现算**
+/// 的每 tick 进度速率。原版每 tick 重算 `getDestroyProgress`
+/// （`ServerPlayerGameMode.tick()` :107-130 → `Player.getDestroySpeed`
+/// Player.java:586-614），空中/入水当 tick 即变速，不许起手缓存速率。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MineHit {
+    pub pos: BlockPos,
+    pub per_tick: f32,
+}
+
+/// [`MineMachine::continue_tick`] 的结果。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MineTick {
+    Idle,
+    /// 本 tick 挖穿（调用方负责写空气 + 掉落 + 音效）。
+    Broken(BlockPos),
+}
+
+/// 挖掘状态机（26.1 客户端 `MultiPlayerGameMode` 的 destroyBlockPos/
+/// destroyProgress/destroyDelay 三件套，:79,308-311）。纯逻辑、无世界访问：
+/// 射线与 per-tick 速率由 `GameRuntime::step_mining` 每 tick 现算喂入，
+/// 且只由 `GameRuntime::on_tick` 门驱动——原版按住期间是**每 tick** 一次
+/// `continueDestroyBlock`（`Minecraft.continueAttack`，Minecraft.java:
+/// 1606-1628），60 Hz 固定步按 dt 连加会让进度偏 3×，故按 tick 离散推进。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MineMachine {
+    /// START 目标（原版 destroyBlockPos）；None = 未在挖。
+    pub pos: Option<BlockPos>,
+    /// 最近一 tick 使用的速率（overlay/调试展示；判定不依赖缓存值）。
+    pub per_tick: f32,
+    /// 累积进度（原版 destroyProgress；≥1 破坏）。
+    pub progress: f32,
+    /// 破坏后冷却（原版 destroyDelay，5 tick；仅正常挖穿与创造连破置位）。
+    pub delay: u32,
+}
+
+impl MineMachine {
+    /// START_DESTROY_BLOCK（生存分支，`MultiPlayerGameMode.java:147-205`）：
+    /// 换目标即隐式 ABORT 旧 + 进度清零重算。返回 Some(pos) = insta-mine
+    /// （per ≥ 1 起手即破，`ServerPlayerGameMode.java:210-212`）；秒破**不**
+    /// 置冷却——原版 destroyDelay=5 只在正常挖穿（:282）与创造（:167/:232）
+    /// 置位，起手秒破（花类）不置。
+    pub fn start(&mut self, pos: BlockPos, per_tick: f32) -> Option<BlockPos> {
+        self.pos = Some(pos);
+        self.per_tick = per_tick;
+        // START 当 tick 计入 1 份进度：服务端进度公式为 per×(ticksSpent+1)
+        // （ServerPlayerGameMode.incrementDestroyProgress :132-142）。
+        self.progress = per_tick;
+        if per_tick >= 1.0 {
+            self.abort();
+            return Some(pos);
+        }
+        None
+    }
+
+    /// ABORT（26.1 stopDestroyBlock → 发 ABORT_DESTROY_BLOCK，
+    /// `MultiPlayerGameMode.java:207-222`；服务端 ABORT 分支只清状态、不
+    /// 破坏，`ServerPlayerGameMode.java:239-249`）：进度作废。delay 不清
+    /// （原版同款——冷却是节奏计数，留给后续 CONTINUE 自行衰减）。
+    pub fn abort(&mut self) {
+        self.pos = None;
+        self.per_tick = 0.0;
+        self.progress = 0.0;
+    }
+
+    /// CONTINUE_DESTROY_BLOCK 生存分支，每 tick 一次
+    /// （`MultiPlayerGameMode.java:224-286`）。`hit` 为 None = 准星射线打不
+    /// 中非空方块（移出 reach/移开/目标被破坏变空）——原版此时走
+    /// stopDestroyBlock = ABORT（Minecraft.java:1624-1626；或 continue 内
+    /// 目标变空气 isDestroying=false，:244-248）。
+    pub fn continue_tick(&mut self, hit: Option<MineHit>) -> MineTick {
+        if self.delay > 0 {
+            // destroyDelay 先减且本 tick 不推进（:226-228）：正常挖穿后置 5，
+            // 第 6 个 tick 才对新目标 START —— "5 tick 冷却再开下一块"。
+            self.delay -= 1;
+            return MineTick::Idle;
+        }
+        let Some(h) = hit else {
+            self.abort();
+            return MineTick::Idle;
+        };
+        if self.pos != Some(h.pos) {
+            // 换目标（含冷却减尽后对新目标的自动重启——continue 落到
+            // startDestroyBlock，:285-286）：ABORT 旧进度 + START 新目标。
+            self.abort();
+            if let Some(p) = self.start(h.pos, h.per_tick) {
+                return MineTick::Broken(p);
+            }
+            return MineTick::Idle;
+        }
+        // 同目标续挖：速率用本 tick 现算值（空中/水下随条件实时变化）。
+        self.per_tick = h.per_tick;
+        self.progress += h.per_tick;
+        if self.progress >= 1.0 {
+            // 原版阈值是 `>= 1.0F`（:274），旧实现的 `> 1.0` 会漏掉恰好
+            // 1.0 的情形，按源码收紧。
+            let pos = h.pos;
+            self.abort();
+            self.delay = 5;
+            return MineTick::Broken(pos);
+        }
+        MineTick::Idle
+    }
+
+    /// 创造按住每 tick（`MultiPlayerGameMode.java:230-242`）：冷却减尽后
+    /// 秒破准星方块并再置 destroyDelay=5。返回 Some(pos) = 本 tick 破坏。
+    /// 按下瞬间的首破由调用方（on_left_press）负责并置初始 delay（:157-167）。
+    pub fn creative_tick(&mut self, hit: Option<BlockPos>) -> Option<BlockPos> {
+        if self.delay > 0 {
+            self.delay -= 1;
+            return None;
+        }
+        let pos = hit?;
+        self.delay = 5;
+        Some(pos)
+    }
+}
+
 /// 60 Hz 固定步 → 20 Hz 原版 tick 累加：返回本步跨过的 tick 数（0 或 1
 /// 为常态），小数留在 `frac`。`dt ≥ 0.2 s` 的 burst（卡顿/后台回归）封顶
 /// 4 tick，防级联。原版逻辑全部按 tick 计时（20 tick/s），任何按 60 Hz
@@ -222,10 +353,37 @@ fn accumulate_ticks(frac: &mut f64, dt: f32) -> u64 {
     n.min(4)
 }
 
+/// 无 GPU 空网格器（无头测试/CI 用）：不产出渲染网格。
+struct NullMesher;
+impl ChunkMesher for NullMesher {
+    fn build(&mut self, _pos: ChunkPos, _handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
+        None
+    }
+}
+
 impl GameRuntime {
     pub fn new(
         seed: u64,
         uploader: mcv_render::gpu::MeshUploader,
+        save_dir: std::path::PathBuf,
+        mode: GameMode,
+    ) -> Self {
+        Self::assemble(
+            seed,
+            Box::new(CxxMesher::new(256 << 20, uploader)),
+            save_dir,
+            mode,
+        )
+    }
+
+    /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。
+    pub fn new_headless(seed: u64, save_dir: std::path::PathBuf, mode: GameMode) -> Self {
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode)
+    }
+
+    fn assemble(
+        seed: u64,
+        mesher: Box<dyn ChunkMesher>,
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
@@ -260,7 +418,7 @@ impl GameRuntime {
             tick_frac: 0.0,
             game_ticks: 0,
             on_tick: false,
-            mesher: Box::new(CxxMesher::new(256 << 20, uploader)),
+            mesher,
             save_dir,
             render_chunks: Vec::new(),
             spawned: false,
@@ -270,10 +428,7 @@ impl GameRuntime {
             // 20 tick 起步 = 全武器满蓄力（attackSpeed≥1.0 → delay≤20 tick）。
             attack_ticker: 20.0, // ready
             food_tick_timer: 0,
-            mine_pos: None,
-            mine_per_tick: 0.0,
-            mine_progress: 0.0,
-            mine_tick_acc: 0.0,
+            mine: MineMachine::default(),
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -289,9 +444,30 @@ impl GameRuntime {
             fall_y: None,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
+        mcv_entity::register_drop_components(&mut rt.mobs_app.world);
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
+        // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
+        // mob_ai 按 MobKind 过滤、掉落系统按 ItemDrop 过滤，互不触碰）。
+        // TODO 渲染：mcv_render Scene 目前只有地形/HUD/玩家模型通路，怪物
+        // 也未上屏——掉落物待通用实体渲染通路（billboard 物品图标或 1/4
+        // 缩放方块）落地后再接，先保证物理+拾取语义完整。
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_physics",
+            mcv_entity::item_physics_system,
+        );
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_merge",
+            mcv_entity::item_merge_system,
+        );
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_pickup",
+            mcv_entity::item_pickup_system,
+        );
         rt
     }
 
@@ -346,6 +522,25 @@ impl GameRuntime {
             if self.mode == GameMode::Hardcore {
                 self.hardcore_death = true;
             }
+            // 死亡掉落（26.1 Player.die → Inventory.dropAll，keepInventory
+            // 默认 false）：快捷栏逐格生成 ItemDrop（拾取延迟 40 tick =
+            // 2 s，LivingEntity.java:3398），与 mob 死亡掉落同一生成路径，
+            // 再清栏。
+            let at = p.pos + Vec3::Y * 0.9;
+            let mut rng = spawn_rng();
+            for s in &self.hotbar.slots {
+                if !s.is_empty() {
+                    mcv_entity::spawn_item_drop(
+                        &mut self.mobs_app.world,
+                        at,
+                        s.item,
+                        s.count,
+                        mcv_entity::DEATH_PICKUP_DELAY,
+                        &mut rng,
+                    );
+                }
+            }
+            self.hotbar = mcv_item::Hotbar::empty();
         }
         let pos = [p.pos.x, p.pos.y, p.pos.z];
         // 26.1 sounds.json 事件:变体随机交给音效表按权重抽取。
@@ -405,16 +600,27 @@ impl GameRuntime {
                     self.player.sel_slot = p.sel_slot as usize;
                     // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
                     // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
-                    if !p.hotbar.is_empty() {
+                    if !p.hotbar.is_empty() || !p.main.is_empty() {
                         let mut h = mcv_item::Hotbar::empty();
-                        for (k, (item, count, damage)) in p.hotbar.into_iter().take(9).enumerate() {
-                            if count > 0 && (item as usize) < mcv_item::ITEMS.len() {
-                                h.slots[k] = mcv_item::ItemStack {
+                        let mk = |(item, count, damage): (u16, u8, u16)| {
+                            (count > 0 && (item as usize) < mcv_item::ITEMS.len()).then(|| {
+                                mcv_item::ItemStack {
                                     item,
                                     count,
                                     damage,
                                     enchants: Vec::new(),
-                                };
+                                }
+                            })
+                        };
+                        for (k, st) in p.hotbar.into_iter().take(9).enumerate() {
+                            if let Some(st) = mk(st) {
+                                h.slots[k] = st;
+                            }
+                        }
+                        // v4 主背包 27 格;v3 档读为空(保持原行为)。
+                        for (k, st) in p.main.into_iter().take(27).enumerate() {
+                            if let Some(st) = mk(st) {
+                                h.main[k] = st;
                             }
                         }
                         self.hotbar = h;
@@ -449,6 +655,13 @@ impl GameRuntime {
                 hotbar: self
                     .hotbar
                     .slots
+                    .iter()
+                    .map(|s| (s.item, s.count, s.damage))
+                    .collect(),
+                // v4:主背包 27 格同样全量导出。
+                main: self
+                    .hotbar
+                    .main
                     .iter()
                     .map(|s| (s.item, s.count, s.damage))
                     .collect(),
@@ -846,6 +1059,11 @@ impl GameRuntime {
                 player_pos: self.player.pos,
                 ticks_step: n.min(u32::MAX as u64) as u32,
             });
+            // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
+            resources.insert(mcv_entity::DropWorld {
+                chunks: self.chunks.clone(),
+                player_pos: self.player.pos,
+            });
             let mut ctx = mcv_ecs::SysCtx {
                 world,
                 resources,
@@ -858,6 +1076,13 @@ impl GameRuntime {
         for h in hits {
             self.hurt_player(h.damage.max(1.0), Some(h.src));
         }
+        // 掉落物拾取结算：入栏走 Hotbar::add（give 路径唯一），满栏剩余留地。
+        mcv_entity::settle_pickups(
+            &mut self.mobs_app.world,
+            &mut self.mobs_app.events,
+            &mut self.hotbar,
+            self.player.sel_slot,
+        );
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
         {
@@ -912,6 +1137,7 @@ impl GameRuntime {
                 // 冲刺提速 4.317→5.612 m/s（LivingEntity.java:156-158 +30%）；
                 // 潜行在 step 内优先于冲刺（蹲下即退冲刺）。
                 sprint: sprinting,
+                gravity_scale: 1.0,
             };
             mcv_game::step(
                 &WorldView {
@@ -1103,13 +1329,18 @@ impl GameRuntime {
     }
 
     /// 左键按下入口（桌面鼠标/触摸按下边沿共用）：先攻准星下的 mob，
-    /// 未命中则创造秒破、生存/极限进入进度挖掘 START。
+    /// 未命中则创造秒破、生存/极限进入进度挖掘 START。**按住**期间的连挖
+    /// 不在这里——那是 `fixed_step` 每 tick 驱动的 `step_mining`
+    /// （原版 Minecraft.continueAttack，Minecraft.java:1606-1628）。
     pub fn on_left_press(&mut self) {
         if self.try_attack() {
             return;
         }
         if self.mode == GameMode::Creative {
+            // 创造按下 = 立即秒破 + destroyDelay=5（MultiPlayerGameMode:157-167），
+            // 后续按住连破由 step_mining 的 creative_tick 接管。
             self.interact(false);
+            self.mine.delay = 5;
             return;
         }
         self.start_mining();
@@ -1181,13 +1412,34 @@ impl GameRuntime {
                     struck = hurt.is_some();
                     // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
                     if struck && hp.0 <= 0.0 {
-                        slain = Some((target, def.xp));
+                        // 带上 defs::MobKind 枚举（death_drops 按种类查 loot）。
+                        slain = Some((target, def.xp, def.kind));
                     }
                 }
             }
-            if let Some((e, xp)) = slain {
+            if let Some((e, xp, kind)) = slain {
+                // 击杀掉落（26.1 LivingEntity.die → loot）：despawn 前取位姿。
+                let pos = self
+                    .mobs_app
+                    .world
+                    .get_ref::<PhysBody>(e)
+                    .map(|b| b.pos + Vec3::Y * 0.5)
+                    .unwrap_or(self.player.pos);
                 self.mobs_app.world.despawn(e);
                 self.player_xp += xp;
+                let mut rng = spawn_rng();
+                for ev in mcv_entity::death_drops(kind, true, pos, &mut rng) {
+                    if let Some(item) = mcv_item::item_by_name(ev.item) {
+                        mcv_entity::spawn_item_drop(
+                            &mut self.mobs_app.world,
+                            pos,
+                            item,
+                            ev.count.min(u8::MAX as u32) as u8,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut rng,
+                        );
+                    }
+                }
             }
         }
         // 攻击实体即消费这次点击（26.1 左键先打实体），顺带中断进度挖掘。
@@ -1234,11 +1486,20 @@ impl GameRuntime {
         }
     }
 
-    #[allow(dead_code)] // wired into physics once mcv_game::step merges
+    /// 身体（脚上 0.5 格）在水中——物理步输入（游泳/浮沉）用。
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
         let b = BlockPos::new(p.x as i32, (p.y + 0.5) as i32, p.z as i32);
         view.block(b).def().liquid
+    }
+
+    /// 眼睛是否在水中（26.1 `Player.isEyeInFluid(WATER)`，Player.java:607：
+    /// 水下挖掘惩罚按**眼位**判定，与物理用的脚位版 in_water 区分）。
+    /// 接 per-tick 速率惩罚链（原 mcv_game::mining 惩罚实现的 live 路径版）。
+    fn eye_in_water(&self, view: &WorldView) -> bool {
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let c = eye.floor().as_ivec3();
+        view.block(BlockPos::new(c.x, c.y, c.z)).def().liquid
     }
 
     /// Mouse look.
@@ -1250,13 +1511,26 @@ impl GameRuntime {
 
     /// Break / place at the crosshair. Uses a temporary inline DDA until the
     /// physics module merges; the voxel write path is final.
+    /// 视线 5 格命中的方块(位置, 方块 id)——壳层拦截工作台等交互方块用。
+    pub fn look_block(&self) -> Option<(BlockPos, u16)> {
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let dir = self.camera(1.0).dir();
+        let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+        Some((hit, view.block(hit).0))
+    }
+
     pub fn interact(&mut self, place: bool) {
         let view = WorldView {
             chunks: &self.chunks,
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, normal)) = dda_hit(&view, eye, dir, 5.0) else {
+        // 交互距离按模式取 26.1 block_interaction_range（生存 4.5 / 创造 5.0）。
+        let Some((hit, normal)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))
+        else {
             return;
         };
         if !place {
@@ -1327,8 +1601,8 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-        // 生存掉落需正确工具（错误工具能磨掉但不掉东西）；满栏剩余暂无
-        // 掉落物实体，丢弃。创造不拾取。
+        // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
+        // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
             // 每破坏一方块 exhaustion 0.005（Block.playerDestroy，
             // Block.java:478 causeFoodExhaustion(0.005F)；创造经
@@ -1338,7 +1612,24 @@ impl GameRuntime {
             if mcv_item::mining::has_correct_tool(old, held.as_ref())
                 && let Some(drop) = mcv_item::drop_for_block(old)
             {
-                let _ = self.hotbar.add(self.player.sel_slot, drop);
+                // 生成点：方块中心 ±0.25 随机三轴、y 再 −0.125（26.1
+                // Block.popResource，Block.java:410-418）；pickup_delay 走
+                // 默认 10 tick（Block.java:436-444，非 0 贴手）。
+                let mut rng = spawn_rng();
+                let j = |rng: &mut dyn FnMut() -> u32| (rng() as f32 / u32::MAX as f32 - 0.5) * 0.5;
+                let c = Vec3::new(
+                    target.x as f32 + 0.5 + j(&mut rng),
+                    target.y as f32 + 0.5 + j(&mut rng) - 0.125,
+                    target.z as f32 + 0.5 + j(&mut rng),
+                );
+                mcv_entity::spawn_item_drop(
+                    &mut self.mobs_app.world,
+                    c,
+                    drop.item,
+                    drop.count,
+                    mcv_entity::PICKUP_DELAY,
+                    &mut rng,
+                );
             }
         }
         if let Some(group) = block_group(old.0) {
@@ -1359,82 +1650,99 @@ impl GameRuntime {
         (!s.is_empty()).then(|| s.clone())
     }
 
-    /// 生存/极限 START（26.1 START_DESTROY_BLOCK）：首 tick 进度即计入，
-    /// ≥1 走 "insta mine" 秒破；不可破坏方块（进度 0）直接无事。
+    /// 本 tick 条件下的 per-tick 挖掘速率（26.1 每 tick 重算：
+    /// `ServerPlayerGameMode.tick()` :107-130 → `Player#getDestroySpeed`
+    /// Player.java:586-614——空中 ÷5（:611-612）、眼在水中 ×0.2（:607-608））。
+    fn mine_per_tick(&self, view: &WorldView, block: BlockId) -> f32 {
+        mcv_item::mining::progress_per_tick_env(
+            block,
+            self.held_stack().as_ref(),
+            self.player.on_ground,
+            self.eye_in_water(view),
+        )
+    }
+
+    /// 生存/极限 START（26.1 START_DESTROY_BLOCK，MultiPlayerGameMode:147-205）：
+    /// 起手射线按交互距离（生存 4.5），速率含当前空中/水下惩罚，
+    /// 首 tick 进度即计入，≥1 走 "insta mine" 秒破；不可破坏方块（进度 0）
+    /// 直接无事。
     fn start_mining(&mut self) {
         let view = WorldView {
             chunks: &self.chunks,
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, _)) = dda_hit(&view, eye, dir, 5.0) else {
+        let Some((hit, _)) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode)) else {
             return;
         };
         let block = view.block(hit);
         if block.0 == 0 {
             return;
         }
-        let held = self.held_stack();
-        let per = mcv_item::mining::progress_per_tick(block, held.as_ref());
+        let per = self.mine_per_tick(&view, block);
         if per <= 0.0 {
             return; // 不可破坏（基岩）
         }
-        self.mine_pos = Some(hit);
-        self.mine_per_tick = per;
-        self.mine_progress = per;
-        self.mine_tick_acc = 1.0;
-        if per >= 1.0 {
-            self.destroy_block(hit);
-            self.cancel_mining();
+        if let Some(p) = self.mine.start(hit, per) {
+            self.destroy_block(p);
         }
     }
 
-    /// 松开：26.1 STOP_DESTROY_BLOCK 补判——perTick×(已耗 tick+1) ≥ 0.7 时
-    /// 判破坏成功（快速点击也能挖掉快碎的方块）。
+    /// 松开左键 = 原版 stopDestroyBlock：发 ABORT_DESTROY_BLOCK、进度**作废**
+    /// （MultiPlayerGameMode.java:207-222；服务端 ABORT 分支只清状态不破坏，
+    /// ServerPlayerGameMode.java:239-249）。旧"perTick×(tick+1) ≥ 0.7 补判
+    /// 破坏"删除——0.7 阈值只存在于服务端复核**客户端完成上报**的 STOP 包
+    /// （ServerPlayerGameMode.java:216-236），玩家中途主动松手从不破坏；本
+    /// 引擎无客户端上报，主动松手一律作废。
     pub fn on_left_release(&mut self) {
-        let Some(pos) = self.mine_pos else {
-            return;
-        };
-        let total = self.mine_per_tick * (self.mine_tick_acc + 1.0);
-        self.cancel_mining();
-        if total >= 0.7 {
-            self.destroy_block(pos);
-        }
+        self.mine.abort();
     }
 
+    /// 兼容入口：攻击实体等旁路取消进度挖掘（语义 = ABORT，见 on_left_release）。
     fn cancel_mining(&mut self) {
-        self.mine_pos = None;
-        self.mine_progress = 0.0;
-        self.mine_per_tick = 0.0;
-        self.mine_tick_acc = 0.0;
+        self.mine.abort();
     }
 
-    /// CONTINUE_DESTROY_BLOCK：按住期间逐 tick 累加（fixed dt=1/60 = 0.5
-    /// tick，×20 还原），进度 >1 破坏；目标消失或超出交互距离则 ABORT。
-    fn step_mining(&mut self, dt: f32) {
-        let Some(pos) = self.mine_pos else {
-            return;
-        };
+    /// 原版 Minecraft.continueAttack（Minecraft.java:1606-1628）：左键**按住
+    /// 状态**驱动，每 tick 重射线一次——不是按下边沿一次性。`on_tick` 门 =
+    /// 每 20 Hz tick 推进一次（60 Hz 按 dt 连加会偏 3×）。行为：
+    /// 生存 = 同目标续挖（速率每 tick 现算）/ 换目标 ABORT+START / 挖穿后
+    /// 5-tick 冷却自动开下一目标；创造 = 冷却减尽后每 tick 秒破准星目标。
+    fn step_mining(&mut self, _dt: f32) {
         if !self.input.mining {
-            // 桌面松开已在 on_left_release 补判，这里是防御路径。
-            self.cancel_mining();
+            // 松开边沿已在 on_left_release 走 ABORT，这里是防御路径
+            // （死亡清输入等）。
+            self.mine.abort();
+            return;
+        }
+        if !self.on_tick {
+            // 本固定步未跨 tick 边界：原版一个 tick 只 continue 一次。
             return;
         }
         let view = WorldView {
             chunks: &self.chunks,
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
-        let center = Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5);
-        if view.block(pos).0 == 0 || (center - eye).length() > 5.5 {
-            self.cancel_mining();
+        let dir = self.camera(1.0).dir();
+        let reach = block_interaction_reach(self.mode);
+        if self.mode == GameMode::Creative {
+            let hit = dda_hit(&view, eye, dir, reach).map(|(p, _)| p);
+            if let Some(p) = self.mine.creative_tick(hit) {
+                self.destroy_block(p);
+            }
             return;
         }
-        let ticks = dt * 20.0;
-        self.mine_progress += self.mine_per_tick * ticks;
-        self.mine_tick_acc += ticks;
-        if self.mine_progress > 1.0 {
-            self.destroy_block(pos);
-            self.cancel_mining();
+        // 每 tick 重射线（原版客户端 hitResult 每 tick 重算；超出 reach 打不中
+        // → None → continue_tick 内 ABORT，取代旧"中心距 >5.5 才中止"）。
+        let hit = dda_hit(&view, eye, dir, reach)
+            .map(|(p, _)| (p, view.block(p)))
+            .filter(|(_, b)| b.0 != 0)
+            .map(|(p, b)| MineHit {
+                pos: p,
+                per_tick: self.mine_per_tick(&view, b),
+            });
+        if let MineTick::Broken(p) = self.mine.continue_tick(hit) {
+            self.destroy_block(p);
         }
     }
 
@@ -1452,20 +1760,20 @@ impl GameRuntime {
         (v & 0xF, v >> 4)
     }
 
-    /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定 mine_pos 并按进度
+    /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
     /// 给裂纹档位（progress×4 取整，0..3）；未挖掘时准星 DDA 目标只描边。
     /// 面暴露 = 邻格空气；面光照取邻格（与 mesher 面光照同规则）。
     pub fn mining_overlay(&self) -> Option<mcv_render::gpu::MiningOverlay> {
         let view = WorldView {
             chunks: &self.chunks,
         };
-        let mining = self.mine_pos.is_some();
-        let target = match self.mine_pos {
+        let mining = self.mine.pos.is_some();
+        let target = match self.mine.pos {
             Some(p) => p,
             None => {
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let dir = self.camera(1.0).dir();
-                let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+                let (hit, _) = dda_hit(&view, eye, dir, block_interaction_reach(self.mode))?;
                 hit
             }
         };
@@ -1497,7 +1805,7 @@ impl GameRuntime {
             }
         }
         let stage = if mining {
-            Some(((self.mine_progress * 4.0) as u32).min(3))
+            Some(((self.mine.progress * 4.0) as u32).min(3))
         } else {
             None
         };
@@ -1515,12 +1823,15 @@ impl GameRuntime {
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），
     /// `gui` 为 None 时整体回退旧程序化绘制；触屏摇杆程序化，
     /// `show_touch`（死亡界面等场景传 false 隐藏摇杆）。
+    /// `show_hotbar` = false 时不画快捷栏（合成/创造界面自带 36 格面板，
+    /// 避免底部快捷栏与面板内快捷栏重复）。
     pub fn build_hud(
         &self,
         width: f32,
         height: f32,
         gui: Option<&mcv_render::gui::SpriteSheet>,
         show_touch: bool,
+        show_hotbar: bool,
     ) -> Vec<HudQuad> {
         let mut quads = Vec::new();
         let s = mcv_render::gui_scale(height);
@@ -1538,77 +1849,79 @@ impl GameRuntime {
             ) {
                 quads.push(q);
             }
-            // 快捷栏：hotbar.png 182x22，选中框 24x23（外扩 1px）
-            quads.extend(g.sprite_full(
-                "hotbar",
-                width * 0.5 - 91.0 * s,
-                height - 22.0 * s,
-                182.0 * s,
-                22.0 * s,
-                white,
-            ));
-            quads.extend(g.sprite_full(
-                "hotbar_sel",
-                width * 0.5 - 92.0 * s + sel as f32 * 20.0 * s,
-                height - 23.0 * s,
-                24.0 * s,
-                23.0 * s,
-                white,
-            ));
-            // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
-            // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
-            for (i, stack) in self.hotbar.slots.iter().enumerate() {
-                if stack.is_empty() {
-                    continue;
-                }
-                let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
-                let iy = height - 19.0 * s;
-                match stack.def().kind {
-                    mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                        mcv_core::BLOCKS[bid.0 as usize].tiles[2],
-                        ix,
-                        iy,
-                        16.0 * s,
-                    )),
-                    _ => quads.extend(g.sprite_full(
-                        stack.def().name,
-                        ix,
-                        iy,
-                        16.0 * s,
-                        16.0 * s,
-                        white,
-                    )),
-                }
-                if stack.count > 1 {
-                    let t = stack.count.to_string();
-                    let tw = text::text_width(&t, s);
-                    quads.extend(text::text_quads(
-                        &t,
-                        ix + 18.0 * s - tw,
-                        iy + 11.0 * s,
-                        s,
-                        white,
-                    ));
-                }
-                // renderSlot 耐久条：黑底 13x1 + 绿→红渐变前景，位于图标下沿。
-                if stack.damage > 0 {
-                    let max = stack.max_damage().max(1) as f32;
-                    let f = 1.0 - stack.damage as f32 / max;
-                    let bar = (13.0 - stack.damage as f32 * 13.0 / max).max(0.0) * s;
-                    quads.push(text::rect(
-                        ix + s,
-                        iy + 12.0 * s,
-                        13.0 * s,
-                        s,
-                        [0.0, 0.0, 0.0, 1.0],
-                    ));
-                    quads.push(text::rect(
-                        ix + s,
-                        iy + 12.0 * s,
-                        bar,
-                        s,
-                        [f * 0.392, f, 0.0, 1.0],
-                    ));
+            if show_hotbar {
+                // 快捷栏：hotbar.png 182x22，选中框 24x23（外扩 1px）
+                quads.extend(g.sprite_full(
+                    "hotbar",
+                    width * 0.5 - 91.0 * s,
+                    height - 22.0 * s,
+                    182.0 * s,
+                    22.0 * s,
+                    white,
+                ));
+                quads.extend(g.sprite_full(
+                    "hotbar_sel",
+                    width * 0.5 - 92.0 * s + sel as f32 * 20.0 * s,
+                    height - 23.0 * s,
+                    24.0 * s,
+                    23.0 * s,
+                    white,
+                ));
+                // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
+                // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
+                for (i, stack) in self.hotbar.slots.iter().enumerate() {
+                    if stack.is_empty() {
+                        continue;
+                    }
+                    let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
+                    let iy = height - 19.0 * s;
+                    match stack.def().kind {
+                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                            ix,
+                            iy,
+                            16.0 * s,
+                        )),
+                        _ => quads.extend(g.sprite_full(
+                            stack.def().name,
+                            ix,
+                            iy,
+                            16.0 * s,
+                            16.0 * s,
+                            white,
+                        )),
+                    }
+                    if stack.count > 1 {
+                        let t = stack.count.to_string();
+                        let tw = text::text_width(&t, s);
+                        quads.extend(text::text_quads(
+                            &t,
+                            ix + 18.0 * s - tw,
+                            iy + 11.0 * s,
+                            s,
+                            white,
+                        ));
+                    }
+                    // renderSlot 耐久条：黑底 13x1 + 绿→红渐变前景，位于图标下沿。
+                    if stack.damage > 0 {
+                        let max = stack.max_damage().max(1) as f32;
+                        let f = 1.0 - stack.damage as f32 / max;
+                        let bar = (13.0 - stack.damage as f32 * 13.0 / max).max(0.0) * s;
+                        quads.push(text::rect(
+                            ix + s,
+                            iy + 12.0 * s,
+                            13.0 * s,
+                            s,
+                            [0.0, 0.0, 0.0, 1.0],
+                        ));
+                        quads.push(text::rect(
+                            ix + s,
+                            iy + 12.0 * s,
+                            bar,
+                            s,
+                            [f * 0.392, f, 0.0, 1.0],
+                        ));
+                    }
                 }
             }
             // 心（左上）与饥饿（右上镜像）：Gui.renderHealth/renderFood 规则，
@@ -1648,63 +1961,65 @@ impl GameRuntime {
                 2.0,
                 [1.0, 1.0, 1.0, 0.75],
             ));
-            let slot = 40.0;
-            let total = slot * 9.0;
-            let x0 = width * 0.5 - total * 0.5;
-            let y0 = height - slot - 8.0;
-            quads.push(text::rect(
-                x0 - 2.0,
-                y0 - 2.0,
-                total + 4.0,
-                slot + 4.0,
-                [0.1, 0.1, 0.1, 0.6],
-            ));
-            for (i, stack) in self.hotbar.slots.iter().enumerate() {
-                let x = x0 + i as f32 * slot;
+            if show_hotbar {
+                let slot = 40.0;
+                let total = slot * 9.0;
+                let x0 = width * 0.5 - total * 0.5;
+                let y0 = height - slot - 8.0;
                 quads.push(text::rect(
-                    x + 1.0,
-                    y0 + 1.0,
-                    slot - 2.0,
-                    slot - 2.0,
-                    [0.25, 0.25, 0.28, 0.8],
+                    x0 - 2.0,
+                    y0 - 2.0,
+                    total + 4.0,
+                    slot + 4.0,
+                    [0.1, 0.1, 0.1, 0.6],
                 ));
-                if !stack.is_empty() {
-                    match stack.def().kind {
-                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid.0 as usize].tiles[2],
-                            x + 5.0,
-                            y0 + 5.0,
-                            slot - 10.0,
-                        )),
-                        // 无图集时非方块物品只画通用色块。
-                        _ => quads.push(text::rect(
-                            x + (slot - 20.0) * 0.5,
-                            y0 + (slot - 20.0) * 0.5,
-                            20.0,
-                            20.0,
-                            [0.55, 0.5, 0.42, 0.95],
-                        )),
+                for (i, stack) in self.hotbar.slots.iter().enumerate() {
+                    let x = x0 + i as f32 * slot;
+                    quads.push(text::rect(
+                        x + 1.0,
+                        y0 + 1.0,
+                        slot - 2.0,
+                        slot - 2.0,
+                        [0.25, 0.25, 0.28, 0.8],
+                    ));
+                    if !stack.is_empty() {
+                        match stack.def().kind {
+                            mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
+                                mcv_core::BLOCKS[bid.0 as usize].tiles[2],
+                                x + 5.0,
+                                y0 + 5.0,
+                                slot - 10.0,
+                            )),
+                            // 无图集时非方块物品只画通用色块。
+                            _ => quads.push(text::rect(
+                                x + (slot - 20.0) * 0.5,
+                                y0 + (slot - 20.0) * 0.5,
+                                20.0,
+                                20.0,
+                                [0.55, 0.5, 0.42, 0.95],
+                            )),
+                        }
+                        if stack.count > 1 {
+                            let t = stack.count.to_string();
+                            let tw = text::text_width(&t, 1.0);
+                            quads.extend(text::text_quads(
+                                &t,
+                                x + slot - 3.0 - tw,
+                                y0 + slot - 12.0,
+                                1.0,
+                                white,
+                            ));
+                        }
                     }
-                    if stack.count > 1 {
-                        let t = stack.count.to_string();
-                        let tw = text::text_width(&t, 1.0);
-                        quads.extend(text::text_quads(
-                            &t,
-                            x + slot - 3.0 - tw,
-                            y0 + slot - 12.0,
-                            1.0,
-                            white,
+                    if i == sel {
+                        quads.push(text::rect(
+                            x - 1.0,
+                            y0 - 1.0,
+                            slot + 2.0,
+                            2.0,
+                            [1.0, 1.0, 1.0, 0.9],
                         ));
                     }
-                }
-                if i == sel {
-                    quads.push(text::rect(
-                        x - 1.0,
-                        y0 - 1.0,
-                        slot + 2.0,
-                        2.0,
-                        [1.0, 1.0, 1.0, 0.9],
-                    ));
                 }
             }
         }
@@ -1916,6 +2231,7 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             in_water: false,
             sneak: false,
             sprint: false,
+            gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
         let mut eng = body.body();
@@ -1938,8 +2254,33 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                 damage: def.attack_damage,
             });
         }
-        // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后 retain）。
+        // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后
+        // retain）+ 环境死亡掉落（非玩家击杀，spider_eye 不掉；玩家击杀
+        // 在 try_attack 即时结算，不会走到这里）。
         if health.get(e).is_some_and(|h| h.0 <= 0.0) {
+            let mut rng = spawn_rng();
+            let drops: Vec<(u16, u8)> = mcv_entity::death_drops(def.kind, false, pos, &mut rng)
+                .into_iter()
+                .filter_map(|ev| {
+                    mcv_item::item_by_name(ev.item).map(|i| (i, ev.count.min(u8::MAX as u32) as u8))
+                })
+                .collect();
+            if !drops.is_empty() {
+                let at = pos + Vec3::Y * 0.5;
+                commands.push(move |w| {
+                    let mut r = spawn_rng();
+                    for (item, count) in drops {
+                        mcv_entity::spawn_item_drop(
+                            w,
+                            at,
+                            item,
+                            count,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut r,
+                        );
+                    }
+                });
+            }
             commands.despawn(e);
         }
     });
