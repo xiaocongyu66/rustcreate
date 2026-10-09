@@ -166,10 +166,12 @@ fn small_step_movement_no_flap_and_converges() {
     assert_ne!(rt.player.pos, Vec3::ZERO, "出生投放未发生（地形未就绪）");
 
     // —— 移动段：100 帧小步直线前进（每帧 0.8 格，跨 5 个区块边界），
-    //    再 100 帧贴着区块边界 ±0.2 振荡（center 在相邻区块间翻转）。
+    //    再 100 帧贴着「直线段结束时的实际 center 边界」±0.2 振荡（center
+    //    在相邻区块间翻转；base 不能写死坐标——spawn 版投放的出生列不
+    //    固定，写死会让振荡段起点偏离实际位置）。
     let mut prev: HashSet<ChunkPos> = rt.chunks.keys().copied().collect();
     let mut events: Vec<(u32, ChunkPos, bool)> = Vec::new(); // (帧, 区块, add?)
-    let boundary = 80.0f32; // x=80 是区块 4/5 的边界
+    let boundary = ((player_chunk(&rt).x + 1) * 16) as f32; // 当前 center 的 +X 边界
     for i in 0..200u32 {
         if i < 100 {
             rt.player.pos.x += 0.8;
@@ -204,16 +206,26 @@ fn small_step_movement_no_flap_and_converges() {
             w[1].0
         );
     }
-    // (b) 振荡段零区块【移除】：迟滞带（请求 ≤rd+1、卸载 >rd+2）下，center
-    //     在相邻区块间翻转不应让任何区块离开又回到半径（嫌疑 D 的直接检
-    //     验）。补载 backlog 期间请求环内的合法插入允许发生，不在本断言内。
-    let oscillation: Vec<&(u32, ChunkPos, bool)> = events
-        .iter()
-        .filter(|(f, _, add)| *f > 100 && !*add)
-        .collect();
+    // (b) 振荡段内同一区块不得【既卸载又加载】：迟滞带（请求 ≤rd+1、卸载
+    //     >rd+2）下，center 在相邻区块间翻转只能让边缘块一次性离开或
+    //     一次性补进，不会往复——「离开又回到半径」即迟滞失效（嫌疑 D
+    //     的防御性锁；真机取证已裁决 D 非主因，本断言防回归）。振荡段
+    //     开局的一次性卸载（骑跨起点重定位）与补载 backlog 的合法插入
+    //     均不在本断言内。
+    let mut removed: HashSet<ChunkPos> = HashSet::new();
+    let mut flap: Vec<(u32, ChunkPos, bool)> = Vec::new();
+    for (f, p, add) in events.iter().filter(|(f, _, _)| *f > 100) {
+        if *add {
+            if removed.contains(p) {
+                flap.push((*f, *p, *add));
+            }
+        } else {
+            removed.insert(*p);
+        }
+    }
     assert!(
-        oscillation.is_empty(),
-        "边界振荡期出现区块卸载（卸载迟滞失效）：{oscillation:?}"
+        flap.is_empty(),
+        "边界振荡期出现区块离开又回到半径（卸载迟滞失效）：{flap:?}"
     );
 
     // —— 收敛段：停止移动。静止判定 = 环内全 Uploaded 且在册区块全部完成
