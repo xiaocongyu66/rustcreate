@@ -90,8 +90,10 @@ fn single_block_six_faces() {
 #[test]
 fn block_table_tex_parity_with_mcv_core() {
     // 生成表（cpp/src/blocks_gen.inc）与 mcv_core::BLOCKS 必须逐 id 一致：
-    // 对每个 id 悬空放一块，不透明 pass 应产出 6 面、逐面 tile 层相同。
-    // 水走水 pass 除外；非立方（楼梯/板/cross…）占位渲染为全立方，同样入检。
+    // 对每个 id 悬空放一块，不透明 pass 按 shape 模板出几何、逐面 tile 层
+    // 相同。水走水 pass 除外。全空气环境下各形状顶点数：Cube/单根 Fence/
+    // 单块 Slab/Torch 细柱 = 6 面；Cross = 2 条双面 quad；Stairs = 两盒
+    // 12 面（不做盒间剔除，宁多勿漏）。
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
@@ -102,7 +104,12 @@ fn block_table_tex_parity_with_mcv_core() {
         }
         put(&mut c.0, 8, 8, 8, id);
         let buf = mesher.build(&full9(&c, &side), 0).unwrap();
-        assert_eq!(buf.counts(), (24, 36), "block {id} face count");
+        let expected = match mcv_core::shape::Shape::from_u8(mcv_core::BLOCKS[id as usize].shape) {
+            mcv_core::shape::Shape::Cross => (8, 24),
+            mcv_core::shape::Shape::Stairs => (48, 72),
+            _ => (24, 36),
+        };
+        assert_eq!(buf.counts(), expected, "block {id} face count");
         for v in decode(&buf) {
             let face = (v.flags & 7) as usize;
             assert_eq!(
