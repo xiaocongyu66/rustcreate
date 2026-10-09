@@ -527,7 +527,7 @@ impl Renderer {
         let n_layers: usize = counts.iter().sum();
         // 图集容量取证（2026-10-10 真机 Mali「平色面」定位）：error 级常显，
         // 与 app.rs 的 adapter 侧 `atlas-cap` 行配对。真机 logcat 必见此行：
-        // truncated=false 且 arrays=[837] 说明设备没被卡，崩坏另有根因。
+        // truncated=false 且 arrays=[838] 说明设备没被卡，崩坏另有根因。
         log::error!(
             "atlas-cap: device max_texture_array_layers={} max_texture_dimension_2d={} atlas::LAYERS={} arrays={:?} created={} truncated={} crack_layers_ok={}",
             device_max,

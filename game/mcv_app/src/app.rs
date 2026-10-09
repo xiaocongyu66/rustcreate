@@ -1851,7 +1851,7 @@ impl AppState {
             apply_limit_buckets: false,
         }))?;
         // 图集容量取证（真机 Mali GLES 定位「平色面」）：error 级常显，
-        // logcat 直接 grep `atlas-cap` 看设备真实上限是否容得下 837 层。
+        // logcat 直接 grep `atlas-cap` 看设备真实上限是否容得下全部图集层（LAYERS=838）。
         log::error!(
             "atlas-cap: adapter({:?} {:?}) max_texture_array_layers={} max_texture_dimension_2d={} atlas::LAYERS={}",
             adapter.get_info().backend,

@@ -186,9 +186,17 @@ fn relight_block_edit(
     // BorderSeed 是格级差分记录；跨区块协议以整条边快照
     // （extract_edge/apply_edge）为单位，脏面掩码已足够驱动派发。
     let _ = seeds;
+    // 双向派发：mask 只驱动「推」（本块边值 → 邻块）。挖开贴边遮光壁时
+    // 本侧字节可能不变（暗格 0→0），邻区光进不来（update_block 文档 :552-
+    // 556 明言拉方向由调用方补）——故对每条脏边再排一条反向同步，把邻块
+    // 现值回喂本块。队列是 LIFO：每边先排 pull 后排 push，pop 序为
+    // push→pull，保证 pull 读到邻块被推之后的现值。
     let mut queue: Vec<(ChunkPos, u8)> = Vec::new();
     for side in 0..4u8 {
         if mask & (1 << side) != 0 {
+            let (dx, dz) = side_delta(side);
+            let npos = ChunkPos::new(cpos.x + dx, cpos.z + dz);
+            queue.push((npos, GameRuntime::opposite_side(side)));
             queue.push((cpos, side));
         }
     }
@@ -200,8 +208,11 @@ fn relight_block_edit(
 /// 光）再 ADD（吸收该边新增的光）——等价 vanilla 跨 section 的
 /// decrease→increase 两阶段（LightEngine.java:147-148，由 setBlock 的
 /// checkNode 驱动）。接收块光变 → 标 MESH 脏 + 其另三面新脏回队级联。
-/// `apply_edge` 从不回报刚同步的边（mcv_light::diff_edges 的 exclude 机制），
-/// 光级别有限，级联自然收敛；步数上限只是防御性兜底。
+/// REMOVE 时 `apply_edge` 若撤改了本侧边值会回报刚同步的边（对
+/// propagateDecrease 幸存格按 stored 现值重播种的跨块等价，
+/// BlockLightEngine.java:103-105），级联把本侧现值回喂编辑块；ADD 不回报。
+/// 回报仅在边字节严格变化时触发，光级别有限，级联单调收敛；步数上限只是
+/// 防御性兜底。
 fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Vec<(ChunkPos, u8)>) {
     let mut steps = 0usize;
     while let Some((pos, side)) = queue.pop() {

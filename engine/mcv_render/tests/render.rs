@@ -92,7 +92,7 @@ fn setup_with_layer_cap_and_assets(
         apply_limit_buckets: false,
     }))
     .expect("no adapter: install mesa-vulkan-drivers for lavapipe");
-    // 与 app.rs 同款：方块图集 837 层（827 真实 + 10 裂纹）> downlevel 256，
+    // 与 app.rs 同款：方块图集 838 层（827 真实 + 1 missing 哨兵 + 10 裂纹）> downlevel 256，
     // 向 adapter 要实际上限（lavapipe 3907 / Metal 2048 / D3D 2048），
     // 否则草地层 336 被 gpu.rs 截尾。
     let mut limits = wgpu::Limits::downlevel_defaults();
@@ -267,15 +267,18 @@ fn terrain_sky_and_hud_render() {
 }
 
 /// 多数组拆分路径回归（2026-10-10 GLES 图集截断洞）：设备
-/// max_texture_array_layers < 837（GLES 保底 256）时方块图集拆 4 个数组、
+/// max_texture_array_layers < LAYERS（GLES 保底 256）时方块图集拆 4 个数组、
 /// shader 按 layer 区间选数组。lavapipe 上限 3907 永远不会自然走这条路
 ///（旧 gles 冒烟测试遇到层数不够直接 return——正是 CI 洞），这里用
-/// layer_cap=256 强制 cdiv(837,256)=4 数组路径：GRASS_TOP=336 → 数组 1
+/// layer_cap=256 强制 cdiv(838,256)=4 数组路径：GRASS_TOP=336 → 数组 1
 /// 局部 126（边界映射由 mcv_core::tests::atlas::remap_layer_boundaries
 /// 锁定），断言草地仍渲出。
 #[test]
 fn terrain_multi_array_grass_render() {
-    let (device, queue, mut renderer) = setup_with_layer_cap_and_assets(Some(256), None);
+    // 必须喂真实素材：nofake 后无素材=全 missingno 品红，草地绿色断言
+    // 只可能来自原版贴图（程序化回退已删）。
+    let (device, queue, mut renderer) =
+        setup_with_layer_cap_and_assets(Some(256), Some(&workspace_assets()));
     let extent = wgpu::Extent3d {
         width: 320,
         height: 240,
