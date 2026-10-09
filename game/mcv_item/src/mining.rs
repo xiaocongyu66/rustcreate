@@ -104,10 +104,10 @@ pub fn has_correct_tool(block: BlockId, stack: Option<&ItemStack>) -> bool {
 /// 26.1 `ItemStack#getDestroySpeed` 子集：种类匹配才吃工具速度，否则 1.0。
 /// （效率附魔/急迫效果未实现，跳过。）
 pub fn destroy_speed(block: BlockId, stack: Option<&ItemStack>) -> f32 {
-    if let (Some((kind, m)), Some(want)) = (tool_of(stack), block_mining(block).speed_tool) {
-        if kind == want {
-            return f32::from(m.speed);
-        }
+    if let (Some((kind, m)), Some(want)) = (tool_of(stack), block_mining(block).speed_tool)
+        && kind == want
+    {
+        return f32::from(m.speed);
     }
     1.0
 }
