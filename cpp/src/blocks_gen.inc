@@ -2,8 +2,9 @@
 // mesher.cpp 的 kBlocks 初始化行；与 blocks_gen.inc.rs 同一次生成，
 // id 顺序/标志/tile 层索引与 mcv_core::BLOCKS 按构造一致。
 // 字段: { opaque, liquid, geom, tiles[+X,-X,+Y,-Y,+Z,-Z], shape }
-// geom: 空气/水（水走水 pass）= false；非立方(kind=1)仍入不透明 pass =
-// true（形状模板网格器按 shape 出几何）；其余立方实体/其他液体 = solid or liquid。
+// geom: 空气/水（水走水 pass）与隐形方块（屏障/光源/空气族/结构空位/
+// 气泡柱）= false；非立方(kind=1)仍入不透明 pass = true（形状模板网格
+// 器按 shape 出几何）；其余立方实体/其他液体 = solid or liquid。
 // shape: mcv_core::Shape 判别值 0立方 1十字 2火把 3栅栏 4半砖 5楼梯，
 // 按注册名分类（shape_of_name，与 game/mcv_core/src/shape.rs 同源）。
     {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // air
@@ -74,7 +75,7 @@
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_hanging_sign
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_sign
     {true, false, true, {36, 36, 37, 35, 36, 36}, 0},  // barrel
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // barrier
+    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // barrier
     {true, false, true, {38, 38, 39, 39, 38, 38}, 0},  // basalt
     {false, false, true, {40, 40, 40, 40, 40, 40}, 0},  // beacon
     {true, false, true, {44, 44, 45, 42, 44, 43}, 0},  // bee_nest
@@ -163,7 +164,7 @@
     {true, false, true, {103, 103, 103, 103, 103, 103}, 0},  // brown_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // brown_wall_banner
     {true, false, true, {104, 104, 104, 104, 104, 104}, 0},  // brown_wool
-    {false, true, true, {789, 789, 789, 789, 789, 789}, 0},  // bubble_column
+    {false, true, false, {789, 789, 789, 789, 789, 789}, 0},  // bubble_column
     {false, false, true, {105, 105, 105, 105, 105, 105}, 0},  // bubble_coral
     {true, false, true, {106, 106, 106, 106, 106, 106}, 0},  // bubble_coral_block
     {false, false, true, {107, 107, 107, 107, 107, 107}, 0},  // bubble_coral_fan
@@ -182,7 +183,7 @@
     {true, false, true, {125, 124, 126, 235, 123, 125}, 0},  // cartography_table
     {true, false, true, {584, 584, 586, 586, 584, 127}, 0},  // carved_pumpkin
     {false, false, true, {129, 129, 130, 128, 129, 129}, 0},  // cauldron
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // cave_air
+    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // cave_air
     {false, false, true, {131, 131, 131, 131, 131, 131}, 0},  // cave_vines
     {false, false, true, {132, 132, 132, 132, 132, 132}, 0},  // cave_vines_plant
     {true, false, true, {135, 135, 135, 135, 133, 134}, 0},  // chain_command_block
@@ -527,7 +528,7 @@
     {false, false, true, {403, 403, 403, 403, 403, 403}, 0},  // leaf_litter
     {false, false, true, {404, 404, 405, 492, 404, 404}, 0},  // lectern
     {false, false, true, {406, 406, 406, 168, 406, 406}, 0},  // lever
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // light
+    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // light
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_bed
     {false, false, true, {407, 407, 407, 407, 407, 407}, 0},  // light_blue_candle
@@ -1000,7 +1001,7 @@
     {true, false, true, {735, 735, 735, 735, 735, 735}, 0},  // stripped_warped_hyphae
     {true, false, true, {735, 735, 736, 736, 735, 735}, 0},  // stripped_warped_stem
     {true, false, true, {737, 737, 737, 737, 737, 737}, 0},  // structure_block
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // structure_void
+    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // structure_void
     {false, false, true, {738, 738, 738, 738, 738, 738}, 0},  // sugar_cane
     {false, false, true, {739, 739, 739, 739, 739, 739}, 0},  // sunflower
     {true, false, true, {740, 740, 740, 740, 740, 740}, 0},  // suspicious_gravel
@@ -1040,7 +1041,7 @@
     {false, false, true, {772, 772, 773, 770, 772, 771}, 0},  // vault
     {true, false, true, {774, 774, 775, 775, 774, 774}, 0},  // verdant_froglight
     {false, false, true, {776, 776, 776, 776, 776, 776}, 0},  // vine
-    {false, false, true, {0, 0, 0, 0, 0, 0}, 0},  // void_air
+    {false, false, false, {0, 0, 0, 0, 0, 0}, 0},  // void_air
     {false, false, true, {755, 755, 755, 755, 755, 755}, 0},  // wall_torch
     {false, false, true, {781, 781, 781, 781, 781, 781}, 0},  // warped_button
     {false, false, true, {777, 777, 777, 777, 777, 777}, 0},  // warped_door

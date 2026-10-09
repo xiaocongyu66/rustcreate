@@ -4,8 +4,10 @@
 - 输入：官方 26.1 素材树 `assets/minecraft/`（历史输入 = `src-26.1/assets/minecraft/`，
   1170 blockstates / 2392 block models）+ 反编译 `net/minecraft/world/level/block/Blocks.java`。
 - 产物：
-  - `crates/mcv_core/src/blocks_gen.inc.rs` —— `GEN_BLOCKS: [(&str, bool,bool,bool, u8, [u16;6], f32, u8); 1171]`
-  - `crates/mcv_core/tiles_manifest.json` —— tile 层索引（按贴图名字典序）→ 文件名 + 虚拟路径
+  - `game/mcv_core/src/blocks_gen.inc.rs` —— `GEN_BLOCKS: [(&str, bool,bool,bool, u8, [u16;6], f32, u8); 1171]`
+  - `game/mcv_core/tiles_manifest.json` —— tile 层索引（按贴图名字典序）→ 文件名 + 虚拟路径
+  - `cpp/src/blocks_gen.inc` —— C++ mesher kBlocks 同步行
+  - `game/mcv_core/tests/vanilla_blocks_gen.inc` —— 官方注册表名字清单（覆盖率测试数据源）
 - 贴图**不拷贝**：运行时从 `assets/minecraft/textures/block/` 按 manifest 虚拟路径加载（主控指令，
   不访问 Mojang CDN；沙箱内 Mojang CDN 亦实测整体 404）。
 - lib.rs 未改动（等主控合并 BlockId u8→u16 后 `include!` 本表）。
@@ -29,9 +31,11 @@
 | 唯一贴图 = 纹理数组层数 | **827**（< 2048 预算，GLES 上限抬到 adapter 值即可容纳） |
 | 缺贴图失败 | **0**（本机素材树 1112 张 block PNG 全覆盖所有引用） |
 | 全空贴图方块 | 5：air/cave_air/void_air/barrier/light/structure_void 类（语义即无形，tiles 全 0 合理） |
-| Blocks.java 名称未解析 | 26（copper_bars/chain/lantern 全 weathering 变体、item_frame、glow_item_frame —— 注册行形态不同，走默认属性 solid/opaque=true、hardness=2.0） |
+| Blocks.java 名称未解析 | 2（仅引擎自建 item_frame/glow_item_frame 占位；26.1 铜系 24 变体 2026-10-10 已按 WeatheringCopperBlocks.create 解析，见下） |
 
-默认属性回退（缺数据时）：solid=true opaque=true liquid=false light=0 hardness=2.0。
+默认属性回退（缺数据时）：solid=true opaque=true liquid=false light=0 hardness=0.0
+（原版 `Properties.destroyTime` 字段默认 0.0F，BlockBehaviour.java:976；2026-10-10
+审计修正，此前误用 2.0 兜底）。
 
 ## id 兼容（硬约束，已机器校验）
 
@@ -68,4 +72,10 @@
 1. `tintindex` 生物群系染色（草侧面 overlay、叶）未由渲染管线实现，贴图按原样入表。
 2. `model_kind=1` 暂按全方块渲染（网格器未实现 model_kind）；任务书建议 cross 顶底留空，但现网格器渲染 6 面且 tile 0 为可见品红调试层，留空会闪品红，故按"做不到就六面同贴图占位"处理。
 3. 朝向/半高/多部件几何（楼梯、板、栅栏、furnace facing 等）需要网格器按 model_kind+state 扩展后才能正确显示，本表已保留分类信息。
-4. 26 个铜栏杆/链/灯笼 weathering 变体与 item_frame 属性走默认回退（对渲染无影响，仅硬度/发光为默认值）。
+4. ~~26 个铜栏杆/链/灯笼 weathering 变体与 item_frame 属性走默认回退~~ 已修复
+   （2026-10-10）：`WeatheringCopperBlocks.create` 按 8 变体展开（栏杆/链 strength=5.0、
+   灯笼 strength=3.5+15 光，全部 noOcclusion）；`buttonProperties()`→0.5+noCollision、
+   `pistonProperties()`→1.5、无 `strength()` 的方块按原版默认 destroyTime=0.0
+   （air 族/虫蚀石/蜂蜜/史莱姆/绊线等 40+ 块从 2.0 修正）；屏障/光源/空气族/
+   结构空位/气泡柱 geom=false（原版不可见，此前顶着层 0 贴图出全盒）。
+   id 0-13 未动。

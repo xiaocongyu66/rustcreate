@@ -5,6 +5,8 @@
 
 use mcv_core::BlockDef;
 
+include!("vanilla_blocks_gen.inc");
+
 /// 按名字查 BLOCKS 注册表条目。
 fn by_name(name: &str) -> &'static BlockDef {
     mcv_core::BLOCKS
@@ -119,5 +121,179 @@ fn block_id_indices_stable() {
     assert_eq!(mcv_core::AIR.def().name, "air");
     for (i, def) in mcv_core::BLOCKS.iter().enumerate() {
         assert_eq!(mcv_core::BlockId(i as u16).def().name, def.name);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// 覆盖率与完整性（M7a 全方块覆盖审计新增）
+// ---------------------------------------------------------------------------
+
+/// 旧 14 方块与官方注册表名的对应（id 0-13 兼容约束：旧名不可改，按别名覆盖）。
+const LEGACY_ALIASES: [(&str, &str); 7] = [
+    ("grass_block", "grass"),
+    ("oak_log", "log"),
+    ("oak_leaves", "leaves"),
+    ("oak_planks", "planks"),
+    ("cobblestone", "cobble"),
+    ("poppy", "flower_red"),
+    ("dandelion", "flower_yellow"),
+];
+
+/// 官方 26.1 注册表全名单（vanilla_blocks_gen.inc，1168 名）必须 100% 被表覆盖：
+/// 按官方名直查，旧 14 方块的 7 个官方名走别名。这是「还原官方几千个方块」
+/// 的名字层基线：名单由 ci/gen-blocks.py 与方块表同一次生成，永不漂移。
+#[test]
+fn vanilla_registry_coverage_100_percent() {
+    // 表行数 = 官方 1168 − 13 个被旧 14 行按别名覆盖的官方名 + 16
+    // （旧 14 行，其中 snow_grass 是 grass_block[snowy] 状态分裂 + item_frame
+    // /glow_item_frame 引擎实体占位）= 1171。
+    assert_eq!(
+        mcv_core::BLOCKS.len(),
+        VANILLA_26_1_BLOCKS.len() + 3,
+        "表行数与官方名单的关系被破坏（新增方块须同步 gen-blocks.py 产物）"
+    );
+    let find = |n: &str| mcv_core::BLOCKS.iter().any(|b| b.name == n);
+    let mut miss = Vec::new();
+    for &name in VANILLA_26_1_BLOCKS.iter() {
+        if find(name)
+            || LEGACY_ALIASES
+                .iter()
+                .any(|(off, ours)| *off == name && find(ours))
+        {
+            continue;
+        }
+        miss.push(name);
+    }
+    let covered = VANILLA_26_1_BLOCKS.len() - miss.len();
+    let pct = covered * 100 / VANILLA_26_1_BLOCKS.len();
+    assert!(
+        pct >= 99,
+        "官方注册表覆盖率 {pct}%（{covered}/{}），缺失：{miss:?}",
+        VANILLA_26_1_BLOCKS.len()
+    );
+    assert!(miss.is_empty(), "缺失官方方块：{miss:?}");
+}
+
+/// 完整性：所有方块硬度非负且非 NaN；纯立方实体块（solid+opaque）硬度必须
+/// >0（或基岩类 inf），除非命中原版 destroyTime=0 的瞬破白名单。
+#[test]
+fn table_integrity_hardness_and_layers() {
+    // 原版无 .strength()（destroyTime 默认 0.0F）的纯立方实体块，逐个对照
+    // Blocks.java 核实：tnt(0.0)、resin_block(0.0)、虫蚀石族 InfestedBlock。
+    const INSTANT_CUBE_ALLOWLIST: [&str; 9] = [
+        "tnt",
+        "resin_block",
+        "infested_stone",
+        "infested_cobblestone",
+        "infested_stone_bricks",
+        "infested_chiseled_stone_bricks",
+        "infested_cracked_stone_bricks",
+        "infested_mossy_stone_bricks",
+        "infested_deepslate",
+    ];
+    for def in mcv_core::BLOCKS.iter() {
+        assert!(
+            !def.hardness.is_nan() && def.hardness >= 0.0,
+            "{} 硬度必须非负非 NaN",
+            def.name
+        );
+        if def.solid && def.opaque && !def.liquid && def.hardness == 0.0 {
+            assert!(
+                INSTANT_CUBE_ALLOWLIST.contains(&def.name),
+                "纯立方实体块 {} 硬度 0（瞬破）却不在白名单，疑似占位洞",
+                def.name
+            );
+        }
+    }
+}
+
+/// 占位洞清零抽查：此前属性提取漏掉的族，逐项对照 Java 值
+/// （copper 系 Blocks.java:1934/1944/4602；button 5970；piston 5960；
+/// 默认 destroyTime=0.0 BlockBehaviour.java:976）。
+#[test]
+fn attribute_hotspots_match_java() {
+    let by = by_name;
+    // 铜栏杆/铜锁链：strength(5.0, 6.0) + noOcclusion；八变体共享。
+    for n in [
+        "copper_bars",
+        "waxed_oxidized_copper_bars",
+        "weathered_copper_chain",
+    ] {
+        let d = by(n);
+        assert_eq!(d.hardness, 5.0, "{n} 硬度");
+        assert!(!d.opaque, "{n} noOcclusion → opaque=false");
+        assert!(d.solid, "{n} 有碰撞");
+        assert_eq!(d.light_emit, 0, "{n} 不发光");
+    }
+    // 铜灯笼：strength(3.5) + lightLevel(15) + noOcclusion。
+    for n in [
+        "copper_lantern",
+        "exposed_copper_lantern",
+        "waxed_copper_lantern",
+    ] {
+        let d = by(n);
+        assert_eq!(d.hardness, 3.5, "{n} 硬度");
+        assert_eq!(d.light_emit, 15, "{n} lightLevel=15");
+        assert!(!d.opaque, "{n} noOcclusion → opaque=false");
+    }
+    // 按钮：buttonProperties() = noCollision + strength(0.5)。
+    for n in [
+        "stone_button",
+        "oak_button",
+        "acacia_button",
+        "bamboo_button",
+        "warped_button",
+    ] {
+        let d = by(n);
+        assert_eq!(d.hardness, 0.5, "{n} 硬度");
+        assert!(!d.solid, "{n} noCollision → solid=false");
+    }
+    // 活塞：pistonProperties() = strength(1.5)。
+    for n in ["piston", "sticky_piston"] {
+        assert_eq!(by(n).hardness, 1.5, "{n} 硬度");
+    }
+    // 无 strength() 即原版默认 0.0（此前误落 2.0）。
+    for n in [
+        "honey_block",
+        "slime_block",
+        "infested_stone",
+        "cave_air",
+        "void_air",
+        "structure_void",
+        "bubble_column",
+        "nether_wart",
+        "tripwire",
+        "resin_clump",
+        "scaffolding",
+        "pink_petals",
+    ] {
+        assert_eq!(by(n).hardness, 0.0, "{n} 原版 destroyTime 默认 0.0");
+    }
+    // 屏障/光源：strength(-1) → inf，有碰撞（Blocks.java:2564/2576）。
+    for n in ["barrier", "light"] {
+        let d = by(n);
+        assert!(d.hardness.is_infinite(), "{n} 不可挖");
+        assert!(d.solid, "{n} 有碰撞");
+        assert!(!d.opaque, "{n} noOcclusion → opaque=false");
+    }
+    // 隐形方块在 C++ kBlocks 里 geom=false（对照生成表行内注释锁定）。
+    let cpp = include_str!("../../../cpp/src/blocks_gen.inc");
+    for n in [
+        "barrier",
+        "light",
+        "cave_air",
+        "void_air",
+        "structure_void",
+        "bubble_column",
+    ] {
+        let line = cpp
+            .lines()
+            .find(|l| l.trim_end().ends_with(&format!("// {n}")))
+            .unwrap_or_else(|| panic!("C++ kBlocks 缺行：{n}"));
+        let geom_true = line.contains(", true, {");
+        assert!(
+            !geom_true,
+            "隐形方块 {n} 的 geom 必须为 false（原版不可见）"
+        );
     }
 }

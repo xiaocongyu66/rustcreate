@@ -2,7 +2,7 @@
 
 > 由 `ci/check-blocks.py` 自动生成，勿手改。复跑：`python3 ci/check-blocks.py`。
 
-- 基线时间戳：2026-10-10 03:08:09 +0800
+- 基线时间戳：2026-10-10 06:34:34 +0800
 - 官方 blockstate（26.1）：1170
 - 我方注册：BLOCKS 现表 14 + GEN_BLOCKS 1171 条 = 1171 条
 - 名称匹配（含历史别名映射，如 cobble→cobblestone，命中 8 个别名）：1170
