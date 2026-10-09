@@ -8,9 +8,10 @@ struct HudUniforms {
 @group(0) @binding(0) var<uniform> hud: HudUniforms;
 @group(0) @binding(1) var font_tex: texture_2d<f32>;
 @group(0) @binding(2) var hud_samp: sampler;
-// @@HUD_TERRAIN_ARRAYS@@ —— gpu.rs 与 terrain.wgsl 同规则展开（物品图标
-// 采方块图集：1..=4 个 texture_2d_array 声明 + sample_terrain_icon）。
-// terrain_tex0 固定 @binding(3)，追加数组占 @binding(6..8)。
+// gpu.rs 与 terrain.wgsl 同规则在下面占位行处展开（物品图标采方块图集：
+// 1..=4 个 texture_2d_array 声明 + sample_terrain_icon）。terrain_tex0
+// 固定 @binding(3)，追加数组占 @binding(6..8)。占位标记独占整行。
+// @@HUD_TERRAIN_ARRAYS@@
 @group(0) @binding(4) var gui_tex: texture_2d<f32>;
 @group(0) @binding(5) var unifont_tex: texture_2d<f32>;
 

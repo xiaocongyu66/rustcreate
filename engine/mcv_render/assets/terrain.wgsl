@@ -42,10 +42,11 @@ fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
-// @@TERRAIN_ARRAYS@@ —— gpu.rs 按设备 max_texture_array_layers 展开：
-// 1..=4 个 texture_2d_array 绑定声明 + sample_terrain 采样函数
-//（上限 ≥ 837 时为单数组，语义与拆分前一致；GLES 保底 256 时按
-// layer 区间 if 链选数组）。terrain_samp 固定 @binding(3)。
+// gpu.rs 按设备 max_texture_array_layers 在下面占位行处展开：1..=4 个
+// texture_2d_array 绑定声明 + sample_terrain 采样函数（上限 ≥ 837 时为
+// 单数组，语义与拆分前一致；GLES 保底 256 时按 layer 区间 if 链选数组）。
+// 占位标记必须独占整行——replace 会整行换生成代码，行尾不能带说明文字。
+// @@TERRAIN_ARRAYS@@
 @group(0) @binding(3) var terrain_samp: sampler;
 
 struct VtxIn {

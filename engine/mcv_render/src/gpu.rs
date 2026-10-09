@@ -441,13 +441,16 @@ fn atlas_arrays_wgsl(counts: &[usize], bindings: &[u32], sampler: &str, fn_name:
     assert_eq!(counts.len(), bindings.len());
     assert!(!counts.is_empty(), "图集至少要有一个数组");
     let mut s = String::new();
+    // 占位标记写在 `// ` 注释行内，replace 只换标记本身——首行前补换行，
+    // 让残留的 `// ` 孤立成空注释行，生成的声明才不会被注释掉。
+    s.push('\n');
     for (i, &b) in bindings.iter().enumerate() {
         s.push_str(&format!(
             "@group(0) @binding({b}) var terrain_tex{i}: texture_2d_array<f32>;\n"
         ));
     }
     s.push_str(&format!(
-        "\nfn {fn_name}(uv: vec2<f32>, layer: u32) -> vec4<f32> {{\n"
+        "fn {fn_name}(uv: vec2<f32>, layer: u32) -> vec4<f32> {{\n"
     ));
     let mut acc = 0usize;
     for (i, &cnt) in counts.iter().enumerate() {
