@@ -517,3 +517,82 @@ fn cloud_pipeline_compiles_and_paints_sky() {
     let (x0, _y0, x1, _y1) = bbox.expect("diff>0 必有包围盒");
     assert!(x1 - x0 > 200, "云 diff 未横贯天空带，bbox={bbox:?}");
 }
+
+/// CJK 字形尺寸回归（任务 #40：中文渲染比英文大很多、溢出布局框）。
+/// 原版依据：unifont quad 尺寸 = 位图 / oversample（UnihexProvider.java:320
+/// getOversample()=2.0、:329 getPixelHeight()=16；GlyphBitmap.java:20-30
+/// right/bottom 均除以 oversample），16px 位图只画 8px 高，与 ASCII
+/// （BitmapProvider 8x8、oversample 1）同处一行行框（Font.java:37
+/// lineHeight = 9，8px 字形 + 1px 阴影行）。修复前 CJK quad 直接用 16px
+/// 位图高，纵向范围约 17px，溢出行框近一倍。本测试渲一行中英混排，
+/// 断言白色（正文，阈值 >200；阴影 0.25 灰不计数）像素纵向范围 ≤ 9。
+#[test]
+fn cjk_text_stays_within_line_box() {
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+
+    // 中英混排一行：CJK 走 unifont（tex=3），ASCII 走字体图集（tex=0）。
+    let hud = mcv_render::text::text_quads("中文Aa", 20.0, 100.0, 1.0, [1.0, 1.0, 1.0, 1.0]);
+    let (sun, day) = mcv_render::sun_state(6000);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        sun_dir: sun,
+        width: 320.0,
+        height: 240.0,
+        chunks: &[],
+        hud: &hud,
+        cloud: None,
+        player: None,
+        overlay: None,
+    };
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut encoder);
+    queue.submit([encoder.finish()]);
+    let rgba = target.read_pixels(&device);
+
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("cjk-line-test.png"), png);
+    }
+
+    // 扫描文字区（x 10..80，y 80..130）内白色像素的纵向范围。
+    let (min_y, max_y, count) = {
+        let mut min_y = u32::MAX;
+        let mut max_y = 0u32;
+        let mut count = 0usize;
+        for y in 80..130u32 {
+            for x in 10..80u32 {
+                let o = ((y * extent.width + x) * 4) as usize;
+                if rgba[o] > 200 && rgba[o + 1] > 200 && rgba[o + 2] > 200 {
+                    min_y = min_y.min(y);
+                    max_y = max_y.max(y);
+                    count += 1;
+                }
+            }
+        }
+        (min_y, max_y, count)
+    };
+    assert!(count > 50, "中英混排文字未渲出白像素：count={count}");
+    let span = max_y - min_y + 1;
+    assert!(
+        span <= 9,
+        "文字纵向范围 {min_y}..{max_y}（{span}px）超出一行行框（9px，Font.java:37）——CJK 字形溢出"
+    );
+}
