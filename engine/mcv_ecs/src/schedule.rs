@@ -5,14 +5,10 @@
 //! 翻转全部事件通道——阶段内看到的 World/事件都是稳定快照。
 //!
 //! 系统签名 [`System`] = `FnMut(&mut SysCtx)`:拿 World 表视图写循环、
-//! 读写 [`Resources`](../resources/index.html)、`send` 事件、结构性变更走
-//! [`Commands`](crate::CommandQueue)。系统间的宿主状态(配置、玩家快照等)
-//! 走 [`Resources`]:宿主每步 `insert` 一份**所有权快照**即可——借来的东西
-//! 进不了类型键表(`TypeId` 要求 `'static`),快照的所有权模型更简单,
-//! 而 `Arc` 化数据本就是共享的,克隆只是计数。
-
-use std::any::Any;
-use std::collections::HashMap;
+//! 读写 [`Resources`](crate::Resources)、`send` 事件、结构性变更走
+//! [`CommandQueue`]。宿主状态(配置、玩家快照等)经 [`Resources`] 传递:
+//! 宿主每步 `insert` 一份**所有权快照**——借用进不了 `TypeId` 键表
+//! (要求 `'static`);`Arc` 化数据本就共享,快照克隆只是加计数。
 
 use crate::World;
 use crate::commands::CommandQueue;
@@ -31,7 +27,7 @@ pub enum Stage {
     Variable,
 }
 
-/// 一步系统上下文:五个 disjoint 字段,系统内按需各自借用(字段分离
+/// 一步系统上下文:四个 disjoint 字段,系统内按需各自借用(字段分离
 /// 借用互不冲突,与 [`World::read`] 元组模式同理)。
 pub struct SysCtx<'a> {
     pub world: &'a mut World,
