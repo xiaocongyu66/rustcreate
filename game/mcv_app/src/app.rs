@@ -174,7 +174,8 @@ fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
 }
 
 /// 关合成界面：网格 + 光标物品全部归还背包（ui.rs 的守恒红线）；
-/// 背包满时丢弃余量并告警（drops 分支合入后改为世界掉落物）。
+/// `add` 已覆盖全 36 格（Inventory.add 语义），满栏时丢弃余量并告警
+/// （drops 分支合入后改为世界掉落物）。
 fn close_craft(craft: &mut Option<mcv_logic::ui::CraftScreen>, rt: &mut GameRuntime) {
     let Some(cs) = craft.take() else { return };
     for st in cs.close() {
@@ -1160,7 +1161,7 @@ impl AppState {
             }
             "res" => {
                 if let Some(c) = self.craft.as_mut() {
-                    c.take_result();
+                    c.take_result(!left);
                 }
             }
             "prev" | "next" => {

@@ -81,6 +81,10 @@ fn click_slot(slot: &mut ItemStack, cursor: &mut ItemStack, left: bool) {
             if cursor.count == 0 {
                 *cursor = ItemStack::empty();
             }
+        } else if slot.item != cursor.item {
+            // 右键异物槽 = 交换（ACM:451-458 SECONDARY 落入同一 swap 分支；
+            // 数量上限守卫在现注册表下恒真，与左键同）。
+            std::mem::swap(cursor, slot);
         }
     }
 }
@@ -127,33 +131,52 @@ impl CraftScreen {
         click_slot(hb.slot_mut(i), &mut self.cursor, left);
     }
 
-    /// 从结果槽取物:仅当光标为空、或光标与结果同物且能装下。成功则经合成
-    /// 引擎消耗网格各占位 1 个,结果落到光标。
-    pub fn take_result(&mut self) -> bool {
+    /// 从结果槽取物(ACM:438-465 + ResultSlot.onTake)。`right` = true 右键取
+    /// ceil(半)(ACM:445);同物光标装不下时取部分(min(所需,光标余量),
+    /// Slot.tryRemove 语义,ACM:459-465)。成功则网格各占用格 −1(整体消耗
+    /// 一次,半取同样消耗)。
+    pub fn take_result(&mut self, right: bool) -> bool {
         let Some(res) = self.result() else {
             return false;
         };
-        let ok = self.cursor.is_empty()
-            || (self.cursor.item == res.item
-                && self.cursor.count + res.count <= Hotbar::max_stack(res.item));
-        if !ok {
+        let want = if right {
+            res.count.div_ceil(2)
+        } else {
+            res.count
+        };
+        let take = if self.cursor.is_empty() {
+            want
+        } else if self.cursor.item == res.item
+            && self.cursor.damage == 0
+            && self.cursor.enchants.is_empty()
+        {
+            let room = Hotbar::max_stack(res.item) - self.cursor.count;
+            want.min(room)
+        } else {
+            return false;
+        };
+        if take == 0 {
             return false;
         }
         crafting::consume_grid(&mut self.grid);
         if self.cursor.is_empty() {
-            self.cursor = res;
+            let mut c = res;
+            c.count = take;
+            self.cursor = c;
         } else {
-            self.cursor.count += res.count;
+            self.cursor.count += take;
         }
         true
     }
 
-    /// 关界面:返回网格 + 光标的全部物品(调用方负责塞回背包/掉落)。
+    /// 关界面:返回光标的全部物品放最前、再网格(vanilla 关容器先归还 carried
+    /// 再逐格网格,ACM:586-594 + CM:98-101)。调用方负责塞回背包/掉落。
     pub fn close(self) -> Vec<ItemStack> {
-        let mut out: Vec<ItemStack> = self.grid.into_iter().filter(|s| !s.is_empty()).collect();
+        let mut out = Vec::new();
         if !self.cursor.is_empty() {
             out.push(self.cursor);
         }
+        out.extend(self.grid.into_iter().filter(|s| !s.is_empty()));
         out
     }
 }
@@ -243,11 +266,11 @@ mod tests {
         // 右键往同物部分堆加 1。
         cs.click_grid(3, false);
         assert_eq!(cs.grid[3].count, 2);
-        // 异物不放。
+        // 右键异物槽 = 交换（ACM SECONDARY 与左键同落 swap 分支）。
         cs.cursor = stack(PLANKS, 1);
         cs.click_grid(3, false);
-        assert_eq!(cs.grid[3].count, 2);
-        assert_eq!(cs.cursor.count, 1);
+        assert_eq!(cs.cursor.item, COBBLESTONE);
+        assert_eq!(cs.grid[3].item, PLANKS);
     }
 
     #[test]
@@ -291,25 +314,63 @@ mod tests {
     }
 
     #[test]
-    fn craft_consumes_grid_and_cursor_guards() {
-        // 木剑 = 木板×1 + 木棍×2(形状无关,2x2 可合成)。
-        let mut cs = CraftScreen::new(2);
-        cs.grid[0] = stack(PLANKS, 2); // 多出的 1 板合成后应剩 1
-        cs.grid[1] = stack(STICK, 1);
-        cs.grid[2] = stack(STICK, 1);
-        let res = cs.result().expect("木剑配方");
+    fn sword_requires_workbench_vertical_pattern() {
+        // 26.1 剑 = 材料×2 + 棍 竖排 1x3：2x2 放不下（shrink 后仍 3 高）。
+        let mut cs2 = CraftScreen::new(2);
+        cs2.grid[0] = stack(PLANKS, 1);
+        cs2.grid[2] = stack(PLANKS, 1);
+        cs2.grid[3] = stack(STICK, 1);
+        assert!(cs2.result().is_none(), "2x2 不可出剑");
+        // 3x3 左列 M/M/S → 木剑。
+        let mut cs3 = CraftScreen::new(3);
+        cs3.grid[0] = stack(PLANKS, 1);
+        cs3.grid[3] = stack(PLANKS, 1);
+        cs3.grid[6] = stack(STICK, 1);
+        let res = cs3.result().expect("木剑配方");
         assert_eq!((res.item, res.count), (WOODEN_SWORD_INDEX, 1));
+    }
+
+    #[test]
+    fn craft_consumes_grid_and_cursor_guards() {
+        // 木剑 3x3 竖排；多放的 1 板合成后应剩（网格全体占用格各 −1）。
+        let mut cs = CraftScreen::new(3);
+        cs.grid[0] = stack(PLANKS, 2); // 多出的 1 板
+        cs.grid[3] = stack(PLANKS, 1);
+        cs.grid[6] = stack(STICK, 1);
         // 光标是异物 → 拒绝取。
         cs.cursor = stack(COBBLESTONE, 10);
-        assert!(!cs.take_result());
-        // 光标空 → 取出,网格各占位消耗 1。
+        assert!(!cs.take_result(false));
+        // 光标空 → 取出，网格各占位消耗 1。
         cs.cursor = ItemStack::empty();
-        assert!(cs.take_result());
+        assert!(cs.take_result(false));
         assert_eq!(cs.cursor.item, WOODEN_SWORD_INDEX);
         assert_eq!(cs.grid[0].count, 1, "同格剩余保留");
-        assert!(cs.grid[1].is_empty() && cs.grid[2].is_empty());
+        assert!(cs.grid[3].is_empty() && cs.grid[6].is_empty());
         // 消耗后已无配方。
         assert!(cs.result().is_none());
+    }
+
+    #[test]
+    fn result_half_take_and_partial_fill() {
+        // 木棍配方：两板竖排 → 4 根（2x2 可放）。
+        let mut cs = CraftScreen::new(2);
+        cs.grid[0] = stack(PLANKS, 1);
+        cs.grid[2] = stack(PLANKS, 1);
+        assert_eq!(cs.result().map(|s| (s.item, s.count)), Some((STICK, 4)));
+        // 右键取 ceil(4/2)=2，网格同样整体消耗一次。
+        assert!(cs.take_result(true));
+        assert_eq!(cs.cursor.count, 2);
+        assert!(cs.grid.iter().all(|s| s.is_empty()), "半取也消耗整份网格");
+        // 部分取：光标 63 根 + 结果 4 → 只取 1 补满 64（tryRemove 收敛）。
+        cs.cursor = stack(STICK, 63);
+        cs.grid[0] = stack(PLANKS, 1);
+        cs.grid[2] = stack(PLANKS, 1);
+        assert!(cs.take_result(false));
+        assert_eq!(cs.cursor.count, 64);
+        // 光标同物已满 → 拒绝（take=0）。
+        cs.grid[0] = stack(PLANKS, 1);
+        cs.grid[2] = stack(PLANKS, 1);
+        assert!(!cs.take_result(false));
     }
 
     #[test]

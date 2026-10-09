@@ -33,8 +33,9 @@ impl Hotbar {
         Self::default()
     }
 
-    /// 单种堆叠上限(vanilla Items 各 maxStackSize:工具/附魔书 1、成书 16、
-    /// 其余 64)。
+    /// 单种堆叠上限(vanilla Items:maxStackSize:工具/附魔书 1——Item.java
+    /// durability 注册时同步 MAX_STACK_SIZE=1、Items 附魔书 stacksTo(1);
+    /// 书=64 为 Item 默认值,16 是成书 written_book 的上限,其余 64)。
     pub fn max_stack(item: u16) -> u8 {
         use crate::ITEMS;
         match ITEMS[item as usize].kind {
@@ -43,7 +44,6 @@ impl Hotbar {
             | ItemKind::Axe(_)
             | ItemKind::Shovel(_)
             | ItemKind::EnchantedBook => 1,
-            ItemKind::Book => 16,
             _ => 64,
         }
     }
@@ -66,51 +66,41 @@ impl Hotbar {
             && dst.count < max
     }
 
-    /// vanilla `Inventory.add` 的 9 格语义:选中槽优先合并 → 任意槽合并 →
-    /// 选中槽空位 → 任意空槽。返回放不下的剩余(满栏时 Some)。
+    /// vanilla `Inventory.add`(INV:195-302):合并扫描 = 选中槽 → 全局 0..35 序
+    /// (多趟 do-while,每趟把余量填进找到的每个部分堆,直到放尽或无处可填);
+    /// 空位 = 全局 0..35 首个空槽(`getFreeSlot`,不偏选中槽)。副手槽未实现,
+    /// 跳过其"选中→副手→全序"中的副手一档。返回放不下的剩余(满栏时 Some)。
     pub fn add(&mut self, sel: usize, mut stack: ItemStack) -> Option<ItemStack> {
         if stack.is_empty() {
             return None;
         }
         let max = Self::max_stack(stack.item);
-        if max > 1 {
-            let sel = sel % HOTBAR_SLOTS;
-            if Self::mergeable(&self.slots[sel], &stack, max) {
-                let room = max - self.slots[sel].count;
-                let mv = stack.count.min(room);
-                self.slots[sel].count += mv;
-                stack.count -= mv;
-                if stack.count == 0 {
-                    return None;
-                }
-            }
-            for i in 0..HOTBAR_SLOTS {
-                if i == sel {
-                    continue;
-                }
-                if Self::mergeable(&self.slots[i], &stack, max) {
-                    let room = max - self.slots[i].count;
-                    let mv = stack.count.min(room);
-                    self.slots[i].count += mv;
-                    stack.count -= mv;
-                    if stack.count == 0 {
-                        return None;
+        let sel = sel % HOTBAR_SLOTS;
+        loop {
+            if max > 1 {
+                let mut merged = false;
+                for i in std::iter::once(sel).chain(0..HOTBAR_SLOTS + MAIN_SLOTS) {
+                    let slot = self.slot_mut(i);
+                    if Self::mergeable(slot, &stack, max) {
+                        let mv = stack.count.min(max - slot.count);
+                        slot.count += mv;
+                        stack.count -= mv;
+                        merged = true;
+                        if stack.count == 0 {
+                            return None;
+                        }
                     }
                 }
+                if merged {
+                    continue;
+                }
             }
-        }
-        let sel = sel % HOTBAR_SLOTS;
-        if self.slots[sel].is_empty() {
-            self.slots[sel] = stack;
-            return None;
-        }
-        for slot in self.slots.iter_mut() {
-            if slot.is_empty() {
-                *slot = stack;
+            if let Some(i) = (0..HOTBAR_SLOTS + MAIN_SLOTS).find(|&i| self.slot_mut(i).is_empty()) {
+                *self.slot_mut(i) = stack;
                 return None;
             }
+            return Some(stack);
         }
-        Some(stack)
     }
 
     /// 全局 36 格可写视图:0..8 = 快捷栏,9..35 = 主背包(背包 UI/溢出
