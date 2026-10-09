@@ -1877,45 +1877,6 @@ fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f
     }
 }
 
-#[cfg(test)]
-mod placement_tests {
-    use super::placement_state;
-    use mcv_core::Shape;
-
-    #[test]
-    fn slab_top_bit() {
-        // 点顶面（法线 +Y）→ 下半砖；点底面 → 上半砖；潜行翻转。
-        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], false, 0.0), 0);
-        assert_eq!(placement_state(Shape::Slab, [0, -1, 0], false, 0.0), 1);
-        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], true, 0.0), 1);
-        assert_eq!(placement_state(Shape::Slab, [1, 0, 0], false, 0.0), 0);
-    }
-
-    #[test]
-    fn stairs_facing_is_player_back() {
-        // yaw=0 视线 -Z，反方向 +Z → facing=0；yaw=π/2 视线 +X → facing=3。
-        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], false, 0.0), 0 | 4);
-        assert_eq!(
-            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
-            3 | 4
-        );
-        assert_eq!(placement_state(Shape::Stairs, [0, 0, 1], false, 0.0) & 4, 0);
-        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], true, 0.0) & 4, 0);
-        // yaw=π 视线 +Z，反方向 -Z → facing=1。
-        assert_eq!(
-            placement_state(Shape::Stairs, [0, 0, -1], false, std::f32::consts::PI) & 3,
-            1
-        );
-    }
-
-    #[test]
-    fn other_shapes_zero() {
-        for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
-            assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
-        }
-    }
-}
-
 fn dda_hit(
     view: &WorldView,
     origin: Vec3,
@@ -2005,5 +1966,44 @@ fn step_event(vid: u16) -> Option<&'static str> {
         2 | 3 | 7 | 11 => Some("block.grass.step"),
         6 | 8 => Some("block.wood.step"),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::placement_state;
+    use mcv_core::Shape;
+
+    #[test]
+    fn slab_top_bit() {
+        // 点顶面（法线 +Y）→ 下半砖；点底面 → 上半砖；潜行翻转。
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], false, 0.0), 0);
+        assert_eq!(placement_state(Shape::Slab, [0, -1, 0], false, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], true, 0.0), 1);
+        assert_eq!(placement_state(Shape::Slab, [1, 0, 0], false, 0.0), 0);
+    }
+
+    #[test]
+    fn stairs_facing_is_player_back() {
+        // yaw=0 视线 -Z，反方向 +Z → facing=0；yaw=π/2 视线 +X → facing=3。
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], false, 0.0), 4);
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
+            3 | 4
+        );
+        assert_eq!(placement_state(Shape::Stairs, [0, 0, 1], false, 0.0) & 4, 0);
+        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], true, 0.0) & 4, 0);
+        // yaw=π 视线 +Z，反方向 -Z → facing=1。
+        assert_eq!(
+            placement_state(Shape::Stairs, [0, 0, -1], false, std::f32::consts::PI) & 3,
+            1
+        );
+    }
+
+    #[test]
+    fn other_shapes_zero() {
+        for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
+            assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
+        }
     }
 }
