@@ -18,7 +18,10 @@ pub struct HotRect {
 }
 
 /// 创造页物品清单 = 物品表全部 36 种（id 即下标）。
-pub const ALL_ITEMS: [u16; 36] = std::array::from_fn(|i| i as u16);
+pub const ALL_ITEMS: [u16; 36] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35,
+];
 
 const GRID_IDS: [&str; 9] = ["g0", "g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8"];
 const INV_IDS: [&str; 36] = [
