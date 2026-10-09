@@ -47,12 +47,16 @@ pub struct RenderChunk {
 /// 缓冲、复用 opaque 顶点缓冲（与既有渲染语义一致）。
 pub struct MeshUploader {
     device: wgpu::Device,
-    queue: wgpu::Queue,
 }
 
 impl MeshUploader {
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
-        Self { device, queue }
+    /// `queue` 参数保留但不再存储：9913274 起创建期映射 buffer 一律经
+    /// mapped slice 直写（见 [`Self::vertex_index`] 注释），
+    /// `queue.write_buffer` 路径已移除，字段失去读者，在 CI
+    /// clippy `-D warnings` 下报 dead_code（main run 37992326288 lint）。
+    /// 参数签名不动，mcv_app 三个调用点无需扩散改动。
+    pub fn new(device: wgpu::Device, _queue: wgpu::Queue) -> Self {
+        Self { device }
     }
 
     fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {
