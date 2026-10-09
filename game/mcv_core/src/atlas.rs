@@ -1,15 +1,30 @@
-//! Terrain texture array: layers `0..MANIFEST_LAYERS` 是真实方块贴图
-//! （tiles_manifest.json 字典序，运行时从资源根 `textures/block/*.png` 读盘），
-//! 特殊层（挖掘裂纹）排在 `CRACK_BASE..`。真实贴图缺失时回退到
-//! 程序化噪声（原始调色板，逐层配方见 LEGACY_RECIPES），保证不崩。
-//! 裂纹层同样优先读原版 `textures/block/destroy_stage_0..9.png`。
+//! Terrain texture array: layers `0..MANIFEST_LAYERS-1` 来自 tiles_manifest.json
+//! （字典序；运行时从资源根 `textures/block/*.png` 读盘，827 张真实贴图 +
+//! 1 层 missing 哨兵），特殊层（挖掘裂纹）排在 `CRACK_BASE..`。
+//!
+//! 素材红线（2026-10 任务 #53）：**本 crate 不产生任何程序化假贴图**。
+//! 旧版按贴图名逐层画噪声的 LEGACY_RECIPES 回退已全部删除——真实贴图
+//! 缺失时该层保留原版 missing 贴图（[`fill_missing_marker`]，与
+//! `MissingTextureAtlasSprite.generateMissingImage` 逐像素一致），调用方
+//! 以 `log::error!` 显式报错，绝不伪装成真实贴图。裂纹层只读原版
+//! `textures/block/destroy_stage_0..9.png`，缺失即为 missing 标记。
 
 use crate::tiles;
 use std::path::Path;
 
 pub const TILE_PX: usize = 16;
-/// 真实贴图层数，与 tiles_manifest.json 的 tile_index_to_file 长度一致。
-pub const MANIFEST_LAYERS: usize = 827;
+/// manifest 层数 = 827 张真实方块贴图（层 0..826，字典序）+ 1 层 missing
+/// 哨兵（层 [`SENTINEL_LAYER`]，与 tiles_manifest.json 的
+/// tile_index_to_file 长度一致）。
+pub const MANIFEST_LAYERS: usize = 828;
+/// 827 张真实方块贴图（不含哨兵）。完整性断言以此为准。
+pub const REAL_TILE_COUNT: usize = MANIFEST_LAYERS - 1;
+/// missing 哨兵层号（manifest 最后一项 `missing_no_texture`，无对应文件）。
+/// 模型无贴图解析的方块（air/barrier/light/structure_void 等，见
+/// ci/gen-blocks.py `tile_id`）指向该层，永远显示原版 missingno 品红标记。
+pub const SENTINEL_LAYER: usize = MANIFEST_LAYERS - 1;
+/// 哨兵贴图名（与 ci/gen-blocks.py SENTINEL_NAME 一致）。
+pub const SENTINEL_TILE: &str = "missing_no_texture";
 /// 挖掘裂纹叠加层数（10 档）。原版 26.1 为 destroy_stage_0..9 十张
 /// （jar MANIFEST 名录），档位映射 `(int)(destroyProgress * 10)`（
 /// MultiPlayerGameMode.java:551）。
@@ -22,333 +37,38 @@ pub const MIP_LEVELS: u32 = 2;
 
 const _: () = assert!(MANIFEST_LAYERS + CRACK_LAYERS <= u16::MAX as usize);
 
-fn hash01(seed: u64, x: u32, y: u32) -> f32 {
-    let mut h =
-        seed ^ (u64::from(x).wrapping_mul(0x9E3779B1)) ^ (u64::from(y).wrapping_mul(0x85EBCA77));
-    h ^= h >> 30;
-    h = h.wrapping_mul(0xBF58476D1CE4E5B9);
-    h ^= h >> 27;
-    h = h.wrapping_mul(0x94D049BB133111EB);
-    h ^= h >> 31;
-    (h >> 40) as f32 / 16_777_216.0
-}
+/// 原版 missing 贴图像素（MissingTextureAtlasSprite.java:19 `pink = -524040`
+/// = ABGR 0xFFF800F8 → RGB (248, 0, 248)；另一分支 `-16777216` = 不透明黑）。
+const MISSING_PINK: [u8; 4] = [248, 0, 248, 255];
+const MISSING_BLACK: [u8; 4] = [0, 0, 0, 255];
 
-struct Painter<'a> {
-    data: &'a mut [u8],
-    layer: usize,
-}
-
-impl Painter<'_> {
-    fn set(&mut self, x: u32, y: u32, r: u8, g: u8, b: u8, a: u8) {
-        let off = self.layer * TILE_PX * TILE_PX * 4 + ((y as usize * TILE_PX + x as usize) * 4);
-        self.data[off] = r;
-        self.data[off + 1] = g;
-        self.data[off + 2] = b;
-        self.data[off + 3] = a;
-    }
-
-    fn fill_noise(&mut self, seed: u64, base: [u8; 3], amp: i32, alpha: u8) {
-        for y in 0..TILE_PX as u32 {
-            for x in 0..TILE_PX as u32 {
-                let n = (hash01(seed, x, y) * 2.0 - 1.0) * amp as f32;
-                self.set(
-                    x,
-                    y,
-                    clamp8(base[0] as i32 + n as i32),
-                    clamp8(base[1] as i32 + n as i32),
-                    clamp8(base[2] as i32 + n as i32),
-                    alpha,
-                );
-            }
-        }
-    }
-
-    fn speckle(&mut self, seed: u64, threshold: f32, dark: i32) {
-        for y in 0..TILE_PX as u32 {
-            for x in 0..TILE_PX as u32 {
-                if hash01(seed ^ 0x51, x, y) < threshold {
-                    let off = self.layer * TILE_PX * TILE_PX * 4
-                        + ((y as usize * TILE_PX + x as usize) * 4);
-                    for c in 0..3 {
-                        self.data[off + c] = clamp8(self.data[off + c] as i32 - dark);
-                    }
-                }
-            }
-        }
-    }
-
-    fn rows(&mut self, from: u32, to: u32, seed: u64, base: [u8; 3], amp: i32, ragged: bool) {
-        for y in from..to {
-            for x in 0..TILE_PX as u32 {
-                let extra = if ragged && hash01(seed ^ 0x77, x, y) < 0.35 {
-                    1
-                } else {
-                    0
-                };
-                let n = (hash01(seed, x, y) * 2.0 - 1.0) * amp as f32;
-                self.set(
-                    x,
-                    y.min(TILE_PX as u32 - 1 + extra),
-                    clamp8(base[0] as i32 + n as i32),
-                    clamp8(base[1] as i32 + n as i32),
-                    clamp8(base[2] as i32 + n as i32),
-                    255,
-                );
-            }
-        }
-    }
-}
-
-fn clamp8(v: i32) -> u8 {
-    v.clamp(0, 255) as u8
-}
-
-/// 程序化配方（原始调色板）：贴图名 → 画法。真实贴图缺失时按 manifest 名
-/// 落到对应层作回退；名字必须是 tiles_manifest.json 里的原词。
-enum Recipe {
-    Noise { seed: u64, base: [u8; 3], amp: i32 },
-    GrassSide,
-    LogSide,
-    LogTop,
-    Planks,
-    Cobble,
-    SnowSide,
-    Flower { red: bool },
-}
-
-/// 旧程序化贴图 → manifest 贴图名（同图异名，回退配方按新层号落位；
-/// 旧 "snow" 并入 grass_block_top/grass_block_snow，故 15 项）。
-const LEGACY_RECIPES: [(&str, Recipe); 15] = [
-    (
-        "grass_block_top",
-        Recipe::Noise {
-            seed: 0xA001,
-            base: [104, 168, 62],
-            amp: 20,
-        },
-    ),
-    ("grass_block_side", Recipe::GrassSide),
-    (
-        "dirt",
-        Recipe::Noise {
-            seed: 0xA005,
-            base: [134, 96, 67],
-            amp: 20,
-        },
-    ),
-    (
-        "stone",
-        Recipe::Noise {
-            seed: 0xA007,
-            base: [127, 127, 127],
-            amp: 12,
-        },
-    ),
-    (
-        "sand",
-        Recipe::Noise {
-            seed: 0xA009,
-            base: [219, 207, 163],
-            amp: 10,
-        },
-    ),
-    (
-        "water_still",
-        Recipe::Noise {
-            seed: 0xA00B,
-            base: [56, 108, 214],
-            amp: 8,
-        },
-    ),
-    ("oak_log", Recipe::LogSide),
-    ("oak_log_top", Recipe::LogTop),
-    (
-        "oak_leaves",
-        Recipe::Noise {
-            seed: 0xA00F,
-            base: [58, 116, 38],
-            amp: 26,
-        },
-    ),
-    ("oak_planks", Recipe::Planks),
-    ("cobblestone", Recipe::Cobble),
-    (
-        "bedrock",
-        Recipe::Noise {
-            seed: 0xA013,
-            base: [64, 64, 64],
-            amp: 34,
-        },
-    ),
-    // 官方无独立 "snow" 全层贴图（+Y 用 grass_block_top 的 snowy 状态），
-    // SNOW 常量也指 336，配方不再单独占名。
-    ("grass_block_snow", Recipe::SnowSide),
-    ("poppy", Recipe::Flower { red: true }),
-    ("dandelion", Recipe::Flower { red: false }),
-];
-
-fn paint_noise(
-    p: &mut Painter,
-    seed: u64,
-    base: [u8; 3],
-    amp: i32,
-    speck: u64,
-    sp_th: f32,
-    sp_dark: i32,
-) {
-    p.fill_noise(seed, base, amp, 255);
-    p.speckle(speck, sp_th, sp_dark);
-}
-
-fn paint_recipe(p: &mut Painter, name: &str, r: &Recipe) {
-    match r {
-        Recipe::Noise { seed, base, amp } => match name {
-            "grass_block_top" => paint_noise(p, *seed, *base, *amp, 0xA002, 0.18, 22),
-            "dirt" => paint_noise(p, *seed, *base, *amp, 0xA006, 0.14, 18),
-            "stone" => paint_noise(p, *seed, *base, *amp, 0xA008, 0.20, 16),
-            "sand" => paint_noise(p, *seed, *base, *amp, 0xA00A, 0.10, 12),
-            "oak_leaves" => paint_noise(p, *seed, *base, *amp, 0xA010, 0.22, 30),
-            _ => p.fill_noise(*seed, *base, *amp, 255), // water_still / bedrock
-        },
-        Recipe::GrassSide => {
-            p.fill_noise(0xA003, [134, 96, 67], 18, 255);
-            p.rows(0, 4, 0xA004, [104, 168, 62], 16, true);
-        }
-        Recipe::LogSide => {
-            p.fill_noise(0xA00D, [104, 82, 50], 10, 255);
-            for x in 0..TILE_PX as u32 {
-                if x % 5 < 2 {
-                    for y in 0..TILE_PX as u32 {
-                        let off = p.layer * TILE_PX * TILE_PX * 4
-                            + ((y as usize * TILE_PX + x as usize) * 4);
-                        for c in 0..3 {
-                            p.data[off + c] = clamp8(p.data[off + c] as i32 - 18);
-                        }
-                    }
-                }
-            }
-        }
-        Recipe::LogTop => {
-            p.fill_noise(0xA00E, [104, 82, 50], 8, 255);
-            for y in 0..TILE_PX as u32 {
-                for x in 0..TILE_PX as u32 {
-                    let d = (x.max(15 - x)).max(y.max(15 - y));
-                    if d % 3 == 0 {
-                        let off = p.layer * TILE_PX * TILE_PX * 4
-                            + ((y as usize * TILE_PX + x as usize) * 4);
-                        for c in 0..3 {
-                            p.data[off + c] = clamp8(p.data[off + c] as i32 - 24);
-                        }
-                    }
-                }
-            }
-        }
-        Recipe::Planks => {
-            p.fill_noise(0xA011, [162, 131, 78], 8, 255);
-            for y in 0..TILE_PX as u32 {
-                if y % 4 == 3 {
-                    for x in 0..TILE_PX as u32 {
-                        let off = p.layer * TILE_PX * TILE_PX * 4
-                            + ((y as usize * TILE_PX + x as usize) * 4);
-                        for c in 0..3 {
-                            p.data[off + c] = clamp8(p.data[off + c] as i32 - 30);
-                        }
-                    }
-                }
-            }
-        }
-        Recipe::Cobble => {
-            p.fill_noise(0xA012, [112, 112, 112], 14, 255);
-            for y in 0..TILE_PX as u32 {
-                for x in 0..TILE_PX as u32 {
-                    let edge = (x % 5 == 0) || (y % 5 == 0);
-                    if edge {
-                        let off = p.layer * TILE_PX * TILE_PX * 4
-                            + ((y as usize * TILE_PX + x as usize) * 4);
-                        for c in 0..3 {
-                            p.data[off + c] = clamp8(p.data[off + c] as i32 - 26);
-                        }
-                    }
-                }
-            }
-        }
-        Recipe::SnowSide => {
-            p.fill_noise(0xA015, [134, 96, 67], 18, 255);
-            p.rows(0, 5, 0xA016, [238, 244, 246], 6, true);
-        }
-        Recipe::Flower { red } => {
-            // 透明背景 + 茎 + 花头（cutout）
-            for y in 0..TILE_PX as u32 {
-                for x in 0..TILE_PX as u32 {
-                    p.set(x, y, 0, 0, 0, 0);
-                }
-            }
-            let petal = if *red { [200, 40, 40] } else { [220, 200, 40] };
-            for y in 8..15 {
-                p.set(7, y, 40, 120, 40, 255);
-                p.set(8, y, 50, 130, 45, 255);
-            }
-            let head = [
-                (6u32, 3u32),
-                (7, 2),
-                (8, 2),
-                (9, 3),
-                (6, 4),
-                (7, 3),
-                (8, 3),
-                (9, 4),
-                (7, 4),
-                (8, 4),
-            ];
-            for (x, y) in head {
-                p.set(x, y, petal[0], petal[1], petal[2], 255);
-            }
-            p.set(7, 5, 240, 220, 120, 255);
-            p.set(8, 5, 240, 220, 120, 255);
-        }
-    }
-}
-
-/// 裂纹 stage（0..CRACK_LAYERS）的程序化回退：递增的暗色像素网。
-/// 仅在原版 destroy_stage_*.png 缺失时兜底（无素材部署模式）。
-fn paint_crack(p: &mut Painter, stage: usize) {
+/// [`MissingTextureAtlasSprite.generateMissingImage`]（:13-32）的逐像素
+/// 等价：16x16，四象限棋盘 `y < h/2 ^ x < w/2` → 左下/右上品红、其余黑。
+/// 这是原版 missing 贴图的显式「缺失标记」（非程序化假贴图）。
+fn paint_missing_marker(data: &mut [u8], layer: usize) {
+    let base = layer * TILE_PX * TILE_PX * 4;
     for y in 0..TILE_PX as u32 {
         for x in 0..TILE_PX as u32 {
-            p.set(x, y, 0, 0, 0, 0);
-        }
-    }
-    let s = stage as u32;
-    for i in 0..(6 + s * 8) {
-        let x = (hash01(0xA017 + u64::from(s), i * 7, i) * 15.0) as u32;
-        let y = (hash01(0xA018 + u64::from(s), i, i * 3) * 15.0) as u32;
-        p.set(x, y, 20, 16, 12, 190);
-        if x < 15 {
-            p.set(x + 1, y, 20, 16, 12, 120);
+            let px = if (y < TILE_PX as u32 / 2) ^ (x < TILE_PX as u32 / 2) {
+                MISSING_PINK
+            } else {
+                MISSING_BLACK
+            };
+            let off = base + ((y as usize * TILE_PX + x as usize) * 4);
+            data[off..off + 4].copy_from_slice(&px);
         }
     }
 }
 
 /// Generates mip level 0 for all layers into `data` (LAYERS * 16*16*4 bytes).
-/// 全层先铺 debug 品红占位（未命中回退配方的真实层保持品红），再画回退配方
-/// 与特殊层；真实贴图由 [`load_real_tiles`] 在调用方覆盖。
+/// 全层先铺原版 missing 贴图（MissingTextureAtlasSprite 语义）；真实贴图由
+/// [`load_real_tiles`] 覆盖，裂纹层由 [`load_crack_stages`] 覆盖。哨兵层
+/// [`SENTINEL_LAYER`] 无对应文件，永远保持 missing 标记——与原版对无贴图
+/// 模型显示 missingno 一致。
 pub fn generate_layers(data: &mut [u8]) {
     assert_eq!(data.len(), LAYERS * TILE_PX * TILE_PX * 4);
-    let mut p = Painter { data, layer: 0 };
-
     for layer in 0..LAYERS {
-        p.layer = layer;
-        p.fill_noise(0xA019 + layer as u64, [180, 40, 180], 10, 255); // debug magenta
-    }
-    for (name, r) in &LEGACY_RECIPES {
-        let Some(idx) = tile_file_names().iter().position(|f| f == name) else {
-            continue; // manifest 换名时静默跳过：只是少一个回退配方
-        };
-        p.layer = idx;
-        paint_recipe(&mut p, name, r);
-    }
-    for s in 0..CRACK_LAYERS {
-        p.layer = CRACK_BASE + s;
-        paint_crack(&mut p, s);
+        paint_missing_marker(data, layer);
     }
 }
 
@@ -379,23 +99,40 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
 
 /// Full upload payload: mip0 + mip1 contiguous. 真实贴图从
 /// `<assets_dir>/textures/block/*.png`（资源根 = assets/minecraft）读盘
-/// 覆盖（目录不存在 = 纯程序化，兼容无素材部署）；挖掘裂纹层读原版
-/// destroy_stage_0..9（[`load_crack_stages`]）。
+/// 覆盖；缺失/解码失败的层保留原版 missing 标记并 `log::error!`（素材
+/// 红线：不产出程序化假贴图）。挖掘裂纹层读原版 destroy_stage_0..9
+/// （[`load_crack_stages`]）。
 pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
     let mut mip0 = vec![0u8; LAYERS * TILE_PX * TILE_PX * 4];
     generate_layers(&mut mip0);
-    if let Some(dir) = assets_dir {
-        let n = load_real_tiles(dir, &mut mip0);
-        if n > 0 {
-            log::info!(
-                "atlas: {n}/{} real tiles from {}",
-                MANIFEST_LAYERS,
-                dir.display()
-            );
+    match assets_dir {
+        Some(dir) => {
+            let n = load_real_tiles(dir, &mut mip0);
+            if n < REAL_TILE_COUNT as u32 {
+                log::error!(
+                    "atlas: {n}/{} real tiles from {}——缺失层将显示原版 missing 标记（无程序化回退）",
+                    REAL_TILE_COUNT,
+                    dir.display()
+                );
+            } else {
+                log::info!(
+                    "atlas: {n}/{} real tiles from {}",
+                    REAL_TILE_COUNT,
+                    dir.display()
+                );
+            }
+            let c = load_crack_stages(dir, &mut mip0);
+            if c < CRACK_LAYERS as u32 {
+                log::error!(
+                    "atlas: {c}/{} vanilla destroy stages——缺失档位显示 missing 标记",
+                    CRACK_LAYERS
+                );
+            } else {
+                log::info!("atlas: {c}/{} vanilla destroy stages", CRACK_LAYERS);
+            }
         }
-        let c = load_crack_stages(dir, &mut mip0);
-        if c > 0 {
-            log::info!("atlas: {c}/{} vanilla destroy stages", CRACK_LAYERS);
+        None => {
+            log::warn!("atlas: 无资源根——全部层为原版 missing 标记（仅无头测试模式）");
         }
     }
     let mut mip1 = vec![0u8; LAYERS * 8 * 8 * 4];
@@ -404,12 +141,13 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
     mip0
 }
 
-/// 无资源路径（纯程序化）。带真实贴图用 [`generate_payload_with_pack`]。
+/// 无资源路径（全部层 = 原版 missing 标记；仅供无头测试）。带真实贴图用
+/// [`generate_payload_with_pack`]。
 pub fn generate_payload() -> Vec<u8> {
     generate_payload_with_pack(None)
 }
 
-/// 层数钳制（GLES `MAX_ARRAY_TEXTURE_LAYERS` 常为 256 < 837）：
+/// 层数钳制（GLES `MAX_ARRAY_TEXTURE_LAYERS` 常为 256 < 838）：
 /// 钳到 `n` 层时返回实际可用的 mip0+mip1 载荷与数组层数。
 /// tiles 引用被钳掉的层时 wgpu 在采样器边界内回绕/钳位（贴图上屏，不崩）。
 /// 建议 gpu.rs 用 `min(LAYERS, limits.max_texture_layers())` 调用。
@@ -497,9 +235,9 @@ fn decode_into_layer(bytes: &[u8], src_path: &Path, layer: usize, layers: &mut [
 }
 
 /// 从 `<dir>/textures/block/<name>.png`（单一资源根的原版路径）加载
-/// 827 张真实方块贴图覆盖层 0..827。缺文件/解码失败保留程序化回退
-/// （开发期桌面与真机资源路径差异下不崩）；目录整体不存在时零次读盘
-/// 尝试。返回覆盖层数。
+/// 827 张真实方块贴图覆盖层 0..826。缺文件/解码失败该层保留原版
+/// missing 标记并计数告警（调用方 `log::error!`，无程序化回退）；
+/// missing 哨兵层（[`SENTINEL_LAYER`]）无对应文件，恒跳过。返回覆盖层数。
 pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
     assert!(layers.len() >= MANIFEST_LAYERS * TILE_PX * TILE_PX * 4);
     let blocks = dir.join(BLOCKS_SUBDIR);
@@ -507,8 +245,11 @@ pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
         return 0;
     }
     let mut count = 0u32;
-    for (idx, name) in tile_file_names().iter().enumerate().skip(1) {
-        // 层 0 是生成器占位层，无对应文件
+    for (idx, name) in tile_file_names().iter().enumerate() {
+        if idx == SENTINEL_LAYER {
+            debug_assert_eq!(*name, SENTINEL_TILE);
+            continue; // 哨兵层：无对应文件，保持 missing 标记
+        }
         let path = blocks.join(format!("{name}.png"));
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
@@ -523,7 +264,8 @@ pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
 /// 加载原版挖掘裂纹 10 档到 `CRACK_BASE + s` 层。原版 jar 内路径即
 /// `textures/block/destroy_stage_0..9.png`（16x16，黑色裂纹 + alpha），
 /// 档位公式 `(int)(destroyProgress * 10)`（MultiPlayerGameMode.java:551）。
-/// 缺哪档保留该档程序化回退（无素材部署不崩）。返回覆盖档数。
+/// 缺档该层保留 missing 标记（调用方 `log::error!`，无程序化回退）。
+/// 返回覆盖档数。
 pub fn load_crack_stages(dir: &Path, layers: &mut [u8]) -> u32 {
     assert!(layers.len() >= LAYERS * TILE_PX * TILE_PX * 4);
     let blocks = dir.join(BLOCKS_SUBDIR);
@@ -568,7 +310,7 @@ pub const PACK_TILE_NAMES: [&str; 15] = [
 /// Overrides atlas layers with user texture-pack PNGs for the classic 15
 /// tiles (files named after manifest texture names, e.g. `stone.png`, or the
 /// standard MC pack tree). Each name resolves to its manifest layer, so pack
-/// files replace the real/程序化 content of exactly that layer.
+/// files replace the real content of exactly that layer.
 ///
 /// Returns the number of layers overridden.
 pub fn load_pack_over(dir: &std::path::Path, mip0: &mut [u8]) -> u32 {

@@ -24,9 +24,15 @@ pub struct FrameUniforms {
     pub cam_pos_time: [f32; 4],
     pub sun_dir_day: [f32; 4],
     pub fog_params: [f32; 4],
+    /// 生物群系染色基色（26.1 ColorResolver 机制）：xyz = plains 草色
+    /// （sRGB 0..1，来自 colormap/grass.png 温度×湿度查表），w = 染色开关
+    /// （colormap 素材缺失时 0 → 不染色，不伪造颜色）。
+    pub tint_grass: [f32; 4],
+    /// xyz = plains 叶色（colormap/foliage.png 查表），w = 自由。
+    pub tint_foliage: [f32; 4],
 }
 
-const _: () = assert!(size_of::<FrameUniforms>() == 112);
+const _: () = assert!(size_of::<FrameUniforms>() == 144);
 
 /// One draw per loaded chunk. Buffers are uploaded once per remesh.
 #[derive(Clone)]
@@ -290,7 +296,8 @@ pub struct Renderer {
     frame_bind: wgpu::BindGroup,
     hud_bind: wgpu::BindGroup,
     sky_bind: wgpu::BindGroup,
-    /// MC GUI 精灵表(资源根 textures/ 下原版精灵);None = 回退程序化绘制。
+    /// MC GUI 精灵表(资源根 textures/ 下原版精灵);None = 素材缺失
+    /// (上层按素材红线显示加载失败提示，无程序化回退)。
     gui: Option<SpriteSheet>,
     player_pipeline: wgpu::RenderPipeline,
     player_bind_layout: wgpu::BindGroupLayout,
@@ -310,9 +317,10 @@ pub struct Renderer {
     /// 设备纹理数组层数是否容得下 CRACK_BASE..（GLES 256 层钳制时为 false，
     /// 只画描边不画裂纹）。
     crack_layers_ok: bool,
-    /// 原版天体贴图（sun + moon/<phase>）是否就位；false = 无素材部署，
-    /// fs_sky 回退程序化天体圆盘。
-    celestial_loaded: bool,
+    /// 生物群系染色基色（FrameUniforms 的 tint_grass/tint_foliage 初值，
+    /// 创建期由 plains 基线算出；colormap 缺失时 w=0 禁用染色）。
+    tint_grass: [f32; 4],
+    tint_foliage: [f32; 4],
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -430,9 +438,9 @@ impl Renderer {
         let max_hud_quads: u32 = 4096;
 
         // ---- terrain texture array ------------------------------------
-        // 真实官方贴图 827 层 + 裂纹；GLES downlevel 上限 256 → 按 device
-        // limits 钳制（app.rs 建 device 时已尽量抬到 adapter 上限，Vulkan 桌面
-        // 可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
+        // 真实官方贴图 827 层 + missing 哨兵 + 裂纹；GLES downlevel 上限 256
+        // → 按 device limits 钳制（app.rs 建 device 时已尽量抬到 adapter 上限，
+        // Vulkan 桌面可吃满）。被钳掉的层按地址回绕采样，显示错贴图但不崩溃。
         let max_layers = atlas::LAYERS.min(device.limits().max_texture_array_layers as usize);
         let (payload, n_layers) = atlas::generate_payload_clamped(assets_dir, max_layers);
         if n_layers < atlas::LAYERS {
@@ -511,13 +519,53 @@ impl Renderer {
             ..Default::default()
         });
 
+        // ---- 生物群系染色（26.1 BlockColors / GrassColor 等价）-----------
+        // ① LUT：tile 层号 → tint 类别（vec4<u32>(kind, r, g, b)，std140
+        //   stride 16）。草/叶族乘 FrameUniforms 基色，云杉/白桦常量色烤进
+        //   LUT；裂纹/哨兵层 kind=0 不染色。
+        let tint_lut_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("tint-lut"),
+            size: (atlas::LAYERS * 16) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&tint_lut_buf, 0, &mcv_core::tint::tint_lut_bytes());
+        // ② plains 基线草/叶色：colormap PNG（原版 GrassColorReloadListener
+        //   同款 256x256 查表图）。缺失 → log::error + 关闭染色（草地按
+        //   原版灰度贴图原样显示，不伪造颜色）。
+        let load_colormap = |file: &str| -> Option<Vec<u8>> {
+            let dir = assets_dir?;
+            let bytes = std::fs::read(dir.join("textures/colormap").join(file)).ok()?;
+            mcv_core::tint::decode_colormap(&bytes)
+        };
+        let (tint_grass, tint_foliage) =
+            match (load_colormap("grass.png"), load_colormap("foliage.png")) {
+                (Some(g), Some(f)) => {
+                    let (g, f) = mcv_core::tint::world_grass_foliage_color(&g, &f)
+                        .expect("colormap 已按 256x256 校验");
+                    ([g[0], g[1], g[2], 1.0], [f[0], f[1], f[2], 1.0])
+                }
+                _ => {
+                    log::error!(
+                        "colormap 素材缺失（textures/colormap/{{grass,foliage}}.png）\
+——生物群系染色禁用，草/树叶按灰度贴图原样显示（不伪造颜色）"
+                    );
+                    ([1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0])
+                }
+            };
+
         // ---- celestial texture array（太阳 + 8 月相）--------------------
         // 原版 26.1 日月为贴图 quad（SkyRenderer.java:125-127/:149-157），
         // 素材 environment/celestial/{sun.png, moon/<phase>.png}。素材缺失
-        // （无素材部署）时全 0 透明 + 天体回退程序化圆盘（shader 内
-        // celestials.y 开关），正常部署不触发。
+        // → 素材红线（2026-10）：删除程序化天体圆盘回退，上传全透明纹理、
+        // log::error，天空保持无天体——绝不画假太阳/假月亮。
         let celestial_payload = assets_dir.and_then(celestial::load_payload);
-        let celestial_loaded = celestial_payload.is_some();
+        if celestial_payload.is_none() {
+            log::error!(
+                "天体贴图缺失：textures/environment/celestial/{{sun.png,moon/*.png}}\
+——天空将没有太阳与月亮（无程序化回退，请检查部署的 assets/）"
+            );
+        }
         let celestial_data = celestial_payload
             .unwrap_or_else(|| vec![0u8; celestial::CELESTIAL_LAYERS * 32 * 32 * 4]);
         let celestial_tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -567,8 +615,16 @@ impl Renderer {
         });
 
         // ---- font texture ---------------------------------------------
-        // 优先 MC ascii.png,失败回退程序化字体(见 font.rs)
-        let (font_data, font_widths, _mc_font) = font::load_atlas(assets_dir);
+        // 原版字体贴图（textures/font/ascii.png + BitmapProvider 度量）。
+        // 缺失/解码失败 → 素材红线（2026-10）：不再回退程序化 8x8 字体，
+        // log::error 并以全透明纹理占位（HUD 文字整体不上屏）。
+        let (font_data, font_widths) = match font::load_atlas(assets_dir) {
+            Ok(v) => v,
+            Err(e) => {
+                log::error!("{e}——HUD 文字将不上屏");
+                (vec![0u8; font::TEX_W * font::TEX_H * 4], [0u8; 256])
+            }
+        };
         font::install_widths(font_widths);
         let font_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("font"),
@@ -612,7 +668,8 @@ impl Renderer {
         let font_view = font_tex.create_view(&wgpu::TextureViewDescriptor::default());
 
         // ---- GUI 精灵表(资源根 textures/ 下原版精灵)-------------------
-        // 缺素材时建 1x1 占位纹理,gui 字段为 None → 上层回退程序化绘制。
+        // 缺素材时建 1x1 占位纹理，gui 字段为 None → 上层按素材红线显示
+        // 加载失败提示（无程序化面板回退）。
         let gui = assets_dir.and_then(SpriteSheet::load);
         let (gui_rgba, gui_w, gui_h) = match &gui {
             Some(s) => (s.rgba.clone(), s.w, s.h),
@@ -714,6 +771,17 @@ impl Renderer {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // 生物群系染色 LUT（层号 → tint 类别，mcv_core::tint）。
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
                     count: None,
                 },
             ],
@@ -954,6 +1022,10 @@ impl Renderer {
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: tint_lut_buf.as_entire_binding(),
                 },
             ],
         });
@@ -1466,14 +1538,15 @@ impl Renderer {
             overlay_ibuf,
             outline_vbuf,
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
-            celestial_loaded,
+            tint_grass,
+            tint_foliage,
             max_chunks,
             max_hud_quads,
         }
     }
 
-    /// MC GUI 精灵表;None 表示资源根未带精灵,上层应回退
-    /// 程序化绘制。
+    /// MC GUI 精灵表;None 表示资源根未带精灵，上层按素材红线显示
+    /// 加载失败提示（无程序化回退）。
     pub fn gui(&self) -> Option<&SpriteSheet> {
         self.gui.as_ref()
     }
@@ -1607,6 +1680,8 @@ impl Renderer {
                 scene.day_factor,
             ],
             fog_params: [0.006, 0.0, cam.far * 0.95, 0.0],
+            tint_grass: self.tint_grass,
+            tint_foliage: self.tint_foliage,
         };
         self.queue
             .write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&uniforms));
@@ -1625,14 +1700,9 @@ impl Renderer {
         sky_u[20..24].copy_from_slice(&sun_arr);
         let hor = [0.62, 0.76, 0.95, 0.0];
         sky_u[24..28].copy_from_slice(&hor);
-        // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 原版贴图是否就位
-        // （0 → shader 回退程序化圆盘，仅无素材部署）。
-        sky_u[28..32].copy_from_slice(&[
-            scene.moon_phase as f32,
-            if self.celestial_loaded { 1.0 } else { 0.0 },
-            0.0,
-            0.0,
-        ]);
+        // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 自由（旧「素材缺失
+        // → 程序化圆盘回退」开关已随红线删除）。
+        sky_u[28..32].copy_from_slice(&[scene.moon_phase as f32, 0.0, 0.0, 0.0]);
         self.queue
             .write_buffer(&self.sky_buf, 0, bytemuck::cast_slice(&sky_u));
 

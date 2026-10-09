@@ -5,8 +5,8 @@ struct SkyUniforms {
     cam_pos: vec4<f32>,   // w = time
     sun_dir_day: vec4<f32>, // xyz = sun dir, w = day factor
     fog_horizon: vec4<f32>, // xyz = horizon color, w = free
-    // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 原版贴图就位标志
-    // （0 → 回退程序化圆盘，仅无素材部署）、zw = 自由。
+    // 天体参数：x = 月相序（MoonPhase 序 0..7）、yzw = 自由（旧「素材缺失
+    // → 程序化圆盘回退」开关已随素材红线删除——日月只画原版贴图 quad）。
     celestials: vec4<f32>,
 };
 
@@ -88,34 +88,25 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     let s = normalize(sky.sun_dir_day.xyz);
     let u_axis = normalize(vec3<f32>(0.0, 0.0, 1.0) - s * s.z);
     let v_axis = cross(u_axis, s);
-    if (sky.celestials.y > 0.5) {
-        // 原版 CELESTIAL 管线混合 = BlendFunction.OVERLAY（RenderPipelines.java:643
-        // → BlendFunction.java:9）：dst.rgb += src.rgb * src.a（加色）。sun.png /
-        // moon/*.png 全图 alpha=1、四周暗色——加色下暗底≈无贡献，只亮出核心。
-        let sun_hit = quad_hit(dir, s, 15.0, u_axis, v_axis);
-        if (sun_hit.z > 0.0) {
-            // 太阳 quad 顶色白、alpha=rainBrightness（:347），本引擎无雨 → 1。
-            let tex = textureSampleLevel(celestial_tex, celestial_samp, sun_hit.xy, 0, 0.0);
-            color += tex.rgb * tex.a;
-        }
-        let m = -s;
-        let moon_hit = quad_hit(dir, m, 10.0, u_axis, -v_axis);
-        if (moon_hit.z > 0.0) {
-            // 月亮 quad UV 双镜像（buildMoonPhases :151-154）+ 相位层选择
-            // （baseVertex = moonPhase.index() * 4，:370-372）。
-            let uv = vec2<f32>(1.0 - moon_hit.x, 1.0 - moon_hit.y);
-            let phase = floor(sky.celestials.x + 0.5);
-            let tex = textureSampleLevel(celestial_tex, celestial_samp, uv, i32(1.0 + phase), 0.0);
-            color += tex.rgb * tex.a;
-        }
-    } else {
-        // 程序化回退（仅无素材部署；原版无此路径）。
-        let sun_d = dot(dir, s);
-        let moon_d = dot(dir, -s);
-        let sun = smoothstep(0.99930, 0.99965, sun_d);
-        let moon = smoothstep(0.99955, 0.99985, moon_d) * (1.0 - day);
-        color = mix(color, vec3<f32>(1.0, 0.95, 0.80), sun);
-        color = mix(color, vec3<f32>(0.85, 0.88, 0.95), moon);
+    // 原版 CELESTIAL 管线混合 = BlendFunction.OVERLAY（RenderPipelines.java:643
+    // → BlendFunction.java:9）：dst.rgb += src.rgb * src.a（加色）。sun.png /
+    // moon/*.png 全图 alpha=1、四周暗色——加色下暗底≈无贡献，只亮出核心。
+    // 素材缺失时纹理数组为全透明（无程序化圆盘回退）：加色 0，天空无天体。
+    let sun_hit = quad_hit(dir, s, 15.0, u_axis, v_axis);
+    if (sun_hit.z > 0.0) {
+        // 太阳 quad 顶色白、alpha=rainBrightness（:347），本引擎无雨 → 1。
+        let tex = textureSampleLevel(celestial_tex, celestial_samp, sun_hit.xy, 0, 0.0);
+        color += tex.rgb * tex.a;
+    }
+    let m = -s;
+    let moon_hit = quad_hit(dir, m, 10.0, u_axis, -v_axis);
+    if (moon_hit.z > 0.0) {
+        // 月亮 quad UV 双镜像（buildMoonPhases :151-154）+ 相位层选择
+        // （baseVertex = moonPhase.index() * 4，:370-372）。
+        let uv = vec2<f32>(1.0 - moon_hit.x, 1.0 - moon_hit.y);
+        let phase = floor(sky.celestials.x + 0.5);
+        let tex = textureSampleLevel(celestial_tex, celestial_samp, uv, i32(1.0 + phase), 0.0);
+        color += tex.rgb * tex.a;
     }
 
     // Stars at night: hash lattice on the ray direction. 原版星星本身即

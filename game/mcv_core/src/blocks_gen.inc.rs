@@ -2,18 +2,20 @@
 // DEVELOP_ONLY：官方 26.1 blockstates/models/Blocks.java 生成（同 assets/ 素材政策）。
 // 元组: (name, solid, opaque, liquid, light_emit, tiles [+X,-X,+Y,-Y,+Z,-Z], hardness, model_kind)
 // model_kind: 0=纯立方（全支持） 1=非立方（cross/楼梯/板/栅栏/多部件…，占位代表贴图）
-// tiles 为 tiles_manifest.json 层索引。注意：层 0 是真实贴图（字典序第一张
-// acacia_door_bottom）——没有「空层」哨兵；air 族/barrier/light 等全 0 行
-// 顶着层 0 贴图但 geom=false 不出几何。hardness=MC strength()，基岩=inf；
-// 未显式 strength() 的方块按原版 destroyTime 默认 0.0（BlockBehaviour.java:976）。
+// tiles 为 tiles_manifest.json 层索引；全部真实贴图层 0..N-1（字典序），
+// 层 N = missing 哨兵（模型无贴图解析的方块，渲染为原版 missingno 品红）。
+// 注意：层 0 也是真实贴图（字典序第一张 acacia_door_bottom），不是空层哨兵。
+// hardness=MC strength()，基岩=inf；未显式 strength() 的方块按原版
+// destroyTime 默认 0.0（BlockBehaviour.java:976）。
 // id 0..13 = 旧 14 方块（id/名字/属性与旧表一致，地形生成器依赖）；14+ 官方名字典序。
 // snow_grass(id 11): 官方是 grass_block 的 snowy 状态；本引擎单方块模型，独立 id，取 snow 模型贴图。
-// 已知限制：tintindex 生物群系染色（草侧面 overlay/叶）未由渲染管线实现，贴图按原样入表；
+// tintindex 生物群系染色（草顶/羊齿/树叶三族）已实现：渲染侧按 tile 层查
+// mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。
 // cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何
 // （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。
 #[allow(clippy::type_complexity)]
 static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
-    /*    0 */ ("air", false, false, false, 0, [0, 0, 0, 0, 0, 0], 0f32, 0),
+    /*    0 */ ("air", false, false, false, 0, [827, 827, 827, 827, 827, 827], 0f32, 0),
     /*    1 */ ("stone", true, true, false, 0, [707, 707, 707, 707, 707, 707], 1.5f32, 0),
     /*    2 */ ("dirt", true, true, false, 0, [274, 274, 274, 274, 274, 274], 0.5f32, 0),
     /*    3 */ ("grass", true, true, false, 0, [333, 333, 336, 274, 333, 333], 0.6f32, 0),
@@ -81,7 +83,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*   65 */ ("bamboo_wall_hanging_sign", true, false, false, 0, [29, 29, 29, 29, 29, 29], 1f32, 1),
     /*   66 */ ("bamboo_wall_sign", true, false, false, 0, [29, 29, 29, 29, 29, 29], 1f32, 1),
     /*   67 */ ("barrel", true, true, false, 0, [36, 36, 37, 35, 36, 36], 2.5f32, 0),
-    /*   68 */ ("barrier", true, false, false, 0, [0, 0, 0, 0, 0, 0], f32::INFINITY, 1),
+    /*   68 */ ("barrier", true, false, false, 0, [827, 827, 827, 827, 827, 827], f32::INFINITY, 1),
     /*   69 */ ("basalt", true, true, false, 0, [38, 38, 39, 39, 38, 38], 1.25f32, 0),
     /*   70 */ ("beacon", true, false, false, 15, [40, 40, 40, 40, 40, 40], 3f32, 1),
     /*   71 */ ("bee_nest", true, true, false, 0, [44, 44, 45, 42, 44, 43], 0.3f32, 0),
@@ -189,7 +191,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*  173 */ ("cartography_table", true, true, false, 0, [125, 124, 126, 235, 123, 125], 2.5f32, 0),
     /*  174 */ ("carved_pumpkin", true, true, false, 0, [584, 584, 586, 586, 584, 127], 1f32, 0),
     /*  175 */ ("cauldron", true, false, false, 0, [129, 129, 130, 128, 129, 129], 2f32, 1),
-    /*  176 */ ("cave_air", false, false, false, 0, [0, 0, 0, 0, 0, 0], 0f32, 1),
+    /*  176 */ ("cave_air", false, false, false, 0, [827, 827, 827, 827, 827, 827], 0f32, 1),
     /*  177 */ ("cave_vines", false, false, false, 0, [131, 131, 131, 131, 131, 131], 0f32, 1),
     /*  178 */ ("cave_vines_plant", false, false, false, 0, [132, 132, 132, 132, 132, 132], 0f32, 1),
     /*  179 */ ("chain_command_block", true, true, false, 0, [135, 135, 135, 135, 133, 134], f32::INFINITY, 0),
@@ -534,7 +536,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*  518 */ ("leaf_litter", false, false, false, 0, [403, 403, 403, 403, 403, 403], 0f32, 1),
     /*  519 */ ("lectern", true, false, false, 0, [404, 404, 405, 492, 404, 404], 2.5f32, 1),
     /*  520 */ ("lever", false, false, false, 0, [406, 406, 406, 168, 406, 406], 0.5f32, 1),
-    /*  521 */ ("light", true, false, false, 0, [0, 0, 0, 0, 0, 0], f32::INFINITY, 1),
+    /*  521 */ ("light", true, false, false, 0, [827, 827, 827, 827, 827, 827], f32::INFINITY, 1),
     /*  522 */ ("light_blue_banner", true, false, false, 0, [492, 492, 492, 492, 492, 492], 1f32, 1),
     /*  523 */ ("light_blue_bed", true, false, false, 0, [492, 492, 492, 492, 492, 492], 0.2f32, 1),
     /*  524 */ ("light_blue_candle", true, false, false, 3, [407, 407, 407, 407, 407, 407], 0.1f32, 1),
@@ -1007,7 +1009,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*  991 */ ("stripped_warped_hyphae", true, true, false, 0, [735, 735, 735, 735, 735, 735], 2f32, 0),
     /*  992 */ ("stripped_warped_stem", true, true, false, 0, [735, 735, 736, 736, 735, 735], 2f32, 0),
     /*  993 */ ("structure_block", true, true, false, 0, [737, 737, 737, 737, 737, 737], f32::INFINITY, 0),
-    /*  994 */ ("structure_void", false, false, false, 0, [0, 0, 0, 0, 0, 0], 0f32, 1),
+    /*  994 */ ("structure_void", false, false, false, 0, [827, 827, 827, 827, 827, 827], 0f32, 1),
     /*  995 */ ("sugar_cane", false, false, false, 0, [738, 738, 738, 738, 738, 738], 0f32, 1),
     /*  996 */ ("sunflower", false, false, false, 0, [739, 739, 739, 739, 739, 739], 0f32, 1),
     /*  997 */ ("suspicious_gravel", true, true, false, 0, [740, 740, 740, 740, 740, 740], 0.25f32, 0),
@@ -1047,7 +1049,7 @@ static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /* 1031 */ ("vault", true, false, false, 0, [772, 772, 773, 770, 772, 771], 50f32, 1),
     /* 1032 */ ("verdant_froglight", true, true, false, 15, [774, 774, 775, 775, 774, 774], 0.3f32, 0),
     /* 1033 */ ("vine", false, false, false, 0, [776, 776, 776, 776, 776, 776], 0.2f32, 1),
-    /* 1034 */ ("void_air", false, false, false, 0, [0, 0, 0, 0, 0, 0], 0f32, 1),
+    /* 1034 */ ("void_air", false, false, false, 0, [827, 827, 827, 827, 827, 827], 0f32, 1),
     /* 1035 */ ("wall_torch", false, false, false, 14, [755, 755, 755, 755, 755, 755], 0f32, 1),
     /* 1036 */ ("warped_button", false, false, false, 0, [781, 781, 781, 781, 781, 781], 0.5f32, 1),
     /* 1037 */ ("warped_door", true, false, false, 0, [777, 777, 777, 777, 777, 777], 3f32, 1),

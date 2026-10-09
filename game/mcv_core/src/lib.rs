@@ -5,6 +5,7 @@ pub mod atlas;
 pub mod chunk;
 pub mod pool;
 pub mod shape;
+pub mod tint;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};
@@ -81,7 +82,7 @@ pub const STATE_SHIFT: u32 = 12;
 /// Texture array layer indices into the real-texture atlas region
 /// (layers 0..MANIFEST_LAYERS, 字典序 = tiles_manifest.json 索引)。
 /// 值为 manifest 的真实层号；u16 以匹配 `BlockDef::tiles` / 网格器顶点
-/// `tex_layer`。特殊程序化层（裂纹叠加等）在 827+，见 mcv_core::atlas。
+/// `tex_layer`。特殊层（missing 哨兵 827、裂纹叠加 828+）见 mcv_core::atlas。
 pub mod tiles {
     pub const GRASS_TOP: u16 = 336; // grass_block_top
     pub const GRASS_SIDE: u16 = 333; // grass_block_side

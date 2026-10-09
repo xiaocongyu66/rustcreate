@@ -104,6 +104,30 @@ jobs:
           unzip -l "$APK" | grep -q "META-INF/" || { echo "APK unsigned!"; exit 1; }
           cp "$APK" ${{ matrix.artifact }}.apk
 
+      - name: Smoke — APK must bundle vanilla texture assets
+        if: matrix.android
+        run: |
+          APK=${{ matrix.artifact }}.apk
+          # 素材红线冒烟（2026-10 任务 #53）：程序化贴图回退已全部删除，
+          # 真机素材缺失只会看到 missing 标记——所以 APK 里必须带齐关键
+          # 原版贴图（地形/天体/字体/容器面板/染色 colormap）。
+          for f in \
+            assets/assets/minecraft/textures/block/grass_block_top.png \
+            assets/assets/minecraft/textures/block/destroy_stage_0.png \
+            assets/assets/minecraft/textures/environment/celestial/sun.png \
+            assets/assets/minecraft/textures/environment/celestial/moon/full_moon.png \
+            assets/assets/minecraft/textures/font/ascii.png \
+            assets/assets/minecraft/textures/gui/container/inventory.png \
+            assets/assets/minecraft/textures/gui/container/crafting_table.png \
+            assets/assets/minecraft/textures/colormap/grass.png \
+            assets/assets/minecraft/textures/colormap/foliage.png ; do
+            unzip -l "$APK" | grep -q " $f\$" || { echo "APK 缺关键素材: $f"; exit 1; }
+          done
+          # 方块贴图总量 ≥ 827（REAL_TILE_COUNT，与 tiles_manifest.json 互锁）。
+          n=$(unzip -l "$APK" | grep -c 'assets/assets/minecraft/textures/block/.*\.png')
+          echo "APK block textures: $n"
+          [ "$n" -ge 827 ] || { echo "APK 方块贴图数量不足: $n < 827"; exit 1; }
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

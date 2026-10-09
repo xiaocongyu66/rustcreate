@@ -8,19 +8,57 @@ fn manifest_json_wellformed() {
     assert!(s.contains("\"tile_index_to_file\""), "manifest key missing");
 }
 
+/// 素材红线（2026-10 任务 #53）：无素材时全部层 = 原版 missing 标记
+/// （MissingTextureAtlasSprite 品红/黑棋盘），不再有任何程序化噪声配方。
 #[test]
-fn payload_layout() {
+fn missing_marker_when_no_assets() {
     let p = atlas::generate_payload();
-    let mip0 = atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4;
-    let mip1 = atlas::LAYERS * 8 * 8 * 4;
-    assert_eq!(p.len(), mip0 + mip1);
-    // layer 0 is debug magenta placeholder; grass_top fallback recipe must be
-    // painted at its manifest layer
-    let off = (mcv_core::tiles::GRASS_TOP as usize) * atlas::TILE_PX * atlas::TILE_PX * 4
-        + (8 * 16 + 8) * 4;
+    let tile = atlas::TILE_PX * atlas::TILE_PX * 4;
+    // 哨兵层与真实层区（此处未喂素材）都应是 missing 棋盘。
+    for layer in [0usize, atlas::SENTINEL_LAYER, atlas::CRACK_BASE] {
+        let off = layer * tile;
+        // 中心 (8,8) 落在右上/左下品红象限（y<8 ^ x<8 = false → 黑？）：
+        // y=8 不小于 8，x=8 不小于 8 → false^false → 黑象限。取 (12,4)
+        // （右上象限）应为品红。
+        let pink = off + (4 * atlas::TILE_PX + 12) * 4;
+        let black = off + (4 * atlas::TILE_PX + 4) * 4;
+        assert_eq!(
+            &p[pink..pink + 4],
+            &[248, 0, 248, 255],
+            "层 {layer} 品红象限"
+        );
+        assert_eq!(&p[black..black + 4], &[0, 0, 0, 255], "层 {layer} 黑象限");
+    }
+}
+
+/// 素材完整性（CPU）：仓库内 827 张真实方块贴图 + 10 档原版裂纹必须全部
+/// 命中对应层——真机曾出现 826/827（层 0 被旧 skip(1) 跳过，acacia 门
+/// 贴图缺失逼出品红），该断言锁死 827/827。
+#[test]
+fn real_assets_fill_all_real_layers() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft");
+    let mut mip0 = vec![0u8; atlas::LAYERS * atlas::TILE_PX * atlas::TILE_PX * 4];
+    let n = atlas::load_real_tiles(&dir, &mut mip0);
+    assert_eq!(
+        n as usize,
+        atlas::REAL_TILE_COUNT,
+        "827 张真实贴图应全部加载"
+    );
+    let c = atlas::load_crack_stages(&dir, &mut mip0);
+    assert_eq!(c as usize, atlas::CRACK_LAYERS, "10 档原版裂纹应全部加载");
+    // 抽查关键层内容已被真实贴图覆盖（非 missing 品红棋盘）：
+    // 草顶为灰度遮罩（r≈g≈b 且非品红）、黄毛 tile 非黑。
+    let tile = atlas::TILE_PX * atlas::TILE_PX * 4;
+    let center = |layer: usize| (layer * tile) + (8 * atlas::TILE_PX + 8) * 4;
+    let grass = &mip0[center(mcv_core::tiles::GRASS_TOP as usize)..][..3];
     assert!(
-        p[off + 1] > p[off],
-        "grass_top center must be green-dominant"
+        !(grass[0] > 150 && grass[2] > 150 && grass[1] + 60 < grass[0]),
+        "grass_block_top 层不应是 missing 品红：{grass:?}"
+    );
+    let yellow = &mip0[center(826)..][..3];
+    assert!(
+        yellow.iter().any(|&v| v > 0),
+        "yellow_wool 层（826，真实贴图区末层）不应全黑"
     );
 }
 

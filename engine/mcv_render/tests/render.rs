@@ -62,13 +62,15 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
 }
 
 fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
-    setup_with_assets(None)
+    setup_with_assets(Some(&workspace_assets()))
 }
 
-/// 喂仓库内原版素材的 setup：裂纹测试验证真实 destroy_stage、天体测试
-/// 验证真实 environment/celestial。管线冒烟测试保持 None——原版
-/// grass_block_top 是灰度待生物群系染色贴图（本引擎尚未实现染色，见
-/// KNOWN-DIVERGENCE），真实素材下草地渲染为灰，绿色断言不适用。
+/// 喂仓库内原版素材的 setup（正常部署路径）：裂纹层吃真实 destroy_stage、
+/// 天空吃真实 environment/celestial、草地吃真实 grass_block_top + 生物群系
+/// 染色（mcv_core::tint plains 基线）。绿色断言从此对真实素材成立。
+/// 素材缺失路径（原「冒烟测试拆双路径」的 None 分支）由
+/// [`missing_assets_never_paint_fake_pixels`] 专门守护——渲染器在该路径
+/// 只产出原版 missing 标记，无任何程序化假贴图。
 fn setup_with_assets(
     assets: Option<&std::path::Path>,
 ) -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
@@ -105,7 +107,8 @@ fn setup_with_assets(
 
 /// 工作区 assets/minecraft 资源根（仓库内已提交原版贴图）。测试显式传给
 /// Renderer::new，让裂纹层吃到原版 destroy_stage_0..9、天空吃到原版
-/// environment/celestial/{sun,moon/*}——与 app.rs 桌面路径同源。
+/// environment/celestial/{sun,moon/*}、染色吃到 colormap/{grass,foliage}
+/// ——与 app.rs 桌面路径同源。
 fn workspace_assets() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft")
 }
@@ -395,7 +398,7 @@ fn gles_fallback_world_frame_smoke() {
         device.clone(),
         queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
-        None,
+        Some(&workspace_assets()),
     );
     let clouds = mcv_render::Clouds::new(&device, &queue);
     // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。
@@ -460,7 +463,8 @@ fn gles_fallback_world_frame_smoke() {
         let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
         let _ = std::fs::write(std::path::Path::new(&dir).join("gles-smoke.png"), png);
     }
-    // GL 回退下草地必须仍然画得出（颜色路径跨后端一致性弱，阈值放宽）。
+    // GL 回退下草地必须仍然画得出（真实素材 + 染色；颜色路径跨后端
+    // 一致性弱，阈值放宽）。
     let (green, _) = sample_stats(&rgba, extent.width, extent.height);
     assert!(green > 0.15, "GLES 回退下草地缺失，green={green}");
 }
@@ -694,4 +698,158 @@ fn celestial_sun_texture_paints_core() {
         }
     }
     assert!(core > 30, "太阳亮核缺失（原版贴图未上屏？）core={core}");
+}
+
+/// 素材红线守护（2026-10 任务 #53）：素材缺失路径不得产出任何程序化
+/// 假贴图像素（原「程序化回退」分支已删，本测试锁死该语义）：
+/// - 地形层：图集只剩原版 missing 标记（MissingTextureAtlasSprite 品红/
+///   黑棋盘），草地层采样为品红系——绝不出现绿色假草地；
+/// - 天体：纹理数组全透明，天空绝不出现程序化假太阳亮核（对照
+///   [`celestial_sun_texture_paints_core`] 的真实素材路径）；
+/// - 字体：字体纹理全透明，HUD 字形/实心矩形不上屏——无假字形。
+#[test]
+fn missing_assets_never_paint_fake_pixels() {
+    let (device, queue, mut renderer) = setup_with_assets(None);
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let (sun, day) = mcv_render::sun_state(6000);
+    let hud: Vec<HudQuad> = Vec::new();
+
+    // —— 场景 A：俯视草地，应为 missing 品红标记 ——
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: std::slice::from_ref(&chunk),
+        hud: &hud,
+        cloud: None,
+        player: None,
+        overlay: None,
+    };
+    let mut enc = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut enc);
+    queue.submit([enc.finish()]);
+    let rgba = target.read_pixels(&device);
+
+    // 草地带统计：品红主导（r、b 高且 g 低）必须占多数；绿色主导必须为 0。
+    let (mut magenta, mut green) = (0u64, 0u64);
+    for y in 120..190u32 {
+        for x in 0..320u32 {
+            let o = ((y * 320 + x) * 4) as usize;
+            let (r, g, b) = (rgba[o] as i32, rgba[o + 1] as i32, rgba[o + 2] as i32);
+            if r > 150 && b > 150 && g + 60 < r.min(b) {
+                magenta += 1;
+            }
+            if g > r + 10 && g > b + 10 {
+                green += 1;
+            }
+        }
+    }
+    let band = 70 * 320; // y 120..190 的地面统计带
+    // 红线断言：素材缺失下不得出现绿色假草地（程序化噪声回退的签名色）。
+    // 品红象限经 mip 下采样/雾混合后亮度不可控（lavapipe 实测 ~16%像素
+    // 命中品红谓词），故只要求品红显著多于绿——标记存在即可，伪装必零。
+    assert!(
+        magenta * 8 > band as u64,
+        "素材缺失下应能看到 missing 品红标记，magenta={magenta}/{band}"
+    );
+    assert_eq!(green, 0, "素材缺失下出现绿色假草地像素（程序化回退复辟？）");
+
+    // —— 场景 B：仰视天顶 + HUD 字形/实心条，应无假太阳、无假字形 ——
+    let camera_up = Camera {
+        pos: Vec3::new(8.0, 110.0, 8.0),
+        yaw: 0.0,
+        pitch: 1.4,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 512.0,
+    };
+    let hud_b = vec![
+        HudQuad {
+            x: 100.0,
+            y: 20.0,
+            w: 16.0,
+            h: 16.0,
+            uv: font::glyph_uv(65), // 'A'
+            color: [1.0, 1.0, 1.0, 1.0],
+            tex: 0,
+            layer: 0,
+            rot: 0.0,
+        },
+        HudQuad {
+            x: 130.0,
+            y: 20.0,
+            w: 40.0,
+            h: 6.0,
+            uv: font::glyph_uv(font::SOLID_CELL),
+            color: [1.0, 1.0, 1.0, 1.0],
+            tex: 0,
+            layer: 0,
+            rot: 0.0,
+        },
+    ];
+    let scene = Scene {
+        camera: &camera_up,
+        time: 0.0,
+        day_factor: 1.0,
+        sun_dir: Vec3::Y, // 太阳在正天顶（对照真实素材测试的同机位）
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: &[],
+        hud: &hud_b,
+        cloud: None,
+        player: None,
+        overlay: None,
+    };
+    let mut enc = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut enc);
+    queue.submit([enc.finish()]);
+    let rgba = target.read_pixels(&device);
+
+    // 无假太阳亮核：真实素材路径该机位 core>30（r、g ≥250），此处必须为 0。
+    let mut core = 0usize;
+    for px in rgba.chunks(4) {
+        if px[0] >= 250 && px[1] >= 250 {
+            core += 1;
+        }
+    }
+    assert_eq!(core, 0, "素材缺失下出现程序化假太阳亮核像素 core={core}");
+
+    // 无假字形/假实心矩形：字形与实心条区域（顶部天顶蓝底，r<200）不应
+    // 有任何白色像素。
+    let mut white = 0usize;
+    for y in 16..44u32 {
+        for x in 96..176u32 {
+            let o = ((y * 320 + x) * 4) as usize;
+            if rgba[o] > 200 && rgba[o + 1] > 200 && rgba[o + 2] > 200 {
+                white += 1;
+            }
+        }
+    }
+    assert_eq!(
+        white, 0,
+        "素材缺失下出现假字形/假实心矩形像素 white={white}"
+    );
 }

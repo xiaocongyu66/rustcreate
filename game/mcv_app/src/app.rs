@@ -197,9 +197,10 @@ fn crafting_table_id() -> u16 {
 }
 
 impl AppState {
-    /// MC 风格按钮：真 MC button 三态贴图九宫格（缺素材回退纯色矩形）+
-    /// 白色阴影文字居中；悬停换高亮贴图并染黄（MC AbstractButton 行为）。
-    /// 逻辑 id 与旧版一致，只换皮。
+    /// MC 风格按钮：真 MC button 三态贴图九宫格 + 白色阴影文字居中；
+    /// 悬停换高亮贴图并染黄（MC AbstractButton 行为）。逻辑 id 与旧版一致，
+    /// 只换皮。素材红线（2026-10 任务 #53）：精灵表缺失时**不画纯色矩形
+    /// 假按钮**，仅保留文字标签与命中矩形（缺贴图应当显眼，不伪装）。
     #[allow(clippy::too_many_arguments)]
     fn mc_button(
         q: &mut Vec<mcv_render::HudQuad>,
@@ -213,18 +214,14 @@ impl AppState {
         bh: f32,
         label: &str,
         scale: f32,
-        accent: [f32; 4],
         align_left: bool,
     ) {
         use mcv_render::text;
         let hovered =
             hover.is_some_and(|(mx, my)| mx >= x && mx <= x + bw && my >= y && my <= y + bh);
-        match gui {
-            Some(g) => {
-                let sprite = if hovered { "button_hl" } else { "button" };
-                q.extend(g.nine_slice(sprite, x, y, bw, bh, 3, scale, [1.0, 1.0, 1.0, 1.0]));
-            }
-            None => q.push(text::rect(x, y, bw, bh, accent)),
+        if let Some(g) = gui {
+            let sprite = if hovered { "button_hl" } else { "button" };
+            q.extend(g.nine_slice(sprite, x, y, bw, bh, 3, scale, [1.0, 1.0, 1.0, 1.0]));
         }
         let color = if hovered && gui.is_some() {
             [1.0, 0.98, 0.6, 1.0] // MC 悬停黄
@@ -311,7 +308,8 @@ impl AppState {
     }
 
     /// 构建菜单界面（HUD quad + 按钮命中表）。MC 26.1 风格：dirt 铺贴
-    /// 背景、原版 logo + splash、button 三态贴图；素材缺失自动回退。
+    /// 背景、原版 logo + splash、button 三态贴图；素材缺失显示失败提示
+    /// （素材红线：无程序化回退）。
     fn menu_ui(&mut self, w: f32, h: f32) -> Vec<mcv_render::HudQuad> {
         use mcv_render::text;
         let mut q: Vec<mcv_render::HudQuad> = Vec::new();
@@ -380,13 +378,14 @@ impl AppState {
                     }
                     q.extend(self.splash_quads(w, h, s, t));
                 } else {
-                    // 回退：程序化标题
+                    // 素材红线（2026-10 任务 #53）：不画程序化标题假 logo，
+                    // 显示原版素材加载失败提示。
                     q.extend(text::text_quads_centered(
-                        "MCV",
+                        "missing textures: gui/title/minecraft.png",
                         w * 0.5,
                         h * 0.22,
-                        4.0 * s,
-                        [1.0, 1.0, 1.0, 1.0],
+                        s,
+                        [1.0, 0.3, 0.3, 1.0],
                     ));
                 }
                 let lang = self.lang();
@@ -411,7 +410,6 @@ impl AppState {
                         btn_h,
                         label,
                         s,
-                        [0.15, 0.16, 0.2, 0.82],
                         false,
                     );
                 }
@@ -445,11 +443,12 @@ impl AppState {
                             ));
                         }
                         None => {
-                            q.push(text::rect(x, y, btn_w, btn_h, [0.12, 0.13, 0.17, 0.85]));
+                            // 素材红线（2026-10 任务 #53）：缺精灵不画纯色
+                            // 假按钮行，仅保留文字。
                             q.extend(text::text_quads(
                                 &label,
-                                x + 8.0,
-                                y + btn_h * 0.5 - 4.0 * s,
+                                x + 4.0 * s,
+                                y + (btn_h - 8.0 * s) * 0.5,
                                 s,
                                 [0.95, 0.95, 0.95, 1.0],
                             ));
@@ -470,7 +469,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "selectWorld.create"),
                     s,
-                    [0.13, 0.3, 0.16, 0.85],
                     false,
                 );
                 Self::mc_button(
@@ -485,7 +483,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "gui.back"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
             }
@@ -521,7 +518,6 @@ impl AppState {
                     btn_h,
                     &label,
                     s,
-                    [0.2, 0.14, 0.3, 0.85],
                     false,
                 );
                 // 模式说明
@@ -550,7 +546,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "mcv.createWorld.create"),
                     s,
-                    [0.13, 0.3, 0.16, 0.85],
                     false,
                 );
                 Self::mc_button(
@@ -565,7 +560,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "gui.back"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
             }
@@ -597,7 +591,6 @@ impl AppState {
                     btn_h,
                     &dlabel,
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 Self::mc_button(
@@ -612,7 +605,6 @@ impl AppState {
                     btn_h,
                     "+",
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 // 灵敏度
@@ -634,7 +626,6 @@ impl AppState {
                     btn_h,
                     &slabel,
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 Self::mc_button(
@@ -649,7 +640,6 @@ impl AppState {
                     btn_h,
                     "+",
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 // 渲染云：官方 CloudStatus 三态循环 OFF→流畅→高品质（点击主按钮循环）
@@ -676,7 +666,6 @@ impl AppState {
                     btn_h,
                     &clabel,
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 // 语言：English ↔ 中文
@@ -702,7 +691,6 @@ impl AppState {
                     btn_h,
                     &llabel,
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 let y4 = y3 + btn_h + gap * 2.0;
@@ -718,7 +706,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "gui.back"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 // 键位重映射入口（追加于 arm 末尾，最小化并行分支冲突面）
@@ -734,7 +721,6 @@ impl AppState {
                     btn_h,
                     crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Entry),
                     s,
-                    [0.2, 0.14, 0.3, 0.85],
                     false,
                 );
             }
@@ -757,7 +743,8 @@ impl AppState {
                     let y = top + i as f32 * row_h;
                     let capturing = self.binds.state == crate::binds_ui::Capture::Capturing(*a);
                     let conflict = self.binds.conflict == Some(*a);
-                    // 行背景：button 贴图染色（捕获=青，冲突=红）；缺素材回退纯色
+                    // 行背景：button 贴图染色（捕获=青，冲突=红）。素材红线
+                    // （2026-10）：缺素材不画纯色矩形假按钮行，仅保留文字。
                     let tint = if conflict {
                         [1.0, 0.5, 0.5, 1.0]
                     } else if capturing {
@@ -765,8 +752,8 @@ impl AppState {
                     } else {
                         [1.0, 1.0, 1.0, 1.0]
                     };
-                    match gui {
-                        Some(g) => q.extend(g.nine_slice(
+                    if let Some(g) = gui {
+                        q.extend(g.nine_slice(
                             if capturing { "button_hl" } else { "button" },
                             x,
                             y,
@@ -775,18 +762,7 @@ impl AppState {
                             3,
                             s,
                             tint,
-                        )),
-                        None => q.push(text::rect(
-                            x,
-                            y,
-                            btn_w,
-                            row_h,
-                            if conflict {
-                                [0.35, 0.12, 0.12, 0.9]
-                            } else {
-                                [0.12, 0.13, 0.17, 0.85]
-                            },
-                        )),
+                        ));
                     }
                     // 左动作名 + 右当前键；过宽时等比缩小（mc_button 同款策略）
                     let label = crate::binds_ui::action_label(lang, *a);
@@ -841,7 +817,6 @@ impl AppState {
                     btn_h,
                     crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Restore),
                     s,
-                    [0.3, 0.15, 0.13, 0.85],
                     false,
                 );
                 Self::mc_button(
@@ -856,7 +831,6 @@ impl AppState {
                     btn_h,
                     crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Save),
                     s,
-                    [0.13, 0.3, 0.16, 0.85],
                     false,
                 );
                 Self::mc_button(
@@ -871,7 +845,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "gui.back"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
             }
@@ -899,7 +872,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "menu.returnToGame"),
                     s,
-                    [0.13, 0.3, 0.16, 0.85],
                     false,
                 );
                 Self::mc_button(
@@ -914,7 +886,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "menu.options"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
                 Self::mc_button(
@@ -929,7 +900,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "menu.returnToMenu"),
                     s,
-                    [0.3, 0.15, 0.13, 0.85],
                     false,
                 );
             }
@@ -973,7 +943,6 @@ impl AppState {
                         btn_h,
                         crate::i18n::t(lang, "deathScreen.respawn"),
                         s,
-                        [0.13, 0.3, 0.16, 0.85],
                         false,
                     );
                     y += btn_h + gap;
@@ -990,7 +959,6 @@ impl AppState {
                     btn_h,
                     crate::i18n::t(lang, "deathScreen.titleScreen"),
                     s,
-                    [0.15, 0.16, 0.2, 0.82],
                     false,
                 );
             }

@@ -8,6 +8,11 @@ struct FrameUniforms {
     cam_pos_time: vec4<f32>,
     sun_dir_day: vec4<f32>,
     fog_params: vec4<f32>,
+    // 生物群系染色基色（26.1 ColorResolver 机制）：xyz = plains 草/叶色
+    // （sRGB 0..1，colormap 温度×湿度查表），tint_grass.w = 染色开关
+    // （colormap 素材缺失时 0 → 不染色）。
+    tint_grass: vec4<f32>,
+    tint_foliage: vec4<f32>,
 };
 
 struct ChunkOrigin {
@@ -40,10 +45,34 @@ fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
     return exp2(-dist * fog.x);
 }
 
+// 生物群系染色（26.1 BlockColors / BlockTintSources 等价）：灰度遮罩贴图
+// × 生物群系颜色。colormap 族取 FrameUniforms 的 plains 基线色（素材缺失
+// 时 w=0 → 不染色）；常量族直接用 LUT 烤色。无染色时返回 1（不改变贴图）。
+fn biome_tint(entry: vec4<u32>) -> vec3<f32> {
+    let kind = entry.x;
+    if (kind == 1u) {
+        return select(vec3<f32>(1.0), frame.tint_grass.rgb, frame.tint_grass.w > 0.5);
+    }
+    if (kind == 2u) {
+        return select(vec3<f32>(1.0), frame.tint_foliage.rgb, frame.tint_foliage.w > 0.5);
+    }
+    if (kind == 3u || kind == 4u) {
+        return vec3<f32>(f32(entry.y), f32(entry.z), f32(entry.w)) / 255.0;
+    }
+    return vec3<f32>(1.0);
+}
+
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
 @group(0) @binding(2) var terrain_tex: texture_2d_array<f32>;
 @group(0) @binding(3) var terrain_samp: sampler;
+// 生物群系染色 LUT（引擎侧 mcv_core::tint 构建）：每层
+// vec4<u32>(kind, r, g, b)。kind: 0=无 1=草 colormap 2=叶 colormap
+// 3=云杉常量 4=白桦常量；常量色烤在 LUT 的 yzw（0..255）。
+// 定长 838（uniform 地址空间不允许 runtime-sized 数组）——
+// 与 mcv_core::atlas::LAYERS 由 mcv_render/src/lib.rs 的 const 断言互锁。
+const TINT_LAYERS: u32 = 838u;
+@group(0) @binding(4) var<uniform> tint_lut: array<vec4<u32>, TINT_LAYERS>;
 
 struct VtxIn {
     @location(0) pos: vec3<f32>,
@@ -86,9 +115,11 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
     if (tex.a < 0.5) {
         discard;
     }
+    // 按贴图层查 tint 类别并乘生物群系颜色（草顶/羊齿/树叶三族）。
+    let tint = biome_tint(tint_lut[v.layer]);
     let fog = fog_factor(v.dist, frame.fog_params);
     let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    let lit = tex.rgb * v.shade;
+    let lit = tex.rgb * v.shade * tint;
     let day = frame.sun_dir_day.w;
     let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
     return vec4<f32>(mix(fog_color, lit, fog), 1.0);
@@ -162,6 +193,8 @@ fn vs_water(v: VtxIn) -> WaterOut {
 
 @fragment
 fn fs_water(v: WaterOut) -> @location(0) vec4<f32> {
+    // 水不染色：26.1 起水贴图（water_still.png）自带颜色，原版仅方块
+    // 粒子/炼药锅走 water tint（BlockColors.java:38-39），不在本次范围。
     let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
     let fog = fog_factor(v.dist, frame.fog_params);
     let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);

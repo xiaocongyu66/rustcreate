@@ -1,5 +1,6 @@
-//! wgpu 30 renderer: terrain/water/sky/HUD passes, procedural texture array,
-//! offscreen capture for CI verification.
+//! wgpu 30 renderer: terrain/water/sky/HUD passes，原版贴图数组（827 张
+//! 官方方块贴图 + missing 哨兵 + 裂纹），生物群系染色（mcv_core::tint），
+//! offscreen capture for CI verification。素材红线：不产程序化假贴图。
 
 pub mod camera;
 pub mod celestial;
@@ -22,6 +23,10 @@ pub use player_mesh::{
 };
 
 use glam::Vec3;
+
+// terrain.wgsl 的 tint LUT 定长（TINT_LAYERS）与图集层数互锁：uniform 地址
+// 空间不允许 runtime-sized 数组，层数变更必须同步 shader 常量。
+const _: () = assert!(mcv_core::atlas::LAYERS == 838);
 
 pub const EYE_HEIGHT: f32 = 1.62;
 

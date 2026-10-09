@@ -20,7 +20,9 @@
 # id 兼容硬约束：现表 14 方块 id 0..13 保持不变（地形生成器依赖这些 id 产出）；
 #   snow_grass 为独立 id 11（官方是 grass_block 的 snowy 状态，本引擎单方块模型，
 #   直接采用 grass_block_snow 模型贴图）。新方块从 14 起按官方名字典序。
-#   tiles 按 BlockId=u16 加宽目标输出 [u16;6]；tile 0 = 空/占位层。
+#   tiles 按 BlockId=u16 加宽目标输出 [u16;6]；tile 层 0..N-1 = 真实贴图
+#   （字典序），层 N = missing 哨兵（模型无贴图解析的方块；渲染为原版
+#   missingno 品红标记，见 mcv_core::atlas::fill_missing_marker）。
 import json
 import os
 import re
@@ -96,6 +98,11 @@ LEGACY_ATTRS = {
     "flower_yellow": (False, False, False, 0, 0.0, 1),
 }
 LEGACY_OFFICIAL = {off for _, off, _ in LEGACY}
+
+# missing 哨兵贴图名（tiles_manifest.json 最后一层，无对应文件）。模型无贴图
+# 解析的方块（air/barrier/light/structure_void 等）全部指向该层，运行时由
+# mcv_core::atlas 固定为原版 missingno 品红标记（MissingTextureAtlasSprite）。
+SENTINEL_NAME = "missing_no_texture"
 
 # 透明像素启发式之外，按名字判非 opaque 的词（玻璃/叶/冰/台阶/薄板等）。
 NONOPAQUE_NAME_WORDS = ("glass", "leaves", "ice", "slab", "pane", "trapdoor", "grate")
@@ -279,8 +286,8 @@ def model_face_textures(model_id):
     if not cube:
         if cross:
             # 十字：自身贴图铺满 6 面。注：任务书建议 cross 顶底留空，但现网格器
-            # 不识别 model_kind（渲染 6 面），且 tile 0 是可见品红调试层，留空会
-            # 闪品红；按“做不到就六面同贴图占位”处理。
+            # 不识别 model_kind（渲染 6 面），且 missing 哨兵层是可见品红调试
+            # 层，留空会闪品红；按“做不到就六面同贴图占位”处理。
             t = face_tex.get("north") or face_tex.get("east") or particle
             for face in FACE_ORDER:
                 out[face] = t
@@ -553,16 +560,22 @@ def main():
     if len(tile_names) >= 2048:
         print(f"[warn] 贴图数 {len(tile_names)} ≥ 2048 层预算（GLES 上限抬到 adapter 值但 <2048）!")
 
+    # missing 哨兵层：排在全部真实贴图之后，专供「模型无贴图解析」的方块
+    # （air/barrier 等）指向；渲染层把它固定为原版 missingno 品红标记
+    # （MissingTextureAtlasSprite），且不参与磁盘加载（无对应文件）。
+    sentinel_index = len(tile_names)
     OUT_MANIFEST.write_text(json.dumps({
         "note": "tiles_manifest: 纹理数组层索引(按文件名字典序)→贴图。由 ci/gen-blocks.py 生成。"
-                "贴图不入库，运行时从资源根 assets/minecraft/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。",
+                "贴图不入库，运行时从资源根 assets/minecraft/textures/block/ 按 virtual_path 加载（DEVELOP_ONLY）。"
+                f"层 {sentinel_index} = missing 哨兵（无对应文件，运行时固定 missingno 品红标记）。",
         "texture_root": "assets/minecraft/textures/block",
-        "tile_index_to_file": tile_names,
+        "tile_index_to_file": tile_names + [SENTINEL_NAME],
         "file_to_virtual_path": {nm: name2path[nm] + ".png" for nm in tile_names},
     }, ensure_ascii=False, indent=1) + "\n")
 
     def tile_id(tex):
-        return tile_index.get(renamed[tex], 0) if tex else 0
+        # 无贴图解析（tex 为空）或贴图不在素材树 → missing 哨兵层。
+        return tile_index.get(renamed[tex], sentinel_index) if tex else sentinel_index
 
     # --- 官方注册表名字清单（覆盖率测试用；名字是事实，可入仓） ---
     vanilla_sorted = sorted(entries)
@@ -584,13 +597,15 @@ def main():
         "// DEVELOP_ONLY：官方 26.1 blockstates/models/Blocks.java 生成（同 assets/ 素材政策）。",
         "// 元组: (name, solid, opaque, liquid, light_emit, tiles [+X,-X,+Y,-Y,+Z,-Z], hardness, model_kind)",
         "// model_kind: 0=纯立方（全支持） 1=非立方（cross/楼梯/板/栅栏/多部件…，占位代表贴图）",
-        "// tiles 为 tiles_manifest.json 层索引。注意：层 0 是真实贴图（字典序第一张",
-        "// acacia_door_bottom）——没有「空层」哨兵；air 族/barrier/light 等全 0 行",
-        "// 顶着层 0 贴图但 geom=false 不出几何。hardness=MC strength()，基岩=inf；",
-        "// 未显式 strength() 的方块按原版 destroyTime 默认 0.0（BlockBehaviour.java:976）。",
+        "// tiles 为 tiles_manifest.json 层索引；全部真实贴图层 0..N-1（字典序），",
+        "// 层 N = missing 哨兵（模型无贴图解析的方块，渲染为原版 missingno 品红）。",
+        "// 注意：层 0 也是真实贴图（字典序第一张 acacia_door_bottom），不是空层哨兵。",
+        "// hardness=MC strength()，基岩=inf；未显式 strength() 的方块按原版",
+        "// destroyTime 默认 0.0（BlockBehaviour.java:976）。",
         "// id 0..13 = 旧 14 方块（id/名字/属性与旧表一致，地形生成器依赖）；14+ 官方名字典序。",
         "// snow_grass(id 11): 官方是 grass_block 的 snowy 状态；本引擎单方块模型，独立 id，取 snow 模型贴图。",
-        "// 已知限制：tintindex 生物群系染色（草侧面 overlay/叶）未由渲染管线实现，贴图按原样入表；",
+        "// tintindex 生物群系染色（草顶/羊齿/树叶三族）已实现：渲染侧按 tile 层查",
+        "// mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。",
         "// cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何",
         "// （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。",
         "#[allow(clippy::type_complexity)]",
@@ -600,7 +615,7 @@ def main():
     idx = 0
     for lname, _off, tiles in LEGACY:
         solid, opaque, liquid, light, hard, kind = LEGACY_ATTRS[lname]
-        t = [tile_id(x) for x in tiles] if tiles else [0] * 6
+        t = [tile_id(x) for x in tiles] if tiles else [sentinel_index] * 6
         cmt = ""
         if lname == "snow_grass":
             cmt = "  // = grass_block[snowy=true]，独立 id（单方块模型）"
