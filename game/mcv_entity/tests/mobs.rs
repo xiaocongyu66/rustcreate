@@ -45,6 +45,7 @@ fn percept(pos: Vec3, target: Option<Vec3>) -> Percept {
         avoid: None,
         shelter: None,
         difficulty: 2, // normal
+        waypoint: None,
     }
 }
 
@@ -209,7 +210,12 @@ fn skeleton_shoot_cycle_and_kite() {
                 } = a
                 {
                     assert!((speed - 1.6).abs() < 1e-6);
-                    assert!((base_damage - 2.0).abs() < 1e-6);
+                    // power = clamp(dist/15, 0.1, 1.0)（RangedAttackGoal.java:92-93）：
+                    // dist=10 → 10/15 → base = 2.0×(10/15) ≈ 1.333。
+                    assert!(
+                        (base_damage - 2.0 * (10.0f32 / 15.0)).abs() < 1e-6,
+                        "base {base_damage}"
+                    );
                     assert!((spread - (14.0 - diff as f32 * 4.0)).abs() < 1e-6);
                     shots.push(t);
                 }

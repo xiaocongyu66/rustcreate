@@ -19,5 +19,7 @@
 //! 将来若上插件化（EnginePlugin/事件总线），注册与路由加在本 crate 边界
 //! 之上即可，子系统 crate 不需感知。
 
+pub mod difficulty;
 pub mod game;
 pub mod ui;
+pub mod weather;

@@ -7,6 +7,7 @@
 use crate::ai::Brain;
 use crate::defs::MobId;
 use glam::Vec3;
+use mcv_core::BlockPos;
 use mcv_ecs::{Entity, World};
 
 /// 怪物种类（查 [`MobId::def`] 取数值表）。
@@ -94,18 +95,47 @@ impl MobIntent {
 }
 
 /// 简化箭矢（AbstractArrow 直线 + 重力近似）：由 skeleton 的
-/// [`crate::ai::AiAction::Shoot`] 经命令队列生成，`arrow_system` 每 tick
-/// 以 0.2 子步推进（防高速隧穿），撞方块 / 命中玩家 / ttl 耗尽即移除。
-/// 原版 `gravity=0.05/tick²`、`INERTIA=0.99`（AbstractArrow.java:59）。
+/// [`crate::ai::AiAction::Shoot`] 与玩家弓（BowItem.java:41 pow×3.0）生成，
+/// `arrow_system` 每 tick 以 0.2 子步推进（防高速隧穿），撞方块 / 命中
+/// 玩家 / ttl 耗尽即移除。原版 `gravity=0.05/tick²`、`INERTIA=0.99`
+/// （AbstractArrow.java:59）。
 #[derive(Clone, Copy, Debug)]
 pub struct MobArrow {
     pub pos: Vec3,
     pub vel: Vec3,
     /// 剩余寿命（tick），到点移除（原版 livedAfterGround 兜底）。
     pub ttl_ticks: u32,
-    /// 命中玩家造成的基础伤害（base=power×2.0=2.0，AbstractArrow.java:719；
-    /// 原版还乘当前速度 ceil(v×base)（:423-432），此处取定值 → 近似）。
-    pub damage: f32,
+    /// baseDamage（AbstractArrow.java:622 默认 2.0；怪射 = power×2.0 +
+    /// triangle(难度×0.11, 0.57425)，AbstractArrow.java:718-720）。命中量
+    /// = ceil(命中瞬间速度模长 × base)（:421-431）。
+    pub base_damage: f32,
+    /// 满蓄力弓箭（pow==1，BowItem.java:41）→ 暴击加成
+    /// `+ rand(damage/2+2)`（AbstractArrow.java:434-437）。
+    pub crit: bool,
+    /// true = 玩家射出（命中 mob 并结算；false = 怪射，命中玩家）。
+    pub player_owned: bool,
+}
+
+/// A* 路径账本（审计 N-1 接线）：`nodes` 为起→终航点、`idx` 游标、
+/// `recalc_cd` 重算倒计时（MeleeAttackGoal.java:100-124 节奏）、
+/// `pathed_target` 上次寻路的目标点（移动 ≥1 格才触发重算，:104-107）。
+#[derive(Clone, Debug)]
+pub struct MobPath {
+    pub nodes: Vec<BlockPos>,
+    pub idx: usize,
+    pub recalc_cd: u32,
+    pub pathed_target: Vec3,
+}
+
+impl Default for MobPath {
+    fn default() -> Self {
+        Self {
+            nodes: Vec::new(),
+            idx: 0,
+            recalc_cd: 0,
+            pathed_target: Vec3::ZERO,
+        }
+    }
 }
 
 /// 预注册全部 mob 组件表：`GameRuntime` 建 World 后调一次——零怪时
@@ -119,6 +149,7 @@ pub fn register_mob_components(world: &mut World) {
     world.register::<LastHurt>();
     world.register::<MobBrain>();
     world.register::<MobIntent>();
+    world.register::<MobPath>();
     world.register::<MobArrow>();
 }
 
@@ -148,5 +179,6 @@ pub fn spawn_mob(world: &mut World, id: MobId, pos: Vec3) -> Entity {
     world.insert(e, LastHurt(0.0));
     world.insert(e, MobBrain(Brain::new()));
     world.insert(e, MobIntent::IDLE);
+    world.insert(e, MobPath::default());
     e
 }

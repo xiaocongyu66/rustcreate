@@ -12,9 +12,10 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_ecs::{App, SysCtx};
-use mcv_entity::{MobArrow, MobId, MobTicks, spawn_mob};
+use mcv_entity::{MobArrow, MobId, MobKind, MobPath, MobTicks, spawn_mob};
 use mcv_logic::game::{
-    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, arrow_system, mob_ai_system,
+    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, PlayerArrowHitMob, arrow_system,
+    mob_ai_system,
 };
 
 /// 单区块世界：x,z ∈ [0,16)，y<64 实心石、64 以上空气。
@@ -69,6 +70,19 @@ fn step(
     on_tick: bool,
     monsters_burn: bool,
 ) {
+    step_as(app, chunks, player, on_tick, monsters_burn, 2, false);
+}
+
+/// 变体：显式指定难度 id（0=peaceful..3=hard）与创造态（难度/豁免测试用）。
+fn step_as(
+    app: &mut App,
+    chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
+    player: Vec3,
+    on_tick: bool,
+    monsters_burn: bool,
+    difficulty: u8,
+    creative: bool,
+) {
     let App {
         world,
         resources,
@@ -87,6 +101,8 @@ fn step(
         // 空气/单区块测试不涉昼夜：darken=0（白天代理，与 monsters_burn
         // 入参语义一致）。
         sky_darken: 0,
+        difficulty,
+        creative,
     });
     let mut ctx = SysCtx {
         world,
@@ -229,7 +245,9 @@ fn arrow_hits_player_and_sends_event() {
             pos: Vec3::new(8.0, 64.6, 10.0),
             vel: Vec3::new(0.0, 0.0, -2.0),
             ttl_ticks: 100,
-            damage: 2.0,
+            base_damage: 2.0,
+            crit: false,
+            player_owned: false,
         },
     );
     let mut got = 0.0f32;
@@ -240,7 +258,9 @@ fn arrow_hits_player_and_sends_event() {
             got = h.damage;
         }
     }
-    assert_eq!(got, 2.0, "AbstractArrow.java:718 power×2.0");
+    // 速度曲线（AbstractArrow.java:421-431）：命中 tick 先扣重力
+    // vel=(0,−0.05,−2) → |v|=2.000625，ceil(|v|×2.0)=5。
+    assert_eq!(got, 5.0, "ceil(|v|×base)");
     assert_eq!(app.world.component_count::<MobArrow>(), 0, "命中后移除");
 }
 
@@ -256,7 +276,9 @@ fn arrow_does_not_move_between_ticks() {
             pos: Vec3::new(2.0, 200.0, 2.0),
             vel: Vec3::new(1.0, 0.0, 0.0),
             ttl_ticks: 100,
-            damage: 2.0,
+            base_damage: 2.0,
+            crit: false,
+            player_owned: false,
         },
     );
     for _ in 0..3 {
@@ -392,4 +414,120 @@ fn wall_blocks_target_acquisition() {
     for (_, brain) in app.world.read::<mcv_entity::MobBrain>().iter() {
         assert!(!brain.0.has_target, "隔墙不得索敌（LOS 门失效）");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 8) A* 寻路（审计 N-1）/ 难度豁免（N-5）/ 玩家箭命中
+// ---------------------------------------------------------------------------
+
+/// 绕 2 格高墙：受击触发索敌（墙挡 LOS）后，A* 账本产出航点且不穿墙列。
+#[test]
+fn pathfinds_around_two_high_wall() {
+    let mut app = harness();
+    let chunks = air_chunk_map();
+    {
+        let h = chunks.get(&ChunkPos::new(0, 0)).unwrap();
+        let mut vox = h.voxels.write().unwrap();
+        // 单列 2 格高墙 x=10, z=8, y=64/65（切断直线，不挡绕行）。
+        for y in 64..66usize {
+            vox[(y << 8) | (8 << 4) | 10] = BlockId(1);
+        }
+    }
+    let player = Vec3::new(12.0, 64.0, 8.0);
+    let mob = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(4.0, 64.0, 8.0));
+    // 受击索敌（HurtByTargetGoal 无需视线——墙挡 LOS 仍锁目标）。
+    app.world
+        .write::<MobTicks>()
+        .get_mut(mob)
+        .unwrap()
+        .hurt_flag = true;
+    step(&mut app, &chunks, player, true, false);
+    let nodes = app
+        .world
+        .read::<MobPath>()
+        .get(mob)
+        .map(|p| p.nodes.clone())
+        .unwrap_or_default();
+    assert!(!nodes.is_empty(), "索敌后产出 A* 路径");
+    assert!(
+        nodes.iter().all(|n| !(n.x == 10 && n.z == 8)),
+        "航点不穿墙列"
+    );
+}
+
+/// 和平难度：敌对即删（Mob.checkDespawn:656-658）。
+#[test]
+fn peaceful_despawns_hostiles() {
+    let mut app = harness();
+    let chunks = air_chunk_map();
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(20.0, 64.0, 20.0));
+    step_as(
+        &mut app,
+        &chunks,
+        Vec3::new(8.0, 64.0, 8.0),
+        true,
+        false,
+        0,
+        false,
+    );
+    assert_eq!(app.world.component_count::<MobKind>(), 0, "和平难度清怪");
+}
+
+/// 创造玩家不被索敌（LivingEntity.java:928）：贴脸僵尸也零近战事件。
+#[test]
+fn creative_player_not_targeted() {
+    let mut app = harness();
+    let chunks = air_chunk_map();
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 9.0));
+    for _ in 0..30 {
+        step_as(
+            &mut app,
+            &chunks,
+            Vec3::new(8.0, 64.0, 8.0),
+            true,
+            false,
+            2,
+            true,
+        );
+        assert!(drain_melee(&mut app).is_empty(), "创造玩家不被索敌");
+    }
+    assert_eq!(
+        app.world.component_count::<MobKind>(),
+        1,
+        "创造不清怪（清怪只看难度）"
+    );
+}
+
+/// 玩家箭命中 mob：player_owned 箭跳过玩家判定、命中 mob 发事件
+/// （伤害 = ceil(|v|×base)，AbstractArrow.java:421-431）。
+#[test]
+fn player_arrow_hits_mob_event() {
+    let mut app = harness();
+    let chunks = air_chunk_map();
+    let mob = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
+    let e = app.world.spawn();
+    app.world.insert(
+        e,
+        MobArrow {
+            pos: Vec3::new(6.0, 64.9, 8.0),
+            vel: Vec3::new(2.0, 0.0, 0.0),
+            ttl_ticks: 100,
+            base_damage: 2.0,
+            crit: false,
+            player_owned: true,
+        },
+    );
+    let mut got = Vec::new();
+    for _ in 0..5 {
+        step(&mut app, &chunks, Vec3::new(0.0, 64.0, 0.0), true, false);
+        got = app.events.channel::<PlayerArrowHitMob>().take();
+        if !got.is_empty() {
+            break;
+        }
+    }
+    assert_eq!(got.len(), 1, "命中事件");
+    assert_eq!(got[0].target, mob);
+    // 命中 tick 重力先扣：vel=(2,−0.05,0) → |v|=2.000625 → ceil(4.00125)=5。
+    assert_eq!(got[0].damage, 5);
+    assert_eq!(app.world.component_count::<MobArrow>(), 0, "命中后移除");
 }
