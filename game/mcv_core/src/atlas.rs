@@ -108,7 +108,7 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
     match assets_dir {
         Some(dir) => {
             let n = load_real_tiles(dir, &mut mip0);
-            if n < REAL_TILE_COUNT {
+            if n < REAL_TILE_COUNT as u32 {
                 log::error!(
                     "atlas: {n}/{} real tiles from {}——缺失层将显示原版 missing 标记（无程序化回退）",
                     REAL_TILE_COUNT,
@@ -122,7 +122,7 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
                 );
             }
             let c = load_crack_stages(dir, &mut mip0);
-            if c < CRACK_LAYERS {
+            if c < CRACK_LAYERS as u32 {
                 log::error!(
                     "atlas: {c}/{} vanilla destroy stages——缺失档位显示 missing 标记",
                     CRACK_LAYERS

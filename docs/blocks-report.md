@@ -12,9 +12,11 @@
   - **2026-10-09 更新（接线已完成）**：`mcv_core::BLOCKS` 已改为 `include!`
     本表（1171 项；前 14 项回归锁 `mcv_core::tests::first_14_match_legacy_table`）。
     827 张贴图源为 `assets/minecraft/textures/block/`（历史上曾拷入 texturepack/blocks/，现已退役）
-    （DEVELOP_ONLY 体系），atlas 运行时按 manifest 层号读盘（层 0..827 =
-    真实贴图，裂纹特殊层移至 827..831，`atlas::LAYERS = 831`）；缺文件回退
-    程序化噪声。（历史注：曾以 texturepack/blocks/ 作为运行时贴图层，2026-10
+    （DEVELOP_ONLY 体系），atlas 运行时按 manifest 层号读盘（层 0..826 =
+    真实贴图，层 827 = missing 哨兵，裂纹特殊层移至 828..838，
+    `atlas::LAYERS = 838`）。（素材红线，2026-10 任务 #53：缺文件/解码失败
+    的层固定显示原版 missingno 品红标记并 log::error，程序化噪声回退已全删。）
+    （历史注：曾以 texturepack/blocks/ 作为运行时贴图层，2026-10
     目录统一后退役，现一律从资源根 assets/minecraft/textures/block/ 读取，
     见 assets/DEVELOP_ONLY.md。）
 
