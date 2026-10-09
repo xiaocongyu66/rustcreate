@@ -48,8 +48,23 @@ pub fn generate_into(handle: &Arc<ChunkHandle>, seed: u64) -> Result<(), i32> {
     Ok(())
 }
 
-/// Rebuilds the heightmap from voxel data (saves don't store it; sky light
-/// derivation needs it identical to the terrain kernel's pass 3).
+/// Rebuilds the heightmap from voxel data (saves don't store it). This is
+/// the single Rust-side producer; the terrain kernel's pass 3
+/// (`cpp/src/terrain.cpp`, exclusion = air/water/flowers) and this function
+/// agree on every block the generator emits: the skip set here is
+/// "lightDampening == 0 (air/flowers/glass/…) **or** liquid (water/lava,
+/// vanilla MOTION_BLOCKING ignores fluids)", and among the legacy terrain
+/// ids exactly air+water+flowers fall in it (`mcv_core::OPACITY`).
+///
+/// C1 heightmap maintenance: after a player places/breaks a block the
+/// runtime recomputes the whole map through this function, so the skip
+/// predicate generalises from "the 3 legacy exclusions" to "damp == 0"
+/// (light-penetrating blocks — torch/glass/plates/… — must not raise the
+/// gameplay surface; opaque/attenuating blocks do). The generator never
+/// emits such blocks, so C++ output and this function stay identical.
+/// The "column fully open ⇒ 1" convention is kept verbatim (audit §已核实
+/// 12). Lighting does NOT read this array (source columns are
+/// voxel-derived, see `mcv_light::init`).
 pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
     let mut hm = Box::new([0u8; 256]);
     for z in 0..16usize {
@@ -58,8 +73,12 @@ pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
             let mut found = false;
             while y > 0 {
                 let id = voxels[(y << 8) | (z << 4) | x];
-                // air / water / flowers do not block direct sky light
-                if id != 0 && id != 5 && id != 12 && id != 13 {
+                // 跳过集：damp==0（全透光：空气/花/玻璃/火把…）或流体
+                // （水/岩浆——原版 MOTION_BLOCKING 高度图同样不计流体；
+                // 生成期排除集 air/water/flowers 恰是该规则的 legacy 子集）。
+                let damp = mcv_core::OPACITY.get(id as usize).copied().unwrap_or(15);
+                let liquid = mcv_core::BLOCKS.get(id as usize).is_some_and(|b| b.liquid);
+                if damp != 0 && !liquid {
                     found = true;
                     break;
                 }
