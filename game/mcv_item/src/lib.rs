@@ -7,7 +7,7 @@ pub mod enchant;
 pub mod inventory;
 pub mod mining;
 
-pub use inventory::{HOTBAR_SLOTS, Hotbar, drop_for_block};
+pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, drop_for_block};
 pub use mining::ToolKind;
 
 use mcv_core::BlockId;

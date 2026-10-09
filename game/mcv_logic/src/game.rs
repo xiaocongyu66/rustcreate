@@ -336,16 +336,27 @@ impl GameRuntime {
                     self.player.sel_slot = p.sel_slot as usize;
                     // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
                     // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
-                    if !p.hotbar.is_empty() {
+                    if !p.hotbar.is_empty() || !p.main.is_empty() {
                         let mut h = mcv_item::Hotbar::empty();
-                        for (k, (item, count, damage)) in p.hotbar.into_iter().take(9).enumerate() {
-                            if count > 0 && (item as usize) < mcv_item::ITEMS.len() {
-                                h.slots[k] = mcv_item::ItemStack {
+                        let mk = |(item, count, damage): (u16, u8, u16)| {
+                            (count > 0 && (item as usize) < mcv_item::ITEMS.len()).then(|| {
+                                mcv_item::ItemStack {
                                     item,
                                     count,
                                     damage,
                                     enchants: Vec::new(),
-                                };
+                                }
+                            })
+                        };
+                        for (k, st) in p.hotbar.into_iter().take(9).enumerate() {
+                            if let Some(st) = mk(st) {
+                                h.slots[k] = st;
+                            }
+                        }
+                        // v4 主背包 27 格;v3 档读为空(保持原行为)。
+                        for (k, st) in p.main.into_iter().take(27).enumerate() {
+                            if let Some(st) = mk(st) {
+                                h.main[k] = st;
                             }
                         }
                         self.hotbar = h;
@@ -380,6 +391,13 @@ impl GameRuntime {
                 hotbar: self
                     .hotbar
                     .slots
+                    .iter()
+                    .map(|s| (s.item, s.count, s.damage))
+                    .collect(),
+                // v4:主背包 27 格同样全量导出。
+                main: self
+                    .hotbar
+                    .main
                     .iter()
                     .map(|s| (s.item, s.count, s.damage))
                     .collect(),

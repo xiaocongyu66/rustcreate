@@ -115,3 +115,48 @@ fn hotbar_kind_roundtrip() {
     let s = ItemStack::new(COBBLESTONE, 1);
     assert!(matches!(s.def().kind, ItemKind::Block(_)));
 }
+
+#[test]
+fn add_overflow_fills_hotbar_then_main() {
+    let mut h = Hotbar::empty();
+    // 快捷栏先吸收(每格 64,9 格 = 576)。
+    assert_eq!(h.add_overflow(COBBLESTONE, 64 * 9), 0);
+    assert!(h.slots.iter().all(|s| s.count == 64));
+    assert!(h.main.iter().all(|s| s.is_empty()), "快捷栏未满不进 main");
+    // 溢出进主背包,合并优先再空位。
+    assert_eq!(h.add_overflow(COBBLESTONE, 10), 0);
+    assert_eq!(h.main[0].item, COBBLESTONE);
+    assert_eq!(h.main[0].count, 10);
+    // 同物未满可继续合并进 main[0](不另开格)。
+    assert_eq!(h.add_overflow(COBBLESTONE, 20), 0);
+    assert_eq!(h.main[0].count, 30);
+    assert_eq!(h.main.iter().filter(|s| !s.is_empty()).count(), 1);
+}
+
+#[test]
+fn add_overflow_respects_max_stack_and_reports_remainder() {
+    let mut h = Hotbar::empty();
+    // 书 max=16:占满 36 格 × 16 = 576,再多 5 放不下降为剩余。
+    for _ in 0..36 {
+        assert_eq!(h.add_overflow(mcv_item::BOOK, 16), 0);
+    }
+    assert_eq!(h.add_overflow(mcv_item::BOOK, 5), 5, "满栏返回剩余");
+    // 工具 max=1:两把永远分两格。
+    let mut h2 = Hotbar::empty();
+    assert_eq!(h2.add_overflow(IRON_SWORD_INDEX, 1), 0);
+    assert_eq!(h2.add_overflow(IRON_SWORD_INDEX, 1), 0);
+    assert!(h2.slots[0].count == 1 && h2.slots[1].count == 1);
+}
+
+#[test]
+fn take_last_nonempty_scans_from_back() {
+    let mut h = Hotbar::empty();
+    h.slots[0] = ItemStack::new(COBBLESTONE, 1);
+    h.main[5] = ItemStack::new(PLANKS, 3);
+    let last = h.take_last_nonempty().expect("有物");
+    assert_eq!((last.item, last.count), (PLANKS, 3), "先取全局尾段(main)");
+    assert!(h.main[5].is_empty());
+    let second = h.take_last_nonempty().expect("还有");
+    assert_eq!(second.item, COBBLESTONE);
+    assert!(h.take_last_nonempty().is_none(), "空栏返回 None");
+}

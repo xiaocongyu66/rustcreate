@@ -1,5 +1,5 @@
-//! 快捷栏物品逻辑:9 格 Hotbar(vanilla `Inventory.add` 语义的 9 格子集)
-//! 与方块→掉落映射。背包其余 27 格未实现(TODO(registry):掉落表同步扩)。
+//! 物品栏逻辑:9 格 Hotbar + 27 格主背包(vanilla `Inventory.add` 语义的
+//! 36 格子集)与方块→掉落映射。
 
 use mcv_core::BlockId;
 
@@ -7,17 +7,23 @@ use crate::{COAL, COBBLESTONE, DIAMOND_ITEM, ItemKind, ItemStack, LOG, PLANKS};
 
 /// 快捷栏格数(vanilla Inventory.hotbarSize)。
 pub const HOTBAR_SLOTS: usize = 9;
+/// 主背包格数(vanilla Inventory.mainSize,快捷栏之外的 27 格)。
+pub const MAIN_SLOTS: usize = 27;
 
-/// 9 格快捷栏。slot 0..8 = 主界面快捷栏;选中槽 = 玩家 `sel_slot % 9`。
+/// 9 格快捷栏 + 27 格主背包。slot 0..8 = 主界面快捷栏;选中槽 = 玩家
+/// `sel_slot % 9`;`main` 为背包 UI 上半区 27 格。
 #[derive(Clone, Debug)]
 pub struct Hotbar {
     pub slots: [ItemStack; HOTBAR_SLOTS],
+    /// 主背包 36 格布局的 9..35 段(默认全空)。
+    pub main: [ItemStack; MAIN_SLOTS],
 }
 
 impl Default for Hotbar {
     fn default() -> Self {
         Self {
             slots: std::array::from_fn(|_| ItemStack::empty()),
+            main: std::array::from_fn(|_| ItemStack::empty()),
         }
     }
 }
@@ -105,6 +111,71 @@ impl Hotbar {
             }
         }
         Some(stack)
+    }
+
+    /// 全局 36 格视图:0..8 = 快捷栏,9..35 = 主背包(背包 UI 用)。
+    pub fn all_slots(&self) -> [ItemStack; HOTBAR_SLOTS + MAIN_SLOTS] {
+        let mut out = std::array::from_fn(|_| ItemStack::empty());
+        out[..HOTBAR_SLOTS].copy_from_slice(&self.slots);
+        out[HOTBAR_SLOTS..].copy_from_slice(&self.main);
+        out
+    }
+
+    /// 全局 36 格的可变引用。
+    pub fn all_slots_mut(&mut self) -> [&mut ItemStack; HOTBAR_SLOTS + MAIN_SLOTS] {
+        std::array::from_fn(|i| {
+            if i < HOTBAR_SLOTS {
+                &mut self.slots[i]
+            } else {
+                &mut self.main[i - HOTBAR_SLOTS]
+            }
+        })
+    }
+
+    /// 溢出放物(vanilla `add` 无选中槽优先的形态):先快捷栏合并、再主背包
+    /// 合并,然后快捷栏空位、主背包空位。返回放不下的剩余数量(0 = 全收)。
+    pub fn add_overflow(&mut self, item: u16, mut count: u8) -> u8 {
+        if count == 0 {
+            return 0;
+        }
+        let max = Self::max_stack(item);
+        let mut rest = ItemStack::new(item, count);
+        if max > 1 {
+            for slot in self.all_slots_mut() {
+                if Self::mergeable(slot, &rest, max) {
+                    let mv = rest.count.min(max - slot.count);
+                    slot.count += mv;
+                    rest.count -= mv;
+                    if rest.count == 0 {
+                        return 0;
+                    }
+                }
+            }
+        }
+        for slot in self.all_slots_mut() {
+            if slot.is_empty() {
+                *slot = rest;
+                return 0;
+            }
+        }
+        rest.count
+    }
+
+    /// 从尾到头取最后一个非空槽(36 格全局序;关界面归还光标/网格物品时
+    /// 反填用)。
+    pub fn take_last_nonempty(&mut self) -> Option<ItemStack> {
+        let all = self.all_slots();
+        for i in (0..all.len()).rev() {
+            if !all[i].is_empty() {
+                let slot = if i < HOTBAR_SLOTS {
+                    &mut self.slots[i]
+                } else {
+                    &mut self.main[i - HOTBAR_SLOTS]
+                };
+                return Some(std::mem::replace(slot, ItemStack::empty()));
+            }
+        }
+        None
     }
 
     /// 消耗选中槽一个(vanilla `consumeItem(1)`):归零则槽清空。返回是否
