@@ -785,9 +785,11 @@ mod tests {
     #[test]
     fn sheep_wool_layer_uses_wool_texture() {
         let m = build_mob_mesh();
-        // 羊基模 6 部位（层 2），羊毛 6 部位（层 3）。羊起始于鸡(8 部位)+牛
-        // (6 部位) = 14 部位 → 顶点 14×24=336 起。
-        let base = (8 + 6) * 24;
+        // 羊基模 6 部位（层 2），羊毛 6 部位（层 3）。顶点偏移按「盒」数
+        // 累积：鸡 8 盒 + 牛 10 盒（头 4 含双角 + 躯干 2 含乳房 + 腿 4）
+        // = 18 盒 → 羊起于 18×24=432；羊 12 盒 → 基模 432..576、羊毛
+        // 576..720。
+        let base = (8 + 10) * 24;
         for v in &m.verts[base..base + 6 * 24] {
             assert_eq!(v.meta[0], 2, "羊基模层号");
         }
@@ -803,9 +805,11 @@ mod tests {
         let m = build_mob_mesh();
         let pose = MobPose::default();
         let mm = mob_model_matrices(MobModelKind::Pig, &pose);
-        // 部位 0（头 2 盒）前 48 顶点；z 最小值 = -15px·PX = -0.9375。
+        // 顶点偏移按「盒」数累积：鸡 8 + 牛 10 + 羊 12 = 30 盒 → 猪起于
+        // 30×24=720；头部位（2 盒）占 720..768。z 最小值 = -15px = -0.9375。
+        let base = (8 + 10 + 12) * 24;
         let mut min_z = f32::MAX;
-        for v in &m.verts[0..48] {
+        for v in &m.verts[base..base + 48] {
             let w = mm[0] * Vec3::from(v.pos).extend(1.0);
             min_z = min_z.min(w.z);
         }
