@@ -269,6 +269,16 @@ impl GameRuntime {
             "item_physics",
             mcv_entity::item_physics_system,
         );
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_merge",
+            mcv_entity::item_merge_system,
+        );
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "item_pickup",
+            mcv_entity::item_pickup_system,
+        );
         rt
     }
 
@@ -771,9 +781,10 @@ impl GameRuntime {
                 chunks: self.chunks.clone(),
                 player_pos: self.player.pos,
             });
-            // 掉落物系统同快照（Arc 计数级克隆）。
+            // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
                 chunks: self.chunks.clone(),
+                player_pos: self.player.pos,
             });
             let mut ctx = mcv_ecs::SysCtx {
                 world,
@@ -787,6 +798,13 @@ impl GameRuntime {
         for h in hits {
             self.hurt_player(h.damage.max(1.0), Some(h.src));
         }
+        // 掉落物拾取结算：入栏走 Hotbar::add（give 路径唯一），满栏剩余留地。
+        mcv_entity::settle_pickups(
+            &mut self.mobs_app.world,
+            &mut self.mobs_app.events,
+            &mut self.hotbar,
+            self.player.sel_slot,
+        );
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
         {

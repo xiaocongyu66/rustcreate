@@ -38,11 +38,21 @@ pub struct ItemDrop {
     pub pickup_delay: u8,
 }
 
-/// 掉落系统的单步快照：区块表克隆（物理地形）。与 game.rs 的
-/// `MobServices` 同款——Arc 计数级克隆，体素数据共享。
+/// 掉落系统的单步快照：区块表克隆（物理地形）+ 玩家位姿（拾取判定）。
+/// 与 game.rs 的 `MobServices` 同款——Arc 计数级克隆，体素数据共享。
 #[derive(Clone)]
 pub struct DropWorld {
     pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    pub player_pos: Vec3,
+}
+
+/// 拾取请求事件：系统只做几何判定，物品入栏由主控 `settle_pickups`
+/// 走 [`mcv_item::Hotbar::add`]（与破坏直落同一 give 路径）。
+#[derive(Clone, Copy, Debug)]
+pub struct PickupReq {
+    pub e: Entity,
+    pub item: u16,
+    pub count: u8,
 }
 
 /// WorldView 的 mcv_entity 侧等价：未载区块按实心石（物理安全垫）。
@@ -139,4 +149,146 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
             commands.despawn(e);
         }
     });
+}
+
+/// 玩家 AABB 外扩 [`PICKUP_INFLATE`] 后的盒（pos = 脚底中心）。
+fn player_box(pos: Vec3) -> (Vec3, Vec3) {
+    let h = mcv_game::Player::HALF;
+    (
+        Vec3::new(
+            pos.x - h[0] - PICKUP_INFLATE,
+            pos.y - PICKUP_INFLATE,
+            pos.z - h[2] - PICKUP_INFLATE,
+        ),
+        Vec3::new(
+            pos.x + h[0] + PICKUP_INFLATE,
+            pos.y + h[1] * 2.0 + PICKUP_INFLATE,
+            pos.z + h[2] + PICKUP_INFLATE,
+        ),
+    )
+}
+
+/// 拾取系统：pickup_delay 归零后，掉落物 AABB 与外扩 0.5 的玩家 AABB
+/// 相交 → 发 [`PickupReq`] 事件（剩余入栏逻辑在主控 settle_pickups，
+/// 满栏剩余自然留在地上——下一 tick 再相交再请求）。
+pub fn item_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
+    let dw = ctx
+        .resources
+        .get::<DropWorld>()
+        .expect("item_pickup：DropWorld 快照未注入 Resources");
+    let (pmin, pmax) = player_box(dw.player_pos);
+    let world: &mcv_ecs::World = ctx.world;
+    let events = &mut *ctx.events;
+    let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
+    for (e, d) in drops.iter() {
+        if d.pickup_delay > 0 {
+            continue;
+        }
+        let Some(b) = phys.get(e) else { continue };
+        // 掉落物 AABB 中心（pos 为脚底）。
+        let (cx, cy, cz) = (b.pos.x, b.pos.y + ITEM_HALF[1], b.pos.z);
+        let hit = (cx - ITEM_HALF[0] < pmax.x)
+            && (cx + ITEM_HALF[0] > pmin.x)
+            && (cy - ITEM_HALF[1] < pmax.y)
+            && (cy + ITEM_HALF[1] > pmin.y)
+            && (cz - ITEM_HALF[2] < pmax.z)
+            && (cz + ITEM_HALF[2] > pmin.z);
+        if hit {
+            events.channel::<PickupReq>().send(PickupReq {
+                e,
+                item: d.item,
+                count: d.count,
+            });
+        }
+    }
+}
+
+/// 合并趟：同物品、未满堆、中心距 < [`MERGE_DIST`] → 移入先到者（按
+/// 稠密表序），数量封顶 max_stack，age 取两者最大（原版 merge 语义的
+/// 简化：不做速度交换）。O(n²) 可接受（掉落物量级几十）。
+pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
+    let world: &mcv_ecs::World = ctx.world;
+    let commands = &mut *ctx.commands;
+    // 快照（合并中会改 count，先收集避免迭代借用冲突）。
+    let mut list: Vec<(Entity, Vec3, u16, u8, u32)> = Vec::new();
+    {
+        let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
+        for (e, d) in drops.iter() {
+            if let Some(b) = phys.get(e) {
+                list.push((e, b.pos, d.item, d.count, d.age));
+            }
+        }
+    }
+    for i in 0..list.len() {
+        let (ei, pi, item_i, mut count_i, mut age_i) = list[i];
+        let max = mcv_item::Hotbar::max_stack(item_i);
+        // 已被更早的实体吸收光（count=0，稍后 despawn）或已满堆：不作合并目标。
+        if count_i == 0 || count_i >= max {
+            continue;
+        }
+        for j in (i + 1)..list.len() {
+            let (ej, pj, item_j, count_j, age_j) = list[j];
+            if item_j != item_i || count_j == 0 {
+                continue;
+            }
+            if (pi - pj).length() >= MERGE_DIST {
+                continue;
+            }
+            let mv = (max - count_i).min(count_j);
+            if mv == 0 {
+                break;
+            }
+            count_i += mv;
+            age_i = age_i.max(age_j);
+            list[j].3 -= mv;
+            if list[j].3 == 0 {
+                commands.despawn(ej);
+            } else {
+                commands.push(move |w| {
+                    if let Some(d) = w.write::<ItemDrop>().get_mut(ej) {
+                        d.count -= mv;
+                    }
+                });
+            }
+        }
+        let (final_count, final_age) = (count_i, age_i);
+        commands.push(move |w| {
+            if let Some(d) = w.write::<ItemDrop>().get_mut(ei) {
+                d.count = final_count;
+                d.age = final_age;
+            }
+        });
+    }
+}
+
+/// 主控结算 [`PickupReq`]：走 [`mcv_item::Hotbar::add`]（与破坏直落同一
+/// give 路径），全收 → despawn；有剩余（满栏）→ 组件 count 改为剩余量，
+/// 实体留在地上。GameRuntime 固定步末与集成测试共用本函数。
+pub fn settle_pickups(
+    world: &mut mcv_ecs::World,
+    events: &mut mcv_ecs::EventBus,
+    hotbar: &mut mcv_item::Hotbar,
+    sel: usize,
+) {
+    for req in events.channel::<PickupReq>().take() {
+        // 句柄带代校验：本 tick 内已被合并/到期的实体直接跳过。
+        let Some(mut d) = world.get_ref::<ItemDrop>(req.e).map(|d| *d) else {
+            continue;
+        };
+        if d.count == 0 {
+            continue;
+        }
+        let rem = hotbar.add(sel, mcv_item::ItemStack::new(req.item, d.count));
+        match rem {
+            None => {
+                world.despawn(req.e);
+            }
+            Some(rest) => {
+                d.count = rest.count;
+                if let Some(slot) = world.write::<ItemDrop>().get_mut(req.e) {
+                    *slot = d;
+                }
+            }
+        }
+    }
 }
