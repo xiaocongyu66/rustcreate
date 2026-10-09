@@ -42,7 +42,10 @@ fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
-@group(0) @binding(2) var terrain_tex: texture_2d_array<f32>;
+// @@TERRAIN_ARRAYS@@ —— gpu.rs 按设备 max_texture_array_layers 展开：
+// 1..=4 个 texture_2d_array 绑定声明 + sample_terrain 采样函数
+//（上限 ≥ 837 时为单数组，语义与拆分前一致；GLES 保底 256 时按
+// layer 区间 if 链选数组）。terrain_samp 固定 @binding(3)。
 @group(0) @binding(3) var terrain_samp: sampler;
 
 struct VtxIn {
@@ -82,7 +85,7 @@ fn vs_terrain(v: VtxIn) -> VtxOut {
 
 @fragment
 fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     if (tex.a < 0.5) {
         discard;
     }
@@ -100,7 +103,7 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
 
 @fragment
 fn fs_crack(v: VtxOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     if (tex.a < 0.02) {
         discard;
     }
@@ -162,7 +165,7 @@ fn vs_water(v: VtxIn) -> WaterOut {
 
 @fragment
 fn fs_water(v: WaterOut) -> @location(0) vec4<f32> {
-    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    let tex = sample_terrain(v.uv, v.layer);
     let fog = fog_factor(v.dist, frame.fog_params);
     let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
     let day = frame.sun_dir_day.w;

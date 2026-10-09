@@ -72,6 +72,16 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
 fn setup_with_assets(
     assets: Option<&std::path::Path>,
 ) -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
+    setup_with_layer_cap_and_assets(None, assets)
+}
+
+/// `layer_cap = Some(n)`：把单数组层数上限强制为 min(n, adapter 上限)。
+/// lavapipe 上限 3907 永远走单数组，GLES 256 层设备才会拆多数组——用它
+/// 在 CI 上强制走多数组拆分路径（堵「层数不够就 return」的覆盖洞）。
+fn setup_with_layer_cap_and_assets(
+    layer_cap: Option<u32>,
+    assets: Option<&std::path::Path>,
+) -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
         power_preference: wgpu::PowerPreference::None,
@@ -94,11 +104,12 @@ fn setup_with_assets(
         trace: wgpu::Trace::Off,
     }))
     .expect("device");
-    let renderer = mcv_render::Renderer::new(
+    let renderer = mcv_render::Renderer::with_atlas_layer_cap(
         device.clone(),
         queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
         assets,
+        layer_cap,
     );
     (device, queue, renderer)
 }
@@ -252,6 +263,65 @@ fn terrain_sky_and_hud_render() {
     let _ = TERRAIN_STRIDE;
 }
 
+/// 多数组拆分路径回归（2026-10-10 GLES 图集截断洞）：设备
+/// max_texture_array_layers < 837（GLES 保底 256）时方块图集拆 4 个数组、
+/// shader 按 layer 区间选数组。lavapipe 上限 3907 永远不会自然走这条路
+///（旧 gles 冒烟测试遇到层数不够直接 return——正是 CI 洞），这里用
+/// layer_cap=256 强制 cdiv(837,256)=4 数组路径：GRASS_TOP=336 → 数组 1
+/// 局部 126（边界映射由 mcv_core::tests::atlas::remap_layer_boundaries
+/// 锁定），断言草地仍渲出。
+#[test]
+fn terrain_multi_array_grass_render() {
+    let (device, queue, mut renderer) = setup_with_layer_cap_and_assets(Some(256), None);
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000);
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: std::slice::from_ref(&chunk),
+        hud: &hud,
+        cloud: None,
+        player: None,
+        overlay: None,
+    };
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut encoder);
+    queue.submit([encoder.finish()]);
+    let rgba = target.read_pixels(&device);
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &rgba);
+        let _ = std::fs::write(
+            std::path::Path::new(&dir).join("multi-array-grass.png"),
+            png,
+        );
+    }
+    // 阈值与 gles 冒烟一致（像素统计跨后端放宽）。
+    let (green, _) = sample_stats(&rgba, extent.width, extent.height);
+    assert!(green > 0.15, "多数组路径下草地缺失，green={green}");
+}
+
 #[test]
 fn mining_crack_and_outline_darken_target() {
     // 同一场景渲两次：overlay（stage3 裂纹 + 描边）应让目标投影区像素
@@ -363,6 +433,10 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
 /// 向 adapter 要 fallback：拿到 swrast GL 就用 MeshUploader（出事入口）+ 云 +
 /// HUD 渲一整帧；fallback 仍是 Vulkan 或无 GL/EGL 环境则跳过，不为守护引入
 /// flake。
+///
+/// 2026-10-10 修正：不再因「数组层数 < 图集」跳过——那正是 CI 洞（GLES
+/// 截断/多数组路径零覆盖）。改用 `with_atlas_layer_cap(Some(256))` 强制
+/// 4 数组拆分路径（swrast 256 层成为天然试验田），草地断言照常执行。
 #[test]
 fn gles_fallback_world_frame_smoke() {
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
@@ -377,9 +451,6 @@ fn gles_fallback_world_frame_smoke() {
     if !matches!(adapter.get_info().backend, wgpu::Backend::Gl) {
         return; // fallback 仍是 Vulkan（如 lavapipe），本环境无新增覆盖
     }
-    if adapter.limits().max_texture_array_layers < mcv_core::atlas::LAYERS as u32 {
-        return; // swrast 数组层数装不下图集，跳过
-    }
     let mut limits = wgpu::Limits::downlevel_defaults();
     limits.max_texture_array_layers = adapter.limits().max_texture_array_layers;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -391,11 +462,12 @@ fn gles_fallback_world_frame_smoke() {
         trace: wgpu::Trace::Off,
     }))
     .expect("gl device");
-    let mut renderer = mcv_render::Renderer::new(
+    let mut renderer = mcv_render::Renderer::with_atlas_layer_cap(
         device.clone(),
         queue.clone(),
         wgpu::TextureFormat::Rgba8UnormSrgb,
         None,
+        Some(256),
     );
     let clouds = mcv_render::Clouds::new(&device, &queue);
     // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。

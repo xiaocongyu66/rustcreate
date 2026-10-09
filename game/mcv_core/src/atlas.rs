@@ -22,6 +22,58 @@ pub const MIP_LEVELS: u32 = 2;
 
 const _: () = assert!(MANIFEST_LAYERS + CRACK_LAYERS <= u16::MAX as usize);
 
+/// texture_2d_array 拆分数组上限。GLES 3.0 规范下限 MAX_ARRAY_TEXTURE_LAYERS
+/// = 256（wgpu `Limits::downlevel_defaults` 同值，wgpu-types-30.0.1
+/// src/limits.rs:426），837 层 = 4 个数组即可装下；需要超过 4 份意味着
+/// adapter 连规范下限都没给，回到截断兜底（见 [`split_layer_counts`]）。
+pub const MAX_TEXTURE_ARRAYS: usize = 4;
+
+/// 按单数组层数上限把 [`LAYERS`] 拆成 N 份（N ≤ [`MAX_TEXTURE_ARRAYS`]）。
+///
+/// 返回每份层数（有序；和 ≤ LAYERS）。上限 ≥ LAYERS 时返回 `[LAYERS]`
+/// （单数组，桌面/Vulkan 主路径零变化）。设备上限过小导致
+/// cdiv(LAYERS, per) > 4 份时，每份仍取设备上限、总和 < LAYERS（截断
+/// 兜底），保证 create_texture 永不越设备验证。
+pub fn split_layer_counts(max_layers_per_array: usize) -> Vec<usize> {
+    let per = max_layers_per_array.max(1);
+    if per >= LAYERS {
+        return vec![LAYERS];
+    }
+    let n = LAYERS.div_ceil(per).min(MAX_TEXTURE_ARRAYS);
+    // n 份正好装得下时均分（单份 ≤ per）；装不下（per 过小）按 per 截尾。
+    let step = if LAYERS.div_ceil(n) <= per {
+        LAYERS.div_ceil(n)
+    } else {
+        per
+    };
+    let mut counts = Vec::with_capacity(n);
+    let mut left = LAYERS;
+    for _ in 0..n {
+        let c = step.min(left);
+        if c == 0 {
+            break;
+        }
+        counts.push(c);
+        left -= c;
+    }
+    counts
+}
+
+/// 全局层号 → (数组下标, 数组内层号)。`counts` 为 [`split_layer_counts`]
+/// 的输出。越界层钳到末数组末层（与 shader if 链兜底分支同语义；mesher
+/// 只发合法层号，越界仅是防御）。
+pub fn remap_layer(layer: usize, counts: &[usize]) -> (usize, usize) {
+    assert!(!counts.is_empty(), "split_layer_counts 结果不能为空");
+    let mut acc = 0usize;
+    for (i, &c) in counts.iter().enumerate() {
+        if layer < acc + c {
+            return (i, layer - acc);
+        }
+        acc += c;
+    }
+    (counts.len() - 1, counts[counts.len() - 1] - 1)
+}
+
 fn hash01(seed: u64, x: u32, y: u32) -> f32 {
     let mut h =
         seed ^ (u64::from(x).wrapping_mul(0x9E3779B1)) ^ (u64::from(y).wrapping_mul(0x85EBCA77));
@@ -407,24 +459,6 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
 /// 无资源路径（纯程序化）。带真实贴图用 [`generate_payload_with_pack`]。
 pub fn generate_payload() -> Vec<u8> {
     generate_payload_with_pack(None)
-}
-
-/// 层数钳制（GLES `MAX_ARRAY_TEXTURE_LAYERS` 常为 256 < 837）：
-/// 钳到 `n` 层时返回实际可用的 mip0+mip1 载荷与数组层数。
-/// tiles 引用被钳掉的层时 wgpu 在采样器边界内回绕/钳位（贴图上屏，不崩）。
-/// 建议 gpu.rs 用 `min(LAYERS, limits.max_texture_layers())` 调用。
-pub fn generate_payload_clamped(assets_dir: Option<&Path>, max_layers: usize) -> (Vec<u8>, usize) {
-    let n = max_layers.clamp(1, LAYERS);
-    let full = generate_payload_with_pack(assets_dir);
-    if n == LAYERS {
-        return (full, n);
-    }
-    let mip0_full = LAYERS * TILE_PX * TILE_PX * 4;
-    let mut out = Vec::with_capacity(n * (TILE_PX * TILE_PX + 8 * 8) * 4);
-    out.extend_from_slice(&full[..n * TILE_PX * TILE_PX * 4]);
-    let mip1_off = mip0_full + n * 8 * 8 * 4;
-    out.extend_from_slice(&full[mip0_full..mip1_off]);
-    (out, n)
 }
 
 const MANIFEST_JSON: &str = include_str!("../tiles_manifest.json");
