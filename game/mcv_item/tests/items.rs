@@ -2,8 +2,8 @@
 
 use mcv_item::crafting::EMPTY_SLOT;
 use mcv_item::{
-    DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS,
-    STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
+    DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS, STICK,
+    STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u32 {
