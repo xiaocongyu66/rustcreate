@@ -823,7 +823,7 @@ impl ContainerScreen {
             } else {
                 start
             };
-            while (if backwards { dest >= start } else { dest < end }) {
+            while if backwards { dest >= start } else { dest < end } {
                 if dest < self.items.len() && dest != skip {
                     if self.items[dest].is_empty() && self.may_place(dest, stack) {
                         let cap = self.slot_cap(stack.kind);
@@ -1219,7 +1219,7 @@ mod tests {
 
     #[test]
     fn carried_follows_cursor() {
-        let cs = screen();
+        let mut cs = screen();
         cs.carried = item(1, 5);
         let (x, y, c) = cs.carried_draw(100.0, 50.0);
         assert_eq!((x, y), (92.0, 42.0)); // -8,-8

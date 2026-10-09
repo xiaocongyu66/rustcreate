@@ -38,11 +38,13 @@ pub fn calculate_scale(fb_w: i32, fb_h: i32, max_scale: i32) -> i32 {
 }
 
 /// 逻辑边长：帧缓冲/scale 向上取整（setGuiScale 的 `> width ? width+1` 分支）。
+/// 注：i32 的 div_ceil 属 unstable int_roundings，此处手写。
+#[allow(clippy::manual_div_ceil)]
 pub fn scaled_len(fb: i32, scale: i32) -> i32 {
     if scale <= 0 {
         return fb.max(0);
     }
-    fb.div_ceil(scale)
+    (fb + scale - 1) / scale
 }
 
 /// 轴对齐矩形（逻辑像素）。
@@ -244,10 +246,22 @@ impl UiGraphics {
 }
 
 /// CPU 侧 scissor：quad 与裁剪矩形求交，UV 按比例截取（rot != 0 的
-/// 旋转 quad 不裁剪——splash 文字无 scissor 场景）。
+/// 旋转 quad 不裁剪——splash 文字无 scissor 场景）。HudQuad 无
+/// Clone/Copy（渲染 crate 类型），逐字段构造。
 pub fn clip_quad(q: &HudQuad, r: &Rect) -> Option<HudQuad> {
+    let fresh = || HudQuad {
+        x: q.x,
+        y: q.y,
+        w: q.w,
+        h: q.h,
+        uv: q.uv,
+        color: q.color,
+        tex: q.tex,
+        layer: q.layer,
+        rot: q.rot,
+    };
     if q.rot != 0.0 || q.w <= 0.0 || q.h <= 0.0 {
-        return Some(*q);
+        return Some(fresh());
     }
     let x0 = q.x.max(r.x);
     let y0 = q.y.max(r.y);
@@ -260,7 +274,7 @@ pub fn clip_quad(q: &HudQuad, r: &Rect) -> Option<HudQuad> {
     let fx1 = (x1 - q.x) / q.w;
     let fy0 = (y0 - q.y) / q.h;
     let fy1 = (y1 - q.y) / q.h;
-    let mut out = *q;
+    let mut out = fresh();
     out.x = x0;
     out.y = y0;
     out.w = x1 - x0;

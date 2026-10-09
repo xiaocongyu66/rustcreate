@@ -543,8 +543,9 @@ mod tests {
     #[test]
     fn tooltip_position_flips_at_edges() {
         // 屏 320x240；光标 (300, 100)，tooltip 宽 60 → 右侧超界翻左边
+        //（312 - 24 - 60 = 228，DefaultTooltipPositioner 公式）
         let (x, y) = tooltip_position(320.0, 240.0, 300.0, 100.0, 60.0, 20.0);
-        assert_eq!(x, (300.0 + 12.0 - 24.0 - 60.0).max(4.0)); // 228
+        assert_eq!(x, 228.0);
         assert_eq!(y, 100.0 - 12.0);
         // 底部超界 → 贴底
         let (x, y) = tooltip_position(320.0, 240.0, 100.0, 235.0, 60.0, 20.0);

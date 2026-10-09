@@ -135,11 +135,21 @@ impl ScreenStack {
     }
 
     pub fn top(&self) -> Option<&dyn Screen> {
-        self.screens.last().map(|b| b.as_ref())
+        // match 形式保证 as_ref 在面向返回类型的 coercion site 上
+        //（闭包内会让 trait object 生存期误定为 'static）
+        match self.screens.last() {
+            Some(b) => Some(b.as_ref()),
+            None => None,
+        }
     }
 
-    pub fn top_mut(&mut self) -> Option<&mut dyn Screen> {
-        self.screens.last_mut().map(|b| b.as_mut())
+    /// 顶层可变借用（`+ '_`：trait object 绑定 self 借用而非 'static；
+    /// &mut 不可协变缩界，须显式标注）。
+    pub fn top_mut(&mut self) -> Option<&mut (dyn Screen + '_)> {
+        match self.screens.last_mut() {
+            Some(b) => Some(b.as_mut()),
+            None => None,
+        }
     }
 
     /// 压栈（on_open 布局一次）。
@@ -306,7 +316,7 @@ mod tests {
         st.push(Box::new(Probe::new("a")), &ctx);
         st.replace(Box::new(Probe::new("b")), &ctx);
         assert_eq!(st.len(), 1);
-        let popped = st.pop().unwrap();
+        let mut popped = st.pop().unwrap();
         let p = popped.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.name, "b");
         // b: open；replace 时 a close、b open
@@ -360,10 +370,10 @@ mod tests {
         st.push(Box::new(Probe::new("b")), &ctx);
         assert!(st.mouse_down(5.0, 5.0, 0));
         // 只顶层收到 click
-        let b = st.pop().unwrap();
+        let mut b = st.pop().unwrap();
         let p = b.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.log, vec!["open", "click"]);
-        let a = st.pop().unwrap();
+        let mut a = st.pop().unwrap();
         let p = a.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.log, vec!["open", "close"]);
     }
@@ -378,7 +388,7 @@ mod tests {
         let mut ctx2 = UiContext::new(1280, 960, 0);
         ctx2.update(1280, 960, 0);
         st.resize(&ctx2);
-        let a = st.pop().unwrap();
+        let mut a = st.pop().unwrap();
         let p = a.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.log, vec!["open", "draw", "resize", "close"]);
     }
