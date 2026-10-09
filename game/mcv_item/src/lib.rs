@@ -4,6 +4,9 @@
 pub mod anvil;
 pub mod crafting;
 pub mod enchant;
+pub mod inventory;
+
+pub use inventory::{HOTBAR_SLOTS, Hotbar, drop_for_block};
 
 use mcv_core::BlockId;
 

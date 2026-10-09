@@ -125,6 +125,8 @@ pub struct PlayerMeta {
     pub pitch: f32,
     pub flying: bool,
     pub sel_slot: u8,
+    /// v3 快捷栏:(item, count, damage) × ≤9,槽序即下标;v1/v2 读为空。
+    pub hotbar: Vec<(u16, u8, u16)>,
 }
 
 impl LevelMeta {
@@ -133,7 +135,7 @@ impl LevelMeta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&Self::MAGIC);
-        out.extend_from_slice(&2u16.to_le_bytes()); // format version
+        out.extend_from_slice(&3u16.to_le_bytes()); // format version
         out.extend_from_slice(&self.seed.to_le_bytes());
         out.extend_from_slice(&self.day_time.to_le_bytes());
         let name = self.name.as_bytes();
@@ -150,6 +152,14 @@ impl LevelMeta {
                 out.extend_from_slice(&p.pitch.to_le_bytes());
                 out.push(u8::from(p.flying));
                 out.push(p.sel_slot);
+                // v3 快捷栏(模式字节保持在末尾,兼容旧解码位置约定)。
+                let hb = &p.hotbar[..p.hotbar.len().min(9)];
+                out.push(hb.len() as u8);
+                for (item, count, damage) in hb {
+                    out.extend_from_slice(&item.to_le_bytes());
+                    out.push(*count);
+                    out.extend_from_slice(&damage.to_le_bytes());
+                }
             }
         }
         out.push(self.mode);
@@ -161,7 +171,7 @@ impl LevelMeta {
             return Err(SaveError::Corrupt("bad magic"));
         }
         let ver = u16::from_le_bytes([data[4], data[5]]);
-        if ver > 2 {
+        if ver > 3 {
             return Err(SaveError::Corrupt("unsupported meta version"));
         }
         let seed = u64::from_le_bytes(data[6..14].try_into().unwrap());
@@ -184,14 +194,35 @@ impl LevelMeta {
                 }
                 let f32_at =
                     |o: usize| f32::from_le_bytes(data[i + o..i + o + 4].try_into().unwrap());
+                let (x, y, z, yaw, pitch) = (f32_at(0), f32_at(4), f32_at(8), f32_at(12), f32_at(16));
+                let (flying, sel_slot) = (data[i + 20] != 0, data[i + 21]);
+                i += 4 * 5 + 2;
+                let mut hotbar = Vec::new();
+                if ver >= 3 {
+                    let n = *data.get(i).ok_or(SaveError::Corrupt("truncated hotbar"))? as usize;
+                    let n = n.min(9);
+                    i += 1;
+                    if i + n * 5 > data.len() {
+                        return Err(SaveError::Corrupt("truncated hotbar"));
+                    }
+                    for k in 0..n {
+                        let o = i + k * 5;
+                        hotbar.push((
+                            u16::from_le_bytes([data[o], data[o + 1]]),
+                            data[o + 2],
+                            u16::from_le_bytes([data[o + 3], data[o + 4]]),
+                        ));
+                    }
+                }
                 Some(PlayerMeta {
-                    x: f32_at(0),
-                    y: f32_at(4),
-                    z: f32_at(8),
-                    yaw: f32_at(12),
-                    pitch: f32_at(16),
-                    flying: data[i + 20] != 0,
-                    sel_slot: data[i + 21],
+                    x,
+                    y,
+                    z,
+                    yaw,
+                    pitch,
+                    flying,
+                    sel_slot,
+                    hotbar,
                 })
             }
             Some(_) => return Err(SaveError::Corrupt("bad player flag")),
