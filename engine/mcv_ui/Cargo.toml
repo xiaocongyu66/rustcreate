@@ -1,0 +1,11 @@
+[package]
+name = "mcv_ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+# 引擎分层守卫：mcv_ui 属 engine 层，只依赖 mcv_render 的
+# HudQuad / 字体度量 / 精灵表类型；不碰 wgpu/winit（纯 CPU 数据结构
+# + 事件输出，游戏层拿事件改背包）。对照 26.1 client/gui/**。
+[dependencies]
+mcv_render.workspace = true
