@@ -328,7 +328,8 @@ mod tests {
     fn ui_context_update_detects_change() {
         let mut ctx = UiContext::new(640, 480, 0);
         assert_eq!((ctx.scale, ctx.width, ctx.height), (2, 320, 240));
-        assert!(!ctx.update(642, 480, 0)); // 同 scale 同逻辑尺寸
+        assert!(!ctx.update(640, 480, 0)); // 同 scale 同逻辑尺寸（640 是
+        // scale 的倍数；非倍数宽度会因向上取整改逻辑宽，属预期）
         assert!(ctx.update(1280, 960, 0));
         assert_eq!((ctx.scale, ctx.width, ctx.height), (4, 320, 240));
         // 物理→逻辑换算
@@ -344,9 +345,10 @@ mod tests {
         g.push_scissor(10.0, 10.0, 100.0, 100.0);
         g.push_scissor(50.0, 50.0, 200.0, 200.0); // 交叠区 50..110
         assert!(g.in_scissor(60.0, 60.0));
-        assert!(!g.in_scissor(120.0, 60.0)); // 外层内、交叠外
+        assert!(!g.in_scissor(30.0, 60.0)); // 外层内（10..110）、交叠外
         g.pop_scissor();
-        assert!(g.in_scissor(120.0, 60.0)); // 回到外层
+        assert!(g.in_scissor(30.0, 60.0)); // 回到外层
+        assert!(g.in_scissor(105.0, 60.0));
         g.pop_scissor();
         assert!(g.in_scissor(120.0, 60.0));
         g.pop_scissor(); // 栈下溢：静默忽略

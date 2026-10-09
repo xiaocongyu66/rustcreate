@@ -319,8 +319,8 @@ mod tests {
         let mut popped = st.pop().unwrap();
         let p = popped.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.name, "b");
-        // b: open；replace 时 a close、b open
-        assert_eq!(p.log, vec!["open"]);
+        // b: open；本 pop 已触发 on_close
+        assert_eq!(p.log, vec!["open", "close"]);
         assert!(st.pop().is_none());
     }
 
@@ -369,10 +369,10 @@ mod tests {
         st.push(Box::new(Probe::new("a")), &ctx);
         st.push(Box::new(Probe::new("b")), &ctx);
         assert!(st.mouse_down(5.0, 5.0, 0));
-        // 只顶层收到 click
+        // 只顶层收到 click（pop 再追加 close）
         let mut b = st.pop().unwrap();
         let p = b.as_any().downcast_ref::<Probe>().unwrap();
-        assert_eq!(p.log, vec!["open", "click"]);
+        assert_eq!(p.log, vec!["open", "click", "close"]);
         let mut a = st.pop().unwrap();
         let p = a.as_any().downcast_ref::<Probe>().unwrap();
         assert_eq!(p.log, vec!["open", "close"]);

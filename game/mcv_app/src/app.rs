@@ -1668,7 +1668,6 @@ impl ApplicationHandler for AppState {
                             ElementState::Released => {
                                 self.ui_stack.mouse_up(lx, ly, b);
                             }
-                            _ => {}
                         }
                     }
                     return;

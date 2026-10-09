@@ -410,7 +410,8 @@ impl WidgetSet {
         }
     }
 
-    /// tooltip 绘制（悬停达标后；返回是否画了）。
+    /// tooltip 绘制（悬停达标后；返回是否画了）。延迟判定用**帧时钟**
+    /// g.now_ms（draw 时传入），悬停起点由 [`Self::hover`] 记录。
     pub fn draw_tooltip(&mut self, g: &mut UiGraphics) -> bool {
         let Some(id) = self.hovered_id() else {
             return false;
@@ -421,7 +422,7 @@ impl WidgetSet {
         if tip.is_empty() {
             return false;
         }
-        if self.now_ms.saturating_sub(self.tooltip.hover_since) < self.tooltip.delay_ms {
+        if g.now_ms.saturating_sub(self.tooltip.hover_since) < self.tooltip.delay_ms {
             return false;
         }
         let (mx, my) = self.mouse;
@@ -575,10 +576,11 @@ mod tests {
     fn slider_clamps() {
         let mut ws = WidgetSet::default();
         ws.add_slider(7, 0.0, 0.0, 108.0, 0.5, "Sens");
-        ws.mouse_down(-50.0, 10.0, 0);
+        // 滑条内点击：x=1 → (1-4)/100 < 0 → clamp 0；x=107 → 103/100 → clamp 1
+        ws.mouse_down(1.0, 10.0, 0);
         assert!((ws.sliders[0].value - 0.0).abs() < 1e-6);
-        ws.mouse_up(-50.0, 10.0, 0);
-        ws.mouse_down(999.0, 10.0, 0);
+        ws.mouse_up(1.0, 10.0, 0);
+        ws.mouse_down(107.0, 10.0, 0);
         assert!((ws.sliders[0].value - 1.0).abs() < 1e-6);
     }
 

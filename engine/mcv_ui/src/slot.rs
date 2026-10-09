@@ -224,10 +224,16 @@ impl ContainerScreen {
         }
     }
 
-    /// 打开/外部变更时灌镜像（长度对齐槽位表）。
+    /// 打开/外部变更时灌镜像（长度对齐槽位表；count 0 归一为全空，
+    /// 便于测试相等性比较）。
     pub fn set_items(&mut self, items: Vec<StackRef>) {
         self.items = items;
         self.items.resize(self.slots.len(), StackRef::default());
+        for s in &mut self.items {
+            if s.is_empty() {
+                *s = StackRef::default();
+            }
+        }
     }
 
     /// 取走累积命令。
@@ -739,7 +745,8 @@ impl ContainerScreen {
         }
     }
 
-    /// Slot.tryRemove（Slot.java:97-117）：取走 ≤amount。
+    /// Slot.tryRemove（Slot.java:97-117）：取走 ≤amount；槽空后 kind
+    /// 一并归零（空栈 = 全零，相等性比较才有单一规范形）。
     fn try_remove(&mut self, i: usize, amount: u32) -> StackRef {
         let item = &mut self.items[i];
         if item.is_empty() {
@@ -748,6 +755,9 @@ impl ContainerScreen {
         let n = amount.min(item.count);
         let kind = item.kind;
         item.count -= n;
+        if item.count == 0 {
+            item.kind = 0;
+        }
         StackRef { kind, count: n }
     }
 
@@ -1166,10 +1176,10 @@ mod tests {
         cs.mouse_up(0.0, 0.0, 0, false);
         assert_eq!(cs.carried, item(1, 9)); // skipNextRelease 吞掉
         assert!(cs.items[0].is_empty());
-        // 再按再松 = 正常放回
+        // 再按再松 = 正常放回（有物在手按下先起拖，松手在原槽放下）
         cs.mouse_down(0.0, 0.0, 0, false, false);
-        assert!(cs.carried.is_empty());
         cs.mouse_up(0.0, 0.0, 0, false);
+        assert!(cs.carried.is_empty());
         assert_eq!(cs.items[0], item(1, 9));
     }
 
