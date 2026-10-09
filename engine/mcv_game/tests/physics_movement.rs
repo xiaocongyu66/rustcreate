@@ -299,7 +299,7 @@ fn sprint_jump_horizontal_boost() {
 /// - 无重力悬停
 #[test]
 fn flight_speed_table() {
-    let mut world = TestWorld::new();
+    let world = TestWorld::new();
     let fly_x = StepInput {
         wish_dir: Vec3::X,
         look_dir: Vec3::X,
@@ -374,7 +374,7 @@ fn flight_speed_table() {
 /// 飞行水平漂移：松杆后按 0.91/tick 衰减（k=1.886/s），1s 后 ≈ 初速 × e^−k。
 #[test]
 fn flight_horizontal_coast_decay() {
-    let mut world = TestWorld::new();
+    let world = TestWorld::new();
     let mut p = Player {
         pos: Vec3::new(0.5, 100.0, 0.5),
         vel: Vec3::new(consts::FLY_SPEED, 0.0, 0.0),
