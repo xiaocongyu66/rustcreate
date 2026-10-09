@@ -208,7 +208,7 @@ const THIRD_PERSON_DIST: f32 = 4.0;
 /// `Attributes.java:22-23`；创造 +0.5 加法修饰 = 5.0，`ServerPlayer.java:215-216`
 /// `CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER` ADD_VALUE）。挖掘/放置/选中
 /// 射线一律传本函数，替换此前散落的硬编码 5.0。服务端 START/STOP 另有
-/// +1.0 容差（`ServerPlayerGameMode.java:153`）且按住期间不查距离——那是
+/// 1.0 容差（`ServerPlayerGameMode.java:153`）且按住期间不查距离——那是
 /// 联网防作弊复核，单机一体无客户端上报语义，按住期间按原版客户端行为
 /// 每 tick 以基值重射线（打不中即 ABORT）。
 pub fn block_interaction_reach(mode: GameMode) -> f32 {
