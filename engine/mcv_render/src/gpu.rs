@@ -453,6 +453,28 @@ impl Renderer {
                 depth_or_array_layers: n_layers as u32,
             },
         );
+        // mip1 必须单独上传：payload 尾部 n*8*8*4 字节是 box 下采样结果。
+        // 采样器 mipmap_filter=Nearest 会把 LOD≥0.5 直接舍入到 mip1，
+        // 漏传则采到未定义内容（lavapipe 清零 → 裂纹 discard、远景发黑）。
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &tex,
+                mip_level: 1,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &payload[n_layers * atlas::TILE_PX * atlas::TILE_PX * 4..],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some((atlas::TILE_PX / 2) as u32 * 4),
+                rows_per_image: Some((atlas::TILE_PX / 2) as u32),
+            },
+            wgpu::Extent3d {
+                width: (atlas::TILE_PX / 2) as u32,
+                height: (atlas::TILE_PX / 2) as u32,
+                depth_or_array_layers: n_layers as u32,
+            },
+        );
         let terrain_view = tex.create_view(&wgpu::TextureViewDescriptor {
             dimension: Some(wgpu::TextureViewDimension::D2Array),
             ..Default::default()

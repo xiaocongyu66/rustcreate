@@ -305,6 +305,13 @@ fn mining_crack_and_outline_darken_target() {
     // 差分断言：同场景两次渲染只应差在 overlay 投影区（裂纹/描边把草地
     // 明显压暗）。按像素 diff 计数，不依赖草地底色，抗驱动差异。
     let (changed, bbox) = a_diff_pixels(&base, &with);
+    let layers = device.limits().max_texture_array_layers as usize;
+    eprintln!(
+        "OVERLAY-DEBUG device_array_layers={layers} atlas_LAYERS={} atlas_CRACK_BASE={} effective_n={}",
+        mcv_core::atlas::LAYERS,
+        mcv_core::atlas::CRACK_BASE,
+        mcv_core::atlas::LAYERS.min(layers),
+    );
     assert!(
         changed > 40,
         "overlay should visibly darken target region, changed={changed} bbox={bbox:?}"
