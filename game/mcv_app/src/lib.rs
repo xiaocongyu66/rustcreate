@@ -7,7 +7,7 @@ pub mod i18n;
 pub mod android_assets;
 
 #[cfg(target_os = "android")]
-#[no_mangle]
+#[unsafe(no_mangle)] // edition 2024:unsafe 属性须显式 unsafe 标注
 fn android_main(app: android_activity::AndroidApp) {
     // 日志进 logcat（tag RustMcv）：adb logcat -s RustMcv
     android_logger::init_once(
