@@ -83,7 +83,7 @@ fn deferred_spawn_and_despawn_apply_at_stage_end() {
     app.world.register::<Pos>();
     // 形态复刻 mob AI:for_each 迭代期间只排队 despawn,绝不触碰 World。
     app.add_system(Stage::Fixed, "life_cycle", |ctx: &mut mcv_ecs::SysCtx| {
-        if ctx.world.len() == 0 {
+        if ctx.world.is_empty() {
             ctx.commands.spawn_with(|w, e| w.insert(e, Pos(1.0)));
             return;
         }
