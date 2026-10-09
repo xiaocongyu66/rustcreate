@@ -134,15 +134,13 @@ fn falls_up_to_three_blocks_only() {
     let mut g4 = Grid::flat();
     g4.trench(4, 6, 4);
     let p4 = find_path(&g4, Vec3::new(0.0, 0.0, 0.0), bp(5, -4, 0), &params64());
-    match p4 {
-        Some(p) => {
-            assert!(!p.reached, "4 格深沟不可达 {p:?}");
-            assert!(
-                !p.nodes.iter().any(|n| n.y <= -4),
-                "降级路径也不下沟：{p:?}"
-            );
-        }
-        None => {} // 完全无路径也合法。
+    // 完全无路径（None）也合法；有降级路径则不得下沟。
+    if let Some(p) = p4 {
+        assert!(!p.reached, "4 格深沟不可达 {p:?}");
+        assert!(
+            !p.nodes.iter().any(|n| n.y <= -4),
+            "降级路径也不下沟：{p:?}"
+        );
     }
 }
 
