@@ -1415,10 +1415,6 @@ impl GameRuntime {
         }
     }
 
-    fn day_factor(&self) -> f32 {
-        mcv_render::day_factor(self.time_ticks)
-    }
-
     /// NaturalSpawner-lite（预算密度为既有 KNOWN-DIVERGENCE M-3）：每 20
     /// tick 抽 2 个已点亮区块，每块 3 组 × ≤4 步游走。审计接线点：
     /// - 候选 y 在 [0, surface] 均匀随机（NaturalSpawner.java:343-349

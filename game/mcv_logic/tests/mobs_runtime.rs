@@ -80,6 +80,8 @@ fn step(
         chunks: chunks.clone(),
         player_pos: player,
         on_tick,
+        // 与 on_tick 同步的单步 tick 数（测试无 burst，等价 0/1）。
+        ticks_step: on_tick as u32,
         game_ticks: 0,
         monsters_burn,
         // 空气/单区块测试不涉昼夜：darken=0（白天代理，与 monsters_burn
