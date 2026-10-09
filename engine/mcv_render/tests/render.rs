@@ -765,8 +765,10 @@ fn missing_assets_never_paint_fake_pixels() {
         }
     }
     let band = 70 * 320; // y 120..190 的地面统计带
+    // missingno 棋盘品红/黑各半；雾混合下品红象限仍应远超 1/4（黑象限
+    // 只会压低亮度，不会翻绿）。
     assert!(
-        magenta * 2 > band as u64,
+        magenta * 4 > band as u64,
         "素材缺失下草地应显示 missing 品红标记，magenta={magenta}/{band}"
     );
     assert_eq!(green, 0, "素材缺失下出现绿色假草地像素（程序化回退复辟？）");
