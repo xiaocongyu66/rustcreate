@@ -62,7 +62,7 @@ pub struct BorderSeed {
 /// 形状方块（火把/栅栏/半砖/楼梯/花草）经 `mcv_core::OPACITY` 规则④
 /// （非整方块渲染形状 → `propagatesSkylightDown`，`BlockBehaviour.java:
 /// 395-397`）取 damp=0，栅栏/花草父类另有显式覆盖恒 0（栅栏系
-/// `CrossCollisionBlock.java:71-73`、花草系 `VegetationBlock.java:50-52`）
+/// `CrossCollisionBlock.java:70-73`、花草系 `VegetationBlock.java:49-52`）
 /// ——即审计 C6（形状方块不得整格 15 阻光）由全表满足。
 ///
 /// KNOWN-DIVERGENCE: 半砖/楼梯在 26.1 是 damp=0 + `useShapeForLightOcclusion`
