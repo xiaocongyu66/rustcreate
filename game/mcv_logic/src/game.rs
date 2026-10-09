@@ -301,6 +301,9 @@ pub struct GameRuntime {
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
     pub attack_ticker: f32,
+    /// FoodData.tickTimer（26.1 FoodData.java:17）：回血快线 10 tick、慢线与
+    /// 饥饿掉血 80 tick 的共享节拍（每 on_tick 走一格）。
+    food_tick_timer: u32,
     /// 挖掘状态机（26.1 MultiPlayerGameMode 的 destroyBlockPos/destroyProgress/
     /// destroyDelay 三件套）：生存/极限走 START→CONTINUE→ABORT，创造走按住
     /// 连秒破冷却；仅 `on_tick` 为真的固定步推进（原版每 tick 一次 continue）。
@@ -549,7 +552,11 @@ impl GameRuntime {
             scheduler: mcv_worldgen::TerrainScheduler::new(seed, mcv_core::world_worker_count()),
             player: Player::default(),
             input: InputState::default(),
-            time_ticks: 6_000, // noon start
+            // 新世界从 tick 0 = 黎明起步（26.1 ClockInstance.totalTicks
+            // 默认 0，ServerClockManager.java:149；day.json wake_up_from_sleep
+            // 标记 0。旧实现 6000「noon start」在新相位下是正午开局，无源码
+            // 依据——旧相位 bug 时代的补偿，相位修正后按原版语义归零）。
+            time_ticks: 0,
             tick_frac: 0.0,
             game_ticks: 0,
             on_tick: false,
@@ -559,7 +566,10 @@ impl GameRuntime {
             spawned: false,
             border_synced: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
+            // 攻击冷却 ticker，单位 tick（Player.attackStrengthTicker）；
+            // 20 tick 起步 = 全武器满蓄力（attackSpeed≥1.0 → delay≤20 tick）。
             attack_ticker: 20.0, // ready
+            food_tick_timer: 0,
             mine: MineMachine::default(),
             spawn_cooldown: 0,
             player_xp: 0,
@@ -605,23 +615,48 @@ impl GameRuntime {
         rt
     }
 
-    /// 玩家受伤（26.1 LivingEntity.hurt 简化）：无敌帧拒绝、击退、受伤音、
+    /// 玩家受伤（26.1 LivingEntity.hurtServer 简化）：无敌帧门、击退、受伤音、
     /// 死亡置位。`from`=伤害来源（None = 环境伤害，不击退）。
+    ///
+    /// 无敌帧为 **tick** 单位：结算后置 `invulnerable = 20`（=1s，
+    /// LivingEntity.java:1206 `invulnerableTime = 20`；ServerPlayer.java:576-577
+    /// 每 tick −1，本仓在 fixed_step 的 on_tick 里递减）。差值门与 mob 路径
+    /// 同构（combat::invulnerable_gate:50-60 ← LivingEntity.java:1196-1206）：
+    /// invulnerable > 10 tick 时，伤害 ≤ lastHurt 整段忽略；更强伤害只扣
+    /// `伤害 − lastHurt` 且不重置无敌帧。注：26.1 该门只依赖 invulnerableTime
+    /// 与 lastHurt（外加伤害类型的 BYPASSES_COOLDOWN 标签，本仓无此类伤害源，
+    /// 不建模）；`lastHurtByMobTimestamp`/`lastHurtMobTimestamp` 只用于仇恨
+    /// 记录（LivingEntity.java:241-244），不构成本门的一部分——按源码实况实现。
     pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
         let p = &mut self.player;
-        if p.invulnerable > 0 || p.health <= 0.0 || self.mode == GameMode::Creative {
+        if p.health <= 0.0 || self.mode == GameMode::Creative {
             return;
         }
-        p.health -= amount;
-        // 受击无敌帧 20 tick = 1 s（LivingEntity.java:1206 `invulnerableTime
-        // = 20`，每 tick 递减 LivingEntity.java:452-453；>10 时的超额伤害
-        // 差值门 LivingEntity.java:1196-1200 未接 → KNOWN-DIVERGENCE：
-        // 无敌期内后续伤害全拒而非按差值放行）。
-        p.invulnerable = 20;
+        let guard = p.invulnerable > 10;
+        let Some(dmg) =
+            combat::invulnerable_gate(p.invulnerable.max(0) as u32, p.last_hurt, amount)
+        else {
+            return;
+        };
+        p.last_hurt = amount;
+        // 差值分支（LivingEntity.java:1201-1202）无敌帧不重置；全额分支才置 20
+        // （LivingEntity.java:1206）。
+        if !guard {
+            p.invulnerable = 20;
+        }
+        p.health -= dmg;
+        // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
+        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
+        // mob_attack/player_attack.json = 0.1，fall/out_of_world.json = 0.0；
+        // 本入口 `from` 有值 ≙ 实体攻击。创造已在上方豁免（对应
+        // Player.causeFoodExhaustion:1561-1567 的 abilities.invulnerable 门）。
+        if from.is_some() {
+            p.exhaustion = (p.exhaustion + 0.1).min(EXHAUSTION_MAX);
+        }
         if let Some(src) = from {
             let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
-            // victim 侧受击击退 0.4（LivingEntity.java:1238 `knockback(0.4F,
-            // ...)`；mob 攻方 ATTACK_KNOCKBACK 属性默认 0，无额外加成）。
+            // 受击击退力度 0.4（LivingEntity.java:1238 `knockback(0.4F, xd, zd)`，
+            // 旧实现 0.5）；冲刺命中 +0.5 是攻击方机制（Player.java:987），不在此。
             let kb = mcv_entity::combat::knockback_velocity(p.vel, p.on_ground, 0.0, 0.4, push);
             p.vel = kb;
         }
@@ -656,12 +691,19 @@ impl GameRuntime {
         self.audio.play_event("entity.player.hurt", pos, pos, 1.0);
     }
 
-    /// 死亡界面「重生」：满状态回出生点上方。
+    /// 死亡界面「重生」：满状态回出生点上方（FoodData 全新实例 = 满食 +
+    /// 饱和 5.0 + exhaustion 0，FoodConstants.java:6 / FoodData.java:15；
+    /// 无敌帧 0——26.1 只有 hurt 全额分支才置 invulnerableTime=20
+    /// （LivingEntity.java:1206），restoreFrom 不传送无敌帧，旧实现 20 tick
+    /// 重生保护期无源码依据）。
     pub fn respawn(&mut self) {
         self.player.health = 20.0;
         self.player.hunger = 20.0;
+        self.player.saturation = 5.0;
         self.player.exhaustion = 0.0;
-        self.player.invulnerable = 20;
+        self.player.last_hurt = 0.0;
+        self.food_tick_timer = 0;
+        self.player.invulnerable = 0;
         self.player.pos = Vec3::new(8.5, 200.0, 8.5);
         self.player.vel = Vec3::ZERO;
         self.player.flying = self.mode == GameMode::Creative;
@@ -1137,7 +1179,13 @@ impl GameRuntime {
             // 死亡界面：尸体不响应输入，仅重力继续
             self.input = Default::default();
         }
-        self.attack_ticker = (self.attack_ticker + dt).min(20.0);
+        // 攻击冷却 ticker：tick 单位（26.1 Player.java:267 每 tick +1；消费侧
+        // combat::attack_strength 的 delay = 20/attackSpeed tick，Player.java:
+        // 1793-1795）。旧实现按秒累加又被当 tick 消费，铁剑满蓄力 12.5s（正确
+        // 12.5 tick = 0.625s）。上限 20 tick（最慢武器 attackSpeed 1.0 → 蓄满）。
+        if self.on_tick {
+            self.attack_ticker = (self.attack_ticker + n as f32).min(20.0);
+        }
         self.step_mining(dt);
 
         // ---- natural spawning (budgeted every 20 ticks) ----
@@ -1172,6 +1220,7 @@ impl GameRuntime {
                 game_ticks: self.game_ticks,
                 monsters_burn: monsters_burn(self.time_ticks),
                 sky_darken: sky_darken(self.time_ticks),
+                ticks_step: n.min(u32::MAX as u64) as u32,
             });
             // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
@@ -1221,6 +1270,11 @@ impl GameRuntime {
                 .try_normalize()
                 .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
             let r = f.cross(Vec3::Y);
+            // 冲刺饥饿门（26.1 LocalPlayer.java:1133 → Player
+            // .hasEnoughFoodToDoExhaustiveManoeuvres = food>6 || mayfly，
+            // Player.java:1569-1571；SPRINT_LEVEL=6，FoodConstants.java:12）：
+            // 饥饿 ≤6 自动退出冲刺（不提速、不计冲刺 exhaustion）。
+            let sprinting = self.input.sprint && (self.player.hunger > 6.0 || self.player.flying);
             let i = &self.input;
             let mut wish = Vec3::ZERO;
             if i.forward {
@@ -1259,6 +1313,9 @@ impl GameRuntime {
                 jump: i.jump,
                 in_water,
                 sneak: i.sneak,
+                // 冲刺提速 4.317→5.612 m/s（LivingEntity.java:156-158 +30%）；
+                // 潜行在 step 内优先于冲刺（蹲下即退冲刺）。
+                sprint: sprinting,
                 gravity_scale: 1.0,
             };
             mcv_game::step(
@@ -1269,7 +1326,11 @@ impl GameRuntime {
                 &step_input,
             );
             // ---- 行为音效：脚步 / 落地 ----
-            let moved = (self.player.pos - before).length();
+            let delta = self.player.pos - before;
+            let moved = delta.length();
+            // exhaustion 只认水平位移（ServerPlayer.checkMovementStatistics:1444
+            // 用 sqrt(dx²+dz²)，垂直不计）。
+            let moved_h = Vec3::new(delta.x, 0.0, delta.z).length();
             self.step_dist += moved;
             if self.player.on_ground && was_air {
                 if fall_v < -3.0 {
@@ -1304,31 +1365,41 @@ impl GameRuntime {
                         .play_event(event, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
                 }
             }
-            // ---- 生存统计（26.1 和平难度规则，粗化 exhaustion）----
-            // 无敌帧按 20 Hz tick 递减（LivingEntity.java:452-453 每 tick
-            // 减 1，非每渲染步）——旧写法 60 Hz 步减 1 使 10 点无敌只剩
-            // 1/6 s（审计 M-7 的 3× 失真，与怪侧同一 C-1 换算）。
+            // ---- 生存统计（26.1 LivingEntity/ServerPlayer/FoodData）----
+            // 无敌帧递减：tick 单位（ServerPlayer.java:576-577 每 tick −1），
+            // 旧实现按 60 Hz 步递减使 20 tick i 帧只剩 0.33s。
             if self.on_tick {
                 self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
             }
+            // 事件式 exhaustion 累加（原版在移动/跳跃事件即时加，非每 tick）：
+            // 冲刺地面水平位移 0.1/m、走路/潜行 0.0/m 且只计水平分量
+            // （ServerPlayer.checkMovementStatistics:1443-1456 +
+            // FoodConstants.java:25-27）；跳跃 = 冲刺跳 0.2 / 普通跳 0.05
+            // （ServerPlayer.jumpFromGround:1532-1540 +
+            // FoodConstants.java:21-22，旧实现恒 0.2 高估普通跳）。
             if self.mode != GameMode::Creative {
                 let p = &mut self.player;
-                p.exhaustion += moved * if self.input.sprint { 0.02 } else { 0.01 };
+                if p.on_ground {
+                    p.exhaustion =
+                        (p.exhaustion + move_exhaustion(sprinting, moved_h)).min(EXHAUSTION_MAX);
+                }
                 if jumped_off {
-                    p.exhaustion += 0.2;
+                    p.exhaustion =
+                        (p.exhaustion + if sprinting { 0.2 } else { 0.05 }).min(EXHAUSTION_MAX);
                 }
-                if p.exhaustion >= 4.0 {
-                    p.exhaustion -= 4.0;
-                    p.hunger = (p.hunger - 1.0).max(0.0);
-                }
-                // 饱和回血：hunger>17 每 4s 回 1 心（MC naturalRegeneration）
-                if p.hunger > 17.0 && p.health > 0.0 && p.health < 20.0 {
-                    p.health = (p.health + dt * 0.25).min(20.0);
-                }
-                // 饥饿掉血：hunger=0 掉至 10 为止（和平难度下限）
-                if p.hunger <= 0.0 && p.health > 10.0 {
-                    p.health = (p.health - dt * 0.25).max(10.0);
-                }
+            }
+            // FoodData.tick 每 game tick 一次（26.1 FoodData.java:32-72）：
+            // exhaustion>4 先扣 1 饱和、饱和耗尽才扣饥饿；回血/饥饿掉血走
+            // tickTimer（和平封顶 10 为本仓既有登记偏差）。
+            if self.on_tick && self.mode != GameMode::Creative {
+                let p = &mut self.player;
+                food_data_tick(
+                    &mut p.exhaustion,
+                    &mut p.saturation,
+                    &mut p.hunger,
+                    &mut p.health,
+                    &mut self.food_tick_timer,
+                );
             }
         }
 
@@ -1342,6 +1413,10 @@ impl GameRuntime {
                 self.player.flying = self.mode == GameMode::Creative;
             }
         }
+    }
+
+    fn day_factor(&self) -> f32 {
+        mcv_render::day_factor(self.time_ticks)
     }
 
     /// NaturalSpawner-lite（预算密度为既有 KNOWN-DIVERGENCE M-3）：每 20
@@ -1566,23 +1641,28 @@ impl GameRuntime {
             sprinting: false,
         };
         let out = combat::resolve_attack(&ctx);
-        self.attack_ticker = 0.0;
-        // 准星射线选目标：read 视图迭代，视图释放后才允许 despawn（需独占）。
-        let mut best: Option<(mcv_ecs::Entity, f32)> = None;
+        // 准星射线选目标（旧实现 3.5m + cos>0.92 锥形近似、无遮挡，可隔墙
+        // 打怪）：实体攻击距离 = DEFAULT_ENTITY_INTERACTION_RANGE 3.0
+        // （Player.java:133）；射线先对世界求方块命中距离，实体 AABB 命中
+        // 必须在方块命中之前（方块 clip 与实体射线取近的 hit pick 语义）。
+        let dir = dir.normalize_or_zero();
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let block_t = block_hit_t(&view, eye, dir, ENTITY_ATTACK_RANGE);
+        let mut targets: Vec<(Vec3, [f32; 3])> = Vec::new();
+        let mut ents: Vec<mcv_ecs::Entity> = Vec::new();
         {
             let bodies = self.mobs_app.world.read::<PhysBody>();
+            let kinds = self.mobs_app.world.read::<MobKind>();
             for (e, body) in bodies.iter() {
-                let to = body.pos + glam::Vec3::new(0.0, 1.0, 0.0) - eye;
-                let dist = to.length();
-                if dist > 3.5 {
-                    continue;
-                }
-                let cos = to.normalize_or_zero().dot(dir);
-                if cos > 0.92 && best.is_none_or(|(_, d)| dist < d) {
-                    best = Some((e, dist));
+                if let Some(k) = kinds.get(e) {
+                    ents.push(e);
+                    targets.push((body.pos, k.0.def().half_size));
                 }
             }
         }
+        let best = pick_attack_target(eye, dir, &targets, block_t).map(|(i, t)| (ents[i], t));
         let mut slain = None;
         let mut struck = false;
         if let Some((target, _)) = best {
@@ -1658,11 +1738,20 @@ impl GameRuntime {
         // 攻击实体即消费这次点击（26.1 左键先打实体），顺带中断进度挖掘。
         let hit_entity = best.is_some();
         if hit_entity {
+            // 冷却只在攻击实体时清零（Player.attack:959 `this.onAttack()` →
+            // resetOnlyAttackStrengthTicker，Player.java:1816-1824）；对空挥/打方块
+            // 不清（旧实现进函数即清）。
+            self.attack_ticker = 0.0;
             self.cancel_mining();
         }
         // 耐久只在命中时消耗（26.1 useOnEnemy 语义）；破损清槽并播放
         // random.break（缺事件时加载器自带节流 no-op）。
         if struck {
+            // 命中 exhaustion 0.1（Player.java:996 causeFoodExhaustion(0.1F)，
+            // player_attack.json 同口径）；创造豁免（abilities.invulnerable 门）。
+            if self.mode != GameMode::Creative {
+                self.player.exhaustion = (self.player.exhaustion + 0.1).min(EXHAUSTION_MAX);
+            }
             let broke = self
                 .hotbar
                 .selected_mut(self.player.sel_slot)
@@ -1816,6 +1905,10 @@ impl GameRuntime {
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
+            // 每破坏一方块 exhaustion 0.005（Block.playerDestroy，
+            // Block.java:478 causeFoodExhaustion(0.005F)；创造经
+            // abilities.invulnerable 门豁免，Player.java:1561-1567）。
+            self.player.exhaustion = (self.player.exhaustion + EXHAUSTION_MINE).min(EXHAUSTION_MAX);
             let held = self.held_stack();
             if mcv_item::mining::has_correct_tool(old, held.as_ref())
                 && let Some(drop) = mcv_item::drop_for_block(old)
@@ -2367,9 +2460,15 @@ pub struct MobServices {
     pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
     pub player_pos: Vec3,
     /// 本固定步是否跨过 20 Hz tick 边界（[`GameRuntime::on_tick`] 快照）：
-    /// 所有 tick 语义计时器（无敌帧 / noActionTime / 燃烧 / AI 决策 /
+    /// 所有 tick 语义计时器（noActionTime / 燃烧 / AI 决策 /
     /// 箭矢推进）只在此为真时 +1，60 Hz 步只跑物理。
     pub on_tick: bool,
+    /// 本固定步跨过的 20 Hz tick 数（0/1 常态）。受击无敌帧按它递减——
+    /// 原版 LivingEntity.tick 每 game tick 给非玩家实体 invulnerableTime
+    /// −1（LivingEntity.java:452-453），绝不按 60 Hz 步递减（旧实现
+    /// 20 计数 = 0.33s，怪 3 击/秒、i 帧缩水 3 倍）；burst 步 n>1 时
+    /// 比 on_tick 单次递减更忠实。
+    pub ticks_step: u32,
     /// 单调 20 Hz 计数快照（[`GameRuntime::game_ticks`]）。
     pub game_ticks: u64,
     /// 白天（EnvironmentAttributes.MONSTERS_BURN，Timelines.java:157）——
@@ -2453,6 +2552,13 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let p_eye = svc.player_pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
     let mut rng = || fast_rand();
     phys.for_each(|e, body| {
+        let tk = match ticks.get_mut(e) {
+            Some(t) => t,
+            None => return,
+        };
+        // i 帧/近战冷却按 game tick 递减（LivingEntity.java:452-453 每 tick
+        // −1；60 Hz 步递减会让 20 tick i 帧只剩 0.33s，见 MobServices 注释）。
+        tk.invulnerable = tk.invulnerable.saturating_sub(svc.ticks_step);
         let Some(&MobKind(id)) = kind.get(e) else {
             return;
         };
@@ -2471,8 +2577,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
 
         if svc.on_tick {
             // ---- 20 Hz tick 语义：计时器只在这里推进（审计 C-1）----
-            // 受击无敌帧：LivingEntity.java:1217 置 20，每 tick 减 1。
-            tk.invulnerable = tk.invulnerable.saturating_sub(1);
+            //（无敌帧递减在循环头部按 ticks_step 处理，见上。）
             // 燃烧：Entity.java:534-544——remainingFireTicks%20==0 时 1 点
             // 伤害（每秒 1 点；"每 tick 1 伤害"系派单口误，以源码为准）。
             if tk.fire_ticks > 0 {
@@ -2630,6 +2735,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             jump: intent.jump && body.on_ground,
             in_water: false,
             sneak: false,
+            sprint: false,
             gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
@@ -2867,6 +2973,172 @@ fn dda_hit(
         }
     }
     None
+}
+
+/// 实体攻击距离（26.1 `Player.DEFAULT_ENTITY_INTERACTION_RANGE = 3.0`，
+/// Player.java:133；Attributes.ENTITY_INTERACTION_RANGE 以此为基值）。
+pub const ENTITY_ATTACK_RANGE: f32 = 3.0;
+
+/// exhaustion 上限（FoodData.addExhaustion:100-101 `min(x + amount, 40)`）。
+pub const EXHAUSTION_MAX: f32 = 40.0;
+
+/// 每破坏一方块的 exhaustion（Block.playerDestroy，Block.java:470-479
+/// `causeFoodExhaustion(0.005F)`；FoodConstants.java:23 EXHAUSTION_MINE）。
+pub const EXHAUSTION_MINE: f32 = 0.005;
+
+/// 地面水平位移的 exhaustion（26.1 ServerPlayer.checkMovementStatistics:1443-1456
+/// 连同 FoodConstants.java:25-27）：冲刺 **0.1/m**、走路/潜行 **0.0/m**，
+/// 且只计水平分量。水中 0.01/m（FoodConstants.java:28 EXHAUSTION_SWIM）
+/// 未接线，登记为已知差异。
+pub fn move_exhaustion(sprinting: bool, horizontal_m: f32) -> f32 {
+    if sprinting { 0.1 * horizontal_m } else { 0.0 }
+}
+
+/// FoodData.tick 的一拍（26.1 FoodData.java:32-72），由调用方每 20 Hz tick
+/// 调一次（非 60 Hz 固定步）：
+/// 1. exhaustion **>4**（FoodData.java:35 严格大于，非 >=4）扣 4，先扣 1 点
+///    饱和度、饱和见底才扣饥饿；
+/// 2. 回血快线：饱和>0 且 hunger≥20 且受伤，每 10 tick 回 min(饱和,6)/6 HP，
+///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52）；
+/// 3. 回血慢线：hunger≥18 且受伤，每 80 tick 回 1 HP，代价 exhaustion+6
+///    （FoodData.java:53-59，FoodConstants.java:20 EXHAUSTION_HEAL=6.0——旧实现
+///    回血零代价）；
+/// 4. 饥饿掉血：hunger=0 每 80 tick 掉 1（难度封顶为既有登记偏差：一律按
+///    和平封顶 10）。
+pub fn food_data_tick(
+    exhaustion: &mut f32,
+    saturation: &mut f32,
+    hunger: &mut f32,
+    health: &mut f32,
+    tick_timer: &mut u32,
+) {
+    if *exhaustion > 4.0 {
+        *exhaustion -= 4.0;
+        if *saturation > 0.0 {
+            *saturation = (*saturation - 1.0).max(0.0);
+        } else {
+            *hunger = (*hunger - 1.0).max(0.0);
+        }
+    }
+    let hurt = *health > 0.0 && *health < 20.0;
+    if *saturation > 0.0 && hurt && *hunger >= 20.0 {
+        *tick_timer += 1;
+        if *tick_timer >= 10 {
+            let spent = (*saturation).min(6.0);
+            *health = (*health + spent / 6.0).min(20.0);
+            *exhaustion = (*exhaustion + spent).min(EXHAUSTION_MAX);
+            *tick_timer = 0;
+        }
+    } else if *hunger >= 18.0 && hurt {
+        *tick_timer += 1;
+        if *tick_timer >= 80 {
+            *health = (*health + 1.0).min(20.0);
+            *exhaustion = (*exhaustion + 6.0).min(EXHAUSTION_MAX);
+            *tick_timer = 0;
+        }
+    } else if *hunger <= 0.0 {
+        *tick_timer += 1;
+        if *tick_timer >= 80 {
+            if *health > 10.0 {
+                *health -= 1.0;
+            }
+            *tick_timer = 0;
+        }
+    } else {
+        *tick_timer = 0;
+    }
+}
+
+/// 射线 vs AABB（slab 法）：返回原点到入射点的距离（原点在盒内取 0）。
+/// `dir` 必须已归一化；盒在射线背后或不相交返回 None。
+pub fn ray_aabb_t(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> {
+    let mut t_min = 0.0f32;
+    let mut t_max = f32::INFINITY;
+    for (o, d, lo, hi) in [
+        (origin.x, dir.x, min.x, max.x),
+        (origin.y, dir.y, min.y, max.y),
+        (origin.z, dir.z, min.z, max.z),
+    ] {
+        if d.abs() < 1e-9 {
+            if o < lo || o > hi {
+                return None;
+            }
+            continue;
+        }
+        let inv = 1.0 / d;
+        let mut t0 = (lo - o) * inv;
+        let mut t1 = (hi - o) * inv;
+        if t0 > t1 {
+            std::mem::swap(&mut t0, &mut t1);
+        }
+        t_min = t_min.max(t0);
+        t_max = t_max.min(t1);
+        if t_min > t_max {
+            return None;
+        }
+    }
+    Some(t_min)
+}
+
+/// 视线第一个方块命中的**距离**：经模块内私有 DDA `dda_hit`（仅 solid 遮挡，
+/// 水/花不挡刀）给出命中格与入射面法线，再按入射面求精确入射距离 t。
+/// 给出命中格与入射面法线，再按入射面求精确入射距离 t。
+pub fn block_hit_t(view: &WorldView, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<f32> {
+    let dir = dir.normalize_or_zero();
+    let (hit, normal) = dda_hit(view, eye, dir, max_dist)?;
+    let mut t = 0.0f32;
+    // dda_hit 的 normal = -step：正向步进从 min 面入射（平面 = 格坐标），
+    // 负向从 max 面入射（平面 = 格坐标 + 1）；起点即命中的退化情形法线全 0
+    // （眼在方块内），t 保持 0。
+    let axes = [
+        (normal[0], hit.x as f32, eye.x, dir.x),
+        (normal[1], hit.y as f32, eye.y, dir.y),
+        (normal[2], hit.z as f32, eye.z, dir.z),
+    ];
+    for (n, base, o, d) in axes {
+        if n == 0 {
+            continue;
+        }
+        let plane = base + if n > 0 { 1.0 } else { 0.0 };
+        t = (plane - o) / d;
+    }
+    if t.is_finite() && (0.0..=max_dist).contains(&t) {
+        Some(t)
+    } else {
+        None
+    }
+}
+
+/// 实体攻击目标选取（try_attack 的等价纯函数，供集成测试）：`mobs` =
+/// （脚底中心，[`mcv_entity::defs::MobDef::half_size`]），AABB 与 step_entity
+/// 同型（高 = 2·hy）。入选条件 = ray-AABB 命中距离 ≤ [`ENTITY_ATTACK_RANGE`]
+/// **且** 严格小于方块命中距离 `block_t`（None = 视线无方块），取最近者，
+/// 返回 (下标, 命中距离)。
+pub fn pick_attack_target(
+    eye: Vec3,
+    dir: Vec3,
+    mobs: &[(Vec3, [f32; 3])],
+    block_t: Option<f32>,
+) -> Option<(usize, f32)> {
+    let mut best: Option<(usize, f32)> = None;
+    for (i, (pos, half)) in mobs.iter().enumerate() {
+        let min = Vec3::new(pos.x - half[0], pos.y, pos.z - half[2]);
+        let max = Vec3::new(pos.x + half[0], pos.y + 2.0 * half[1], pos.z + half[2]);
+        let Some(t) = ray_aabb_t(eye, dir, min, max) else {
+            continue;
+        };
+        if t > ENTITY_ATTACK_RANGE {
+            continue;
+        }
+        // 方块遮挡：实体入射点不比方块命中点近 → 挡墙落空。
+        if block_t.is_some_and(|bt| t >= bt) {
+            continue;
+        }
+        if best.is_none_or(|(_, d)| t < d) {
+            best = Some((i, t));
+        }
+    }
+    best
 }
 
 /// 挖掘/放置音效材质 → 26.1 sounds.json 事件前缀（BLOCKS 表序：0air 1stone

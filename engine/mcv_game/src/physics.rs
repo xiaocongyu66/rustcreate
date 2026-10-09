@@ -271,6 +271,10 @@ pub struct StepInput {
     pub in_water: bool,
     /// 潜行 / 下降。
     pub sneak: bool,
+    /// 冲刺：水平目标速度取 [`consts::SPRINT_SPEED`]（26.1 SPRINTING 速度修饰
+    /// 为 `+30%` ADD_MULTIPLIED_TOTAL，LivingEntity.java:156-158）。潜行优先于
+    /// 冲刺（原版蹲下即退冲刺）。调用方负责饥饿门（food>6，见 GameRuntime）。
+    pub sprint: bool,
     /// 重力缩放（生物 1.0；掉落物 0.5 = 原版 ItemEntity.getDefaultGravity
     /// 0.04 块/tick² 相对 Entity 默认 0.08 的比值 → 16 m/s²）。
     pub gravity_scale: f32,
@@ -283,6 +287,7 @@ impl Default for StepInput {
             jump: false,
             in_water: false,
             sneak: false,
+            sprint: false,
             gravity_scale: 1.0,
         }
     }
@@ -375,6 +380,8 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
     wish.y = 0.0;
     let speed = if input.sneak {
         consts::SNEAK_SPEED
+    } else if input.sprint {
+        consts::SPRINT_SPEED
     } else {
         consts::WALK_SPEED
     };

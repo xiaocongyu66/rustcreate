@@ -37,8 +37,9 @@ pub const JUMP_SPEED: f32 = 8.4;
 /// 社区/旧版口径 4.317 m/s（差 2%，<15%），两者取保守值 **4.317** 保留。
 pub const WALK_SPEED: f32 = 4.317;
 
-/// 冲刺速度：步行 ×1.3（MC sprint 速度修饰 +30%）= 5.612 m/s（StepInput 暂无
-/// sprint 位，预留）。
+/// 冲刺速度：步行 ×1.3（26.1 SPRINTING 速度修饰 +30% ADD_MULTIPLIED_TOTAL，
+/// LivingEntity.java:156-158）= 5.612 m/s。由 [`crate::physics::StepInput::sprint`]
+/// 接线（GameRuntime 侧另有 food>6 饥饿门，FoodConstants.java SPRINT_LEVEL=6）。
 pub const SPRINT_SPEED: f32 = 5.612;
 
 /// 潜行速度：MC 潜行 ≈ 1.3 m/s ≈ 行走的 0.3 倍。
