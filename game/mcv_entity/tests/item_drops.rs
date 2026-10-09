@@ -340,6 +340,42 @@ fn merge_conserves_count() {
     assert_eq!(t2, 90);
 }
 
+/// 到期堆不得吸收邻堆（原版 isMergable 的 `age < 6000` 前置，
+/// ItemEntity.java:224-227）：到期堆在物理步排队 despawn 后，若同帧
+/// merge 还把它当吸收目标，阶段末命令 flush 时吸收量随实体一起蒸发
+/// ——审计 M10 的静默吞物品场景。
+#[test]
+fn expired_stack_cannot_absorb_neighbor() {
+    let mut app = setup(NO_PLAYER);
+    let mut rng = lcg(23);
+    let x = spawn_item_drop(
+        &mut app.world,
+        Vec3::new(8.5, 64.0, 8.5),
+        27,
+        30,
+        250,
+        &mut rng,
+    );
+    let y = spawn_item_drop(
+        &mut app.world,
+        Vec3::new(8.8, 64.0, 8.5),
+        27,
+        10,
+        250,
+        &mut rng,
+    );
+    // 只差一步到期：下一步物理把 X 推到 DESPAWN_AGE 并排队 despawn。
+    app.world.write::<ItemDrop>().get_mut(x).unwrap().age = DESPAWN_AGE - 1;
+    tick(&mut app, NO_PLAYER);
+    assert!(!app.world.is_alive(x), "到期堆照常 despawn");
+    assert!(app.world.is_alive(y), "邻堆照常存活（未被并入拖死）");
+    assert_eq!(
+        app.world.get_ref::<ItemDrop>(y).unwrap().count,
+        10,
+        "邻堆数量未被到期堆吸收后蒸发"
+    );
+}
+
 /// 合并半径：≥ 0.5 距离不合。
 #[test]
 fn merge_respects_distance() {

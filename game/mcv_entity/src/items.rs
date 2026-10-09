@@ -3,7 +3,7 @@
 //! 挂载，步进复用 [`mcv_game::step_entity`]（掉落物重力缩放 0.5，见
 //! [`StepInput.gravity_scale`]）。
 //!
-//! 数值对齐反编译 ItemEntity.java（/root/mc-ref/VERIFY-drops.md）：
+//! 数值对齐反编译 ItemEntity.java（mc-ref/VERIFY-drops.md）：
 //! AABB 0.25³、初速 x/z=±0.1 y=+0.2 块/tick、落地反弹 ×0.5、寿命
 //! 6000 tick、pickup_delay 10 tick（死亡掉落 40）、拾取盒 inflate(1,0.5,1)、
 //! 合并并给 count 大者且 age 取 min。引擎步 1/60 s，原版 tick 1/20 s，
@@ -252,6 +252,13 @@ pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
     {
         let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
         for (e, d) in drops.iter() {
+            // 到期即待删的实体不参与合并（原版 isMergable 的
+            // `age < 6000` 前置，ItemEntity.java:224-227）——否则物理
+            // 刚排队 despawn 的堆在本帧吸走邻堆数量、阶段末命令
+            // flush 时连同吸收量一起蒸发（静默吞物品）。
+            if d.age >= DESPAWN_AGE {
+                continue;
+            }
             if let Some(b) = phys.get(e) {
                 list.push((e, b.pos, d.item, d.count, d.age, d.pickup_delay));
             }
