@@ -216,6 +216,7 @@ fn terrain_sky_and_hud_render() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -375,6 +376,7 @@ fn mining_crack_and_outline_darken_target() {
             hud: &hud,
             cloud: None,
             player: None,
+            mobs: None,
             overlay,
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -540,6 +542,7 @@ fn gles_fallback_world_frame_smoke() {
         hud: &hud,
         cloud: Some((&clouds, mcv_render::CloudSettings::default())),
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -609,6 +612,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             hud: empty_hud,
             cloud: cloud_on.then_some((&clouds, mcv_render::CloudSettings::default())),
             player: None,
+            mobs: None,
             overlay: None,
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -698,6 +702,7 @@ fn cjk_text_stays_within_line_box() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -778,6 +783,7 @@ fn celestial_sun_texture_paints_core() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
