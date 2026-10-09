@@ -17,7 +17,9 @@ fn mesh_counts_and_uv_bounds() {
             let n = c as f32 / 255.0;
             assert!((0.0..=1.0).contains(&n));
         }
-        assert!(v.meta[0] < 5 && v.meta[1] < 12);
+        // meta[0] = 贴图层（<5）；meta[1] = 跨四种生物的全局部位序
+        //（8+6+12+6 = 32，非单体 MAX_MOB_PARTS）。
+        assert!(v.meta[0] < 5 && v.meta[1] < 8 + 6 + 12 + 6);
     }
     let max_i = *m.indices.iter().max().unwrap() as usize;
     assert_eq!(max_i, m.verts.len() - 1);
@@ -29,7 +31,7 @@ fn kind_slices_are_contiguous() {
     let mut prev = 0;
     for (k, r) in m.slices.iter().enumerate() {
         assert_eq!(r.start, prev, "kind {k} 切片应连续");
-        assert_eq!(r.len() as usize % 36, 0);
+        assert_eq!(r.len() % 36, 0);
         prev = r.end;
     }
 }
