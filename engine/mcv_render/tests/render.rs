@@ -297,24 +297,39 @@ fn mining_crack_and_outline_darken_target() {
         }),
     );
 
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &with);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("overlay-test.png"), png);
+    }
+
     // 差分断言：同场景两次渲染只应差在 overlay 投影区（裂纹/描边把草地
     // 明显压暗）。按像素 diff 计数，不依赖草地底色，抗驱动差异。
-    let changed = a_diff_pixels(&base, &with);
+    let (changed, bbox) = a_diff_pixels(&base, &with);
     assert!(
         changed > 40,
-        "overlay should visibly darken target region, changed={changed}"
+        "overlay should visibly darken target region, changed={changed} bbox={bbox:?}"
     );
 }
 
-fn a_diff_pixels(a: &[u8], b: &[u8]) -> usize {
-    a.chunks(4)
-        .zip(b.chunks(4))
-        .filter(|(p, q)| {
-            let dp: i32 = p[..3].iter().map(|&v| v as i32).sum();
-            let dq: i32 = q[..3].iter().map(|&v| v as i32).sum();
-            (dp - dq).abs() > 40
-        })
-        .count()
+/// diff 像素数 + 包围盒 (min_x,min_y,max_x,max_y)（无 diff 时 None），
+/// 断言消息带 bbox 便于从 CI 日志定位投影区。
+fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
+    let w = 320u32;
+    let mut n = 0usize;
+    let mut bb: Option<(u32, u32, u32, u32)> = None;
+    for (i, (p, q)) in a.chunks(4).zip(b.chunks(4)).enumerate() {
+        let dp: i32 = p[..3].iter().map(|&v| v as i32).sum();
+        let dq: i32 = q[..3].iter().map(|&v| v as i32).sum();
+        if (dp - dq).abs() > 40 {
+            n += 1;
+            let (x, y) = ((i as u32) % w, (i as u32) / w);
+            bb = Some(match bb {
+                Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                None => (x, y, x, y),
+            });
+        }
+    }
+    (n, bb)
 }
 
 #[test]

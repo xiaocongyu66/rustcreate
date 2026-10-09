@@ -74,5 +74,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: render-screenshot
-          path: render-test.png
+          path: |
+            render-test.png
+            overlay-test.png
           if-no-files-found: ignore
