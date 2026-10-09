@@ -237,7 +237,10 @@ mod tests {
         // 正文首行 y = textTop = yc − 50（GUI px）。
         let text_top = h * 0.5 - 50.0 * s;
         assert_eq!(no_grid[1].y, text_top + 1.0, "阴影 quad 偏移 (1,1)");
-        assert!(no_grid.iter().any(|q| q.y == text_top), "正文 textTop = yc−50");
+        assert!(
+            no_grid.iter().any(|q| q.y == text_top),
+            "正文 textTop = yc−50"
+        );
         // 有网格：q[1] = 网格格 (0,0)：start(−15) + (0+7)×2 = −1 → yc − s；
         // 标题阴影随其后，正文 textTop = yc − radius×2 − 27 = yc − 41。
         assert_eq!(with_grid[1].y, h * 0.5 - 1.0 * s, "网格格 y = yc−1");
