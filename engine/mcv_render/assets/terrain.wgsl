@@ -83,6 +83,41 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
     return vec4<f32>(mix(fog_color, lit, fog), 1.0);
 }
 
+// ---- mining crack overlay --------------------------------------------------
+// 复用 vs_terrain（同顶点布局/同绑定组）；片元按裂纹层 alpha 混合。
+// 顶点 CPU 侧外偏 0.003 防 z-fighting，管线不写深度。
+
+@fragment
+fn fs_crack(v: VtxOut) -> @location(0) vec4<f32> {
+    let tex = textureSample(terrain_tex, terrain_samp, v.uv, v.layer);
+    if (tex.a < 0.02) {
+        discard;
+    }
+    let fog = fog_factor(v.dist, frame.fog_params);
+    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
+    let day = frame.sun_dir_day.w;
+    let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
+    let lit = tex.rgb * v.shade;
+    return vec4<f32>(mix(fog_color, lit, fog), tex.a);
+}
+
+// ---- block selection outline -----------------------------------------------
+
+struct OutlineIn {
+    @location(0) pos: vec3<f32>,
+};
+
+@vertex
+fn vs_outline(v: OutlineIn) -> @builtin(position) vec4<f32> {
+    let world = chunk.origin.xyz + v.pos;
+    return frame.view_proj * vec4<f32>(world, 1.0);
+}
+
+@fragment
+fn fs_outline() -> @location(0) vec4<f32> {
+    return vec4<f32>(0.02, 0.02, 0.02, 0.75);
+}
+
 // ---- water ----------------------------------------------------------------
 
 struct WaterOut {

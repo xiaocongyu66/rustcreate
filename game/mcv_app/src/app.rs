@@ -1393,6 +1393,7 @@ impl AppState {
             hud: &hud,
             cloud: None,
             player: None,
+            overlay: None,
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -1613,6 +1614,7 @@ impl AppState {
             };
             models = mcv_render::model_matrices(&pose);
         }
+        let overlay = runtime.mining_overlay();
         let scene = mcv_render::Scene {
             camera: &camera,
             time: (runtime.time_ticks % 24_000) as f32 / 20.0,
@@ -1624,6 +1626,7 @@ impl AppState {
             hud: &hud,
             cloud: clouds.map(|c| (c, cloud_settings)),
             player: has_player.then_some((&models, 0)),
+            overlay,
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);

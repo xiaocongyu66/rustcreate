@@ -117,6 +117,126 @@ pub struct HudQuad {
     pub rot: f32,
 }
 
+/// 挖掘 overlay 的一面：暴露才画裂纹 quad；光照取相邻空气方块
+/// （低 nibble=block、高 nibble=sky，与 mesher 面光照一致）。
+#[derive(Clone, Copy, Debug)]
+pub struct MineFace {
+    pub exposed: bool,
+    pub block_light: u8,
+    pub sky_light: u8,
+}
+
+/// 选中/挖掘 overlay：`min` = 方块最小角世界坐标；`crack_stage` =
+/// Some(0..=3) 时画裂纹层（CRACK_BASE+stage），描边始终画。
+/// 面顺序与着色器 face_id 一致：+X,-X,+Y,-Y,+Z,-Z。
+#[derive(Clone, Copy, Debug)]
+pub struct MiningOverlay {
+    pub min: [f32; 3],
+    pub crack_stage: Option<u32>,
+    pub faces: [MineFace; 6],
+}
+
+/// 裂纹 overlay 顶点：与 terrain 顶点逐字节同布局（TERRAIN_STRIDE）。
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct CrackVertex {
+    pos: [f32; 3],
+    uv: [u16; 2],
+    layer: u16,
+    block_light: u8,
+    sky_light: u8,
+    ao: u8,
+    flags: u8,
+    pad: [u8; 2],
+}
+
+const _: () = assert!(size_of::<CrackVertex>() == TERRAIN_STRIDE);
+
+/// 面顶点模板（单位立方体局部坐标）与法线，索引 = face_id
+/// （+X,-X,+Y,-Y,+Z,-Z，与 terrain.wgsl face_shade 表一致）。
+const FACE_QUAD: [[[f32; 3]; 4]; 6] = [
+    [
+        [1.0, 0.0, 0.0],
+        [1.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 1.0, 0.0],
+    ],
+    [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 1.0],
+        [0.0, 1.0, 0.0],
+    ],
+    [
+        [0.0, 1.0, 0.0],
+        [0.0, 1.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [1.0, 1.0, 0.0],
+    ],
+    [
+        [0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+    ],
+    [
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 1.0],
+        [1.0, 1.0, 1.0],
+        [0.0, 1.0, 1.0],
+    ],
+    [
+        [0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [1.0, 1.0, 0.0],
+        [0.0, 1.0, 0.0],
+    ],
+];
+const FACE_NORM: [[f32; 3]; 6] = [
+    [1.0, 0.0, 0.0],
+    [-1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [0.0, 0.0, -1.0],
+];
+const FACE_UV: [[u16; 2]; 4] = [[0, 0], [0, 65535], [65535, 65535], [65535, 0]];
+
+/// 生成暴露面的裂纹 quad（局部坐标沿法线外偏 0.003，深度只读时防
+/// z-fighting）。layer = CRACK_BASE + stage。
+fn build_crack_overlay(ov: &MiningOverlay) -> (Vec<CrackVertex>, Vec<u32>) {
+    let stage = ov.crack_stage.unwrap_or(0).min(3);
+    let layer = (atlas::CRACK_BASE + stage as usize) as u16;
+    let mut verts = Vec::with_capacity(24);
+    let mut idx = Vec::with_capacity(36);
+    for (f, face) in ov.faces.iter().enumerate() {
+        if !face.exposed {
+            continue;
+        }
+        let base = verts.len() as u32;
+        for c in 0..4 {
+            let p = &FACE_QUAD[f][c];
+            let n = &FACE_NORM[f];
+            verts.push(CrackVertex {
+                pos: [
+                    p[0] + n[0] * 0.003,
+                    p[1] + n[1] * 0.003,
+                    p[2] + n[2] * 0.003,
+                ],
+                uv: FACE_UV[c],
+                layer,
+                block_light: face.block_light,
+                sky_light: face.sky_light,
+                ao: 3,
+                flags: f as u8,
+                pad: [0; 2],
+            });
+        }
+        idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    (verts, idx)
+}
+
 pub struct Scene<'a> {
     pub camera: &'a Camera,
     pub time: f32,
@@ -131,6 +251,8 @@ pub struct Scene<'a> {
     pub cloud: Option<(&'a crate::Clouds, crate::CloudSettings)>,
     /// 玩家模型：(12 部位模型矩阵, 皮肤层 0=steve 1=alex)；第三人称时传入。
     pub player: Option<(&'a [glam::Mat4; PART_COUNT], u32)>,
+    /// 挖掘裂纹 + 选中描边；None = 准星无目标。
+    pub overlay: Option<MiningOverlay>,
 }
 
 pub struct Renderer {
@@ -159,9 +281,22 @@ pub struct Renderer {
     player_bind: wgpu::BindGroup,
     player_sampler: wgpu::Sampler,
     skins_loaded: bool,
+    crack_pipeline: wgpu::RenderPipeline,
+    outline_pipeline: wgpu::RenderPipeline,
+    /// 裂纹 quad 顶点/索引（每帧覆写，最多 6 面 × 4 顶点 / 36 索引）。
+    overlay_vbuf: wgpu::Buffer,
+    overlay_ibuf: wgpu::Buffer,
+    /// 描边 12 条棱 = 24 顶点，创建时一次性上传（单位立方体，origin 定位）。
+    outline_vbuf: wgpu::Buffer,
+    /// 设备纹理数组层数是否容得下 CRACK_BASE..（GLES 256 层钳制时为 false，
+    /// 只画描边不画裂纹）。
+    crack_layers_ok: bool,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
+
+/// origins_buf 末尾保留的 overlay/outline 专用 dynamic-offset 槽。
+const OVERLAY_ORIGIN_PAD: u64 = 64;
 
 /// 玩家管线 uniform:view_proj + 12 部位模型矩阵(mat4x4 align 16,无填充)。
 #[repr(C)]
@@ -645,7 +780,9 @@ impl Renderer {
         });
         let origins_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-origins"),
-            size: (max_chunks as u64) * 256,
+            // 末尾多留 1 槽给挖掘 overlay 的 origin（dynamic offset =
+            // max_chunks * 256），复用 terrain/water 的绑定组布局。
+            size: (max_chunks as u64 + 1) * 256,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -838,11 +975,128 @@ impl Renderer {
                 cull_mode: None,
                 ..Default::default()
             },
+            depth_stencil: depth_read_only.clone(),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        // 裂纹：复用 vs_terrain 与 terrain 顶点布局，片元 alpha 混合；
+        // 顶点 CPU 侧外偏 0.003，深度只读不写。
+        let crack_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("mining-crack"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &frame_mod,
+                entry_point: Some("vs_terrain"),
+                compilation_options: Default::default(),
+                buffers: &[Some(terrain_vertex_layout())],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &frame_mod,
+                entry_point: Some("fs_crack"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: depth_read_only.clone(),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        // 描边：LineList，pos-only 顶点；12 条棱 24 顶点创建时传一次。
+        let outline_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("block-outline"),
+            layout: Some(&pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: &frame_mod,
+                entry_point: Some("vs_outline"),
+                compilation_options: Default::default(),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 12,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[wgpu::VertexAttribute {
+                        format: wgpu::VertexFormat::Float32x3,
+                        offset: 0,
+                        shader_location: 0,
+                    }],
+                })],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &frame_mod,
+                entry_point: Some("fs_outline"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::LineList,
+                cull_mode: None,
+                ..Default::default()
+            },
             depth_stencil: depth_read_only,
             multisample: Default::default(),
             multiview_mask: None,
             cache: None,
         });
+        let overlay_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay-vbuf"),
+            size: 6 * 4 * TERRAIN_STRIDE as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let overlay_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay-ibuf"),
+            size: 6 * 6 * 4,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // 单位立方体 12 条棱（LineList），外扩 0.002 防与方块面 z-fighting。
+        let outline_vbuf = {
+            let e = 0.002f32;
+            let (lo, hi) = (-e, 1.0 + e);
+            // 8 角索引位打包：bit0=x bit1=y bit2=z
+            let corners = |i: u32| {
+                [
+                    if i & 1 == 0 { lo } else { hi },
+                    if i & 2 == 0 { lo } else { hi },
+                    if i & 4 == 0 { lo } else { hi },
+                ]
+            };
+            let edges: [[u32; 2]; 12] = [
+                [0, 1],
+                [2, 3],
+                [4, 5],
+                [6, 7], // X 向
+                [0, 2],
+                [1, 3],
+                [4, 6],
+                [5, 7], // Y 向
+                [0, 4],
+                [1, 5],
+                [2, 6],
+                [3, 7], // Z 向
+            ];
+            let mut verts = Vec::with_capacity(24);
+            for [a, b] in edges {
+                verts.extend_from_slice(&corners(a));
+                verts.extend_from_slice(&corners(b));
+            }
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("outline-vbuf"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            })
+        };
         let sky_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
             layout: Some(&sky_layout),
@@ -1077,6 +1331,12 @@ impl Renderer {
             hud_bind,
             sky_bind,
             gui,
+            crack_pipeline,
+            outline_pipeline,
+            overlay_vbuf,
+            overlay_ibuf,
+            outline_vbuf,
+            crack_layers_ok: n_layers > atlas::CRACK_BASE,
             max_chunks,
             max_hud_quads,
         }
@@ -1315,6 +1575,46 @@ impl Renderer {
             // player: 不透明地形后、水前（entity 在 translucent 之前渲染）
             if let Some((models, skin)) = scene.player {
                 self.draw_player(&mut pass, vp.to_cols_array_2d(), models, skin);
+            }
+
+            // 挖掘裂纹 + 选中描边：不透明后、水前（26.1 translucent 序）。
+            if let Some(ov) = scene.overlay {
+                let overlay_off = self.max_chunks * 256;
+                let mut slot = [0.0f32; OVERLAY_ORIGIN_PAD as usize];
+                slot[..3].copy_from_slice(&ov.min);
+                self.queue.write_buffer(
+                    &self.origins_buf,
+                    overlay_off as u64,
+                    bytemuck::cast_slice(&slot),
+                );
+                if ov.crack_stage.is_some() && self.crack_layers_ok {
+                    let (verts, idx) = build_crack_overlay(&ov);
+                    if !idx.is_empty() {
+                        self.queue.write_buffer(
+                            &self.overlay_vbuf,
+                            0,
+                            bytemuck::cast_slice(&verts),
+                        );
+                        self.queue
+                            .write_buffer(&self.overlay_ibuf, 0, bytemuck::cast_slice(&idx));
+                        pass.set_pipeline(&self.crack_pipeline);
+                        pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
+                        pass.set_vertex_buffer(
+                            0,
+                            self.overlay_vbuf
+                                .slice(..(verts.len() * TERRAIN_STRIDE) as u64),
+                        );
+                        pass.set_index_buffer(
+                            self.overlay_ibuf.slice(..(idx.len() * 4) as u64),
+                            wgpu::IndexFormat::Uint32,
+                        );
+                        pass.draw_indexed(0..idx.len() as u32, 0, 0..1);
+                    }
+                }
+                pass.set_pipeline(&self.outline_pipeline);
+                pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
+                pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
+                pass.draw(0..24, 0..1);
             }
 
             // water: far to near

@@ -1310,6 +1310,76 @@ impl GameRuntime {
         }
     }
 
+    /// 真实面光照：读 ChunkHandle.light（低 nibble=block 高 nibble=sky，
+    /// 与 mesher 同一约定）。缺区块按 0（对齐 mesher 的 missing=0）。
+    fn light_at(&self, p: BlockPos) -> (u8, u8) {
+        let Some(chunk) = self.chunks.get(&p.chunk()) else {
+            return (0, 0);
+        };
+        if chunk.stage() == Stage::Empty {
+            return (0, 0);
+        }
+        let [lx, ly, lz] = p.local();
+        let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+        (v & 0xF, v >> 4)
+    }
+
+    /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定 mine_pos 并按进度
+    /// 给裂纹档位（progress×4 取整，0..3）；未挖掘时准星 DDA 目标只描边。
+    /// 面暴露 = 邻格空气；面光照取邻格（与 mesher 面光照同规则）。
+    pub fn mining_overlay(&self) -> Option<mcv_render::gpu::MiningOverlay> {
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let mining = self.mine_pos.is_some();
+        let target = match self.mine_pos {
+            Some(p) => p,
+            None => {
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let dir = self.camera(1.0).dir();
+                let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+                hit
+            }
+        };
+        if view.block(target).0 == 0 {
+            return None;
+        }
+        const NORMALS: [[i32; 3]; 6] = [
+            [1, 0, 0],
+            [-1, 0, 0],
+            [0, 1, 0],
+            [0, -1, 0],
+            [0, 0, 1],
+            [0, 0, -1],
+        ];
+        let mut faces = [mcv_render::gpu::MineFace {
+            exposed: false,
+            block_light: 0,
+            sky_light: 0,
+        }; 6];
+        for (i, n) in NORMALS.iter().enumerate() {
+            let nb = BlockPos::new(target.x + n[0], target.y + n[1], target.z + n[2]);
+            if view.block(nb).0 == 0 {
+                let (b, s) = self.light_at(nb);
+                faces[i] = mcv_render::gpu::MineFace {
+                    exposed: true,
+                    block_light: b,
+                    sky_light: s,
+                };
+            }
+        }
+        let stage = if mining {
+            Some(((self.mine_progress * 4.0) as u32).min(3))
+        } else {
+            None
+        };
+        Some(mcv_render::gpu::MiningOverlay {
+            min: [target.x as f32, target.y as f32, target.z as f32],
+            crack_stage: stage,
+            faces,
+        })
+    }
+
     pub fn render_chunks(&self) -> &[RenderChunk] {
         &self.render_chunks
     }

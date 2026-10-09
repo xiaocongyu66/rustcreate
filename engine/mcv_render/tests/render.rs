@@ -5,7 +5,7 @@
 //! across driver versions. A PNG artifact is emitted for manual inspection.
 
 use glam::{Vec3, Vec4};
-use mcv_render::gpu::{HudQuad, RenderChunk, Scene, TERRAIN_STRIDE};
+use mcv_render::gpu::{HudQuad, MineFace, MiningOverlay, RenderChunk, Scene, TERRAIN_STRIDE};
 use mcv_render::{Camera, OffscreenTarget, font};
 use wgpu::util::DeviceExt;
 
@@ -181,6 +181,7 @@ fn terrain_sky_and_hud_render() {
         hud: &hud,
         cloud: None,
         player: None,
+        overlay: None,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -230,6 +231,79 @@ fn terrain_sky_and_hud_render() {
 
     // Water pipeline path: reuse vertex layout sanity (compile-only draw).
     let _ = TERRAIN_STRIDE;
+}
+
+#[test]
+fn mining_crack_and_outline_darken_target() {
+    // 同一场景渲两次：overlay（stage3 裂纹 + 描边）应在目标投影区制造
+    // 明显多于基线的暗像素（草地亮、裂纹/描边深色系）。
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000);
+    let render = |renderer: &mut mcv_render::Renderer, overlay: Option<MiningOverlay>| {
+        let scene = Scene {
+            camera: &camera,
+            time: 0.0,
+            day_factor: day,
+            sun_dir: sun,
+            width: 320.0,
+            height: 240.0,
+            chunks: std::slice::from_ref(&chunk),
+            hud: &hud,
+            cloud: None,
+            player: None,
+            overlay,
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        target.read_pixels(&device)
+    };
+
+    let base = render(&mut renderer, None);
+    let mut faces = [MineFace {
+        exposed: false,
+        block_light: 0,
+        sky_light: 0,
+    }; 6];
+    faces[2] = MineFace {
+        exposed: true,
+        block_light: 0,
+        sky_light: 15,
+    };
+    let with = render(
+        &mut renderer,
+        Some(MiningOverlay {
+            min: [8.0, 99.0, 8.0], // 顶面恰好落在 y=100 的草地平面上
+            crack_stage: Some(3),
+            faces,
+        }),
+    );
+
+    let dark = |px: &[u8]| {
+        px.chunks(4)
+            .filter(|p| (p[0] as u32 + p[1] as u32 + p[2] as u32) < 150)
+            .count()
+    };
+    let (d0, d1) = (dark(&base), dark(&with));
+    assert!(d1 > d0 + 25, "overlay should darken: base={d0} with={d1}");
 }
 
 #[test]
