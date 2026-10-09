@@ -218,6 +218,7 @@ fn terrain_sky_and_hud_render() {
         player: None,
         overlay: None,
         underwater: false,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -376,6 +377,7 @@ fn mining_crack_and_outline_darken_target() {
             player: None,
             overlay,
             underwater: false,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -540,6 +542,7 @@ fn gles_fallback_world_frame_smoke() {
         player: None,
         overlay: None,
         underwater: false,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -608,6 +611,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             player: None,
             overlay: None,
             underwater: false,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -696,6 +700,7 @@ fn cjk_text_stays_within_line_box() {
         player: None,
         overlay: None,
         underwater: false,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -775,6 +780,7 @@ fn celestial_sun_texture_paints_core() {
         player: None,
         overlay: None,
         underwater: false,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);

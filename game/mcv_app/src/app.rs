@@ -1815,6 +1815,7 @@ impl AppState {
             player: None,
             overlay: None,
             underwater: false,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -2114,6 +2115,7 @@ impl AppState {
             overlay,
             // 水下雾：眼位在水块内（Player.isEyeInFluid(WATER)）。
             underwater: runtime.eye_under_water(),
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);

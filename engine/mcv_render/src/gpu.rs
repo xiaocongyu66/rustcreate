@@ -11,6 +11,8 @@ use crate::celestial;
 use crate::font;
 use crate::frustum::Frustum;
 use crate::gui::SpriteSheet;
+use crate::particle_renderer::ParticleRenderer;
+use crate::particles::ParticleEngine;
 use crate::player_mesh::{self, PART_COUNT, PLAYER_STRIDE, PlayerVertex, SKIN_LAYERS};
 use mcv_core::atlas;
 
@@ -289,6 +291,9 @@ pub struct Scene<'a> {
     /// 眼睛在水中（Player.isEyeInFluid(WATER)）：帧雾切水下参数
     /// （26.1 水下视距骤减；GameRuntime::eye_under_water 喂入）。
     pub underwater: bool,
+    /// 粒子引擎：(池, 帧内 tick 进度 partialTickTime 0..1)；None 不画
+    /// （crack overlay 后、水前，26.1 translucent 序）。
+    pub particles: Option<(&'a ParticleEngine, f32)>,
 }
 
 pub struct Renderer {
@@ -332,6 +337,9 @@ pub struct Renderer {
     /// 创建期由 plains 基线算出；colormap 缺失时 w=0 禁用染色）。
     tint_grass: [f32; 4],
     tint_foliage: [f32; 4],
+    /// 粒子渲染（独立小 draw；纹理/管线在 ParticleRenderer 内）。
+    particles: ParticleRenderer,
+    particle_bind: wgpu::BindGroup,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -1115,6 +1123,15 @@ impl Renderer {
             mapped_at_creation: false,
         });
 
+        // ---- particles -------------------------------------------------
+        // 粒子渲染器（原版 textures/particle 贴图）；frame uniform 复用
+        // frame_buf，方块图集/sampler 复用 terrain 首数组（多数组拆分设备上
+        // 碎屑仅数组 0 的层有真贴图，其余层采样钳在末层——粒子为装饰可接受，
+        // 真机层数 ≥838 单数组无此问题）。
+        let particles = ParticleRenderer::new(&device, &queue, color_format, assets_dir);
+        let particle_bind =
+            particles.build_bind_group(&device, &frame_buf, &terrain_views[0], &sampler);
+
         // ---- bind groups ----------------------------------------------
         // terrain 图集数组槽：binding 2 = terrain_views[0]，追加数组 5/6/7
         // （binding 4 固定给生物群系染色 LUT——tint_lut 在 terrain.wgsl 是
@@ -1698,6 +1715,8 @@ impl Renderer {
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
             tint_grass,
             tint_foliage,
+            particles,
+            particle_bind,
             max_chunks,
             max_hud_quads,
         }
@@ -2006,6 +2025,22 @@ impl Renderer {
                 pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
                 pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
                 pass.draw(0..24, 0..1);
+            }
+
+            // 粒子：裂纹 overlay 后、水前（26.1 translucent 序；
+            // ParticleEngine.tick 是 20Hz 固定步，提取/绘制在渲染帧）。
+            if let Some((engine, partial_tick)) = scene.particles {
+                self.particles.draw(
+                    &mut pass,
+                    &self.particle_bind,
+                    crate::particle_renderer::DrawCtx {
+                        engine,
+                        cam,
+                        day: scene.day_factor,
+                        partial_tick,
+                    },
+                    &self.queue,
+                );
             }
 
             // water: far to near
