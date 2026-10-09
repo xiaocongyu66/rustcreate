@@ -371,7 +371,7 @@ mod tests {
             light_emit: 0,
             tiles: [15; 6],
             hardness: 0.0,
-            shape: 1, // cross 占位 → Cross
+            shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
         },
         BlockDef {
             name: "flower_yellow",
@@ -381,7 +381,7 @@ mod tests {
             light_emit: 0,
             tiles: [16; 6],
             hardness: 0.0,
-            shape: 1, // cross 占位 → Cross
+            shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
         },
     ];
 

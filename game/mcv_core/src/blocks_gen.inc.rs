@@ -6,7 +6,8 @@
 // id 0..13 = 旧 14 方块（id/名字/属性与旧表一致，地形生成器依赖）；14+ 官方名字典序。
 // snow_grass(id 11): 官方是 grass_block 的 snowy 状态；本引擎单方块模型，独立 id，取 snow 模型贴图。
 // 已知限制：tintindex 生物群系染色（草侧面 overlay/叶）未由渲染管线实现，贴图按原样入表；
-// cross/非立方暂渲染为全方块（网格器未实现 model_kind），六面给代表贴图。
+// cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何
+// （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。
 #[allow(clippy::type_complexity)]
 static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*    0 */ ("air", false, false, false, 0, [0, 0, 0, 0, 0, 0], 0f32, 0),

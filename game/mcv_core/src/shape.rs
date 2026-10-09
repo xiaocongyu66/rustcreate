@@ -33,7 +33,7 @@ impl Shape {
 
 /// 十字植物（花草类）精确名单；与 gen-blocks.py `CROSS_PLANTS` 一致。
 /// 注：官方短草 blockstate 名 "grass" 与旧 id 3（草方块，本引擎旧名同名）
-/// 冲突，无法按名区分，故不入名单（保持 Cube 占位渲染）。
+/// 冲突，无法按名区分，故不入名单（保持 Cube 整盒渲染）。
 const CROSS_PLANTS: [&str; 18] = [
     "flower_red",
     "flower_yellow",
