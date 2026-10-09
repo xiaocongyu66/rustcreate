@@ -69,7 +69,23 @@ fn tick(app: &mut mcv_ecs::App, player_pos: Vec3) {
         .chunks
         .clone();
     app.resources.insert(DropWorld { chunks, player_pos });
-    app.update(mcv_game::consts::FIXED_DT);
+    // 与 GameRuntime::fixed_step 同款：手动跑 Fixed 阶段。App::update 会
+    // 连跑 Variable 阶段并再次翻转事件通道，把 Fixed 期发出的 PickupReq
+    // 吞掉（阶段边界 rotate 语义：事件只活一轮）。
+    let mcv_ecs::App {
+        world,
+        resources,
+        events,
+        commands,
+        schedule,
+    } = app;
+    let mut ctx = mcv_ecs::SysCtx {
+        world,
+        resources,
+        events,
+        commands,
+    };
+    schedule.run_stage(mcv_ecs::Stage::Fixed, &mut ctx);
 }
 
 /// 跑 n tick 并结算拾取（GameRuntime 固定步末同款流水线）。

@@ -42,13 +42,13 @@ fn build_platform(rt: &mut GameRuntime) {
         let mut v = h.voxels.write().unwrap();
         for (x, z) in [(8usize, 8usize), (8, 7), (7, 8)] {
             for y in 0..70usize {
-                v[(y << 8 | z << 4 | x)] = BlockId(1);
+                v[y << 8 | z << 4 | x] = BlockId(1);
             }
         }
         // 清空眼睛/射线走廊（地形可能天然有石头）：眼睛所在 (8,71,8) 与
         // 瞄准路径 (7,71,8)。
         for (x, z) in [(8usize, 8usize), (7, 8)] {
-            v[(71usize << 8 | z << 4 | x)] = BlockId(0);
+            v[71usize << 8 | z << 4 | x] = BlockId(0);
         }
     }
     h.advance_to(Stage::TerrainReady);
@@ -67,13 +67,13 @@ fn set_aim_at_block(rt: &mut GameRuntime) {
 
 fn set_block(rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: BlockId) {
     let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
-    h.voxels.write().unwrap()[(y << 8 | z << 4 | x)] = id;
+    h.voxels.write().unwrap()[y << 8 | z << 4 | x] = id;
     h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
 }
 
 fn block_at(rt: &GameRuntime, x: usize, y: usize, z: usize) -> BlockId {
     let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
-    h.voxels.read().unwrap()[(y << 8 | z << 4 | x)]
+    h.voxels.read().unwrap()[y << 8 | z << 4 | x]
 }
 
 fn hotbar_count(rt: &GameRuntime, item: u16) -> u32 {
@@ -213,15 +213,15 @@ fn reach_constants_survival_creative() {
         {
             let mut v = h.voxels.write().unwrap();
             for y in 0..70usize {
-                v[(y << 8 | 8 << 4 | 8)] = BlockId(1);
+                v[y << 8 | 8 << 4 | 8] = BlockId(1);
             }
             // 清空准星走廊（y=71，x=8，z=4..8），只留靶：悬浮石块 (8,71,3)。
             for z in 4..9usize {
-                v[(71usize << 8 | z << 4 | 8)] = BlockId(0);
+                v[71usize << 8 | z << 4 | 8] = BlockId(0);
             }
             // 准星靶：悬浮石块 (8,71,3)，水平瞄准。眼睛 (8.5,71.62,8.5+dz)
             // → 近面 z=4 距离 = 4.5+dz（dz=+0.1 → 4.6；-0.1 → 4.4）。
-            v[(71usize << 8 | 3 << 4 | 8)] = BlockId(1);
+            v[71usize << 8 | 3 << 4 | 8] = BlockId(1);
         }
         h.advance_to(Stage::TerrainReady);
         rt.player.pos = Vec3::new(8.5, 70.0, 8.5 + dz);
