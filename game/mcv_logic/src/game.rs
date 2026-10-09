@@ -297,7 +297,8 @@ pub enum GamePhase {
     Playing,
 }
 
-#[derive(Default)]
+/// 本固定步聚合后的输入意图（键盘 + 触屏摇杆/按钮合并，见
+/// `apply_touch_input` 与 app 层键盘接线）。
 pub struct InputState {
     pub forward: bool,
     pub back: bool,
@@ -308,6 +309,28 @@ pub struct InputState {
     pub sprint: bool,
     pub mining: bool,
     pub placing: bool,
+    /// 移动模拟量（0..=1）：键盘恒 1.0；触屏摇杆为偏移幅度（死区重标定，
+    /// `TouchState::stick_analog`）。原版 getInputVector 只在输入模长 >1 时
+    /// 归一化（Entity.java:1677），亚单位输入自然产生亚单位速度。
+    /// Default 为 1.0（手写）：derive 会给 0，让一切移动静止。
+    pub analog: f32,
+}
+
+impl Default for InputState {
+    fn default() -> Self {
+        Self {
+            forward: false,
+            back: false,
+            left: false,
+            right: false,
+            jump: false,
+            sneak: false,
+            sprint: false,
+            mining: false,
+            placing: false,
+            analog: 1.0,
+        }
+    }
 }
 
 pub struct GameRuntime {
@@ -369,6 +392,9 @@ pub struct GameRuntime {
     pub dead: bool,
     /// 离地时的 y（落地按 26.1 规则算摔落伤害：floor(高度−3)）。
     fall_y: Option<f32>,
+    /// 上一步 wasTouchingWater（入水沿检测：溅落音 + 摔落豁免，
+    /// Entity.java:1570-1574）。
+    was_in_water: bool,
     /// 当前阶段：进入世界先 [`GamePhase::Loading`]，出生点邻域就绪后转
     /// [`GamePhase::Playing`]（26.1 `LevelLoadTracker` 状态机）。
     pub phase: GamePhase,
@@ -385,6 +411,12 @@ pub struct GameRuntime {
     /// 显示用平滑进度：每 tick 向目标值 lerp 0.2
     /// （LevelLoadingScreen.java:84 `smoothedProgress += (target−cur)×0.2`）。
     smoothed_progress: f32,
+    /// 上一固定步 jump 键状态（双击切飞行的按下沿检测）。
+    jump_held_prev: bool,
+    /// 双击切飞行的窗口余量，**tick** 单位（26.1 LocalPlayer.jumpTriggerTime，
+    /// LocalPlayer.java:835-836 窗口 7 tick = 350ms；Player.aiStep:443-445
+    /// 每 tick −1）。首按沿置 7，窗口内再按沿 → 切换 abilities.flying。
+    flight_jump_trigger: f32,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -648,6 +680,9 @@ impl GameRuntime {
             load_ready_at: None,
             load_deadline_tick: 600,
             smoothed_progress: 0.0,
+            jump_held_prev: false,
+            flight_jump_trigger: 0.0,
+            was_in_water: false,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
@@ -1454,17 +1489,28 @@ impl GameRuntime {
             self.input.back = dy > 0.3;
             self.input.left = dx < -0.3;
             self.input.right = dx > 0.3;
-            let len = (dx * dx + dy * dy).sqrt();
-            self.input.sprint = len > 0.85;
+            // 冲刺门 = 摇杆物理偏移 >85% 半径（stick_vec 是像素、上限
+            // STICK_R）。旧实现把 stick_direction 归一化后的单位向量再求模
+            // （恒 1.0）与 0.85 比较 → 死区外任何轻推都恒冲刺。
+            self.input.sprint = self.touch.stick_sprint();
+            // 移动量随偏移幅度缩放（Bedrock 式模拟摇杆；键盘恒 1.0）。
+            self.input.analog = self.touch.stick_analog();
         } else if self.touch.stick_vec == (0.0, 0.0) {
             self.input.forward = false;
             self.input.back = false;
             self.input.left = false;
             self.input.right = false;
             self.input.sprint = false;
+            // 松杆恢复键盘全速比例（否则残留上一杆的亚单位幅度）。
+            self.input.analog = 1.0;
         }
+        // 跳跃键沿镜像：只写 true 会让触摸松开后 jump 永远悬真（无键盘来
+        // 清零）→ 落地自动连跳/飞行中永久上升；无条件镜像又会在「触摸启用
+        // 过的桌面」压掉键盘按住态。按沿双向：按住置真，松开沿置假。
         if self.touch.jump_held {
             self.input.jump = true;
+        } else if fx.jump_released {
+            self.input.jump = false;
         }
         // 触摸挖掘：按下 = 攻击/开始挖，松开 = STOP 补判（与桌面鼠标同一入口）。
         // 仅在触摸启用后镜像，避免清掉桌面鼠标按下的 mining 状态。
@@ -1503,6 +1549,28 @@ impl GameRuntime {
             // 死亡界面：尸体不响应输入，仅重力继续
             self.input = Default::default();
         }
+        // ---- 双击跳 = 切换创造飞行（26.1 LocalPlayer.aiStep:827-848）----
+        // abilities.mayfly 门 → 本仓映射为创造模式；按下沿 + 7 tick 窗口
+        // （jumpTriggerTime，LocalPlayer.java:835-836；Player.aiStep:443-445
+        // 每 tick −1，这里在 on_tick 递减）。起飞瞬间在地面则同款
+        // jumpFromGround（LocalPlayer.java:839-841）。加载/死亡态输入已清，
+        // 无按下沿，天然被门住。
+        if self.on_tick {
+            self.flight_jump_trigger = (self.flight_jump_trigger - n as f32).max(0.0);
+        }
+        let jump_down = self.input.jump;
+        if jump_down && !self.jump_held_prev && self.mode == GameMode::Creative {
+            if self.flight_jump_trigger > 0.0 {
+                self.player.flying = !self.player.flying;
+                self.flight_jump_trigger = 0.0;
+                if self.player.flying && self.player.on_ground {
+                    self.player.vel.y = mcv_game::consts::JUMP_SPEED;
+                }
+            } else {
+                self.flight_jump_trigger = 7.0;
+            }
+        }
+        self.jump_held_prev = jump_down;
         // 攻击冷却 ticker：tick 单位（26.1 Player.java:267 每 tick +1；消费侧
         // combat::attack_strength 的 delay = 20/attackSpeed tick，Player.java:
         // 1793-1795）。旧实现按秒累加又被当 tick 消费，铁剑满蓄力 12.5s（正确
@@ -1593,8 +1661,8 @@ impl GameRuntime {
         // 投放路径（stream 出生投放块）会整体覆写 pos，期间步进纯浪费。
         let awaiting_spawn = !self.spawned && self.player.pos == Vec3::ZERO;
         if !awaiting_spawn {
-            let f = self.camera(1.0).dir();
-            let f = Vec3::new(f.x, 0.0, f.z)
+            let look = self.camera(1.0).dir();
+            let f = Vec3::new(look.x, 0.0, look.z)
                 .try_normalize()
                 .unwrap_or(Vec3::new(0.0, 0.0, -1.0));
             let r = f.cross(Vec3::Y);
@@ -1617,7 +1685,10 @@ impl GameRuntime {
             if i.left {
                 wish -= r;
             }
-            let wish_dir = wish.normalize_or_zero();
+            // 模拟量随输入幅度缩放（触屏摇杆 0..1，键盘 1.0）；>1 的键盘
+            // 斜向合成由 step 内按原版 getInputVector 规则归一化
+            // （Entity.java:1677：模长 >1 才归一化）。
+            let wish_dir = wish * self.input.analog;
             let was_air = !self.player.on_ground;
             let fall_v = self.player.vel.y.min(0.0);
             let jumped_off = i.jump && self.player.on_ground;
@@ -1625,6 +1696,21 @@ impl GameRuntime {
             let in_water = self.in_water(&WorldView {
                 chunks: &self.chunks,
             });
+            // 入水沿：原版 Entity.updateFluidInteraction（Entity.java:1570
+            // -1574）——wasTouchingWater 假→真瞬间 resetFallDistance + 溅落
+            // 效果。摔落豁免由下方 fall_y 清空承担；溅落音按入水速度分档
+            // （event 缺素材时静默 no-op）。
+            let entered_water = in_water && !self.was_in_water;
+            if entered_water && fall_v < -2.0 {
+                let p = self.player.pos;
+                self.audio.play_event(
+                    "entity.player.splash",
+                    [p.x, p.y + 0.5, p.z],
+                    [p.x, p.y, p.z],
+                    0.8,
+                );
+            }
+            self.was_in_water = in_water;
             // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
             if !self.player.flying && !in_water {
                 if self.player.on_ground {
@@ -1644,6 +1730,10 @@ impl GameRuntime {
                 // 冲刺提速 4.317→5.612 m/s（LivingEntity.java:156-158 +30%）；
                 // 潜行在 step 内优先于冲刺（蹲下即退冲刺）。
                 sprint: sprinting,
+                // 冲刺跳的水平增补沿 **yaw 朝向**（LivingEntity.java:2349-2351
+                // 只用 yaw，与俯仰无关）；冲刺游泳的竖直转向用俯仰分量
+                // （Player.java:1383-1392）。水平=f、竖直=look.y 的合成。
+                look_dir: Vec3::new(f.x, look.y, f.z),
                 gravity_scale: 1.0,
             };
             mcv_game::step(
@@ -2108,20 +2198,39 @@ impl GameRuntime {
         }
     }
 
-    /// 身体（脚上 0.5 格）在水中——物理步输入（游泳/浮沉）用。
+    /// 身体在水中——原版 `Entity.wasTouchingWater` 语义（Entity.java:1566
+    /// -1580：`fluidInteraction.isInFluid(WATER)`，AABB 与水块**任一重叠**
+    /// 即触水，非「浸水比例」也非脚下一格）。游泳/浮沉/摔落豁免共用。
     fn in_water(&self, view: &WorldView) -> bool {
         let p = self.player.pos;
-        let b = BlockPos::new(p.x as i32, (p.y + 0.5) as i32, p.z as i32);
-        view.block(b).def().liquid
+        let hx = mcv_game::Player::HALF[0];
+        let top = p.y + 2.0 * mcv_game::Player::HALF[1];
+        for by in p.y.floor() as i32..=top.floor() as i32 {
+            for bx in (p.x - hx).floor() as i32..=(p.x + hx).floor() as i32 {
+                for bz in (p.z - hx).floor() as i32..=(p.z + hx).floor() as i32 {
+                    if view.block(BlockPos::new(bx, by, bz)).def().liquid {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// 眼睛是否在水中（26.1 `Player.isEyeInFluid(WATER)`，Player.java:607：
-    /// 水下挖掘惩罚按**眼位**判定，与物理用的脚位版 in_water 区分）。
+    /// 水下挖掘惩罚按**眼位**判定，与物理用的触水版 in_water 区分）。
     /// 接 per-tick 速率惩罚链（原 mcv_game::mining 惩罚实现的 live 路径版）。
     fn eye_in_water(&self, view: &WorldView) -> bool {
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let c = eye.floor().as_ivec3();
         view.block(BlockPos::new(c.x, c.y, c.z)).def().liquid
+    }
+
+    /// 眼在水中（渲染侧查询：水下雾/视距，`Scene::underwater`）。
+    pub fn eye_under_water(&self) -> bool {
+        self.eye_in_water(&WorldView {
+            chunks: &self.chunks,
+        })
     }
 
     /// Mouse look.
@@ -3116,6 +3225,8 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             in_water: false,
             sneak: false,
             sprint: false,
+            // 生物无冲刺跳增补（sprint=false 使增补分支不可达），视线置零。
+            look_dir: Vec3::ZERO,
             gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。

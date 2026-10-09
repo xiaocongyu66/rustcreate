@@ -19,6 +19,10 @@ pub struct TouchEffects {
     pub slot: Option<usize>,
     pub place: bool,
     pub attack: bool,
+    /// 跳跃键**松开沿**（本次 consume 窗口内松开过）——运行时据此把
+    /// input.jump 拉回 false（触屏没有键盘按键释放事件，若只按住置真、
+    /// 松开不置假，jump 会永远悬真：落地自动连跳/飞行中永久上升）。
+    pub jump_released: bool,
 }
 
 #[derive(Default)]
@@ -136,6 +140,7 @@ impl TouchState {
                 if self.jump_id == Some(id) {
                     self.jump_id = None;
                     self.jump_held = false;
+                    self.effects.jump_released = true;
                 }
                 if self.mine_id == Some(id) {
                     self.mine_id = None;
@@ -156,6 +161,15 @@ impl TouchState {
         fx
     }
 
+    /// 程序化松开跳跃键：等价 TouchPhase::Ended 落在跳跃键上（置松开沿）。
+    /// 供无头测试/输入回放驱动，不经 winit 事件也能走完整按下-松开沿。
+    pub fn release_jump(&mut self) {
+        if self.jump_held {
+            self.jump_held = false;
+            self.effects.jump_released = true;
+        }
+    }
+
     /// 摇杆偏移换算成移动方向（供运行时合成 wish_dir）。
     pub fn stick_direction(&self) -> Option<(f32, f32)> {
         let (dx, dy) = self.stick_vec;
@@ -164,6 +178,26 @@ impl TouchState {
             None
         } else {
             Some((dx / len.max(1.0), dy / len.max(1.0)))
+        }
+    }
+
+    /// 冲刺门：摇杆物理偏移超过 85% 半径（满杆推 = 冲刺，Bedrock 语义）。
+    /// 必须用**像素**模长判定——`stick_direction` 返回的是归一化单位向量，
+    /// 对它再求模恒为 1，任何阈值都会失效。
+    pub fn stick_sprint(&self) -> bool {
+        let (dx, dy) = self.stick_vec;
+        (dx * dx + dy * dy).sqrt() > STICK_R * 0.85
+    }
+
+    /// 摇杆模拟量幅度 0..=1：死区线性重标定到满偏半径（死区内 0，
+    /// STICK_R 封顶 1）。供运行时按幅度缩放移动速度（模拟量摇杆）。
+    pub fn stick_analog(&self) -> f32 {
+        let (dx, dy) = self.stick_vec;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len <= DEADZONE {
+            0.0
+        } else {
+            ((len - DEADZONE) / (STICK_R - DEADZONE)).min(1.0)
         }
     }
 }

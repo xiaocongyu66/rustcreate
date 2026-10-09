@@ -215,6 +215,7 @@ fn terrain_sky_and_hud_render() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -370,6 +371,7 @@ fn mining_crack_and_outline_darken_target() {
             cloud: None,
             player: None,
             overlay,
+            underwater: false,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -531,6 +533,7 @@ fn gles_fallback_world_frame_smoke() {
         cloud: Some((&clouds, mcv_render::CloudSettings::default())),
         player: None,
         overlay: None,
+        underwater: false,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -596,6 +599,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             cloud: cloud_on.then_some((&clouds, mcv_render::CloudSettings::default())),
             player: None,
             overlay: None,
+            underwater: false,
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -681,6 +685,7 @@ fn cjk_text_stays_within_line_box() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -757,6 +762,7 @@ fn celestial_sun_texture_paints_core() {
         cloud: None,
         player: None,
         overlay: None,
+        underwater: false,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
