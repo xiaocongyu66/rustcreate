@@ -12,10 +12,7 @@ use std::sync::atomic::AtomicU32;
 use std::time::{Duration, Instant};
 
 use common::SoundFixture;
-use mcv_audio::{
-    AudioCmd, DEFAULT_ATTENUATION_RADIUS, Mixer, SAME_ID_MIN_INTERVAL, SoundLoader,
-    default_sounds_dir,
-};
+use mcv_audio::{AudioCmd, DEFAULT_ATTENUATION_RADIUS, Mixer, SAME_ID_MIN_INTERVAL, SoundLoader};
 
 const ORIGIN: [f32; 3] = [0.0; 3];
 
