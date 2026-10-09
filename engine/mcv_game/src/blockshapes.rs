@@ -173,12 +173,10 @@ pub fn push_boxes(
                 (0.375, 0.5, 0.625, 1.0), // +Z：z 0.5..1，x 对齐柱
                 (0.375, 0.0, 0.625, 0.5), // -Z
             ];
-            for i in 0..DIRS.len() {
-                let (dx, dz) = DIRS[i];
+            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
                 if !fence_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
                     continue;
                 }
-                let (x0, z0, x1, z1) = ARMS[i];
                 add!(x0, 0.0, z0, x1, h, z1);
             }
         }
