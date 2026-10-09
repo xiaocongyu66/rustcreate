@@ -154,6 +154,12 @@ pub struct GameRuntime {
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
     pub attack_ticker: f32,
+    /// 进度挖掘状态（26.1 ServerPlayerGameMode 的 destroyPos/destroyProgress/
+    /// gameTicks 三件套）：仅生存/极限走 START→CONTINUE→STOP 状态机，创造秒破。
+    mine_pos: Option<BlockPos>,
+    mine_per_tick: f32,
+    mine_progress: f32,
+    mine_tick_acc: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -233,6 +239,10 @@ impl GameRuntime {
             border_synced: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
             attack_ticker: 20.0, // ready
+            mine_pos: None,
+            mine_per_tick: 0.0,
+            mine_progress: 0.0,
+            mine_tick_acc: 0.0,
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -706,9 +716,17 @@ impl GameRuntime {
         if self.touch.jump_held {
             self.input.jump = true;
         }
-        if self.touch.mine_held {
-            self.input.mining = true;
-            self.interact(false); // 挖掘 / 攻击（含跨帧冷却逻辑）
+        // 触摸挖掘：按下 = 攻击/开始挖，松开 = STOP 补判（与桌面鼠标同一入口）。
+        // 仅在触摸启用后镜像，避免清掉桌面鼠标按下的 mining 状态。
+        if self.touch.enabled {
+            let held = self.touch.mine_held;
+            let was = self.input.mining;
+            self.input.mining = held;
+            if held && !was {
+                self.on_left_press();
+            } else if !held && was {
+                self.on_left_release();
+            }
         }
     }
 
@@ -719,6 +737,7 @@ impl GameRuntime {
             self.input = Default::default();
         }
         self.attack_ticker = (self.attack_ticker + dt).min(20.0);
+        self.step_mining(dt);
         self.spawn_cooldown = self.spawn_cooldown.saturating_sub(1);
 
         // ---- natural spawning (budgeted every 20 ticks) ----
@@ -973,14 +992,21 @@ impl GameRuntime {
         }
     }
 
-    /// 创造模式：挖掘无间隔。返回是否跳过冷却。
-    pub fn instant_mine(&self) -> bool {
-        self.mode == GameMode::Creative
+    /// 左键按下入口（桌面鼠标/触摸按下边沿共用）：先攻准星下的 mob，
+    /// 未命中则创造秒破、生存/极限进入进度挖掘 START。
+    pub fn on_left_press(&mut self) {
+        if self.try_attack() {
+            return;
+        }
+        if self.mode == GameMode::Creative {
+            self.interact(false);
+            return;
+        }
+        self.start_mining();
     }
 
-    /// Left-click attack: crosshair ray over mobs first, else mine block.
-    pub fn attack(&mut self) {
-        self.interact(false);
+    /// 准星射线选 mob 并攻击（26.1 攻击判定先于挖掘），返回是否被攻击消费。
+    fn try_attack(&mut self) -> bool {
         // mob hit: nearest mob within reach along view dir
         let dir = self.camera(1.0).dir();
         let eye = self.player.pos + glam::Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
@@ -1049,6 +1075,11 @@ impl GameRuntime {
                 self.player_xp += xp;
             }
         }
+        // 攻击实体即消费这次点击（26.1 左键先打实体），顺带中断进度挖掘。
+        let hit_entity = best.is_some();
+        if hit_entity {
+            self.cancel_mining();
+        }
         // 耐久只在命中时消耗（26.1 useOnEnemy 语义）；破损清槽并播放
         // random.break（缺事件时加载器自带节流 no-op）。
         if struck {
@@ -1066,6 +1097,7 @@ impl GameRuntime {
                 );
             }
         }
+        hit_entity
     }
 
     /// 攻击武器：选中槽的非方块物品（26.1：方块不参战，按空手算）。
@@ -1103,75 +1135,178 @@ impl GameRuntime {
         let Some((hit, normal)) = dda_hit(&view, eye, dir, 5.0) else {
             return;
         };
-        let target = if place {
-            BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2])
-        } else {
-            hit
-        };
+        if !place {
+            // 破坏入口：创造秒破走这里；生存由 step_mining 完成后调 destroy_block。
+            self.destroy_block(hit);
+            return;
+        }
+        let target = BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2]);
         // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
         // （26.1 交互仅方块实现，其余走未实现的 useItem）。
-        let place_id = if place {
+        let place_id = {
             let s = self.hotbar.selected(self.player.sel_slot);
             match s.def().kind {
                 mcv_item::ItemKind::Block(bid) if !s.is_empty() => Some(bid),
                 _ => None,
             }
-        } else {
-            None
         };
-        if place && place_id.is_none() {
+        let Some(new_id) = place_id else {
             return;
-        }
-        if place {
-            // reject placement that would intersect the player AABB
-            let p = &self.player;
-            let (pmin, pmax) = player_aabb(&p.pos);
-            let cmin = Vec3::new(target.x as f32, target.y as f32, target.z as f32);
-            let cmax = cmin + Vec3::ONE;
-            let overlap = cmin.x < pmax.x
-                && cmax.x > pmin.x
-                && cmin.y < pmax.y
-                && cmax.y > pmin.y
-                && cmin.z < pmax.z
-                && cmax.z > pmin.z;
-            if overlap {
-                return;
-            }
+        };
+        // reject placement that would intersect the player AABB
+        let p = &self.player;
+        let (pmin, pmax) = player_aabb(&p.pos);
+        let cmin = Vec3::new(target.x as f32, target.y as f32, target.z as f32);
+        let cmax = cmin + Vec3::ONE;
+        let overlap = cmin.x < pmax.x
+            && cmax.x > pmin.x
+            && cmin.y < pmax.y
+            && cmax.y > pmin.y
+            && cmin.z < pmax.z
+            && cmax.z > pmin.z;
+        if overlap {
+            return;
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, ly, lz] = target.local();
-            let new_id = place_id.unwrap_or(BlockId(0));
-            let old = handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx];
-            // 破坏按原方块发声，放置按新方块发声（26.1 GameRenderer 行为音）
-            let snd_vid = if place { new_id.0 } else { old.0 };
             handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = new_id;
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-            // 生存：放置消耗一格（consumeItem），破坏按 26.1 dropResources
-            // 入栏（满栏剩余暂无掉落物实体，丢弃）；创造两者都不做。
+            // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
-                if place {
-                    self.hotbar.take_one(self.player.sel_slot);
-                } else if old.0 != 0
-                    && let Some(drop) = mcv_item::drop_for_block(old)
-                {
-                    let _ = self.hotbar.add(self.player.sel_slot, drop);
-                }
+                self.hotbar.take_one(self.player.sel_slot);
             }
-            if (old.0 != 0 || place)
-                && let Some(group) = block_group(snd_vid)
-            {
+            // 放置按新方块发声（26.1 GameRenderer 行为音）
+            if let Some(group) = block_group(new_id.0) {
                 let p = [
                     target.x as f32 + 0.5,
                     target.y as f32 + 0.5,
                     target.z as f32 + 0.5,
                 ];
-                let event = if place {
-                    format!("{group}.place")
-                } else {
-                    format!("{group}.break")
-                };
-                self.audio.play_event(&event, p, [eye.x, eye.y, eye.z], 1.0);
+                self.audio
+                    .play_event(&format!("{group}.place"), p, [eye.x, eye.y, eye.z], 1.0);
             }
+        }
+    }
+
+    /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落（26.1：掉落需要
+    /// 正确工具，`hasCorrectToolForDrops` 门控）+ break 音效。挖掘进度完成
+    /// 与创造秒破共用。
+    fn destroy_block(&mut self, target: BlockPos) {
+        let Some(handle) = self.chunks.get(&target.chunk()) else {
+            return;
+        };
+        let [lx, ly, lz] = target.local();
+        let idx = ly << 8 | lz << 4 | lx;
+        let old = handle.voxels.read().unwrap()[idx];
+        if old.0 == 0 {
+            return;
+        }
+        handle.voxels.write().unwrap()[idx] = BlockId(0);
+        handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        // 生存掉落需正确工具（错误工具能磨掉但不掉东西）；满栏剩余暂无
+        // 掉落物实体，丢弃。创造不拾取。
+        if self.mode != GameMode::Creative {
+            let held = self.held_stack();
+            if mcv_item::mining::has_correct_tool(old, held.as_ref())
+                && let Some(drop) = mcv_item::drop_for_block(old)
+            {
+                let _ = self.hotbar.add(self.player.sel_slot, drop);
+            }
+        }
+        if let Some(group) = block_group(old.0) {
+            let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+            let p = [
+                target.x as f32 + 0.5,
+                target.y as f32 + 0.5,
+                target.z as f32 + 0.5,
+            ];
+            self.audio
+                .play_event(&format!("{group}.break"), p, [eye.x, eye.y, eye.z], 1.0);
+        }
+    }
+
+    /// 选中槽物品（空槽 = None，挖掘按徒手算）。
+    fn held_stack(&self) -> Option<mcv_item::ItemStack> {
+        let s = self.hotbar.selected(self.player.sel_slot);
+        (!s.is_empty()).then(|| s.clone())
+    }
+
+    /// 生存/极限 START（26.1 START_DESTROY_BLOCK）：首 tick 进度即计入，
+    /// ≥1 走 "insta mine" 秒破；不可破坏方块（进度 0）直接无事。
+    fn start_mining(&mut self) {
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let dir = self.camera(1.0).dir();
+        let Some((hit, _)) = dda_hit(&view, eye, dir, 5.0) else {
+            return;
+        };
+        let block = view.block(hit);
+        if block.0 == 0 {
+            return;
+        }
+        let held = self.held_stack();
+        let per = mcv_item::mining::progress_per_tick(block, held.as_ref());
+        if per <= 0.0 {
+            return; // 不可破坏（基岩）
+        }
+        self.mine_pos = Some(hit);
+        self.mine_per_tick = per;
+        self.mine_progress = per;
+        self.mine_tick_acc = 1.0;
+        if per >= 1.0 {
+            self.destroy_block(hit);
+            self.cancel_mining();
+        }
+    }
+
+    /// 松开：26.1 STOP_DESTROY_BLOCK 补判——perTick×(已耗 tick+1) ≥ 0.7 时
+    /// 判破坏成功（快速点击也能挖掉快碎的方块）。
+    pub fn on_left_release(&mut self) {
+        let Some(pos) = self.mine_pos else {
+            return;
+        };
+        let total = self.mine_per_tick * (self.mine_tick_acc + 1.0);
+        self.cancel_mining();
+        if total >= 0.7 {
+            self.destroy_block(pos);
+        }
+    }
+
+    fn cancel_mining(&mut self) {
+        self.mine_pos = None;
+        self.mine_progress = 0.0;
+        self.mine_per_tick = 0.0;
+        self.mine_tick_acc = 0.0;
+    }
+
+    /// CONTINUE_DESTROY_BLOCK：按住期间逐 tick 累加（fixed dt=1/60 = 0.5
+    /// tick，×20 还原），进度 >1 破坏；目标消失或超出交互距离则 ABORT。
+    fn step_mining(&mut self, dt: f32) {
+        let Some(pos) = self.mine_pos else {
+            return;
+        };
+        if !self.input.mining {
+            // 桌面松开已在 on_left_release 补判，这里是防御路径。
+            self.cancel_mining();
+            return;
+        }
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let center = Vec3::new(pos.x as f32 + 0.5, pos.y as f32 + 0.5, pos.z as f32 + 0.5);
+        if view.block(pos).0 == 0 || (center - eye).length() > 5.5 {
+            self.cancel_mining();
+            return;
+        }
+        let ticks = dt * 20.0;
+        self.mine_progress += self.mine_per_tick * ticks;
+        self.mine_tick_acc += ticks;
+        if self.mine_progress > 1.0 {
+            self.destroy_block(pos);
+            self.cancel_mining();
         }
     }
 

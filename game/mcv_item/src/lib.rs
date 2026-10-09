@@ -5,6 +5,7 @@ pub mod anvil;
 pub mod crafting;
 pub mod enchant;
 pub mod inventory;
+pub mod mining;
 
 pub use inventory::{HOTBAR_SLOTS, Hotbar, drop_for_block};
 
@@ -217,7 +218,11 @@ pub const WOODEN_SWORD_INDEX: u16 = 7;
 pub const STONE_SWORD_INDEX: u16 = 8;
 pub const IRON_SWORD_INDEX: u16 = 9;
 pub const WOODEN_PICKAXE_INDEX: u16 = 13;
+pub const STONE_PICKAXE_INDEX: u16 = 14;
 pub const IRON_PICKAXE_INDEX: u16 = 15;
+pub const DIAMOND_PICKAXE_INDEX: u16 = 16;
+pub const WOODEN_AXE_INDEX: u16 = 19;
+pub const WOODEN_SHOVEL_INDEX: u16 = 25;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnchStack {

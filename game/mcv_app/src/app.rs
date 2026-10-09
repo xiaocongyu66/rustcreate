@@ -1299,9 +1299,14 @@ impl ApplicationHandler for AppState {
                 let pressed = state == ElementState::Pressed;
                 match button {
                     MouseButton::Left => {
+                        // 按下 = 攻 mob/开始挖掘，松开 = STOP 补判（26.1 语义，
+                        // 与触摸挖按钮共用 on_left_press/release 入口）。
+                        let was = runtime.input.mining;
                         runtime.input.mining = pressed;
                         if pressed {
-                            runtime.interact(false);
+                            runtime.on_left_press();
+                        } else if was {
+                            runtime.on_left_release();
                         }
                     }
                     MouseButton::Right => {
