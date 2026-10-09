@@ -307,7 +307,7 @@ fn extract_edge(from: &ChunkHandle, side: u8) -> [u8; 4096] {
     let mut lg = from.light.write().unwrap();
     let hg = from.heightmap.read().unwrap();
     let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
-    let mut view = mcv_light::LightChunk {
+    let view = mcv_light::LightChunk {
         voxels,
         light: &mut lg[..],
         heightmap: &hg[..],
@@ -343,30 +343,34 @@ fn apply_edge_pair(to: &ChunkHandle, edge: &[u8; 4096], side: u8) -> (u8, u8) {
 fn paired_edge_sync_is_idempotent() {
     // 直接检验边协议的数学幂等性（嫌疑 A：REMOVE+ADD 两相乒乓）：
     // 同一条边快照重复施加第二轮，光照必须零变化、级联脏掩码必须为 0。
-    // 场景：A 东缘立一堵顶到 y=30 的界墙（A 边缘该段全暗 0），B 敞开
-    // （西缘直接天光 15）——A→B 的 REMOVE 相必然撤得过光再由 B 内部
-    // 光源回填，两相都要走真路径。
-    let a = lit_custom(0, 0, 20, |vg| {
-        // x=15 界墙：从地表 20 顶再垒到 y=30。
+    // 场景：B 在 y=50 架一块全尺寸顶板——y 11..49 成封闭暗腔（init 只播
+    // 天板之上的直天光），唯一进光口是 A 侧的亮边（A 平地边缘 y≥21=15）。
+    // 首轮 A→B 的 ADD 相把 B 西缘抬到 14 并向腔内传播；第二轮同边同相
+    // `s < n−dec` 不再触发、REMOVE 相 `s > n+1` 也不触发——固定点。
+    // （不用「A 暗边撤 B 亮边」的构造：撤回光会被 B 的直天光柱经
+    // spread_target 的直落规则立刻原值重新证成，两轮间本就零净变化，
+    // 区分不出幂等与空转。）
+    let a = lit_chunk(0, 0, 20);
+    let b = lit_custom(1, 0, 10, |vg| {
+        // y=50 全尺寸顶板：其下腔体对外封闭（±Z/+X 无邻块可进光）。
         for z in 0..16usize {
-            for y in 21..=30usize {
-                vg[vidx(15, y, z)] = BlockId(1);
+            for x in 0..16usize {
+                vg[vidx(x, 50, z)] = BlockId(1);
             }
         }
     });
-    let b = lit_chunk(1, 0, 10);
 
     let light_of = |h: &ChunkHandle| h.light.read().unwrap().to_vec();
     let b_before = light_of(&b);
 
     // 首轮：A→B 与成对的 B→A（sync_light_edges 的成对双向语义）。
-    let (d1r, d1a) = apply_edge_pair(&b, &extract_edge(&a, 0), 1);
+    let _ = apply_edge_pair(&b, &extract_edge(&a, 0), 1);
     let b_once = light_of(&b);
-    let (e1r, e1a) = apply_edge_pair(&a, &extract_edge(&b, 1), 0);
+    let _ = apply_edge_pair(&a, &extract_edge(&b, 1), 0);
     let a_once = light_of(&a);
     let b_after_back = light_of(&b);
 
-    // 首轮必须真的做过事：B 的光照被 A 的暗墙改写（REMOVE 撤光+回填）。
+    // 首轮必须真的做过事：A 的亮边把光喂进 B 的暗腔。
     assert_ne!(b_before, b_once, "首轮 A→B 未改写 B 的光照——用例空转");
 
     // 第二轮：同一条边、同样的 REMOVE+ADD——必须零级联脏、零光照变化。
