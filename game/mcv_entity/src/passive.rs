@@ -252,7 +252,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         rng_state = 0x9E37_79B9_7F4A_7C15;
     }
 
-    let (mut phys, kinds, mut wanders, mut anims, mut yaws, mut intents, mut ticks, mut healths) = (
+    let (mut phys, kinds, mut wanders, mut anims, mut yaws, mut intents, mut ticks, healths) = (
         world.write::<crate::PhysBody>(),
         world.read::<crate::MobKind>(),
         world.write::<WanderState>(),

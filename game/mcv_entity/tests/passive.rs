@@ -211,7 +211,8 @@ fn walk_animation_builds_and_rests() {
         }
         step(&mut app);
     }
-    let a = app.world.read::<mcv_entity::AnimState>().get(e).unwrap();
+    let anims = app.world.read::<mcv_entity::AnimState>();
+    let a = anims.get(e).unwrap();
     assert_eq!(a.amount, 0.0, "静止后摆幅必须归零");
 }
 
