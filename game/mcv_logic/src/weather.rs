@@ -108,12 +108,13 @@ impl Weather {
         self.thunder_level
     }
 
-    /// 测试/指令用：直接置雨（等价 setWeather + setRainLevel）。
+    /// 测试/指令用：直接置雨（等价 setWeather + setRainLevel）；倒计时给
+    /// 足一个 DURATION 上限，避免下一 tick 立即翻转。
     pub fn set_for_test(&mut self, raining: bool, thundering: bool) {
         self.raining = raining;
         self.thundering = thundering;
-        self.rain_time = 1;
-        self.thunder_time = 1;
+        self.rain_time = 24_000;
+        self.thunder_time = 15_600;
     }
 
     /// 每 game tick 一次（ServerLevel.advanceWeatherCycle，:694-755）。
@@ -279,9 +280,10 @@ mod tests {
         w.thunder_level = 0.0;
         let rainy = w.sky_light_factor(1.0);
         assert!((rainy - 0.7625).abs() < 1e-4, "rain {rainy}");
-        w.thunder_level = 1.0; // rain_eff = 0
+        w.thunder_level = 1.0; // rain_eff = rain−thunder = 0：只剩雷层混合
         let stormy = w.sky_light_factor(1.0);
-        let want = 0.7625_f32.mul_add(1.0 - 0.527_343_75, 0.24 * 0.527_343_75);
+        // lerp(0.52734375, 1.0, 0.24) = 1×0.47265625 + 0.24×0.52734375。
+        let want = 1.0_f32.mul_add(1.0 - 0.527_343_75, 0.24 * 0.527_343_75);
         assert!((stormy - want).abs() < 1e-4, "storm {stormy} vs {want}");
         // 晴天原样。
         w.rain_level = 0.0;
