@@ -3188,7 +3188,15 @@ pub fn ray_aabb_t(origin: Vec3, dir: Vec3, min: Vec3, max: Vec3) -> Option<f32> 
 /// 给出命中格与入射面法线，再按入射面求精确入射距离 t。
 pub fn block_hit_t(view: &WorldView, eye: Vec3, dir: Vec3, max_dist: f32) -> Option<f32> {
     let dir = dir.normalize_or_zero();
-    let (hit, normal) = dda_hit(view, eye, dir, max_dist)?;
+    // 攻击遮挡判据 = 碰撞形状：水/花草/火把无碰撞盒 → 不挡刀，与
+    // 本函数"仅 solid 遮挡"语义一致（Collide 系 blockshapes 形状盒）。
+    let (hit, normal) = dda_hit(
+        view,
+        eye,
+        dir,
+        max_dist,
+        mcv_game::blockshapes::RayTarget::Collide,
+    )?;
     let mut t = 0.0f32;
     // dda_hit 的 normal = -step：正向步进从 min 面入射（平面 = 格坐标），
     // 负向从 max 面入射（平面 = 格坐标 + 1）；起点即命中的退化情形法线全 0
