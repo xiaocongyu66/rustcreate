@@ -18,8 +18,8 @@ pub use components::{
 pub use defs::{MOBS, MobDef, MobId};
 pub use drops::{DropEvent, death_drops};
 pub use items::{
-    DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, MERGE_DIST, PICKUP_DELAY, PICKUP_INFLATE,
-    PickupReq, item_merge_system, item_physics_system, item_pickup_system,
-    register_drop_components, settle_pickups, spawn_item_drop,
+    DEATH_PICKUP_DELAY, DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, PICKUP_DELAY,
+    PICKUP_INFLATE_XZ, PICKUP_INFLATE_Y, PickupReq, item_merge_system, item_physics_system,
+    item_pickup_system, register_drop_components, settle_pickups, spawn_item_drop,
 };
 pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};

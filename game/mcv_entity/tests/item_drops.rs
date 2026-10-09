@@ -60,10 +60,15 @@ fn setup(player_pos: Vec3) -> mcv_ecs::App {
 }
 
 fn tick(app: &mut mcv_ecs::App, player_pos: Vec3) {
-    app.resources.insert(DropWorld {
-        chunks: floor_world(),
-        player_pos,
-    });
+    // 复用既有快照的区块表（Arc 计数克隆，1 项 HashMap），仅换玩家位姿
+    // ——寿命测试要跑 1.8 万步，每步重建假世界太浪费。
+    let chunks = app
+        .resources
+        .get::<DropWorld>()
+        .expect("setup 未注入 DropWorld")
+        .chunks
+        .clone();
+    app.resources.insert(DropWorld { chunks, player_pos });
     app.update(mcv_game::consts::FIXED_DT);
 }
 
@@ -91,15 +96,16 @@ fn drop_settles_on_ground() {
         tick(&mut app, NO_PLAYER);
     }
     let body = app.world.get_ref::<mcv_entity::PhysBody>(e).unwrap();
-    assert!(body.on_ground, "600 tick 后必已落地");
+    assert!(body.on_ground, "600 步（含反弹收敛）后必已落地静止");
     assert!(
         (body.pos.y - 64.0).abs() < 1e-3,
         "落点贴地 y={}",
         body.pos.y
     );
+    // 静止时贴地冲击 -0.53 m/s 低于反弹下限，落地清零后速度归零。
     assert!(body.vel.length() < 0.01, "静止 vel={:?}", body.vel);
     let d = app.world.get_ref::<ItemDrop>(e).unwrap();
-    assert_eq!(d.age, 600, "600 tick 计龄正确且未到期（< DESPAWN_AGE）");
+    assert_eq!(d.age, 600, "600 步计龄正确且未到期（< DESPAWN_AGE）");
 }
 
 #[test]
@@ -114,13 +120,31 @@ fn drop_despawns_at_6000_ticks() {
         0,
         &mut rng,
     );
-    // 6000 tick 前一刻仍存活。
+    // 寿命（6000 tick = 18000 步）前一刻仍存活。
     for _ in 0..DESPAWN_AGE - 1 {
         tick(&mut app, NO_PLAYER);
     }
-    assert!(app.world.is_alive(e), "5999 tick 仍存活");
+    assert!(app.world.is_alive(e), "17999 步仍存活");
     tick(&mut app, NO_PLAYER);
-    assert!(!app.world.is_alive(e), "6000 tick 到期 despawn");
+    assert!(!app.world.is_alive(e), "18000 步（6000 tick）到期 despawn");
+    assert_eq!(app.world.component_count::<ItemDrop>(), 0);
+}
+
+/// 掉进虚空（y < -64）当 tick 销毁（MC Entity 出界移除，不等 DESPAWN_AGE）。
+#[test]
+fn drop_despawns_below_void() {
+    let mut app = setup(NO_PLAYER);
+    let mut rng = lcg(17);
+    let e = spawn_item_drop(
+        &mut app.world,
+        Vec3::new(8.5, -70.0, 8.5),
+        27,
+        1,
+        0,
+        &mut rng,
+    );
+    tick(&mut app, NO_PLAYER);
+    assert!(!app.world.is_alive(e), "y<-64 的掉落物当 tick 即销毁");
     assert_eq!(app.world.component_count::<ItemDrop>(), 0);
 }
 
@@ -150,7 +174,7 @@ fn initial_vel_deterministic_per_seed() {
     let vb = app.world.get_ref::<mcv_entity::PhysBody>(b).unwrap().vel;
     assert_eq!(va, vb);
     assert!((va.y - 4.0).abs() < 1e-5, "vy=0.2 块/tick ×20 = 4 m/s");
-    assert!(va.x.abs() <= 1.4 + 1e-5 && va.z.abs() <= 1.4 + 1e-5);
+    assert!(va.x.abs() <= 2.0 + 1e-5 && va.z.abs() <= 2.0 + 1e-5);
     // pickup_delay 原样入组件，系统逐步衰减。
     assert_eq!(app.world.get_ref::<ItemDrop>(a).unwrap().pickup_delay, 10);
     tick(&mut app, NO_PLAYER);
@@ -188,7 +212,8 @@ fn physics_skips_non_drops() {
 // 拾取 + 合并
 // ---------------------------------------------------------------------------
 
-/// 玩家贴身站立：pickup_delay(10) 归零后数 tick 内入栏并 despawn。
+/// 玩家贴身站立：pickup_delay（默认 10 tick = 30 步）归零后数步内入栏
+/// 并 despawn。
 #[test]
 fn adjacent_player_collects_drop() {
     let mut app = setup(Vec3::new(8.5, 64.0, 8.5));
@@ -199,14 +224,14 @@ fn adjacent_player_collects_drop() {
         Vec3::new(8.5, 64.2, 8.5),
         27,
         3,
-        10,
+        mcv_entity::PICKUP_DELAY,
         &mut rng,
     );
-    // 9 tick：delay 未到，不收。
-    tick_with_pickup(&mut app, &mut hotbar, 9);
+    // 29 步（delay 未到 0）：不收。
+    tick_with_pickup(&mut app, &mut hotbar, 29);
     assert!(app.world.is_alive(e), "pickup_delay 未到不拾取");
     assert!(hotbar.slots.iter().all(|s| s.is_empty()));
-    // 再 5 tick：delay 归零，贴身必被收走。
+    // 再 5 步：delay 归零，贴身必被收走。
     tick_with_pickup(&mut app, &mut hotbar, 5);
     assert!(!app.world.is_alive(e), "delay 归零后贴身必拾取");
     let s = &hotbar.slots[0];
@@ -244,11 +269,11 @@ fn full_hotbar_keeps_drop_alive() {
     );
 }
 
-/// 合并守恒：总数量不变、单堆不超 max_stack、age 取最大。
+/// 合并守恒：总数量不变、单堆不超 max_stack、age 取 min（保年轻者）。
+/// 三只用同 seed 独立 rng → 初速完全一致，同点位锁步漂移不散开。
 #[test]
 fn merge_conserves_count() {
     let mut app = setup(NO_PLAYER);
-    let mut rng = lcg(11);
     // 同点三只 30 个圆石（max 64）→ 合并为 64 + 26。
     let mut ids = Vec::new();
     for _ in 0..3 {
@@ -258,7 +283,7 @@ fn merge_conserves_count() {
             27,
             30,
             250,
-            &mut rng,
+            &mut lcg(11),
         ));
     }
     for _ in 0..101 {
@@ -279,8 +304,9 @@ fn merge_conserves_count() {
     assert_eq!(total, 90, "合并守恒");
     // 被并入者 despawn：只剩两只（64+26）。
     assert_eq!(app.world.component_count::<ItemDrop>(), 2);
+    // age 取 min：三只同龄，合并后仍为生成时年龄（随步数累加到 101）。
     assert_eq!(max_age, 101);
-    // 再跑 200 tick（delay 已过但玩家不在场）：不消失不增数。
+    // 再跑 200 步（delay 已过但玩家不在场）：不消失不增数。
     for _ in 0..200 {
         tick(&mut app, NO_PLAYER);
     }
@@ -305,7 +331,8 @@ fn merge_respects_distance() {
         250,
         &mut rng,
     );
-    // 1.3 格外：扣除空中初速漂移（<0.35/只）仍 > 合并半径 0.5。
+    // 1.3 格外：落地后地面阻尼（60 m/s²）数步内清零初速，漂移 <0.1/只，
+    // 仍 > 合并水平半径 0.5。
     let b = spawn_item_drop(
         &mut app.world,
         Vec3::new(9.8, 64.0, 8.5),

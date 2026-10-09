@@ -1,10 +1,13 @@
 //! 掉落物实体（26.1 `ItemEntity` 子集）：`ItemDrop` 组件 + 生成入口 +
-//! 物理/寿命系统。组件与 [`crate::components::PhysBody`] 组合挂载，步进
-//! 复用 [`mcv_game::step_entity`]（重力/阻尼/落地与怪物同一套代码）。
+//! 物理/寿命/拾取/合并系统。组件与 [`crate::components::PhysBody`] 组合
+//! 挂载，步进复用 [`mcv_game::step_entity`]（掉落物重力缩放 0.5，见
+//! [`StepInput.gravity_scale`]）。
 //!
-//! 拾取与合并走 [`pickup_system`] / 合并趟（increment 2），本文件先落
-//! 实体形态：AABB 0.25³（half 0.125，MC Item.java SIZE=0.25）、初速
-//! 随机散布、age 6000 tick（5 分钟）消失（MC ItemEntity DESPAWN_TIME）。
+//! 数值对齐反编译 ItemEntity.java（/root/mc-ref/VERIFY-drops.md）：
+//! AABB 0.25³、初速 x/z=±0.1 y=+0.2 块/tick、落地反弹 ×0.5、寿命
+//! 6000 tick、pickup_delay 10 tick（死亡掉落 40）、拾取盒 inflate(1,0.5,1)、
+//! 合并并给 count 大者且 age 取 min。引擎步 1/60 s，原版 tick 1/20 s，
+//! 计数阈值一律 ×3 换算（`STEPS_PER_TICK`）。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,14 +20,24 @@ use crate::components::PhysBody;
 
 /// 掉落物碰撞半尺寸（AABB 0.25³，MC Item.java:24 SIZE=0.25）。
 pub const ITEM_HALF: [f32; 3] = [0.125; 3];
-/// 生成后禁止拾取的 tick 数（MC ItemEntity pickupDelay=10；矿掉落传 0）。
-pub const PICKUP_DELAY: u8 = 10;
-/// 消失年龄（MC ItemEntity.java DESPAWN_TIME=6000 tick = 5 min）。
-pub const DESPAWN_AGE: u32 = 6000;
-/// 拾取判定：玩家 AABB 外扩半径（MC 近似：实体碰撞盒 + 0.5 吸附余量）。
-pub const PICKUP_INFLATE: f32 = 0.5;
-/// 同物品合并半径（米，MC ItemEntity 合并距离近似）。
-pub const MERGE_DIST: f32 = 0.5;
+/// 引擎固定步长 1/60 s，原版 tick = 1/20 s → 1 tick = 3 步。age/pickup_delay
+/// 均以**步**计数，阈值 = 原版 tick 值 × 3（审计 C2/C5 的步↔tick 换算）。
+pub const STEPS_PER_TICK: u32 = 3;
+/// 生成后禁止拾取（MC ItemEntity pickupDelay 默认 10 tick = 0.5 s）。
+pub const PICKUP_DELAY: u8 = 10 * 3;
+/// 玩家死亡掉落的拾取延迟（MC LivingEntity.drop 40 tick = 2 s）。
+pub const DEATH_PICKUP_DELAY: u8 = 40 * 3;
+/// 消失年龄（MC ItemEntity LIFETIME 6000 tick = 300 s）。
+pub const DESPAWN_AGE: u32 = 6000 * 3;
+/// 拾取判定：玩家碰撞盒外扩（MC Player.java:454 `inflate(1.0, 0.5, 1.0)`）。
+pub const PICKUP_INFLATE_XZ: f32 = 1.0;
+/// 拾取判定竖向外扩（同上，y 轴 0.5）。
+pub const PICKUP_INFLATE_Y: f32 = 0.5;
+/// 同物品合并水平中心距上限（MC 合并 BB `inflate(0.5, 0, 0.5)` 的近似）。
+pub const MERGE_DIST_XZ: f32 = 0.5;
+/// 落地反弹冲击下限（m/s）：低于此不反弹。原版无阈值（vy = −vy×0.5 恒
+/// 成立），但本引擎落地清零 vy，无阈值会造成贴地毫米级永动微弹。
+pub const BOUNCE_MIN_IMPACT: f32 = 1.5;
 
 /// 掉落物组件：与 [`PhysBody`] 成对出现（物理走 PhysBody + step_entity）。
 #[derive(Clone, Copy, Debug)]
@@ -32,9 +45,9 @@ pub struct ItemDrop {
     /// 物品内核 id（[`mcv_item::ITEMS`] 下标）。
     pub item: u16,
     pub count: u8,
-    /// 已存活 tick；≥ [`DESPAWN_AGE`] 消失。
+    /// 已存活步数（3 步 = 1 原版 tick）；≥ [`DESPAWN_AGE`] 消失。
     pub age: u32,
-    /// 剩余不可拾取 tick（MC pickupDelay 语义）。
+    /// 剩余不可拾取步数（MC pickupDelay 语义，每步 −1）。
     pub pickup_delay: u8,
 }
 
@@ -79,15 +92,15 @@ impl mcv_game::VoxelAccess for ChunkVoxels<'_> {
     }
 }
 
-/// MC 初速：水平 (rand−0.5)×0.14、竖直 +0.2（块/tick，ItemEntity.java
+/// MC 初速：水平 rand×0.2−0.1、竖直 +0.2（块/tick，ItemEntity.java:66
 /// 构造器）→ 引擎 m/s 需 ×20（块/tick × tick/s）。rng 复用 game.rs 的
 /// 确定性 fast_rand 链，测试可控。
 fn initial_vel(rng: &mut impl FnMut() -> u32) -> Vec3 {
     let r = |rng: &mut dyn FnMut() -> u32| rng() as f32 / u32::MAX as f32;
     Vec3::new(
-        (r(rng) - 0.5) * 0.14 * 20.0,
+        (r(rng) - 0.5) * 0.2 * 20.0,
         0.2 * 20.0,
-        (r(rng) - 0.5) * 0.14 * 20.0,
+        (r(rng) - 0.5) * 0.2 * 20.0,
     )
 }
 
@@ -127,8 +140,9 @@ pub fn spawn_item_drop(
     e
 }
 
-/// 固定步系统：物理积分（step_entity 通用重力/阻尼/落地）+ age++ +
-/// 到期 despawn（延迟命令，同 mob_ai 语义）。
+/// 固定步系统：物理积分（step_entity 通用重力/阻尼/落地；掉落物重力
+/// 缩放 0.5 = 原版 ItemEntity.getDefaultGravity 0.04 块/tick²）+ 落地
+/// 反弹 + age/pickup_delay 步进 + 到期 despawn（延迟命令，同 mob_ai）。
 pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
     let dw = ctx
         .resources
@@ -138,11 +152,28 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
     let commands = &mut *ctx.commands;
     let (mut phys, mut drops) = (world.write::<PhysBody>(), world.write::<ItemDrop>());
     let view = ChunkVoxels { chunks: &dw.chunks };
+    let input = mcv_game::StepInput {
+        gravity_scale: 0.5,
+        ..mcv_game::StepInput::default()
+    };
     phys.for_each(|e, body| {
         let Some(d) = drops.get_mut(e) else { return };
         let mut eng = body.body();
-        mcv_game::step_entity(&view, &mut eng, ITEM_HALF, &mcv_game::StepInput::default());
+        let impact = eng.vel.y; // 落地前竖直速度 = 冲击速度
+        mcv_game::step_entity(&view, &mut eng, ITEM_HALF, &input);
+        // 落地反弹（MC ItemEntity.java:159-164：onGround 且 vy<0 →
+        // vy = −vy×0.5）；低于冲击下限不弹（见 BOUNCE_MIN_IMPACT 注释）。
+        if eng.on_ground && impact < -BOUNCE_MIN_IMPACT {
+            eng.vel.y = -impact * 0.5;
+        }
         body.set_body(&eng);
+        // 掉进虚空：y < -64 立即销毁（MC Entity.checkBelowWorld：y <
+        // minY−64 → discard，不等 LIFETIME；BlockPos::local 对负 y 取模
+        // 安全，读到的别名数据无碍）。
+        if body.pos.y < -64.0 {
+            commands.despawn(e);
+            return;
+        }
         d.age += 1;
         d.pickup_delay = d.pickup_delay.saturating_sub(1);
         if d.age >= DESPAWN_AGE {
@@ -151,26 +182,27 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
     });
 }
 
-/// 玩家 AABB 外扩 [`PICKUP_INFLATE`] 后的盒（pos = 脚底中心）。
+/// 玩家碰撞盒外扩（x/z [`PICKUP_INFLATE_XZ`]、y [`PICKUP_INFLATE_Y`]，
+/// MC Player.java:454 `inflate(1.0, 0.5, 1.0)`）后的盒（pos = 脚底中心）。
 fn player_box(pos: Vec3) -> (Vec3, Vec3) {
     let h = mcv_game::Player::HALF;
     (
         Vec3::new(
-            pos.x - h[0] - PICKUP_INFLATE,
-            pos.y - PICKUP_INFLATE,
-            pos.z - h[2] - PICKUP_INFLATE,
+            pos.x - h[0] - PICKUP_INFLATE_XZ,
+            pos.y - PICKUP_INFLATE_Y,
+            pos.z - h[2] - PICKUP_INFLATE_XZ,
         ),
         Vec3::new(
-            pos.x + h[0] + PICKUP_INFLATE,
-            pos.y + h[1] * 2.0 + PICKUP_INFLATE,
-            pos.z + h[2] + PICKUP_INFLATE,
+            pos.x + h[0] + PICKUP_INFLATE_XZ,
+            pos.y + h[1] * 2.0 + PICKUP_INFLATE_Y,
+            pos.z + h[2] + PICKUP_INFLATE_XZ,
         ),
     )
 }
 
-/// 拾取系统：pickup_delay 归零后，掉落物 AABB 与外扩 0.5 的玩家 AABB
-/// 相交 → 发 [`PickupReq`] 事件（剩余入栏逻辑在主控 settle_pickups，
-/// 满栏剩余自然留在地上——下一 tick 再相交再请求）。
+/// 拾取系统：pickup_delay 归零后，掉落物 AABB 与外扩 (1.0, 0.5, 1.0) 的
+/// 玩家 AABB 相交 → 发 [`PickupReq`] 事件（剩余入栏逻辑在主控
+/// settle_pickups，满栏剩余自然留在地上——下一步再相交再请求）。
 pub fn item_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
     let dw = ctx
         .resources
@@ -203,60 +235,91 @@ pub fn item_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
     }
 }
 
-/// 合并趟：同物品、未满堆、中心距 < [`MERGE_DIST`] → 移入先到者（按
-/// 稠密表序），数量封顶 max_stack，age 取两者最大（原版 merge 语义的
-/// 简化：不做速度交换）。O(n²) 可接受（掉落物量级几十）。
+/// 合并趟（26.1 ItemEntity.merge 近似）：同物品、双方未满堆、未待删
+/// （age < [`DESPAWN_AGE`]，审计 M10）→ 数量小的并给数量大的（同量取
+/// 稠密表序先到者）；单次封顶 max_stack；合并后目标 **age 取 min（保
+/// 年轻者）、pickup_delay 取 max**（原版 ItemEntity.java:260-267）。
+/// 形状：水平 XZ 中心距 < [`MERGE_DIST_XZ`] 且 y 盒重叠（原版 BB
+/// `inflate(0.5, 0, 0.5)` 的近似）。TODO(审计 M4)：合并触发节奏每 2/40
+/// tick，本实现每步都跑（掉落物量级几十，O(n²) 可接受）。
 pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
     // 快照（合并中会改 count，先收集避免迭代借用冲突）。
-    let mut list: Vec<(Entity, Vec3, u16, u8, u32)> = Vec::new();
+    let mut list: Vec<(Entity, Vec3, u16, u8, u32, u8)> = Vec::new();
     {
         let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
         for (e, d) in drops.iter() {
             if let Some(b) = phys.get(e) {
-                list.push((e, b.pos, d.item, d.count, d.age));
+                list.push((e, b.pos, d.item, d.count, d.age, d.pickup_delay));
             }
         }
     }
     for i in 0..list.len() {
-        let (ei, pi, item_i, mut count_i, mut age_i) = list[i];
+        let (ei, pi, item_i, mut count_i, mut age_i, mut delay_i) = list[i];
         let max = mcv_item::Hotbar::max_stack(item_i);
-        // 已被更早的实体吸收光（count=0，稍后 despawn）或已满堆：不作合并目标。
+        // 已被吸收光（count=0，稍后 despawn）或已满堆：不作合并目标。
         if count_i == 0 || count_i >= max {
             continue;
         }
         // 可变切片迭代（clippy needless_range_loop：j 仅用于索引 list）。
         for slot in list[i + 1..].iter_mut() {
-            let (ej, pj, item_j, count_j, age_j) = *slot;
-            if item_j != item_i || count_j == 0 {
+            let (ej, pj, item_j, count_j, age_j, delay_j) = *slot;
+            if item_j != item_i || count_j == 0 || count_j >= max {
                 continue;
             }
-            if (pi - pj).length() >= MERGE_DIST {
+            if (pi.x - pj.x).hypot(pi.z - pj.z) >= MERGE_DIST_XZ
+                || (pi.y - pj.y).abs() >= ITEM_HALF[1] * 2.0
+            {
                 continue;
             }
-            let mv = (max - count_i).min(count_j);
-            if mv == 0 {
-                break;
-            }
-            count_i += mv;
-            age_i = age_i.max(age_j);
-            slot.3 -= mv;
-            if slot.3 == 0 {
-                commands.despawn(ej);
+            // 并给 count 大者（原版 ItemEntity.java:233-239）；同量并入先到者。
+            if count_i >= count_j {
+                let mv = (max - count_i).min(count_j);
+                if mv == 0 {
+                    break; // 目标已满，后续更远者不必再看
+                }
+                count_i += mv;
+                age_i = age_i.min(age_j);
+                delay_i = delay_i.max(delay_j);
+                slot.3 -= mv;
+                if slot.3 == 0 {
+                    commands.despawn(ej);
+                } else {
+                    commands.push(move |w| {
+                        if let Some(d) = w.write::<ItemDrop>().get_mut(ej) {
+                            d.count -= mv;
+                        }
+                    });
+                }
             } else {
+                let mv = (max - count_j).min(count_i);
+                if mv == 0 {
+                    continue;
+                }
+                slot.3 += mv;
+                slot.4 = age_j.min(age_i);
+                slot.5 = delay_j.max(delay_i);
                 commands.push(move |w| {
                     if let Some(d) = w.write::<ItemDrop>().get_mut(ej) {
-                        d.count -= mv;
+                        d.count += mv;
+                        d.age = age_j.min(age_i);
+                        d.pickup_delay = delay_j.max(delay_i);
                     }
                 });
+                count_i -= mv;
+                if count_i == 0 {
+                    commands.despawn(ei);
+                    break;
+                }
             }
         }
-        let (final_count, final_age) = (count_i, age_i);
+        let (final_count, final_age, final_delay) = (count_i, age_i, delay_i);
         commands.push(move |w| {
             if let Some(d) = w.write::<ItemDrop>().get_mut(ei) {
                 d.count = final_count;
                 d.age = final_age;
+                d.pickup_delay = final_delay;
             }
         });
     }

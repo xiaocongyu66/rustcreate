@@ -197,10 +197,37 @@ pub enum CameraType {
 /// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
 const THIRD_PERSON_DIST: f32 = 4.0;
 
+/// 无 GPU 空网格器（无头测试/CI 用）：不产出渲染网格。
+struct NullMesher;
+impl ChunkMesher for NullMesher {
+    fn build(&mut self, _pos: ChunkPos, _handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
+        None
+    }
+}
+
 impl GameRuntime {
     pub fn new(
         seed: u64,
         uploader: mcv_render::gpu::MeshUploader,
+        save_dir: std::path::PathBuf,
+        mode: GameMode,
+    ) -> Self {
+        Self::assemble(
+            seed,
+            Box::new(CxxMesher::new(256 << 20, uploader)),
+            save_dir,
+            mode,
+        )
+    }
+
+    /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。
+    pub fn new_headless(seed: u64, save_dir: std::path::PathBuf, mode: GameMode) -> Self {
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode)
+    }
+
+    fn assemble(
+        seed: u64,
+        mesher: Box<dyn ChunkMesher>,
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
@@ -232,7 +259,7 @@ impl GameRuntime {
             player: Player::default(),
             input: InputState::default(),
             time_ticks: 6_000, // noon start
-            mesher: Box::new(CxxMesher::new(256 << 20, uploader)),
+            mesher,
             save_dir,
             render_chunks: Vec::new(),
             spawned: false,
@@ -264,6 +291,9 @@ impl GameRuntime {
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
         // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
         // mob_ai 按 MobKind 过滤、掉落系统按 ItemDrop 过滤，互不触碰）。
+        // TODO 渲染：mcv_render Scene 目前只有地形/HUD/玩家模型通路，怪物
+        // 也未上屏——掉落物待通用实体渲染通路（billboard 物品图标或 1/4
+        // 缩放方块）落地后再接，先保证物理+拾取语义完整。
         rt.mobs_app.add_system(
             mcv_ecs::Stage::Fixed,
             "item_physics",
@@ -302,6 +332,25 @@ impl GameRuntime {
             if self.mode == GameMode::Hardcore {
                 self.hardcore_death = true;
             }
+            // 死亡掉落（26.1 Player.die → Inventory.dropAll，keepInventory
+            // 默认 false）：快捷栏逐格生成 ItemDrop（拾取延迟 40 tick =
+            // 2 s，LivingEntity.java:3398），与 mob 死亡掉落同一生成路径，
+            // 再清栏。
+            let at = p.pos + Vec3::Y * 0.9;
+            let mut rng = spawn_rng();
+            for s in &self.hotbar.slots {
+                if !s.is_empty() {
+                    mcv_entity::spawn_item_drop(
+                        &mut self.mobs_app.world,
+                        at,
+                        s.item,
+                        s.count,
+                        mcv_entity::DEATH_PICKUP_DELAY,
+                        &mut rng,
+                    );
+                }
+            }
+            self.hotbar = mcv_item::Hotbar::empty();
         }
         let pos = [p.pos.x, p.pos.y, p.pos.z];
         // 26.1 sounds.json 事件:变体随机交给音效表按权重抽取。
@@ -851,6 +900,7 @@ impl GameRuntime {
                 jump: i.jump,
                 in_water,
                 sneak: i.sneak,
+                gravity_scale: 1.0,
             };
             mcv_game::step(
                 &WorldView {
@@ -1096,13 +1146,34 @@ impl GameRuntime {
                     struck = hurt.is_some();
                     // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
                     if struck && hp.0 <= 0.0 {
-                        slain = Some((target, def.xp));
+                        // 带上 defs::MobKind 枚举（death_drops 按种类查 loot）。
+                        slain = Some((target, def.xp, def.kind));
                     }
                 }
             }
-            if let Some((e, xp)) = slain {
+            if let Some((e, xp, kind)) = slain {
+                // 击杀掉落（26.1 LivingEntity.die → loot）：despawn 前取位姿。
+                let pos = self
+                    .mobs_app
+                    .world
+                    .get_ref::<PhysBody>(e)
+                    .map(|b| b.pos + Vec3::Y * 0.5)
+                    .unwrap_or(self.player.pos);
                 self.mobs_app.world.despawn(e);
                 self.player_xp += xp;
+                let mut rng = spawn_rng();
+                for ev in mcv_entity::death_drops(kind, true, pos, &mut rng) {
+                    if let Some(item) = mcv_item::item_by_name(ev.item) {
+                        mcv_entity::spawn_item_drop(
+                            &mut self.mobs_app.world,
+                            pos,
+                            item,
+                            ev.count.min(u8::MAX as u32) as u8,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut rng,
+                        );
+                    }
+                }
             }
         }
         // 攻击实体即消费这次点击（26.1 左键先打实体），顺带中断进度挖掘。
@@ -1154,6 +1225,16 @@ impl GameRuntime {
         self.player.pitch = (self.player.pitch - dy as f32 * k).clamp(-1.55, 1.55);
     }
 
+    /// 交互到达距离（26.1）：生存/极限 [`mcv_game::REACH`] 4.5，
+    /// 创造 [`mcv_game::CREATIVE_REACH`] 5.0。
+    fn reach(&self) -> f32 {
+        if self.mode == GameMode::Creative {
+            mcv_game::CREATIVE_REACH
+        } else {
+            mcv_game::REACH
+        }
+    }
+
     /// Break / place at the crosshair. Uses a temporary inline DDA until the
     /// physics module merges; the voxel write path is final.
     pub fn interact(&mut self, place: bool) {
@@ -1162,7 +1243,7 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, normal)) = dda_hit(&view, eye, dir, 5.0) else {
+        let Some((hit, normal)) = dda_hit(&view, eye, dir, self.reach()) else {
             return;
         };
         if !place {
@@ -1233,14 +1314,31 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
-        // 生存掉落需正确工具（错误工具能磨掉但不掉东西）；满栏剩余暂无
-        // 掉落物实体，丢弃。创造不拾取。
+        // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
+        // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
             let held = self.held_stack();
             if mcv_item::mining::has_correct_tool(old, held.as_ref())
                 && let Some(drop) = mcv_item::drop_for_block(old)
             {
-                let _ = self.hotbar.add(self.player.sel_slot, drop);
+                // 生成点：方块中心 ±0.25 随机三轴、y 再 −0.125（26.1
+                // Block.popResource，Block.java:410-418）；pickup_delay 走
+                // 默认 10 tick（Block.java:436-444，非 0 贴手）。
+                let mut rng = spawn_rng();
+                let j = |rng: &mut dyn FnMut() -> u32| (rng() as f32 / u32::MAX as f32 - 0.5) * 0.5;
+                let c = Vec3::new(
+                    target.x as f32 + 0.5 + j(&mut rng),
+                    target.y as f32 + 0.5 + j(&mut rng) - 0.125,
+                    target.z as f32 + 0.5 + j(&mut rng),
+                );
+                mcv_entity::spawn_item_drop(
+                    &mut self.mobs_app.world,
+                    c,
+                    drop.item,
+                    drop.count,
+                    mcv_entity::PICKUP_DELAY,
+                    &mut rng,
+                );
             }
         }
         if let Some(group) = block_group(old.0) {
@@ -1269,7 +1367,7 @@ impl GameRuntime {
         };
         let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
         let dir = self.camera(1.0).dir();
-        let Some((hit, _)) = dda_hit(&view, eye, dir, 5.0) else {
+        let Some((hit, _)) = dda_hit(&view, eye, dir, self.reach()) else {
             return;
         };
         let block = view.block(hit);
@@ -1367,7 +1465,7 @@ impl GameRuntime {
             None => {
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let dir = self.camera(1.0).dir();
-                let (hit, _) = dda_hit(&view, eye, dir, 5.0)?;
+                let (hit, _) = dda_hit(&view, eye, dir, self.reach())?;
                 hit
             }
         };
@@ -1810,6 +1908,7 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             jump: body.on_ground && to_player.y > 1.0 && dist_sqr < 16.0,
             in_water: false,
             sneak: false,
+            gravity_scale: 1.0,
         };
         // 独立表视图（各自 RefCell）：与 phys 的迭代借用互不冲突。
         let mut eng = body.body();
@@ -1832,8 +1931,33 @@ fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                 damage: def.attack_damage,
             });
         }
-        // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后 retain）。
+        // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后
+        // retain）+ 环境死亡掉落（非玩家击杀，spider_eye 不掉；玩家击杀
+        // 在 try_attack 即时结算，不会走到这里）。
         if health.get(e).is_some_and(|h| h.0 <= 0.0) {
+            let mut rng = spawn_rng();
+            let drops: Vec<(u16, u8)> = mcv_entity::death_drops(def.kind, false, pos, &mut rng)
+                .into_iter()
+                .filter_map(|ev| {
+                    mcv_item::item_by_name(ev.item).map(|i| (i, ev.count.min(u8::MAX as u32) as u8))
+                })
+                .collect();
+            if !drops.is_empty() {
+                let at = pos + Vec3::Y * 0.5;
+                commands.push(move |w| {
+                    let mut r = spawn_rng();
+                    for (item, count) in drops {
+                        mcv_entity::spawn_item_drop(
+                            w,
+                            at,
+                            item,
+                            count,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut r,
+                        );
+                    }
+                });
+            }
             commands.despawn(e);
         }
     });
