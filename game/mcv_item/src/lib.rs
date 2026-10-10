@@ -114,7 +114,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 59] = [
+pub static ITEMS: [ItemDef; 61] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -243,6 +243,11 @@ pub static ITEMS: [ItemDef; 59] = [
     // 追加在尾部保持旧 id 序列化稳定，堆叠沿用 Material 全局 64，原版 16
     // 的差异 def! 无 stack 参数槽、非本轮引入的引擎约定差）。
     def!("snowball", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 铁砧修料补齐（tags/item/gold_tool_materials.json = gold_ingot、
+    // netherite_tool_materials.json = netherite_ingot；旧 ITEMS 缺这两件，
+    // 金/下界具无修料）。追加在尾部保持旧 id 序列化稳定。
+    def!("gold_ingot", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("netherite_ingot", ItemKind::Material, 0.0, 0.0, 0, 0),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
@@ -288,6 +293,9 @@ pub const GRAVEL_ITEM: u16 = 56;
 pub const COBBLED_DEEPSLATE: u16 = 57;
 /// 弓（ITEMS 下标 42：`durability(384)` → 不可堆叠，见 inventory::max_stack）。
 pub const BOW: u16 = 42;
+/// 金/下界锭（58/59）：金/下界具铁砧修料（*_tool_materials tags）。
+pub const GOLD_INGOT: u16 = 58;
+pub const NETHERITE_INGOT: u16 = 59;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;
