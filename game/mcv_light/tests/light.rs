@@ -31,7 +31,7 @@ impl World {
         Self {
             voxels: vec![AIR; CHUNK_VOL],
             light: vec![0; CHUNK_VOL],
-            hm: vec![WORLD_MIN_Y; 256],
+            hm: vec![WORLD_MIN_Y as i16; 256],
         }
     }
 
@@ -645,7 +645,7 @@ fn ocean_water_column_falls_off_below_surface() {
     w.rebuild_heightmap();
     // init 不再读 heightmap（播种判据=voxels/column_top，M4 统一判据）：
     // 故意抹成全 0，旧实现会把整柱（含水）种满 15，新实现结果不变。
-    w.hm.fill(WORLD_MIN_Y);
+    w.hm.fill(WORLD_MIN_Y as i16);
     let mut c = w.chunk();
     init(&mut c);
     // 水面以上的空气是源柱：整段 15。
