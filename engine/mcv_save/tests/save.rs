@@ -1,10 +1,12 @@
-use mcv_save::{LevelMeta, RegionFile, chunk_local, chunk_region, rle_decode, rle_encode};
+use mcv_save::{
+    CHUNK_VERSION, LevelMeta, RegionFile, chunk_local, chunk_region, rle_decode, rle_encode,
+};
 
 /// Deterministic pseudo-random voxel buffer with mixed run lengths
 /// (including >255 runs to exercise the escape path). Uses u16 ids beyond
 /// 255 (900/1000) to pin the widened little-endian id encoding.
 fn sample_voxels(seed: u8) -> Vec<u16> {
-    let mut v = vec![0u16; 65536];
+    let mut v = vec![0u16; mcv_core::CHUNK_VOL];
     let mut s = seed as u32 | 1;
     let mut i = 0;
     while i < v.len() {
@@ -30,7 +32,7 @@ fn rle_roundtrip_mixed_runs() {
         let vox = sample_voxels(seed);
         let enc = rle_encode(&vox);
         assert!(enc.len() < vox.len() * 2, "rle must compress this data");
-        let mut dec = vec![0u16; 65536];
+        let mut dec = vec![0u16; mcv_core::CHUNK_VOL];
         rle_decode(&enc, &mut dec).expect("decode");
         assert_eq!(dec, vox);
     }
@@ -54,7 +56,7 @@ fn rle_u16_escape_run_boundary_id() {
 /// 楼梯朝向）必须与方块 id 一起无损存读。
 #[test]
 fn rle_roundtrip_preserves_state_nibble() {
-    let mut vox = vec![0u16; 65536];
+    let mut vox = vec![0u16; mcv_core::CHUNK_VOL];
     // acacia_slab(26) 上半 (state=1) | acacia_stairs(27) facing=2+top (state=6)
     let slab_top: u16 = 26 | (1 << 12);
     let stair: u16 = 27 | (6 << 12);
@@ -62,7 +64,7 @@ fn rle_roundtrip_preserves_state_nibble() {
     vox[300..400].fill(stair);
     vox[500] = slab_top;
     let enc = rle_encode(&vox);
-    let mut dec = vec![0u16; 65536];
+    let mut dec = vec![0u16; mcv_core::CHUNK_VOL];
     rle_decode(&enc, &mut dec).expect("decode");
     assert_eq!(dec, vox);
     assert_eq!(dec[0], slab_top);
@@ -90,40 +92,79 @@ fn region_roundtrip() {
 
     let a = sample_voxels(3);
     let b = sample_voxels(9);
-    region.save_chunk(chunk_local(0, 0), &a).expect("save a");
-    region.save_chunk(chunk_local(5, 7), &b).expect("save b");
+    // v6：v3 记录尾带 heightmap i16[256]（绝对 y，可负）——往返同锁。
+    let hm: [i16; 256] = std::array::from_fn(|i| (i as i32 - 64) as i16);
+    region.save_chunk(chunk_local(0, 0), &a, &hm).expect("save a");
+    region.save_chunk(chunk_local(5, 7), &b, &hm).expect("save b");
     assert!(region.has_chunk(chunk_local(0, 0)).unwrap());
     assert!(!region.has_chunk(chunk_local(1, 1)).unwrap());
 
-    let mut out = vec![0u16; 65536];
+    let mut out = vec![0u16; mcv_core::CHUNK_VOL];
+    let mut hm_out = [0i16; 256];
     region
-        .load_chunk(chunk_local(0, 0), &mut out)
+        .load_chunk(chunk_local(0, 0), &mut out, &mut hm_out)
         .expect("load a");
     assert_eq!(out, a);
+    assert_eq!(hm_out, hm, "heightmap 落盘往返漂移");
     region
-        .load_chunk(chunk_local(5, 7), &mut out)
+        .load_chunk(chunk_local(5, 7), &mut out, &mut hm_out)
         .expect("load b");
     assert_eq!(out, b);
+    assert_eq!(hm_out, hm);
 
     // Overwrite: smaller record reuses the slot.
-    let small = vec![1u16; 65536];
+    let small = vec![1u16; mcv_core::CHUNK_VOL];
     region
-        .save_chunk(chunk_local(0, 0), &small)
+        .save_chunk(chunk_local(0, 0), &small, &hm)
         .expect("resave");
     region
-        .load_chunk(chunk_local(0, 0), &mut out)
+        .load_chunk(chunk_local(0, 0), &mut out, &mut hm_out)
         .expect("reload");
     assert_eq!(out, small);
 }
 
+/// v3 门：rle 完整但缺 512B heightmap 尾部的记录必须拒载（不崩）。
+#[test]
+fn region_rejects_truncated_heightmap_tail() {
+    let dir = std::env::temp_dir().join("mcv_region_test_hmtail");
+    let _ = std::fs::remove_dir_all(&dir);
+    let region = RegionFile::open(&dir, 0, 0).expect("open");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(region.path())
+        .expect("reopen");
+    use std::io::{Seek, SeekFrom, Write};
+    file.seek(SeekFrom::Start(512 * 8)).expect("seek body");
+    let mut record: Vec<u8> = Vec::new();
+    record.extend_from_slice(&0u16.to_le_bytes());
+    record.push(mcv_save::CHUNK_VERSION);
+    let vox = vec![7u16; mcv_core::CHUNK_VOL];
+    let rle = rle_encode(&vox);
+    record.extend_from_slice(&(rle.len() as u32).to_le_bytes());
+    record.extend_from_slice(&rle); // 无 heightmap 尾
+    let len = record.len() as u32;
+    file.write_all(&record).expect("write");
+    file.seek(SeekFrom::Start(0)).expect("seek head");
+    file.write_all(&(512u32 * 8u32).to_le_bytes()).expect("off");
+    file.write_all(&len.to_le_bytes()).expect("len");
+    drop(file);
+
+    let mut region = RegionFile::open(&dir, 0, 0).expect("reopen");
+    let mut out = vec![0u16; mcv_core::CHUNK_VOL];
+    let mut hm = [0i16; 256];
+    assert!(
+        region.load_chunk(chunk_local(0, 0), &mut out, &mut hm).is_err(),
+        "缺 heightmap 尾的 v3 记录必须拒载"
+    );
+}
+
 #[test]
 fn region_rejects_old_version() {
-    // v1 (u8-id) records must be rejected outright: dev format, no compat.
+    // v1 (u8-id) 与 v2（256 高）都必须整拒：开发格式，无兼容义务。
     let dir = std::env::temp_dir().join("mcv_region_test_ver");
     let _ = std::fs::remove_dir_all(&dir);
     let region = RegionFile::open(&dir, 0, 0).expect("open");
-    let mut out = vec![0u16; 65536];
-    // Hand-write a fake v1 record and point the header at it.
+    // Hand-write a fake old-version record and point the header at it.
     use std::io::{Seek, SeekFrom, Write};
     let off = region.path();
     let mut file = std::fs::OpenOptions::new()
@@ -133,7 +174,7 @@ fn region_rejects_old_version() {
     file.seek(SeekFrom::Start(512 * 8)).expect("seek body");
     let mut record: Vec<u8> = Vec::new();
     record.extend_from_slice(&0u16.to_le_bytes()); // local
-    record.push(1u8); // stale v1 version byte
+    record.push(1u8); // stale version byte（下方逐版覆写）
     record.extend_from_slice(&3u32.to_le_bytes()); // rle_len (v1 encoding)
     record.extend_from_slice(&[10, 3, 10]); // 10x id 3, v1 style
     let len = record.len() as u32;
@@ -144,14 +185,25 @@ fn region_rejects_old_version() {
     file.write_all(&len.to_le_bytes()).expect("len");
     drop(file);
 
-    let mut region = RegionFile::open(&dir, 0, 0).expect("reopen");
-    let err = region
-        .load_chunk(chunk_local(0, 0), &mut out)
-        .expect_err("v1 must be rejected");
-    assert!(
-        err.to_string().contains("version"),
-        "expected a version error, got: {err}"
-    );
+    for stale in [1u8, 2u8, CHUNK_VERSION + 1] {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&off)
+            .expect("reopen");
+        file.seek(SeekFrom::Start(512 * 8 + 2)).expect("seek ver byte");
+        file.write_all(&[stale]).expect("write ver byte");
+        drop(file);
+        let mut region = RegionFile::open(&dir, 0, 0).expect("reopen");
+        let mut out = vec![0u16; mcv_core::CHUNK_VOL];
+        let mut hm = [0i16; 256];
+        let err = region
+            .load_chunk(chunk_local(0, 0), &mut out, &mut hm)
+            .expect_err("stale/future version must be rejected");
+        assert!(
+            err.to_string().contains("version"),
+            "v{stale}: expected a version error, got: {err}"
+        );
+    }
 }
 
 #[test]

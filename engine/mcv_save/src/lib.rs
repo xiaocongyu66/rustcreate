@@ -9,14 +9,19 @@
 //! - header: 512 entries of { u32 byte_offset, u32 byte_len }, offset 0 =
 //!   unused
 //! - body records, appended: { u16 chunk_local, u8 version, u32 rle_len,
-//!   rle bytes }
+//!   rle bytes, i16[256] heightmap }
 //!
 //! RLE (u16 block ids, v2+): sequence of (count u8, id u16 LE) for runs
 //! 1..=255; count 0 escapes to (0, len_lo, len_hi, id_lo, id_hi) supporting
-//! runs up to 65535. `id` is a little-endian u16 `BlockId`.
+//! runs up to 65535. `id` is a little-endian u16 `BlockId`。v6（384 域）下
+//! 定长输入为 CHUNK_VOL=98304，超 65535 的同值长程由 escape run 自动切段，
+//! 解码长度门随 out 长度走，编码侧无隐含上限。
 //!
-//! v1 (u8 ids) is *not* readable: development format, old regions are
-//! discarded and `load_chunk` reports a version error.
+//! v3 = 384 高 / min_y=-64 几何 + heightmap 落盘：记录尾追加 256×i16 LE
+//! （512B，绝对 y；对齐原版把 heightmap 原始数组直接写进 chunk NBT、读盘
+//! 不重算的做法，Heightmap.java:126 setRawData / :138 getRawData）。
+//! v1（u8 ids）与 v2（256 高）都不迁移、不读：开发格式，`load_chunk` 报
+//! 版本错误，调用方回退生成器。
 
 use std::fs;
 use std::io::{self, Read, Seek, SeekFrom, Write};
@@ -25,9 +30,11 @@ use std::path::{Path, PathBuf};
 pub const REGION_CHUNKS: usize = 16 * 16;
 pub const HEADER_SIZE: usize = REGION_CHUNKS * 8;
 const RECORD_HEADER: usize = 2 + 1 + 4;
-/// Region record format version. v2 = u16 block ids (RLE widened with the
-/// block-id u8 -> u16 migration); v1 files are rejected, not migrated.
-pub const CHUNK_VERSION: u8 = 2;
+/// Region record format version. v2 = u16 block ids（256 高时代）；v3 =
+/// 384 域 + 记录尾 heightmap i16[256]。v1/v2 一律拒载不迁移。
+pub const CHUNK_VERSION: u8 = 3;
+/// heightmap 落盘字节数：256 列 × i16（绝对 y），追加在 rle 之后。
+pub const HEIGHTMAP_BYTES: usize = 256 * 2;
 
 #[derive(Debug)]
 pub enum SaveError {
@@ -382,10 +389,15 @@ impl RegionFile {
     /// Saves one chunk (local index 0..255, (z<<4)|x within the region).
     /// Reuses the old slot when the compressed record still fits, else
     /// appends. Writes tmp + rename is unnecessary here (record granularity).
-    pub fn save_chunk(&mut self, local: u16, voxels: &[u16]) -> io::Result<()> {
+    pub fn save_chunk(
+        &mut self,
+        local: u16,
+        voxels: &[u16],
+        heightmap: &[i16; 256],
+    ) -> io::Result<()> {
         debug_assert!(voxels.len() == mcv_core::CHUNK_VOL);
         let rle = rle_encode(voxels);
-        let record_len = RECORD_HEADER + rle.len();
+        let record_len = RECORD_HEADER + rle.len() + HEIGHTMAP_BYTES;
         let header = self.read_header()?;
 
         let s = self.slot(local);
@@ -403,6 +415,9 @@ impl RegionFile {
         record.push(CHUNK_VERSION);
         record.extend_from_slice(&(rle.len() as u32).to_le_bytes());
         record.extend_from_slice(&rle);
+        for h in heightmap {
+            record.extend_from_slice(&h.to_le_bytes());
+        }
 
         self.file.seek(SeekFrom::Start(off as u64))?;
         self.file.write_all(&record)?;
@@ -416,7 +431,12 @@ impl RegionFile {
         Ok(())
     }
 
-    pub fn load_chunk(&mut self, local: u16, out: &mut [u16]) -> Result<(), SaveError> {
+    pub fn load_chunk(
+        &mut self,
+        local: u16,
+        out: &mut [u16],
+        heightmap: &mut [i16; 256],
+    ) -> Result<(), SaveError> {
         debug_assert!(out.len() == mcv_core::CHUNK_VOL);
         let header = self.read_header()?;
         let s = self.slot(local);
@@ -437,14 +457,20 @@ impl RegionFile {
         }
         let version = record[2];
         if version != CHUNK_VERSION {
-            // Dev-format break: u8-id (v1) regions are not migrated.
+            // Dev-format breaks: v1 (u8 ids) and v2 (256-high geometry)
+            // regions are rejected, not migrated. No compat obligation.
             return Err(SaveError::Corrupt("unsupported region chunk version"));
         }
         let rle_len = u32::from_le_bytes(record[3..7].try_into().unwrap()) as usize;
-        if record.len() < RECORD_HEADER + rle_len {
-            return Err(SaveError::Corrupt("short rle"));
+        if record.len() < RECORD_HEADER + rle_len + HEIGHTMAP_BYTES {
+            return Err(SaveError::Corrupt("short rle/heightmap"));
         }
-        rle_decode(&record[RECORD_HEADER..RECORD_HEADER + rle_len], out)
+        rle_decode(&record[RECORD_HEADER..RECORD_HEADER + rle_len], out)?;
+        let hm = &record[RECORD_HEADER + rle_len..RECORD_HEADER + rle_len + HEIGHTMAP_BYTES];
+        for (i, h) in heightmap.iter_mut().enumerate() {
+            *h = i16::from_le_bytes([hm[i * 2], hm[i * 2 + 1]]);
+        }
+        Ok(())
     }
 
     pub fn has_chunk(&mut self, local: u16) -> io::Result<bool> {
