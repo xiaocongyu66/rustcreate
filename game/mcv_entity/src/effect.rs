@@ -360,14 +360,17 @@ fn fires_on_interval(base: i32, amplifier: u8, tick_count: i32) -> bool {
 }
 
 /// 周期动作的结算界面（本仓自有：纯引用切片，不引入目标对象抽象）。
-pub struct TickTarget<'a> {
+/// 两个寿命分开：`'a` = 血/盾引用，`'f` = 食物/伤害队列引用——`FoodMut`
+/// 内部引用在 `&mut` 下不变（invariant），与血引用绑死会让调用方的
+/// 独立借用区无法各自收缩。
+pub struct TickTarget<'a, 'f> {
     pub health: &'a mut f32,
     pub max_health: f32,
     pub absorb: &'a mut f32,
     /// 玩家侧食物三元组（mob 无 FoodData，传 None）。
-    pub food: Option<&'a mut FoodMut<'a>>,
+    pub food: Option<&'f mut FoodMut<'f>>,
     /// 伤害出队：结算需走完整 hurt 管线（无敌帧/吸收/难度），不可就地扣。
-    pub harms: &'a mut Vec<Harm>,
+    pub harms: &'f mut Vec<Harm>,
 }
 
 /// 魔法/凋零伤害事件（damageSources().magic() / .wither()）。
@@ -695,15 +698,14 @@ impl Active {
     }
 
     /// 单条推进（MobEffectInstance.tickServer:223-240）。
-    #[allow(clippy::too_many_arguments)]
-    fn advance(
+    fn advance<'a, 'f>(
         &mut self,
         world_tick: i32,
-        health: &mut f32,
+        health: &'a mut f32,
         max_health: f32,
-        absorb: &mut f32,
-        food: Option<&mut FoodMut>,
-        harms: &mut Vec<Harm>,
+        absorb: &'a mut f32,
+        food: Option<&'f mut FoodMut<'f>>,
+        harms: &'f mut Vec<Harm>,
     ) -> bool {
         if !self.has_remaining() {
             return false;
@@ -905,12 +907,12 @@ pub fn hud_order(a: &Active, b: &Active) -> Ordering {
 mod tests {
     use super::*;
 
-    fn target<'a>(
+    fn target<'a, 'f>(
         health: &'a mut f32,
         absorb: &'a mut f32,
-        food: Option<&'a mut FoodMut>,
-        harms: &'a mut Vec<Harm>,
-    ) -> TickTarget<'a> {
+        food: Option<&'f mut FoodMut<'f>>,
+        harms: &'f mut Vec<Harm>,
+    ) -> TickTarget<'a, 'f> {
         TickTarget {
             health,
             max_health: 20.0,
