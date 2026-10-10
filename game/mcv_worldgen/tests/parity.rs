@@ -9,7 +9,7 @@
 //! `#[cfg(test)]`，已知答案 + 位模式，无 epsilon）。
 
 use mcv_core::ChunkPos;
-use mcv_worldgen::{TerrainBackend, generate_terrain_with};
+use mcv_worldgen::{generate_terrain_with, TerrainBackend};
 
 const VOL: usize = 65536;
 
@@ -54,7 +54,7 @@ fn expected_heightmap(voxels: &[u16]) -> [u8; 256] {
 fn parity_one(seed: u64, cx: i32, cz: i32) {
     let oracle = generate_terrain_with(TerrainBackend::Ffi, seed, ChunkPos::new(cx, cz))
         .expect("oracle 路径生成失败");
-    let rust = generate_terrain_with(TerrainBackend::Rust, seed, ChunkPos::new(cx, cz))
+    let rust = generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
         .expect("rust 路径生成失败");
 
     let a = oracle.voxels.as_u16_slice();
@@ -109,8 +109,8 @@ fn terrain_byte_parity_4_seeds_x_25_chunks() {
 #[test]
 fn rust_backend_deterministic_same_seed() {
     // Rust 路径自确定性（oracle 侧同类性质已由 tests/terrain.rs 锁定）。
-    let a = generate_terrain_with(TerrainBackend::Rust, 42, ChunkPos::new(3, -7)).expect("gen");
-    let b = generate_terrain_with(TerrainBackend::Rust, 42, ChunkPos::new(3, -7)).expect("gen");
+    let a = generate_terrain_with(TerrainBackend::Legacy, 42, ChunkPos::new(3, -7)).expect("gen");
+    let b = generate_terrain_with(TerrainBackend::Legacy, 42, ChunkPos::new(3, -7)).expect("gen");
     assert_eq!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
     assert_eq!(a.heightmap, b.heightmap);
 }
@@ -118,8 +118,8 @@ fn rust_backend_deterministic_same_seed() {
 #[test]
 fn rust_backend_differs_across_seeds() {
     // 种子敏感性哨兵：全 1 位（u64::MAX）与 0 的异或通路必须分叉。
-    let a = generate_terrain_with(TerrainBackend::Rust, 0, ChunkPos::new(0, 0)).expect("gen");
+    let a = generate_terrain_with(TerrainBackend::Legacy, 0, ChunkPos::new(0, 0)).expect("gen");
     let b =
-        generate_terrain_with(TerrainBackend::Rust, u64::MAX, ChunkPos::new(0, 0)).expect("gen");
+        generate_terrain_with(TerrainBackend::Legacy, u64::MAX, ChunkPos::new(0, 0)).expect("gen");
     assert_ne!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
 }
