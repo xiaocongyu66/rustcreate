@@ -22,7 +22,7 @@ use mcv_worldgen::os2s::smooth;
 /// 与 Java 参考程序（GenVec.java）完全一致的确定性点流。
 struct Stream {
     state: u64,
-    k: u64,
+    point: u64,
 }
 
 const LCG_MUL: u64 = 6364136223846793005;
@@ -30,7 +30,7 @@ const LCG_ADD: u64 = 1442695040888963407;
 
 impl Stream {
     fn new() -> Self {
-        Self { state: 0, k: 0 }
+        Self { state: 0, point: 0 }
     }
 
     fn next01(&mut self) -> f64 {
@@ -38,17 +38,18 @@ impl Stream {
         (self.state >> 11) as f64 * (1.0_f64 / (1_u64 << 53) as f64)
     }
 
-    /// 按类别产出坐标分量（k % 6 选类别）。
-    fn cat(&mut self) -> f64 {
+    /// 单分量抽取：类别由 `point % 6` 决定（GenVec.cat(k, comp) 的语义：
+    /// 一个点的 4 个分量共用同一全局点序号选类别）。
+    fn comp(&mut self, c: usize) -> f64 {
         const CAT_BASE: [f64; 6] = [0.0, -950.0, 1.0e6, 1.0e9, 0.0, 0.5];
         const CAT_SPAN: [f64; 6] = [16.0, 100.0, 2.0e6, 1.0e6, 0.5, 0.5];
-        let c = (self.k % 6) as usize;
-        self.k += 1;
         CAT_BASE[c] + (self.next01() - 0.5) * CAT_SPAN[c]
     }
 
     fn coords4(&mut self) -> (f64, f64, f64, f64) {
-        (self.cat(), self.cat(), self.cat(), self.cat())
+        let c = (self.point % 6) as usize;
+        self.point += 1;
+        (self.comp(c), self.comp(c), self.comp(c), self.comp(c))
     }
 }
 
