@@ -21,8 +21,12 @@ pub const VERTEX_STRIDE: usize = 24;
 const BARRIER: u16 = 0xFFFF;
 /// 体素 u16 打包（mesher.cpp:30-34）：bit0-11 = id，bit12-15 = 状态 nibble。
 const ID_MASK: u16 = 0x0FFF;
-/// 每格边 UV 单位 = 65535/16，16 格合并恰好铺满 u16（mesher.cpp:36-38）。
-const UV_PER_BLOCK: f32 = 4095.9375;
+/// 每格边 UV 单位 = 65535：一个方块面吃满整 tile 0..65535（mesher.cpp:36-44，
+/// 原版烘焙规则 FaceBakery.java:26-35/166 每面 sprite 满幅）。旧 65535/16 把
+/// 「1 tile」错当「16 方块」，每面只采 tile 左上 1 纹素 → 全平台纯色
+/// （2026-10-10 真机事故）。repeat 环绕来自 sampler；合并面靠 uv_coord 的
+/// mod-65536 环绕。
+const UV_PER_BLOCK: f32 = 65535.0;
 /// 水顶面下沉量（mesher.cpp:39）。
 const WATER_TOP_SINK: f32 = 0.1;
 
@@ -274,16 +278,15 @@ fn grid_axes(axis: usize) -> ([i32; 3], [i32; 3]) {
     }
 }
 
-/// 格数 → u16 UV（mesher.cpp:289-295 uv_coord）：*kUvPerBlock+0.5 后截断，
-/// 上限 65535。Rust `as` 截断语义与 C++ static_cast 一致，f32 运算逐位同。
+/// 格数 → u16 UV（mesher.cpp:293-303 uv_coord）：*kUvPerBlock+0.5 后截断，
+/// 再 mod-65536 环绕。合并面会越过一 tile；饱和在 65535 会把整个合并面
+/// 钉死在同一纹素（纯色 bug 的微缩版），环绕误差 <0.004px 由 sampler
+/// repeat 吸收。Rust `as u32` 截断语义与 C++ static_cast 一致（blocks≥0
+/// 无负值 UB 之虞），f32 运算逐位同。
 #[inline]
 fn uv_coord(blocks: f32) -> u16 {
     let scaled = blocks * UV_PER_BLOCK + 0.5;
-    if scaled >= 65535.0 {
-        65535
-    } else {
-        scaled as u16
-    }
+    (((scaled as u32) & 0xFFFF) as u16)
 }
 
 /// 切片格（mesher.cpp:117-127 Cell）：ao4 打包 4 角 × 2bit，角序 (b*2+a)。
