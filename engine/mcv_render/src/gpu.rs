@@ -2679,7 +2679,10 @@ impl Renderer {
             });
 
             // 臂（皮肤切片 0=steve；挥臂矩阵已写 player_uniform 手持槽）。
-            if self.skins_loaded {
+            // 26.1 renderArmWithItem 只在 **itemStack.isEmpty()** 时接线
+            // renderPlayerArm（:449）——手持方块/物品时臂不画，否则自定臂盒
+            // 会把更远的持物条带深度裁掉（CI 实测 sprite 图标仅余 17 px）。
+            if self.skins_loaded && matches!(hand.item, HandItem::Empty) {
                 let slice = self.player_index_slices[0][crate::player_mesh::P_R_ARM].clone();
                 pass.set_pipeline(&self.player_pipeline);
                 pass.set_bind_group(0, &self.player_bind, &[PLAYER_HAND_SLOT_OFF as u32]);

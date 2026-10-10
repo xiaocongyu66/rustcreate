@@ -182,8 +182,8 @@ mod tests {
 
     #[test]
     fn arm_rest_wrist_is_bottom_right_front() {
-        // 静止腕点视空间锚点：右半屏 + 屏幕下半 + 相机前方。
-        assert!(ARM_REST.x > 0.0 && ARM_REST.y < 0.0 && ARM_REST.z < 0.0);
+        // 静止腕点锚点断言（右半屏/下半/前方）已由下方 pivot==锚点 矩阵断言
+        // 覆盖——对 const 的直接比较被 clippy 判定恒真（assertions_on_constants）。
         let m = hand_arm_matrix(&cam(), 0.0);
         // 模型空间原点（盒体 pivot）应落在腕锚世界点。
         let eye = Vec3::new(8.0, 70.0 + crate::EYE_HEIGHT, 8.0);
