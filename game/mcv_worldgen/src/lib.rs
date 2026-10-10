@@ -8,6 +8,8 @@
 //! 与 mesher 开关同款模式；生产默认切换属后续任务。两路输出由
 //! tests/parity.rs 逐字节对拍锁定（对拍不过修 Rust 侧，禁改 cpp/**）。
 
+pub mod os2s;
+
 mod rust_noise;
 mod rust_terrain;
 
