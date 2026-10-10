@@ -19,7 +19,9 @@ pub const SCENES: [(&str, bool); 7] = [
 /// 随机批：64 区块 × 2 pass = 128 行（mesh_random_batch.tsv 顺序与此一致）。
 pub const RANDOM_BATCH_CHUNKS: usize = 64;
 
-pub const VOL: usize = 65536;
+// v6：384 高 / min_y=-64 / 海平面 63 基线——VOL 与索引公式随 core 走
+// （mcv_core::vidx，y 为绝对世界 y）。
+pub const VOL: usize = mcv_core::CHUNK_VOL;
 
 pub type Chunk = (Box<[u16; VOL]>, Box<[u8; VOL]>);
 
@@ -37,8 +39,9 @@ pub fn chunk(id: u16, light: u8) -> Chunk {
     (Box::new([id; VOL]), Box::new([light; VOL]))
 }
 
-pub fn put(vox: &mut [u16; VOL], x: usize, y: usize, z: usize, id: u16) {
-    vox[(y << 8) | (z << 4) | x] = id;
+/// `y` 为**绝对**世界 y（v6：界外由 vidx 断言拦截）。
+pub fn put(vox: &mut [u16; VOL], x: usize, y: i32, z: usize, id: u16) {
+    vox[mcv_core::vidx(x, y, z)] = id;
 }
 
 /// 按注册名查方块 id（不硬编码生成表 id）。
@@ -97,10 +100,10 @@ pub fn scene_plains() -> Chunk {
                 } else {
                     stone
                 };
-                put(&mut c.0, x, y, z, id);
+                put(&mut c.0, x, y as i32, z, id);
             }
             if (x + z) % 5 == 0 {
-                put(&mut c.0, x, h, z, flower);
+                put(&mut c.0, x, h as i32, z, flower);
             }
         }
     }
@@ -132,14 +135,14 @@ pub fn scene_cave() -> Chunk {
     for x in 0..16 {
         for z in 0..16 {
             for y in 0..14 {
-                put(&mut c.0, x, y, z, stone);
+                put(&mut c.0, x, y as i32, z, stone);
             }
         }
     }
     for x in 4..12 {
         for z in 4..12 {
             for y in 5..11 {
-                put(&mut c.0, x, y, z, 0);
+                put(&mut c.0, x, y as i32, z, 0);
             }
         }
     }
@@ -164,7 +167,7 @@ pub fn scene_water() -> Chunk {
         for z in 2..10 {
             let top = if (x + z) % 4 == 0 { 10 } else { 9 };
             for y in 8..top {
-                put(&mut c.0, x, y, z, water);
+                put(&mut c.0, x, y as i32, z, water);
             }
         }
     }
@@ -225,17 +228,18 @@ pub fn scene_noncube_mix() -> Chunk {
     c
 }
 
-/// 越界/邻域缺失语义：y=0 实心层（-Y 走 y<0 哨兵）、y=255 顶柱（+Y 走
-/// y>=256 空气、sky=15）、贴边方块对 None 邻（哨兵剔面）。
+/// 越界/邻域缺失语义：y=WORLD_MIN_Y 实心层（-Y 走 y<min 哨兵）、顶到
+/// WORLD_MAX_Y−1 的柱（+Y 走 y>=max 空气、sky=15）、贴边方块对 None 邻
+/// （哨兵剔面）。v6：边界常量随绝对域走。
 pub fn scene_bounds() -> Chunk {
     let mut c = chunk(0, 0xF0);
     let (stone, glass) = (id_of("stone"), id_of("glass"));
     for x in 0..16 {
         for z in 0..16 {
-            put(&mut c.0, x, 0, z, stone);
+            put(&mut c.0, x, mcv_core::WORLD_MIN_Y, z, stone);
         }
     }
-    for y in 0..256 {
+    for y in mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y {
         put(&mut c.0, 8, y, 8, stone);
     }
     // 贴四边的透明方块：朝 None 邻的面被哨兵剔除，透明块自身也测。
@@ -261,7 +265,7 @@ pub fn scene_light_gradient() -> Chunk {
     for y in 0..16usize {
         for x in 0..16usize {
             for z in 0..16usize {
-                let i = (y << 8) | (z << 4) | x;
+                let i = mcv_core::vidx(x, y as i32, z);
                 c.1[i] = ((((y * 13 + x * 7 + z * 3) % 16) << 4) | ((x + z) % 16)) as u8;
             }
         }
@@ -331,12 +335,12 @@ pub fn random_chunk(rng: &mut Rng) -> Chunk {
                     mcv_core::shape::Shape::Stairs => id | ((rng.below(8) as u16) << 12),
                     _ => id,
                 };
-                c.0[(y << 8) | (z << 4) | x] = raw;
+                c.0[mcv_core::vidx(x, y as i32, z)] = raw;
             }
             // 水面：洼地灌到 y=59（水顶波动 + 水下剔除 + 水间共面）。
             if h < 60 {
                 for y in h..60 {
-                    c.0[(y << 8) | (z << 4) | x] = id_of("water");
+                    c.0[mcv_core::vidx(x, y as i32, z)] = id_of("water");
                 }
             }
             // 稀疏装饰（约 1/8 列）：栅栏/半砖/楼梯/花草/火把，随机状态。
@@ -348,12 +352,12 @@ pub fn random_chunk(rng: &mut Rng) -> Chunk {
                     mcv_core::shape::Shape::Stairs => id | ((rng.below(8) as u16) << 12),
                     _ => id,
                 };
-                c.0[(h << 8) | (z << 4) | x] = raw;
+                c.0[mcv_core::vidx(x, h as i32, z)] = raw;
             }
             // 稀疏洞（约 1/16 列）：孤立空腔的六向剔除与 AO。
             if rng.below(16) == 0 && h > 6 {
                 let y = rng.below((h - 2) as u64) as usize + 1;
-                c.0[(y << 8) | (z << 4) | x] = 0;
+                c.0[mcv_core::vidx(x, y as i32, z)] = 0;
             }
         }
     }

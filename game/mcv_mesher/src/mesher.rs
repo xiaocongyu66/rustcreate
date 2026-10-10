@@ -167,13 +167,15 @@ pub(crate) struct Nb<'a> {
     pub light: [Option<&'a [u8]>; 9],
 }
 
-/// 邻域坐标取方块（mesher.cpp:139-168 block_at）：y<0 → 哨兵（实心底），
-/// y>=256 → 空气（世界顶开放）；x/z 越界折入邻区块，未加载 → 哨兵。
+/// 邻域坐标取方块（mesher.cpp:139-168 block_at）：y < WORLD_MIN_Y(−64) →
+/// 哨兵（实心底：底面不渲染、不穿底）；y ≥ WORLD_MAX_Y(320) → 空气
+/// （世界顶开放，顶面可见）；x/z 越界折入邻区块，未加载 → 哨兵。
+/// v6：y 为**绝对**世界 y，存储索引走 `mcv_core::vidx`。
 fn block_at(n: &Nb, x: i32, y: i32, z: i32) -> u16 {
-    if y < 0 {
+    if y < mcv_core::WORLD_MIN_Y {
         return BARRIER;
     }
-    if y >= 256 {
+    if y >= mcv_core::WORLD_MAX_Y {
         return 0;
     }
     let (mut x, mut z) = (x, z);
@@ -195,17 +197,17 @@ fn block_at(n: &Nb, x: i32, y: i32, z: i32) -> u16 {
     }
     match n.voxels[((cz + 1) * 3 + (cx + 1)) as usize] {
         None => BARRIER,
-        Some(arr) => arr[((y << 8) | (z << 4) | x) as usize],
+        Some(arr) => arr[mcv_core::vidx(x as usize, y, z as usize)],
     }
 }
 
 /// 光照采样（mesher.cpp:184-224 light_at）：低 nibble=方块光、高=天空光；
 /// 世界上方 sky=15/block=0，下方全 0，缺失数组全 0。返回 (sky, block)。
 fn light_at(n: &Nb, x: i32, y: i32, z: i32) -> (u8, u8) {
-    if y >= 256 {
+    if y >= mcv_core::WORLD_MAX_Y {
         return (15, 0);
     }
-    if y < 0 {
+    if y < mcv_core::WORLD_MIN_Y {
         return (0, 0);
     }
     let (mut x, mut z) = (x, z);
@@ -228,7 +230,7 @@ fn light_at(n: &Nb, x: i32, y: i32, z: i32) -> (u8, u8) {
     match n.light[((cz + 1) * 3 + (cx + 1)) as usize] {
         None => (0, 0),
         Some(arr) => {
-            let v = arr[((y << 8) | (z << 4) | x) as usize];
+            let v = arr[mcv_core::vidx(x as usize, y, z as usize)];
             (v >> 4, v & 0x0F)
         }
     }
@@ -260,18 +262,21 @@ fn corner_ao(n: &Nb, nx: i32, ny: i32, nz: i32, u: [i32; 3], v: [i32; 3], a: i32
 /// axis0: u=z v=y；axis1: u=x v=z；axis2: u=x v=y。
 fn slice_geom(axis: usize) -> (usize, usize, usize) {
     if axis == 1 {
-        (16, 16, 256)
+        (16, 16, mcv_core::CHUNK_SY)
     } else {
-        (16, 256, 16)
+        (16, mcv_core::CHUNK_SY, 16)
     }
 }
 
 /// (轴, 层, u, v) → 区块内 (x,y,z)（mesher.cpp:258-273 cell_coords）。
 fn cell_coords(axis: usize, layer: i32, u: usize, v: usize) -> (i32, i32, i32) {
+    // v6：y 分量 = 层内局部 v/layer + WORLD_MIN_Y（绝对世界 y，与
+    // block_at/light_at/顶点位置的绝对域一致）。
+    let y0 = v as i32 + mcv_core::WORLD_MIN_Y;
     match axis {
-        0 => (layer, v as i32, u as i32),
-        1 => (u as i32, layer, v as i32),
-        _ => (u as i32, v as i32, layer),
+        0 => (layer, y0, u as i32),
+        1 => (u as i32, layer + mcv_core::WORLD_MIN_Y, v as i32),
+        _ => (u as i32, y0, layer),
     }
 }
 
@@ -412,10 +417,13 @@ fn emit_quad(
     for [a, b] in CORNER_ORDER[face] {
         let uu = (u0 as i32 + a * wq) as f32;
         let vv = (v0 as i32 + b * hq) as f32;
+        // v6：顶点 y 为绝对世界 y（层/格局部量 + WORLD_MIN_Y；上传 origin
+        // 的 y 分量恒 0，见 RustMesher）。
+        let mine = mcv_core::WORLD_MIN_Y as f32;
         let (x, y, z) = match axis {
-            0 => (plane, vv, uu),
-            1 => (uu, plane, vv),
-            _ => (uu, vv, plane),
+            0 => (plane, vv + mine, uu),
+            1 => (uu, plane + mine, vv),
+            _ => (uu, vv + mine, plane),
         };
         let cu = if a != 0 { u_max } else { 0 };
         // 侧面（v 轴=世界 +y）：v=0 必须在顶边——上传行序无翻转，row 0=贴图
@@ -719,7 +727,7 @@ impl ShapeEmitter<'_, '_> {
 /// 中心块逐格扫描发射非立方模板（mesher.cpp:614-669 emit_shapes）：仅
 /// 不透明 pass 调用；生成表只出 shape 0..5，default 整盒为防御性回退。
 fn emit_shapes(n: &Nb, out: &mut MeshData) {
-    for y in 0..256 {
+    for y in mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y {
         for z in 0..16 {
             for x in 0..16 {
                 let raw = block_at(n, x, y, z);

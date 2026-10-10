@@ -10,6 +10,12 @@
 //! （防重构手滑），对拍不过修 Rust 侧。
 //!
 //! 输入规格唯一来源见 tests/golden/cases.rs（场景构造/splitmix64/行序）。
+//!
+//! **v6 基线**：384 高 / min_y=-64 / 海平面 63——本黄金件在几何升原版的
+//! 同一提交经 `GOLDEN_UPDATE=1` 通道重锚（哈希口径随 CHUNK_VOL 走）。
+//! 重生成模式：`GOLDEN_UPDATE=1 cargo test --test golden`（必须走 CI，
+//! 本机禁 cargo）——把 mesh_scenes/*.bin 与 mesh_random_batch.tsv 重写为
+//! 当前 Rust 输出，供落盘提交；平时该变量不设，测试纯断言。
 
 #[path = "golden/cases.rs"]
 mod cases;
@@ -22,6 +28,11 @@ use mcv_mesher::{MESH_OPAQUE, MESH_WATER, Mesher, Slot};
 
 fn golden_dir() -> String {
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden").to_string()
+}
+
+/// `GOLDEN_UPDATE=1`：把当前 Rust 输出写回黄金件（CI 专用重锚通道）。
+fn update_mode() -> bool {
+    std::env::var("GOLDEN_UPDATE").is_ok_and(|v| v == "1")
 }
 
 /// 场景黄金文件（mesh_scenes/）逐字节断言：u32 vc + u32 ic + 顶点 + 索引。
@@ -39,7 +50,6 @@ fn deterministic_scenes_byte_match_golden() {
         };
         for kind in [MESH_OPAQUE, MESH_WATER] {
             let path = format!("{golden}/mesh_scenes/{name}_k{kind}.bin");
-            let want = std::fs::read(&path).unwrap_or_else(|e| panic!("黄金件缺失 {path}: {e}"));
             let got = mesher.build(&slots, kind).expect("rust build");
             let mut blob = Vec::with_capacity(8 + got.vertices.len() + got.indices.len() * 4);
             blob.extend_from_slice(&got.counts().0.to_le_bytes());
@@ -48,6 +58,11 @@ fn deterministic_scenes_byte_match_golden() {
             for i in got.indices() {
                 blob.extend_from_slice(&i.to_le_bytes());
             }
+            if update_mode() {
+                std::fs::write(&path, &blob).expect("黄金重锚写入失败");
+                continue;
+            }
+            let want = std::fs::read(&path).unwrap_or_else(|e| panic!("黄金件缺失 {path}: {e}"));
             let (got_len, want_len) = (blob.len(), want.len());
             assert_eq!(
                 got_len, want_len,
@@ -64,13 +79,17 @@ fn deterministic_scenes_byte_match_golden() {
 /// in_hash 锁输入规格（cases.rs 与黄金数据不同步即红），后三列锁输出。
 #[test]
 fn random_batch_matches_golden_table() {
-    let text = std::fs::read_to_string(format!("{}/mesh_random_batch.tsv", golden_dir()))
-        .expect("黄金表应随仓库存在");
+    let tsv_path = format!("{}/mesh_random_batch.tsv", golden_dir());
+    let updating = update_mode();
+    let text = std::fs::read_to_string(&tsv_path).unwrap_or_default();
     let rows: Vec<Vec<&str>> = text
         .lines()
         .map(|l| l.split_whitespace().collect())
         .collect();
-    assert_eq!(rows.len(), RANDOM_BATCH_CHUNKS * 2, "黄金行数漂移");
+    if !updating {
+        assert_eq!(rows.len(), RANDOM_BATCH_CHUNKS * 2, "黄金行数漂移");
+    }
+    let mut new_rows: Vec<String> = Vec::with_capacity(RANDOM_BATCH_CHUNKS * 2);
 
     let mesher = Mesher::new();
     let mut rng = Rng(RANDOM_BATCH_SEED);
@@ -96,17 +115,20 @@ fn random_batch_matches_golden_table() {
             }
         }
         // 输入哈希口径：与黄金落盘驱动一致——u32 kind LE + 9×(present 字节 +
-        // 131072B 体素 LE + 65536B 光照)。
+        // CHUNK_VOL×2B 体素 LE + CHUNK_VOL B 光照)。v6：98304 → 196608+98304B。
         for kind in [MESH_OPAQUE, MESH_WATER] {
             let row = &rows[ri];
-            assert_eq!(
-                row[0],
-                format!("{:03}", ci * 2 + kind as usize + 14),
-                "行号漂移 @ {ri}"
-            );
-            assert_eq!(row[1], format!("rand{ci}"), "用例名漂移 @ {ri}");
-            assert_eq!(row[2], kind.to_string(), "kind 漂移 @ {ri}");
-            let mut input = Vec::with_capacity(4 + 9 * (1 + 131072 + 65536));
+            let want_row = !updating;
+            if want_row {
+                assert_eq!(
+                    row[0],
+                    format!("{:03}", ci * 2 + kind as usize + 14),
+                    "行号漂移 @ {ri}"
+                );
+                assert_eq!(row[1], format!("rand{ci}"), "用例名漂移 @ {ri}");
+                assert_eq!(row[2], kind.to_string(), "kind 漂移 @ {ri}");
+            }
+            let mut input = Vec::with_capacity(4 + 9 * (1 + 3 * mcv_core::CHUNK_VOL));
             input.extend_from_slice(&kind.to_le_bytes());
             for slot in &slots {
                 match slot {
@@ -120,29 +142,35 @@ fn random_batch_matches_golden_table() {
                     None => input.push(0),
                 }
             }
-            assert_eq!(
-                row[3],
-                format!("{:016x}", fnv1a(&input)),
-                "rand{ci} k{kind}: 输入哈希与黄金不符——cases.rs 输入规格漂移"
-            );
+            let in_hash = format!("{:016x}", fnv1a(&input));
+            if want_row {
+                assert_eq!(
+                    row[3], in_hash,
+                    "rand{ci} k{kind}: 输入哈希与黄金不符——cases.rs 输入规格漂移"
+                );
+            }
 
             let got = mesher.build(&slots, kind).expect("rust build");
             let (vc, ic) = got.counts();
-            assert_eq!(row[4], vc.to_string(), "rand{ci} k{kind}: 顶点数漂移");
-            assert_eq!(row[5], ic.to_string(), "rand{ci} k{kind}: 索引数漂移");
-            assert_eq!(
-                row[6],
-                format!("{:016x}", fnv1a(got.vertex_data())),
-                "rand{ci} k{kind}: 顶点字节黄金哈希漂移"
-            );
             let idx_bytes: Vec<u8> = got.indices().iter().flat_map(|i| i.to_le_bytes()).collect();
-            assert_eq!(
-                row[7],
-                format!("{:016x}", fnv1a(&idx_bytes)),
-                "rand{ci} k{kind}: 索引黄金哈希漂移"
-            );
+            let v_hash = format!("{:016x}", fnv1a(got.vertex_data()));
+            let i_hash = format!("{:016x}", fnv1a(&idx_bytes));
+            if want_row {
+                assert_eq!(row[4], vc.to_string(), "rand{ci} k{kind}: 顶点数漂移");
+                assert_eq!(row[5], ic.to_string(), "rand{ci} k{kind}: 索引数漂移");
+                assert_eq!(row[6], v_hash, "rand{ci} k{kind}: 顶点字节黄金哈希漂移");
+                assert_eq!(row[7], i_hash, "rand{ci} k{kind}: 索引黄金哈希漂移");
+            }
+            new_rows.push(format!(
+                "{:03} rand{ci} {kind} {in_hash} {vc} {ic} {v_hash} {i_hash}",
+                ci * 2 + kind as usize + 14
+            ));
             ri += 1;
         }
+    }
+    if updating {
+        assert_eq!(new_rows.len(), RANDOM_BATCH_CHUNKS * 2);
+        std::fs::write(&tsv_path, new_rows.join("\n") + "\n").expect("黄金表重锚写入失败");
     }
 }
 
@@ -216,22 +244,25 @@ fn bounds_semantics_rust_invariants() {
     let c = scene_by_name("bounds");
     let mesher = Mesher::new();
     let buf = mesher.build(&only_center(&c), MESH_OPAQUE).unwrap();
-    // y=0 层无 -Y 面（y<0 哨兵剔除）：查 flags bit0-2 != 3 且 pos.y == 0。
+    // y=WORLD_MIN_Y 层无 -Y 面（界下哨兵剔除）：查 flags bit0-2 == 3 且
+    // pos.y == WORLD_MIN_Y（v6：顶点 y 为绝对世界 y）。
+    let ymin = mcv_core::WORLD_MIN_Y as f32;
+    let ymax = mcv_core::WORLD_MAX_Y as f32;
     let mut ny_at_y0 = 0;
     for b in buf.vertex_data().chunks(24) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
-        if y == 0.0 && (flags & 7) == 3 {
+        if y == ymin && (flags & 7) == 3 {
             ny_at_y0 += 1;
         }
     }
-    assert_eq!(ny_at_y0, 0, "y=0 层不应有 -Y 面（y<0 = 实心）");
-    // y=255 柱顶 +Y 面存在且 sky=15（y>=256 = 空气、sky 15）。
+    assert_eq!(ny_at_y0, 0, "y=WORLD_MIN_Y 层不应有 -Y 面（界下 = 实心）");
+    // 柱顶 +Y 面存在且 sky=15（y>=WORLD_MAX_Y = 空气、sky 15）。
     let mut py_top_sky = None;
     for b in buf.vertex_data().chunks(24) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
-        if y == 256.0 && (flags & 7) == 2 {
+        if y == ymax && (flags & 7) == 2 {
             py_top_sky = Some(b[19]);
         }
     }
