@@ -268,7 +268,9 @@ mod tests {
         assert_eq!(peaks_valleys(1.0).to_bits(), 0x33c0_0000);
     }
 
-    /// 值域不变量（对锚点的补充哨兵，不作对拍替代）。
+    /// 值域不变量（对锚点的补充哨兵，不作对拍替代）。peaks_valleys 只对
+    /// 定义域 [-1,1] 保证值域（terrain 侧输入是 fbm2_w*2-1 ∈ [-1,1]），故
+    /// 此处以 r=v/64 ∈ [-1,1] 喂入；value2/value3 对任意输入都有界。
     #[test]
     fn ranges_hold() {
         for i in -64..=64 {
@@ -280,7 +282,7 @@ mod tests {
             assert!((0.0..1.0).contains(&h));
             assert!((0.0..1.0).contains(&value2(SEED, x, y)));
             assert!((0.0..1.0).contains(&value3(SEED, x, y, z)));
-            assert!((-1.0..=1.0).contains(&peaks_valleys(y)));
+            assert!((-1.0..=1.0).contains(&peaks_valleys(v / 64.0)));
         }
     }
 }
