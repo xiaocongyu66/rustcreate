@@ -201,6 +201,7 @@ fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
 ///   ACM:588-596）；`to_inventory=false`（死亡路径）直接掉世界——fixed_step
 ///   死亡丢弃刚清完 36 格，塞回去 = 免死漏洞；
 /// - 网格物品**逐堆掉世界**，不塞背包（CM:96-99 / IM:87-94 clearContainer）。
+///
 /// 旧实现全部塞背包、满栏 log 后静默丢弃 = 双重偏离 + 吞物，禁。
 /// ContainerScreen 镜像随屏丢弃：真数据在 craft/hotbar，每次交互已回写。
 fn close_craft(
@@ -2057,15 +2058,16 @@ impl ApplicationHandler for AppState {
                             }
                         }
                         ElementState::Released => {
-                            if self.screen == Screen::Crafting && !on_close {
-                                if let Some((cx, cy)) = cur {
-                                    let b = match button {
-                                        MouseButton::Left => 0,
-                                        MouseButton::Right => 1,
-                                        _ => 2,
-                                    };
-                                    self.craft_menu_up(cx, cy, b);
-                                }
+                            if self.screen == Screen::Crafting
+                                && !on_close
+                                && let Some((cx, cy)) = cur
+                            {
+                                let b = match button {
+                                    MouseButton::Left => 0,
+                                    MouseButton::Right => 1,
+                                    _ => 2,
+                                };
+                                self.craft_menu_up(cx, cy, b);
                             }
                         }
                     }
