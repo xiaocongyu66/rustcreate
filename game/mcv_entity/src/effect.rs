@@ -601,7 +601,9 @@ impl Active {
     ) -> Self {
         Self {
             kind,
-            amplifier: amplifier.min(MAX_AMPLIFIER),
+            // 入参已是 u8：域界 0..=255 由类型承担（原版对更宽的 int 钳
+            // 0..255，MobEffectInstance.java:81），此处无需再钳。
+            amplifier,
             duration,
             ambient,
             visible,
@@ -1392,6 +1394,9 @@ mod tests {
         let mut book = EffectBook::default();
         book.apply_simple(Kind::Speed, 10, 200);
         assert_eq!(book.amplifier(Kind::Speed), Some(200));
+        // 上限 255（MobEffectInstance.java:29）原样通过（u8 类型域即域界）。
+        book.apply_simple(Kind::Speed, 10, 255);
+        assert_eq!(book.amplifier(Kind::Speed), Some(255));
     }
 
     /// 属性汇总面（AttributeInstance.java:147-164 合成序：先加后乘）。
