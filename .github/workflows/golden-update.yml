@@ -1,14 +1,17 @@
 # 临时 job（任务板 v6 几何升原版的黄金重锚通道）：
-# `gh workflow run golden-update.yml --ref feat/geometry-384` 触发，
-# GOLDEN_UPDATE=1 跑 worldgen/mesher 两个 golden 测试重写黄金件，
-# 整体打成 artifact；本机 `gh run download` 落盘提交后本文件即删。
-# CI 三 job 的常规绿灯门不受本文件影响（只有 workflow_dispatch 触发）。
+# 触发：push 到 feat/geometry-384 且提交信息含 `[golden-update]` 标记
+# （workflow_dispatch 要求工作流先存在于默认分支，本仓默认分支是 main，
+# 故改用 push+marker 守卫）。GOLDEN_UPDATE=1 跑 worldgen/mesher 两个
+# golden 测试重写黄金件，整体打成 artifact；本机 `gh run download`
+# 落盘提交后本文件即删。无标记的 push 该 job 直接跳过，不影响常规三 job。
 name: golden-update
 on:
-  workflow_dispatch:
+  push:
+    branches: ["feat/geometry-384"]
 
 jobs:
   regen:
+    if: contains(github.event.head_commit.message, '[golden-update]')
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
