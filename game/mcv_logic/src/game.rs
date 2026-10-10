@@ -1785,7 +1785,7 @@ impl GameRuntime {
         // 预算（审计 §4.3/A2）：初始装载（门控期）放宽 8/帧，进世界后
         // 2/帧。可见网格半径 ≤ sim_dist（物理安全区 ≥ 可见区，杜绝
         // 「看得见却穿透」；待卸滞留环不建网格不占预算）。
-        let mut remesh_budget = if self.phase == GamePhase::Loading {
+        let mut remesh_budget: i32 = if self.phase == GamePhase::Loading {
             8
         } else {
             2
