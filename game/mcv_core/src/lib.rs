@@ -312,12 +312,13 @@ pub static OPACITY: [u8; GEN_BLOCKS.len()] = {
 
 /// 26.1 带 `Properties.replaceable()` 的注册名全集（对照 src-26.1
 /// `Blocks.java` 逐一提取，共 29 项：空气族 air/cave_air/void_air/
-/// structure_void、流体水与岩浆（water Blocks.java:197-205 `.replaceable()`
-/// + `.liquid()`）、雪层 snow、植被/草/藤/根族（short_grass/fern/
-/// tall_grass/large_fern/bush/leaf_litter/short_dry_grass/tall_dry_grass/
-/// seagrass/tall_seagrass/crimson_roots/warped_roots/nether_sprouts/
-/// dead_bush/hanging_roots/vine/glow_lichen）、火 fire/soul_fire、
-/// resin_clump、bubble_column、光源 light）。
+/// structure_void、流体水与岩浆（water Blocks.java:197-205 带
+/// `.replaceable()` 与 `.liquid()`）、雪层 snow、植被/草/藤/根族
+/// （short_grass/fern/tall_grass/large_fern/bush/leaf_litter/
+/// short_dry_grass/tall_dry_grass/seagrass/tall_seagrass/crimson_roots/
+/// warped_roots/nether_sprouts/dead_bush/hanging_roots/vine/glow_lichen）、
+/// 火 fire/soul_fire、resin_clump、bubble_column、光源 light）。
+///
 /// `is_replaceable` 的名字名单段；新增方块带 `.replaceable()` 时同步此处
 /// （锁定测试见 tests::replaceable_names_all_registered）。
 const REPLACEABLE_NAMES: [&str; 29] = [
