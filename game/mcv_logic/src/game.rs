@@ -855,6 +855,11 @@ impl GameRuntime {
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
+        // 被动组件（WanderState/AnimState）也要注册：mob 渲染收集器
+        // （mob_render::collect_mob_instances_in）read 全部五类组件，未注册
+        // 类型 read 会 panic。游戏内被动怪经 spawn_mob 装配（无这两组件，
+        // 视图为空表不 panic）——注册仅为收集器的读面兜底。
+        mcv_entity::register_passive_components(&mut rt.mobs_app.world);
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
