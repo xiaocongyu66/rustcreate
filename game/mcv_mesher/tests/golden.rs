@@ -293,14 +293,14 @@ fn perf_chunk() -> cases::Chunk {
                 } else {
                     stone
                 };
-                cases::put(&mut c.0, x, y, z, id);
+                cases::put(&mut c.0, x, y as i32, z, id);
             }
             for y in h..64 {
-                cases::put(&mut c.0, x, y, z, water);
+                cases::put(&mut c.0, x, y as i32, z, water);
             }
             for y in 10..40 {
                 if (x * 31 + y * 17 + z * 11) % 97 < 3 {
-                    cases::put(&mut c.0, x, y, z, 0);
+                    cases::put(&mut c.0, x, y as i32, z, 0);
                 }
             }
         }
