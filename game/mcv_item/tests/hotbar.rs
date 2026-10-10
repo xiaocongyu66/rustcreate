@@ -16,6 +16,30 @@ fn max_stack_matches_vanilla_items() {
         1,
         "附魔书不可堆叠(26.1)"
     );
+    // 弓:Items.java:1112 `BOW = …durability(384)`——Item.Properties.durability
+    // 内部即 stacksTo(1)，耐久物恒不可堆。旧白名单按 ItemKind 枚举漏了
+    // Bow(弓 64 堆 = 叠弓绕过耐久语义)；现按 max_damage>0 判定，全表
+    // 耐久物 = 13 件工具 + 弓(下表逐件锁死)，无同类漏网。
+    assert_eq!(Hotbar::max_stack(mcv_item::BOW), 1, "耐久物(durability)不可堆叠");
+    // 全表扫描：任何 max_damage>0 的物品上限必为 1。
+    for (i, d) in mcv_item::ITEMS.iter().enumerate() {
+        if d.max_damage > 0 {
+            assert_eq!(
+                Hotbar::max_stack(i as u16),
+                1,
+                "{}(durability={})不可堆叠",
+                d.name,
+                d.max_damage
+            );
+        }
+    }
+    // 端到端:两把弓不得合并成一个 2 堆,各占一格。
+    let mut h = Hotbar::empty();
+    assert!(h.add(0, ItemStack::new(mcv_item::BOW, 1)).is_none());
+    assert!(h.add(0, ItemStack::new(mcv_item::BOW, 1)).is_none());
+    assert_eq!(h.slots[0].count, 1);
+    assert_eq!(h.slots[1].item, mcv_item::BOW);
+    assert_eq!(h.slots[1].count, 1);
 }
 
 #[test]

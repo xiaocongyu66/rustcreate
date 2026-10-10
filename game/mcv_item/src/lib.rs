@@ -286,6 +286,8 @@ pub const ACACIA_SAPLING: u16 = 54;
 pub const DARK_OAK_SAPLING: u16 = 55;
 pub const GRAVEL_ITEM: u16 = 56;
 pub const COBBLED_DEEPSLATE: u16 = 57;
+/// 弓（ITEMS 下标 42：`durability(384)` → 不可堆叠，见 inventory::max_stack）。
+pub const BOW: u16 = 42;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;

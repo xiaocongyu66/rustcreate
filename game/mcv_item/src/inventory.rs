@@ -33,18 +33,20 @@ impl Hotbar {
         Self::default()
     }
 
-    /// 单种堆叠上限(vanilla Items:maxStackSize:工具/附魔书 1——Item.java
-    /// durability 注册时同步 MAX_STACK_SIZE=1、Items 附魔书 stacksTo(1);
-    /// 书=64 为 Item 默认值,16 是成书 written_book 的上限,其余 64)。
+    /// 单种堆叠上限(vanilla Items:maxStackSize:**凡带 durability 组件者
+    /// 恒 1**——`Item.Properties.durability()` 内部即 `stacksTo(1)`，
+    /// Items.java:1112 `BOW = …durability(384)` 同理；附魔书显式
+    /// stacksTo(1)；书=64 为 Item 默认值，16 是成书 written_book 的上限，
+    /// 其余 64)。旧实现按 ItemKind 白名单枚举，漏了 Bow(384 耐久却 64 堆，
+    /// 叠弓绕过耐久语义)；改为按 max_damage>0 判定，未来新增耐久物品
+    /// 自动入规、无再漏网可能。
     pub fn max_stack(item: u16) -> u8 {
         use crate::ITEMS;
-        match ITEMS[item as usize].kind {
-            ItemKind::Sword(_)
-            | ItemKind::Pickaxe(_)
-            | ItemKind::Axe(_)
-            | ItemKind::Shovel(_)
-            | ItemKind::EnchantedBook => 1,
-            _ => 64,
+        let def = &ITEMS[item as usize];
+        if def.max_damage > 0 || matches!(def.kind, ItemKind::EnchantedBook) {
+            1
+        } else {
+            64
         }
     }
 
