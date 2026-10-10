@@ -100,7 +100,10 @@ fn vs_terrain(v: VtxIn) -> VtxOut {
     var out: VtxOut;
     let world = chunk.origin.xyz + v.pos;
     out.clip = frame.view_proj * vec4<f32>(world, 1.0);
-    out.uv = vec2<f32>(v.uv) / 65535.0;
+    // uv 单位 = 1/4096 tile（mesher kUvPerBlock）：除 4096 得 tile 数，
+    // sampler repeat 平铺合并大面。此前除 65535 与 u16 满幅约定绑定，
+    // 合并面无法表达多 tile 跨度。
+    out.uv = vec2<f32>(v.uv) / 4096.0;
     out.layer = v.layer;
     let face = v.aoflags.y & 0x7u;
     let ao = f32(v.aoflags.x) / 3.0;
@@ -185,7 +188,7 @@ fn vs_water(v: VtxIn) -> WaterOut {
         world.y += sin(t * 2.2 + world.x * 0.9 + world.z * 1.1) * 0.05;
     }
     out.clip = frame.view_proj * vec4<f32>(world, 1.0);
-    out.uv = vec2<f32>(v.uv) / 65535.0;
+    out.uv = vec2<f32>(v.uv) / 4096.0;
     out.layer = v.layer;
     let face = v.aoflags.y & 0x7u;
     let sky = f32(v.lights.y);

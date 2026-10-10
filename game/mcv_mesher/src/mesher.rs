@@ -21,12 +21,14 @@ pub const VERTEX_STRIDE: usize = 24;
 const BARRIER: u16 = 0xFFFF;
 /// 体素 u16 打包（mesher.cpp:30-34）：bit0-11 = id，bit12-15 = 状态 nibble。
 const ID_MASK: u16 = 0x0FFF;
-/// 每格边 UV 单位 = 65535：一个方块面吃满整 tile 0..65535（mesher.cpp:36-44，
-/// 原版烘焙规则 FaceBakery.java:26-35/166 每面 sprite 满幅）。旧 65535/16 把
-/// 「1 tile」错当「16 方块」，每面只采 tile 左上 1 纹素 → 全平台纯色
-/// （2026-10-10 真机事故）。repeat 环绕来自 sampler；合并面靠 uv_coord 的
-/// mod-65536 环绕。
-const UV_PER_BLOCK: f32 = 65535.0;
+/// 每格边 UV 单位 = 4096（一格边 = 一整 tile；shader 除 4096.0 得 tile 数，
+/// sampler repeat 平铺，mesher.cpp:36-49）。单位是 tile 归一而非 u16 归一：
+/// 合并面跨 N 块携带 N*4096，u16 容 N≤15（贪心合并上限 `MAX_MERGE` 由此来
+/// 源）。65535/块的首版修法让 ≥2 块合并面溢出 u16，mod-65536 环绕毁掉顶点
+/// 间线性插值 → 一 tile 拉伸铺满整个合并面（真机 round 2「马赛克拉伸」）。
+const UV_PER_BLOCK: f32 = 4096.0;
+/// 单轴贪心合并上限：15 * 4096 = 61440 < 65536（u16 安全）。
+const MAX_MERGE: i32 = 15;
 /// 水顶面下沉量（mesher.cpp:39）。
 const WATER_TOP_SINK: f32 = 0.1;
 
@@ -278,15 +280,13 @@ fn grid_axes(axis: usize) -> ([i32; 3], [i32; 3]) {
     }
 }
 
-/// 格数 → u16 UV（mesher.cpp:293-303 uv_coord）：*kUvPerBlock+0.5 后截断，
-/// 再 mod-65536 环绕。合并面会越过一 tile；饱和在 65535 会把整个合并面
-/// 钉死在同一纹素（纯色 bug 的微缩版），环绕误差 <0.004px 由 sampler
-/// repeat 吸收。Rust `as u32` 截断语义与 C++ static_cast 一致（blocks≥0
-/// 无负值 UB 之虞），f32 运算逐位同。
+/// 格数 → u16 UV（mesher.cpp uv_coord）：*4096+0.5 截断。调用方保证
+/// blocks ≤ MAX_MERGE（贪心）或 ≤1（形状模板），不会溢出 u16。不做
+/// mod-wrap：顶点 uv 线性插值下环绕会把跨度折叠成一 tile 拉伸。
+/// Rust `as` 截断语义与 C++ static_cast 一致（blocks≥0），f32 逐位同。
 #[inline]
 fn uv_coord(blocks: f32) -> u16 {
-    let scaled = blocks * UV_PER_BLOCK + 0.5;
-    ((scaled as u32) & 0xFFFF) as u16
+    (blocks * UV_PER_BLOCK + 0.5) as u16
 }
 
 /// 切片格（mesher.cpp:117-127 Cell）：ao4 打包 4 角 × 2bit，角序 (b*2+a)。
@@ -395,7 +395,16 @@ fn emit_quad(
             _ => (uu, vv, plane),
         };
         let cu = if a != 0 { u_max } else { 0 };
-        let cv = if b != 0 { v_max } else { 0 };
+        // 侧面（v 轴=世界 +y）：v=0 必须在顶边——上传行序无翻转，row 0=贴图
+        // 顶边（草裙），shader coord.y=0 采 row 0。旧约定 v 随 y 增 → 草裙
+        // 落在方块底部（真机 round 2）。顶/底面（v 轴=z）方向不敏感。
+        let cv = if axis != 1 {
+            if b != 0 { 0 } else { v_max }
+        } else if b != 0 {
+            v_max
+        } else {
+            0
+        };
         let ao = (anchor.ao4 >> (2 * (b as u8 * 2 + a as u8))) & 0x3;
         out.push_vertex(x, y, z, cu, cv, anchor, ao, flags);
     }
@@ -486,7 +495,13 @@ impl ShapeEmitter<'_, '_> {
             pos[u_axis] = if a != 0 { bmax[u_axis] } else { bmin[u_axis] };
             pos[v_axis] = if bq != 0 { bmax[v_axis] } else { bmin[v_axis] };
             let cu = uv_coord(pos[u_axis]);
-            let cv = uv_coord(pos[v_axis]);
+            // 侧面：盒内 y 镜像，v=0 落在盒顶（约定同 emit_quad）。
+            let v_uv_pos = if v_axis == 1 {
+                bmax[v_axis] + bmin[v_axis] - pos[v_axis]
+            } else {
+                pos[v_axis]
+            };
+            let cv = uv_coord(v_uv_pos);
             let ao = corner_ao(self.n, nx, ny, nz, u_ax, v_ax, a, bq);
             self.out.push_vertex(
                 pos[0] + self.x as f32,
@@ -542,7 +557,8 @@ impl ShapeEmitter<'_, '_> {
                 [1.0, 1.0, 0.0],
             ],
         ];
-        let cuv = [[0u16, 0], [u_max, 0], [u_max, v_max], [0, v_max]];
+        // 底角（y=0）v=v_max、顶角 v=0：row 0=贴图顶边须落方块顶（同 emit_quad）。
+        let cuv = [[0u16, v_max], [u_max, v_max], [u_max, 0], [0, 0]];
         for diag in DIAGONALS {
             let base = self.out.vertex_base();
             for k in 0..4 {
@@ -844,8 +860,10 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                         }
                         let key = cells[i];
 
+                        // MAX_MERGE 上限：uv 跨度 = 连长*4096 必须容于 u16
+                        //（UV_PER_BLOCK 注释）。
                         let mut wq = 1i32;
-                        while u + (wq as usize) < gu {
+                        while u + (wq as usize) < gu && wq < MAX_MERGE {
                             let j = v * gu + (u + wq as usize);
                             if visited[j] != 0 || !same_key(&key, &cells[j]) {
                                 break;
@@ -855,7 +873,7 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
 
                         let mut hq = 1i32;
                         let mut grew = true;
-                        while v + (hq as usize) < gv && grew {
+                        while v + (hq as usize) < gv && grew && hq < MAX_MERGE {
                             for k in 0..(wq as usize) {
                                 let j = (v + (hq as usize)) * gu + u + k;
                                 if visited[j] != 0 || !same_key(&key, &cells[j]) {

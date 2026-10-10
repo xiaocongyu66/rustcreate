@@ -78,10 +78,10 @@ fn decode(buf: &MeshBuffer) -> Vec<Vtx> {
         .collect()
 }
 
-/// UV 单位回归（2026-10-10 真机纯色事故）：一个方块面必须横跨整 tile
-/// 0..65535。旧实现 kUvPerBlock=65535/16 把「1 tile」当「16 方块」，
-/// 每面只采样 tile 左上 1 纹素 → 全平台纯色。原版烘焙规则：每个面吃满
-/// sprite 满幅 0..1（FaceBakery.java:26-35/166）。
+/// UV 单位回归（2026-10-10 真机事故两轮）：一个方块面横跨一整 tile =
+/// 4096 单位（shader 除 4096 得 tile 数）。第一代 bug：kUvPerBlock=
+/// 65535/16 每面只采 1 纹素=纯色；第二代 bug：65535/块使 ≥2 块合并面
+/// u16 溢出环绕=拉伸。原版烘焙：每面吃满 sprite 满幅（FaceBakery.java:26-35/166）。
 #[test]
 fn uv_spans_full_tile_per_block() {
     let mesher = Mesher::new(1 << 20).unwrap();
@@ -96,17 +96,18 @@ fn uv_spans_full_tile_per_block() {
             let hi = quad.iter().map(|v| v.uv[axis] as i32).max().unwrap();
             assert_eq!(
                 hi - lo,
-                65535,
-                "quad {qi} uv axis {axis}: single block must span full tile, got {lo}..{hi}"
+                4096,
+                "quad {qi} uv axis {axis}: single block must span one tile (4096), got {lo}..{hi}"
             );
         }
     }
 }
 
-/// 贪心合并面的 uv 环绕：2 方块宽的面跨度 = 2×65535 mod 65536 = 65534
-/// （旧 saturate-at-65535 写法会把合并面钉死在 tile 边界=纯色）。
+/// 贪心合并面 uv：2 方块宽面跨度 = 8192（2 tile），**无环绕**——
+/// 顶点 uv 线性插值下 mod-wrap 会折叠跨度、一 tile 拉伸铺满合并面
+/// （真机 round 2「马赛克拉伸」签名）。
 #[test]
-fn greedy_merged_face_uv_wraps_past_one_tile() {
+fn greedy_merged_face_uv_spans_multiple_tiles() {
     let mesher = Mesher::new(1 << 20).unwrap();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
@@ -118,13 +119,45 @@ fn greedy_merged_face_uv_wraps_past_one_tile() {
         (0..2).any(|axis| {
             let lo = q.iter().map(|v| v.uv[axis] as i32).min().unwrap();
             let hi = q.iter().map(|v| v.uv[axis] as i32).max().unwrap();
-            hi - lo == 65534
+            hi - lo == 8192
         })
     });
     assert!(
         merged,
-        "2-block merged face must wrap uv mod 65536 (expect span 65534)"
+        "2-block merged face must carry span 8192 (2 tiles, no u16 wrap)"
     );
+}
+
+/// 侧面 v 方向：贴图 row 0（PNG 顶行=草裙）无翻转上传后落在采样
+/// coord.y=0，所以顶角顶点（y 大）uv.v=0、底角 uv.v=4096。此前 v 随 y
+/// 增，真机草裙全部倒挂（round 2）。数据走真 mesher，非手写 quad。
+#[test]
+fn side_face_uv_v0_at_top_edge() {
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, 3);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+
+    let mut sides = 0;
+    for (qi, quad) in decode(&buf).chunks(4).enumerate() {
+        let ys: Vec<f32> = quad.iter().map(|v| v.pos[1]).collect();
+        let ymin = ys.iter().cloned().fold(f32::INFINITY, f32::min);
+        let ymax = ys.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+        if (ymax - ymin) < 0.5 {
+            continue; // top/bottom face: constant y
+        }
+        sides += 1;
+        for v in quad {
+            let want = if v.pos[1] > ymin + 0.25 { 0i32 } else { 4096 };
+            assert_eq!(
+                v.uv[1] as i32, want,
+                "side quad {qi}: vertex y={} must have v={want} (v=0 at top), got {}",
+                v.pos[1], v.uv[1]
+            );
+        }
+    }
+    assert_eq!(sides, 4, "one floating block = exactly 4 side quads");
 }
 
 #[test]

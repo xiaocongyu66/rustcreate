@@ -33,14 +33,19 @@ constexpr uint16_t kBarrier = 0xFFFF;
 #define MCV_ID(v) ((v) &0x0FFFu)
 #define MCV_STATE(v) (((v) >> 12) & 0xFu)
 
-/* UV units per block edge: one block edge spans a FULL tile (65535),
- * matching the vanilla bake rule where every face covers the sprite's
- * entire 0..1 uv range (FaceBakery.java:26-35/166 — per-block full-uv).
- * The old 65535/16 treated a tile as 16 blocks wide, so every face
- * sampled only the tile's top-left texel → flat tint-colored blocks on
- * all backends (2026-10-10 real-device incident). Repeat wrap comes from
- * the sampler; merged quads rely on mod-65536 wrap in uv_coord. */
-constexpr float kUvPerBlock = 65535.0f;
+/* UV units per block edge: one block edge spans ONE FULL TILE = 4096
+ * units; the shader divides by 4096.0 to get tile counts and the sampler
+ * repeats (vanilla bake rule: every face covers the sprite's entire 0..1
+ * uv range, FaceBakery.java:26-35/166). Units are tile-normalized, not
+ * u16-normalized: a merged greedy quad spanning N blocks carries N*4096
+ * units, which u16 holds for N ≤ 15 — greedy growth is capped at
+ * kMaxMerge for exactly this reason. The first fix used 65535/block, so
+ * merged faces ≥2 blocks overflowed u16 and the mod-65536 wrap corrupted
+ * the linearly-interpolated coordinate → one tile stretched over the
+ * whole merged face ("mosaic stretch", 2026-10-10 device round 2). */
+constexpr float kUvPerBlock = 4096.0f;
+/* Max greedy run per axis: 15 * 4096 = 61440 < 65536 (u16 safe). */
+constexpr int kMaxMerge = 15;
 constexpr float kWaterTopSink = 0.1f;
 
 enum FaceId {
@@ -292,13 +297,10 @@ void grid_axes(int axis, int* ux, int* uy, int* uz, int* vx, int* vy,
 }
 
 uint16_t uv_coord(float blocks) {
-    /* Merged quads run past one tile; wrap mod 65536 (u16) keeps the
-     * repeat-wrapped coordinate (max error 1/65535 texel < 0.004px).
-     * Saturating at 65535 here would pin the whole merged face to one
-     * texel — the flat-color bug in miniature. */
-    float scaled = blocks * kUvPerBlock + 0.5f;
-    uint32_t wrapped = static_cast<uint32_t>(scaled) & 0xFFFFu;
-    return static_cast<uint16_t>(wrapped);
+    /* Callers guarantee blocks ≤ kMaxMerge (greedy cap) or ≤1 (shape
+     * templates), so blocks*4096 never overflows u16. No mod-wrap: with
+     * linear vertex interpolation a wrap would collapse the span. */
+    return static_cast<uint16_t>(blocks * kUvPerBlock + 0.5f);
 }
 
 bool same_key(const Cell& a, const Cell& b) {
@@ -364,7 +366,14 @@ void emit_quad(std::vector<QuadVertex>& verts, std::vector<uint32_t>& indices,
             z = plane;
         }
         const uint16_t cu = a != 0 ? u_max : 0;
-        const uint16_t cv = b != 0 ? v_max : 0;
+        /* Sides (v axis = world +y): v=0 must sit at the TOP edge —
+         * texture row 0 is the image top (grass fringe), uploaded with no
+         * flip, and the shader samples coord.y=0 at row 0. The old
+         * convention grew v with y, putting the fringe at the block
+         * bottom (device round 2). Top/bottom faces (v axis = z) are
+         * direction-agnostic noise textures. */
+        const uint16_t cv =
+            (axis != 1) ? (b != 0 ? 0 : v_max) : (b != 0 ? v_max : 0);
         const uint8_t ao =
             static_cast<uint8_t>((anchor.ao4 >> (2 * (b * 2 + a))) & 0x3);
         push_vertex(verts, x, y, z, cu, cv, anchor, ao, flags);
@@ -454,7 +463,12 @@ void emit_box_face(const Neighborhood& n, std::vector<QuadVertex>& verts,
         pos[u_axis] = a != 0 ? bmax[u_axis] : bmin[u_axis];
         pos[v_axis] = bq != 0 ? bmax[v_axis] : bmin[v_axis];
         const uint16_t cu = uv_coord(pos[u_axis]);
-        const uint16_t cv = uv_coord(pos[v_axis]);
+        /* Side faces: mirror y within the box so v=0 lands on the box top
+         * (see emit_quad comment for the texture-row convention). */
+        const float v_uv_pos = v_axis == 1
+                                  ? bmax[v_axis] + bmin[v_axis] - pos[v_axis]
+                                  : pos[v_axis];
+        const uint16_t cv = uv_coord(v_uv_pos);
         const uint8_t ao =
             corner_ao(n, nx, ny, nz, ux, uy, uz, vx, vy, vz, a, bq);
         push_vertex(verts, pos[0] + static_cast<float>(x),
@@ -496,12 +510,15 @@ void emit_cross(const Neighborhood& n, std::vector<QuadVertex>& verts,
     const uint16_t u_max = uv_coord(1.0f);
     const uint16_t v_max = uv_coord(1.0f);
     const uint8_t flags = static_cast<uint8_t>(kFacePy);
-    /* 每条对角线 4 角：底1 底2 顶2 顶1（u 沿对角线、v 沿 y）。 */
+    /* 每条对角线 4 角：底1 底2 顶2 顶1（u 沿对角线、v 沿 y）。
+     * v 翻转：底角取 v_max、顶角取 0——row 0 是贴图顶边（花/苗的顶部），
+     * 须落在方块顶（真机 round 2：v 随 y 增导致植物倒立）。 */
     const float corners[2][4][3] = {
         {{0, 0, 0}, {1, 0, 1}, {1, 1, 1}, {0, 1, 0}},
         {{1, 0, 0}, {0, 0, 1}, {0, 1, 1}, {1, 1, 0}},
     };
-    const uint16_t cuv[4][2] = {{0, 0}, {u_max, 0}, {u_max, v_max}, {0, v_max}};
+    const uint16_t cuv[4][2] = {
+        {0, v_max}, {u_max, v_max}, {u_max, 0}, {0, 0}};
     for (const auto& diag : corners) {
         const uint32_t base = static_cast<uint32_t>(verts.size());
         for (int k = 0; k < 4; ++k) {
@@ -771,8 +788,10 @@ void build_pass(const Neighborhood& n, bool water_pass,
                         }
                         const Cell key = cells[i];
 
+                        /* kMaxMerge cap: uv span = run * 4096 must fit u16
+                         * (see kUvPerBlock comment). */
                         int wq = 1;
-                        while (u + wq < g.gu) {
+                        while (u + wq < g.gu && wq < kMaxMerge) {
                             const size_t j = cell_idx(v, u + wq);
                             if (visited[j] || !same_key(key, cells[j])) {
                                 break;
@@ -782,7 +801,7 @@ void build_pass(const Neighborhood& n, bool water_pass,
 
                         int hq = 1;
                         bool grew = true;
-                        while (v + hq < g.gv && grew) {
+                        while (v + hq < g.gv && grew && hq < kMaxMerge) {
                             for (int k = 0; k < wq; ++k) {
                                 const size_t j = cell_idx(v + hq, u + k);
                                 if (visited[j] || !same_key(key, cells[j])) {
