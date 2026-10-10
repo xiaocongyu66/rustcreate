@@ -70,8 +70,7 @@ const SEEDS: [i64; 8] = [
 fn os2s_bitwise_parity_with_official_java() {
     let mut s = Stream::new();
     for m in 0..10 {
-        for si in 0..8 {
-            let seed = SEEDS[si];
+        for (si, &seed) in SEEDS.iter().enumerate() {
             for p in 0..64 {
                 let want = f32::from_bits(os2s_golden::GOLDEN[m][si * 64 + p]);
                 let (x, y, z, w) = s.coords4();

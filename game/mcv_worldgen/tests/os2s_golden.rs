@@ -6,7 +6,7 @@
 //! 本文件逐值一致，golden.txt/golden2.txt/golden4.txt 三份固化输出亦与
 //! 复跑输出逐字节相同。
 
-pub const GOLDEN: [[u32; 512]; 10] = [
+pub static GOLDEN: [[u32; 512]; 10] = [
     [
         // noise2
         // seed 0

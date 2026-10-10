@@ -48,8 +48,8 @@ fn biome_distribution_in_bands() {
             total += 1;
         }
     }
-    for (b, c) in counts {
-        let pct = 100.0 * c as f64 / total as f64;
+    for (b, c) in &counts {
+        let pct = 100.0 * *c as f64 / total as f64;
         assert!(
             (2.0..=35.0).contains(&pct),
             "群系 {b:?} 占比 {pct:.2}% 越带（c={c} total={total}）"
