@@ -1514,7 +1514,7 @@ impl AppState {
         };
         let mut extra: Vec<mcv_item::ItemStack> = Vec::new();
         let mut items: Vec<mcv_ui::slot::StackRef> = Vec::new();
-        let mut carried = mcv_ui::slot::StackRef::default();
+        let carried;
         {
             let craft = self.craft.as_ref().unwrap();
             items.push(
@@ -1875,7 +1875,7 @@ impl ApplicationHandler for AppState {
                 // ContainerScreen 内；非容器屏的世界丢弃 = 审计 #54 债）。
                 // 先于 runtime 借用处理：craft_key_throw 需要 &mut self。
                 if state == ElementState::Pressed
-                    && code == KeyCode::Q
+                    && code == KeyCode::KeyQ
                     && self.screen == Screen::Crafting
                 {
                     let whole = self.ctrl_held;
