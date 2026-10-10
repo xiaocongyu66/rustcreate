@@ -839,6 +839,8 @@ pub struct Scene<'a> {
     pub overlay: Option<MiningOverlay>,
     /// 眼睛在水中（Player.isEyeInFluid(WATER)）：帧雾切水下参数
     /// （26.1 水下视距骤减；GameRuntime::eye_under_water 喂入）。
+    /// 渲染侧内部再做迟滞（[`step_underwater_hysteresis`]）：game 层对
+    /// 眼位 `floor()` 直测，水面处逐帧翻转，迟滞防整屏雾闪。
     pub underwater: bool,
     /// 粒子引擎：(池, 帧内 tick 进度 partialTickTime 0..1)；None 不画
     /// （crack overlay 后、水前，26.1 translucent 序）。
@@ -860,6 +862,32 @@ pub struct FrameStats {
     pub opaque_draws: u32,
     /// 本帧 water draw_indexed 次数（逐成员分段，与逐块绘制同粒度）。
     pub water_draws: u32,
+}
+
+/// 水下雾翻转迟滞（渲染侧内部状态步进；缺陷 3「水面处整屏雾逐帧翻转」）。
+/// game 层 `eye_under_water` 对眼位方块 `floor()` 直测（无原版
+/// `Camera.getFluidInCamera` 的过渡语义，FogRenderer.java:207-209），
+/// 眼位骑在水面线上时每帧 0/1 抖动 → 雾色/端点整屏闪。这里要求连续
+/// [`UNDERWATER_CONFIRM_FRAMES`] 帧反方向意见才翻转确认态（原版雾本身
+/// 有 FogRenderer 过渡计时，我们无逐帧 fog lerp，用帧计数等效防抖）。
+/// 状态 = (确认态, 连续反向计数)。
+pub const UNDERWATER_CONFIRM_FRAMES: u32 = 5;
+
+/// 纯函数便于单测：返回 (新确认态, 新状态)。confirm=1 即无迟滞。
+pub fn step_underwater_hysteresis(
+    state: (bool, u32),
+    raw: bool,
+    confirm: u32,
+) -> (bool, (bool, u32)) {
+    let (confirmed, run) = state;
+    if raw == confirmed {
+        return (confirmed, (confirmed, 0));
+    }
+    let run = run + 1;
+    if run >= confirm.max(1) {
+        return (raw, (raw, 0));
+    }
+    (confirmed, (confirmed, run))
 }
 
 pub struct Renderer {
@@ -926,6 +954,9 @@ pub struct Renderer {
     hand_bind: wgpu::BindGroup,
     hand_terrain_vbuf: wgpu::Buffer,
     hand_terrain_ibuf: wgpu::Buffer,
+    /// 水下雾迟滞状态 (确认态, 连续反向计数)，见
+    /// [`step_underwater_hysteresis`]。
+    underwater_state: (bool, u32),
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -2564,6 +2595,7 @@ impl Renderer {
             overlay_ibuf,
             outline_vbuf,
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
+            underwater_state: (false, 0),
             tint_grass,
             tint_foliage,
             particles,
@@ -2778,6 +2810,15 @@ impl Renderer {
         let eye = cam.pos + glam::Vec3::new(0.0, crate::EYE_HEIGHT, 0.0);
         let vp = cam.view_proj();
 
+        // 水下旗标迟滞：raw=game 层逐帧 floor() 直测值，确认态防抖
+        // （见 [`step_underwater_hysteresis`]）。
+        let (underwater, next_state) = step_underwater_hysteresis(
+            self.underwater_state,
+            scene.underwater,
+            UNDERWATER_CONFIRM_FRAMES,
+        );
+        self.underwater_state = next_state;
+
         let uniforms = FrameUniforms {
             view_proj: vp.to_cols_array_2d(),
             cam_pos_time: [eye.x, eye.y, eye.z, scene.time],
@@ -2788,11 +2829,15 @@ impl Renderer {
                 scene.day_factor,
             ],
             // 雾：常规 = 基线 0.006 × 天气乘子（雨雾距收缩的 exp 映射，
-            // AtmosphericFogEnvironment.java:70-73）；水下 = 高密度短视距
-            // 覆盖（26.1 水下能见度骤减；fog_factor = exp2(-dist·x)，
-            // x=0.05 → 20 m 处透过 0.5）。
-            fog_params: if scene.underwater {
-                [0.05, 0.0, 32.0, 0.0]
+            // AtmosphericFogEnvironment.java:70-73）；水下 = 原版线性雾端点
+            // 照抄 WATER_FOG_START/END_DISTANCE = −8/96、雾色
+            // WATER_FOG_COLOR 0x050533（EnvironmentAttributes.java:33-41、
+            // WaterFogEnvironment.java:16-38——end×waterVision 因本仓无该
+            // 通路按 1.0，登记债；FogRenderer.java:148-166 提亮同债）。
+            // 旧 [0.05,·,32,·] exp 近似（20 m 透过 0.5，96 m 视野被提前
+            // 糊死）与雾色混天空蓝均系偏离，已换（水下旗标经迟滞）。
+            fog_params: if underwater {
+                [0.0, -8.0, 96.0, 1.0]
             } else {
                 [0.006 * scene.fog_density_mult, 0.0, cam.far * 0.95, 0.0]
             },
@@ -3346,4 +3391,41 @@ fn flatten_hud(quads: &[HudQuad]) -> (Vec<HudVertex>, Vec<u32>) {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
     (verts, indices)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::step_underwater_hysteresis as step;
+
+    /// 迟滞语义锁：抖动输入不翻转确认态；持续反向 N 帧才翻转，且
+    /// 翻转后计数归零（下一次反向同样需要 N 帧）。
+    #[test]
+    fn underwater_hysteresis_debounce() {
+        // 逐帧 0/1 交替（水面骑线抖动）：5 帧确认阈值下永不翻转。
+        let mut st = (false, 0u32);
+        for i in 0..200 {
+            let (confirmed, next) = step(st, i % 2 == 1, 5);
+            assert!(!confirmed, "交替抖动不应翻转确认态（第 {i} 帧）");
+            st = next;
+        }
+        // 持续反向：前 4 帧不翻，第 5 帧翻。
+        let mut st = (false, 0);
+        for i in 0..4 {
+            let (confirmed, next) = step(st, true, 5);
+            assert!(!confirmed, "第 {} 帧未到确认阈值", i + 1);
+            st = next;
+        }
+        let (confirmed, st) = step(st, true, 5);
+        assert!(confirmed, "连续 5 帧反向必须翻转（否则水下雾永不生效）");
+        // 翻转后抖动同样被吸收。
+        let (confirmed, _) = step(st, false, 5);
+        assert!(confirmed, "翻转后 1 帧反向不得回切");
+    }
+
+    /// confirm=1 退化为直通（无迟滞），供参数含义自证。
+    #[test]
+    fn underwater_hysteresis_passthrough_at_one() {
+        let (confirmed, _) = step((false, 0), true, 1);
+        assert!(confirmed);
+    }
 }

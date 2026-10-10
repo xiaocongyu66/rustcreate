@@ -10,10 +10,22 @@ struct FrameUniforms {
     fog_params: vec4<f32>,
 };
 
-// 复用 terrain 的 lightmap 亮度曲线（lightmap.fsh 乘序：先 get_brightness
-// 曲线再乘昼夜因子），CPU 侧逐顶点预算成标量传下来。
+// 雾语义与 terrain.wgsl 同步（gpu.rs 同一份 fog_params）：w≤0.5 = exp2 密度
+//（x）；w>0.5 = 水下，线性 fog.y..fog.z（−8..96，EnvironmentAttributes.java:
+// 36-41）+ 雾色 WATER_FOG_COLOR 0x050533（EnvironmentAttributes.java:33-35）。
 fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
+    if (fog.w > 0.5) {
+        return clamp((fog.z - dist) / (fog.z - fog.y), 0.0, 1.0);
+    }
     return exp2(-dist * fog.x);
+}
+
+fn fog_color(fog: vec4<f32>) -> vec3<f32> {
+    if (fog.w > 0.5) {
+        return vec3<f32>(5.0, 5.0, 51.0) / 255.0;
+    }
+    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
+    return mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, frame.sun_dir_day.w);
 }
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
@@ -65,10 +77,7 @@ fn fs_particle(v: PVertOut) -> @location(0) vec4<f32> {
         discard;
     }
     let fog = fog_factor(v.dist, frame.fog_params);
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    let day = frame.sun_dir_day.w;
-    let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
     let lit = tex.rgb * v.color.rgb * v.light;
-    let rgb = mix(fog_color, lit, fog);
+    let rgb = mix(fog_color(frame.fog_params), lit, fog);
     return vec4<f32>(rgb, tex.a * v.color.a);
 }
