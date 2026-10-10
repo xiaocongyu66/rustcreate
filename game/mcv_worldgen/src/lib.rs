@@ -9,6 +9,7 @@
 //! tests/parity.rs 逐字节对拍锁定（对拍不过修 Rust 侧，禁改 cpp/**）。
 
 pub mod os2s;
+pub mod vanilla;
 
 mod rust_noise;
 mod rust_terrain;
