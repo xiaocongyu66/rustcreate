@@ -146,7 +146,7 @@ fn info_of(base: u16) -> &'static Info {
 /// 不透明判定（mesher.cpp:179-182 is_opaque）：哨兵先行；真 id 走表。
 #[inline]
 fn is_opaque(raw: u16) -> bool {
-    raw >= BARRIER || info_of(raw & ID_MASK).opaque
+    raw == BARRIER || info_of(raw & ID_MASK).opaque
 }
 
 /// 3x3 邻域（mesher.cpp:100-103 Neighborhood）：行主序 dz 外/dx 内，
@@ -226,6 +226,8 @@ fn light_at(n: &Nb, x: i32, y: i32, z: i32) -> (u8, u8) {
 
 /// 单角 AO（mesher.cpp:226-241 corner_ao）：s1/s2/corner 是暴露层里贴住
 /// 该角的三个格子；s1&&s2 → 0，否则 3-(s1+s2+c)。
+// 参数列与 oracle 同构（邻格 + u/v 轴 + 角偏移），语义单元不可再拆。
+#[allow(clippy::too_many_arguments)]
 fn corner_ao(n: &Nb, nx: i32, ny: i32, nz: i32, u: [i32; 3], v: [i32; 3], a: i32, b: i32) -> u8 {
     let du = if a != 0 { 1 } else { -1 };
     let dv = if b != 0 { 1 } else { -1 };
@@ -317,6 +319,7 @@ pub struct MeshData {
 }
 
 impl MeshData {
+    #[allow(clippy::too_many_arguments)]
     fn push_vertex(
         &mut self,
         x: f32,
@@ -330,6 +333,7 @@ impl MeshData {
     ) {
         // mesher.cpp:303-320 push_vertex 的平铺表达：手写 LE 字节保证布局
         // 与 C++ 结构体逐字节一致（偏移 0/12/16/18/19/20/21，pad=0）。
+        // 参数列与 oracle 同构（一条顶点的全部字段），不可再拆。
         self.vertices.extend_from_slice(&x.to_le_bytes());
         self.vertices.extend_from_slice(&y.to_le_bytes());
         self.vertices.extend_from_slice(&z.to_le_bytes());
@@ -379,9 +383,7 @@ fn emit_quad(
     let v_max = uv_coord(hq as f32);
     let flags = (face as u8) | if anchor.wave != 0 { 0x08 } else { 0x00 };
     let base = out.vertex_base();
-    for k in 0..4 {
-        let a = CORNER_ORDER[face][k][0];
-        let b = CORNER_ORDER[face][k][1];
+    for [a, b] in CORNER_ORDER[face] {
         let uu = (u0 as i32 + a * wq) as f32;
         let vv = (v0 as i32 + b * hq) as f32;
         let (x, y, z) = match axis {
@@ -438,7 +440,7 @@ impl ShapeEmitter<'_, '_> {
     /// 采样暴露邻格 (nx,ny,nz)（mesher.cpp:437,451-452）。
     fn box_face(&mut self, info: &Info, b: &Box3, face: usize, expose: bool) {
         let axis = face / 2;
-        let step: i32 = if face % 2 == 0 { 1 } else { -1 };
+        let step: i32 = if face.is_multiple_of(2) { 1 } else { -1 };
         let nx = self.x + if axis == 0 { step } else { 0 };
         let ny = self.y + if axis == 1 { step } else { 0 };
         let nz = self.z + if axis == 2 { step } else { 0 };
@@ -457,23 +459,25 @@ impl ShapeEmitter<'_, '_> {
         };
         let (u_ax, v_ax) = (unit(u_axis), unit(v_axis));
 
-        let mut c = Cell::default();
-        c.tex = info.tiles[face];
-        c.visible = 1;
         let (sky, blk) = light_at(self.n, nx, ny, nz);
-        c.sky = sky;
-        c.blk = blk;
+        let c = Cell {
+            id: 0,
+            tex: info.tiles[face],
+            sky,
+            blk,
+            ao4: 0,
+            wave: 0,
+            visible: 1,
+        };
 
-        let plane = if face % 2 == 0 {
+        let plane = if face.is_multiple_of(2) {
             bmax[axis]
         } else {
             bmin[axis]
         };
         let flags = face as u8;
         let base = self.out.vertex_base();
-        for k in 0..4 {
-            let a = CORNER_ORDER[face][k][0];
-            let bq = CORNER_ORDER[face][k][1];
+        for [a, bq] in CORNER_ORDER[face] {
             let mut pos = [0.0f32; 3];
             pos[axis] = plane;
             pos[u_axis] = if a != 0 { bmax[u_axis] } else { bmin[u_axis] };
@@ -502,16 +506,20 @@ impl ShapeEmitter<'_, '_> {
         }
     }
 
-    /// 十字植物（mesher.cpp:475-513 emit_cross）：两条对角双面 quad（正面
-    /// + 反面索引各 6，不透明管线开背面剔除）；ao 恒 3；flags 用 +Y 光照档；
+    /// 十字植物（mesher.cpp:475-513 emit_cross）：两条对角双面 quad，正面、
+    /// 反面索引各 6（不透明管线开背面剔除）；ao 恒 3；flags 用 +Y 光照档；
     /// 光照取方块自身所在格（植物不遮挡所在格光照）。
     fn cross(&mut self, info: &Info) {
-        let mut c = Cell::default();
-        c.tex = info.tiles[FACE_PY];
-        c.visible = 1;
         let (sky, blk) = light_at(self.n, self.x, self.y, self.z);
-        c.sky = sky;
-        c.blk = blk;
+        let c = Cell {
+            id: 0,
+            tex: info.tiles[FACE_PY],
+            sky,
+            blk,
+            ao4: 0,
+            wave: 0,
+            visible: 1,
+        };
         let (fx, fy, fz) = (self.x as f32, self.y as f32, self.z as f32);
         let u_max = uv_coord(1.0);
         let v_max = uv_coord(1.0);
@@ -563,7 +571,7 @@ impl ShapeEmitter<'_, '_> {
     /// mesher.cpp:519-530），且 engine/mcv_game/src/blockshapes.rs::
     /// fence_connects 是同规则的第三份（渲染臂与碰撞臂一致性）。
     fn arm_connects(&self, nb: u16) -> bool {
-        if nb >= BARRIER {
+        if nb == BARRIER {
             return false;
         }
         let i = info_of(nb & ID_MASK);
@@ -673,7 +681,7 @@ fn emit_shapes(n: &Nb, out: &mut MeshData) {
         for z in 0..16 {
             for x in 0..16 {
                 let raw = block_at(n, x, y, z);
-                if raw >= BARRIER {
+                if raw == BARRIER {
                     continue;
                 }
                 let info = info_of(raw & ID_MASK);
@@ -773,7 +781,7 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                     for u in 0..gu {
                         let (x, y, z) = cell_coords(axis, layer, u, v);
                         let raw = block_at(n, x, y, z);
-                        if raw >= BARRIER {
+                        if raw == BARRIER {
                             continue;
                         }
                         let id = raw & ID_MASK;
@@ -789,7 +797,7 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                             if id == t.water_id && nb < BARRIER && (nb & ID_MASK) != t.water_id {
                                 visible = true;
                                 if face == FACE_PY {
-                                    wave = u8::from(nb & ID_MASK == 0);
+                                    wave = u8::from((nb & ID_MASK) == 0);
                                 }
                             }
                         } else {
@@ -800,14 +808,16 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                             continue;
                         }
 
-                        let mut c = Cell::default();
-                        c.id = id;
-                        c.tex = info_of(id).tiles[face];
-                        c.wave = wave;
-                        c.visible = 1;
                         let (sky, blk) = light_at(n, nx, ny, nz);
-                        c.sky = sky;
-                        c.blk = blk;
+                        let mut c = Cell {
+                            id,
+                            tex: info_of(id).tiles[face],
+                            sky,
+                            blk,
+                            ao4: 0,
+                            wave,
+                            visible: 1,
+                        };
                         if water_pass {
                             c.ao4 = 0xFF; // 全角全亮（mesher.cpp:741-742）
                         } else {

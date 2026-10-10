@@ -387,7 +387,7 @@ fn bounds_semantics_shared_by_both_backends() {
     for b in buf.vertex_data().chunks(24) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
-        if y == 0.0 && flags & 7 == 3 {
+        if y == 0.0 && (flags & 7) == 3 {
             ny_at_y0 += 1;
         }
     }
@@ -397,7 +397,7 @@ fn bounds_semantics_shared_by_both_backends() {
     for b in buf.vertex_data().chunks(24) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
-        if y == 256.0 && flags & 7 == 2 {
+        if y == 256.0 && (flags & 7) == 2 {
             py_top_sky = Some(b[19]);
         }
     }
@@ -469,8 +469,8 @@ fn random_chunk(rng: &mut Rng) -> Chunk {
         }
     }
     // 光照：50% 经典 0xF0，否则随机 nibble 对（覆盖高低位与合并键）。
-    for i in 0..VOL {
-        c.1[i] = if rng.below(2) == 0 {
+    for slot in c.1.iter_mut() {
+        *slot = if rng.below(2) == 0 {
             0xF0
         } else {
             rng.below(256) as u8
