@@ -399,7 +399,7 @@ def parse_java_blocks():
         if "shulkerBoxProperties(" in body:
             e["strength"] = 2.0
             e["no_occlusion"] = True
-            e["force_solid"] = True
+            e["force_solid"] = True  # 仅 isSolid 语义；碰撞由无 noCollision 保证
         if "registerBed(" in body:
             e["strength"] = 0.2
             e["no_occlusion"] = True
@@ -439,7 +439,16 @@ def resolve_attrs(name, entries, const2name, seen=None):
     hardness = e["strength"]
     if hardness is not None and hardness < 0:
         hardness = float("inf")  # 基岩 strength(-1) → INFINITY（沿用引擎约定）
-    solid = not (e["no_collision"] or e["liquid"] or e["air"]) or e["force_solid"]
+    # solid = 原版 hasCollision（Properties.noCollision() 置 false，
+    # BlockBehaviour.java:1079-1082）。26.1 碰撞判据 =
+    # `hasCollision ? getShape : empty`（BlockBehaviour.java:333-334），
+    # 引擎消费方 blockshapes::push_boxes 的 Cube 分支以 solid 为碰撞谓词，
+    # 语义必须对位 hasCollision。forceSolidOn 只抬 isSolid
+    # （BlockBehaviour.java:482-487 calculateSolid，供 isSolidRender/实体
+    # 投放等查询），不产生碰撞——此前误并入 solid，给招牌/压力板/旗帜/
+    # 凋珊瑚/蛛网/竹笋等 noCollision+forceSolidOn 方块凭空造出全盒碰撞，
+    # 且让 bamboo_sapling 落入「solid=true 而形状零碰撞」的自相矛盾条目。
+    solid = not (e["no_collision"] or e["liquid"] or e["air"])
     no_occ = e["no_occlusion"]
     liquid, air = e["liquid"], e["air"]
     light = e["light"]
@@ -457,7 +466,7 @@ def resolve_attrs(name, entries, const2name, seen=None):
             air = air or b.get("air", False)
             instabreak = instabreak or b.get("instabreak")
             no_occ = no_occ or not b["opaque"]
-            if e["strength"] is None and not e["no_collision"] and not e["force_solid"]:
+            if e["strength"] is None and not e["no_collision"]:
                 solid = b["solid"]
     if instabreak:
         hardness = 0.0

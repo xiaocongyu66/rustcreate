@@ -110,6 +110,14 @@ pub enum Axis {
 /// CrossCollisionBlock.java:45；火把/花草无碰撞盒）沿移动轴最近的阻挡面
 /// 坐标：正向（朝 +轴）先碰到坐标较小的面，取各盒 min 面中最小者；
 /// 负向取各盒 max 面中最大者。
+///
+/// 候选过滤：正向只接受**仍位于自身后边界之前**的 min 面（`b.min ≥
+/// aabb.min`），负向只接受仍位于自身前边界之后的 max 面。AABB 跨两格
+/// 且两格同轴都有盒时（= 玩家已嵌入固体，如出生埋沙/挤入方块），无过滤
+/// 的 `min(全部 min 面)` 会选中**身后**的面，把玩家隔着整块向反方向瞬移
+/// （沙坑内每次移动都被甩到沙柱另一侧，即"老是能到沙子里面"的挣扎表现）。
+/// 过滤后嵌入态只会就近推出所嵌盒的最近面（正常逼近路径的候选恒满足
+/// 该条件，行为逐位不变）。
 fn nearest_face(world: &dyn VoxelAccess, aabb: &Aabb, axis: Axis, forward: bool) -> Option<f32> {
     let x0 = aabb.min.x.floor() as i32 - 1;
     let x1 = aabb.max.x.floor() as i32 + 1;
@@ -128,7 +136,9 @@ fn nearest_face(world: &dyn VoxelAccess, aabb: &Aabb, axis: Axis, forward: bool)
                     if !aabb.overlaps(b) {
                         continue;
                     }
-                    // 正向移动被盒子 min 面挡住，负向被 max 面挡住。
+                    // 正向移动被盒子 min 面挡住，负向被 max 面挡住；
+                    // 候选面必须不在自身反向边界之后（见函数注：防嵌入
+                    // 态隔块瞬移；逼近路径恒满足，行为不变）。
                     let v = match (axis, forward) {
                         (Axis::X, true) => b.min.x,
                         (Axis::X, false) => b.max.x,
@@ -137,6 +147,17 @@ fn nearest_face(world: &dyn VoxelAccess, aabb: &Aabb, axis: Axis, forward: bool)
                         (Axis::Z, true) => b.min.z,
                         (Axis::Z, false) => b.max.z,
                     };
+                    let in_front = match (axis, forward) {
+                        (Axis::X, true) => b.min.x >= aabb.min.x,
+                        (Axis::X, false) => b.max.x <= aabb.max.x,
+                        (Axis::Y, true) => b.min.y >= aabb.min.y,
+                        (Axis::Y, false) => b.max.y <= aabb.max.y,
+                        (Axis::Z, true) => b.min.z >= aabb.min.z,
+                        (Axis::Z, false) => b.max.z <= aabb.max.z,
+                    };
+                    if !in_front {
+                        continue;
+                    }
                     face = Some(match face {
                         None => v,
                         Some(f) => {
