@@ -7,7 +7,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
-use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
+use mcv_logic::game::{GameMode, GamePhase, GameRuntime, WORLD_MIN_Y};
 
 /// 唯一临时存档目录（测试并行安全）。
 fn tmp_world(tag: &str) -> PathBuf {
