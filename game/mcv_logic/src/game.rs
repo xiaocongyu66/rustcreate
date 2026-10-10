@@ -4347,6 +4347,7 @@ pub fn air_supply_tick(air: &mut i32, eyes_in_water: bool, can_drown: bool) -> b
 /// - 起步：`sprinting && isUnderWater`（=wasEyeInWater && isInWater，
 ///   Entity.java:1536-1538）`&& 脚下格流体为水`（blockPosition 的
 ///   FluidState is WATER，:1562-1563）。
+///
 /// `sprinting` 传带饥饿门的冲刺态（LocalPlayer.java:1133 → Player.java
 /// :1569-1571，GameRuntime 侧已算）。
 pub fn swimming_tick(
