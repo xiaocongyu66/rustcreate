@@ -12,7 +12,7 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_ecs::{App, SysCtx};
-use mcv_entity::{MobArrow, MobId, MobKind, MobPath, MobTicks, spawn_mob};
+use mcv_entity::{MobArrow, MobId, MobKind, MobPath, MobTicks, PhysBody, spawn_mob};
 use mcv_logic::game::{
     MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, PlayerArrowHitMob, arrow_system,
     mob_ai_system,
@@ -166,13 +166,28 @@ fn far_mob_despawned_in_one_tick() {
 fn near_mob_survives_despawn_band() {
     let mut app = harness();
     let chunks = air_chunk_map();
-    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
+    let e = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
+    // 本用例只验消散距离账本，不验走位：把怪钉在出生格。fix/stream-collision
+    // 后 WorldView 未加载列=空气（26.1 Level.java:361-363），LOS 不再被
+    // 「未加载=石」代理挡住——僵尸会隔着未加载区锁定 50 格外的玩家并追击，
+    // ~79 tick 越出唯一已加载区块，被模拟环门冻结（26.1 ServerLevel.java:419
+    // 区块未就绪实体不 tick，checkDespawn 同样停在 frozen 门内，
+    // ServerLevel.java:415）→ idle 账本停摆、近距清零断言失真。钉住即与
+    // 用例意图（纯账本节拍）一致且免于 fast_rand 进程级序列的并行扰动。
+    let pin = |app: &mut App| {
+        if let Some(b) = app.world.write::<PhysBody>().get_mut(e) {
+            b.pos = Vec3::new(8.0, 64.0, 8.0);
+            b.vel = Vec3::ZERO;
+        }
+    };
     // 32..128 带内、idle 从 0 起：600 tick 内不得随机移除（idle>600 才有门）。
     for _ in 0..300 {
+        pin(&mut app);
         step(&mut app, &chunks, Vec3::new(8.0, 64.0, 58.0), true, false);
     }
     assert_eq!(app.world.component_count::<mcv_entity::MobKind>(), 1);
     // 且 <32² 时 idle 账本被清零（Mob.java:673）：拉回近处后账本为 0。
+    pin(&mut app);
     step(&mut app, &chunks, Vec3::new(8.0, 64.0, 8.5), true, false);
     let mut found = 0u64;
     for (_, tk) in app.world.read::<MobTicks>().iter() {
@@ -297,7 +312,11 @@ fn burning_damage_cadence_is_20_ticks() {
     let mut app = harness();
     let chunks = air_chunk_map();
     let player = Vec3::new(8.0, 64.0, 100.0); // 远但 <128：不消散
-    let e = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 60.0));
+    // 怪必须摆进唯一已加载区块（fix/stream-collision 实体模拟区门：所在
+    // 区块未就位 = 冻结不 tick，26.1 ServerLevel.java:419 等价；同
+    // daylight_burn 测试注释的原则）。距玩家 92：>索敌半径、<128 消散线，
+    // AI 与消散都不干扰燃烧节拍。
+    let e = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
     app.world.write::<MobTicks>().get_mut(e).unwrap().fire_ticks = 160;
     let hp = |app: &App| app.world.read::<mcv_entity::Health>().get(e).unwrap().0;
     // Entity.java:538-540：160 % 20 == 0 → 第 1 个 tick 即扣 1。
@@ -460,7 +479,10 @@ fn pathfinds_around_two_high_wall() {
 fn peaceful_despawns_hostiles() {
     let mut app = harness();
     let chunks = air_chunk_map();
-    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(20.0, 64.0, 20.0));
+    // 摆在唯一已加载区块内：和平清怪走 checkDespawn（tickProcessing 内部，
+    // 模拟区外实体本就不 tick——26.1 ServerLevel.java:419，实体门同样豁免
+    // 不得在此之外）。
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(12.0, 64.0, 12.0));
     step_as(
         &mut app,
         &chunks,

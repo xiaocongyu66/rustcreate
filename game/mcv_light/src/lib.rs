@@ -466,9 +466,14 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
                 // 26.1 撤销波的「编辑前波前等级」（propagateDecrease 携带被
                 // 清格子的旧值续传，BlockLightEngine.java:91-101），只能以
                 // 邻区现值 n 为界：n+1 的余量保证内部自证光不被邻区暗边误撤
-                // （残余 ≤+2 记为 KNOWN-DIVERGENCE，随下次编辑自愈），也保证
-                // 直天 15 源柱在 n≤14 下永不回撤（同型判据
-                // `toLevel <= oldFromLevel - 1`，SkyLightEngine.java:141-166）。
+                // （残余 ≤+2 记为 KNOWN-DIVERGENCE，随下次编辑自愈）。
+                // 注意方向（A5 纠偏，旧注释写反）：直天 s=15 源柱仅在
+                // n≥14 时不被回撤，n≤13 会回撤清 0——实践中靠
+                // removal_channel readd + spread_target 的 direct_down 豁免
+                // 从上方空气柱原值恢复（净 0 不回报）掩盖；贴边 y=255 行
+                // 上方无源格时可净降 1 档（vanilla 源柱不受邻 section
+                // decrease 影响，SkyLightEngine.java:106-131，s==15 直接
+                // 豁免为后续项）。
                 if s_sky > n_sky + 1 && s_sky > 0 {
                     set_ch(chunk.light, sidx, SKY_SHIFT, 0);
                     sky_rem.push((sidx as u16, s_sky));

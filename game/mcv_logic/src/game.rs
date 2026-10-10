@@ -108,19 +108,48 @@ pub struct WorldView<'a> {
 }
 
 impl VoxelAccess for WorldView<'_> {
+    /// 未加载 / 体素未就位（Empty）→ **空气**，与 26.1 一致：越界列
+    /// `Level.getBlockState` 返回 VOID_AIR（Level.java:361-363），从无
+    /// 「未加载=实心石」代理。旧石安全垫是真机「隐形墙」（撞上看不见
+    /// 的实心边界）与「看得见却穿透」错位（石面高度≠地形）的共同根因。
+    /// 玩家物理安全不再靠假方块，而靠模拟区不变量：`fixed_step` 步进
+    /// 前 [`GameRuntime::sim_safe_radius`] 门、步末 [`GameRuntime::clamp_to_sim_area`]
+    /// 钳回已就位区——玩家 AABB 查询的列恒 ≥TerrainReady（恒真体素）。
+    /// 区外查询（mob 远景射线、缺块粒子等）得空气=原版该区不 tick 的
+    /// 等价近似（ServerLevel.java:419），不再是假石头。
     fn block(&self, p: BlockPos) -> BlockId {
+        // y 出界 = 虚空空气（coords 审计 P2：`local()` 的 rem_euclid(256)
+        // 会把 y≥256 / y<0 绕回同列另一端 → 显示≠真实的幽灵方块/隐形
+        // 地板；原版越界一律 VOID_AIR，Level.java:361-363）。
+        if p.y < 0 || p.y >= 256 {
+            return BlockId(0);
+        }
         let Some(chunk) = self.chunks.get(&p.chunk()) else {
-            return BlockId(1); // unloaded = solid stone (physics safety)
+            return BlockId(0); // unloaded = void air, as 26.1 Level.java:361-363
         };
         if chunk.stage() == Stage::Empty {
-            return BlockId(1);
+            return BlockId(0); // terrain not committed yet — same treatment
         }
         let [lx, ly, lz] = p.local();
         chunk.voxels.read().unwrap()[ly << 8 | lz << 4 | lx]
     }
 
-    fn light(&self, _p: BlockPos) -> u8 {
-        15 // M4 wires real light
+    /// 真实光照（原「恒 15」M4 死桩已清）：返回 sky/block 较亮者的
+    /// 0..15 亮度，与 [`Self::chunk_loaded`] 无关——缺块给满亮天空，
+    /// 对齐 Particle.java:184-187 hasChunkAt=false → 0xF 天光语义。
+    fn light(&self, p: BlockPos) -> u8 {
+        if p.y < 0 || p.y >= 256 {
+            return 15; // 虚空：满亮（同下缺块分支）
+        }
+        let c = p.chunk();
+        match self.chunks.get(&c) {
+            Some(chunk) if chunk.stage() != Stage::Empty => {
+                let [lx, ly, lz] = p.local();
+                let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+                (v & 0xF).max(v >> 4)
+            }
+            _ => 15,
+        }
     }
 
     fn chunk_loaded(&self, c: ChunkPos) -> bool {
@@ -130,7 +159,8 @@ impl VoxelAccess for WorldView<'_> {
 
 /// 粒子世界适配器（[`mcv_render::particles::ParticleWorld`]）：只借
 /// chunks，让 fixed_step 能在 `&mut self.particles` 的同时喂世界回调。
-/// 缺区块语义按引擎默认：碰撞=实心石、光=满亮（Particle.java:184-187
+/// 缺区块语义：碰撞=空气（不碰撞，原版无 chunk 粒子不做碰撞、按
+/// removeIfNoChunk 消亡）、光=满亮（Particle.java:184-187
 /// hasChunkAt=false → 0xF000F0）。
 struct ParticleRt<'a> {
     chunks: &'a HashMap<ChunkPos, Arc<ChunkHandle>>,
@@ -146,6 +176,9 @@ impl mcv_render::particles::ParticleWorld for ParticleRt<'_> {
 
     fn light_at(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
         let p = BlockPos::new(x, y, z);
+        if p.y < 0 || p.y >= 256 {
+            return (15, 15); // 虚空满亮（y 出界不绕回，coords P2）
+        }
         match self.chunks.get(&p.chunk()) {
             Some(c) if c.stage() != Stage::Empty => {
                 let [lx, ly, lz] = p.local();
@@ -200,11 +233,20 @@ fn side_delta(side: u8) -> (i32, i32) {
 ///    做增量重光照；未初始化时直接返回，主循环稍后的 `init` 会全量覆盖。
 /// 3. 光发生变化的边界交给 [`sync_light_edges`] 跨区块派发，光变块的
 ///    MESH 脏在派发路径内标好（网格顶点烘焙光照字节）。
+///
+/// `queue` = 跨区块边派发队列（调用方持有：游戏路径传
+/// [`GameRuntime::pending_light_edges`] 跨帧消化，测试路径就地
+/// [`sync_light_edges`] 排空）。本函数只做块内增量重光照与双向任务
+/// 入队，**不再同步跑边同步**——旧实现整链跑在 fixed_step 的编辑调用
+/// 栈内，贴边一次编辑最坏 512 步 × 每步双 BFS 冻结主线程数百 ms
+/// （审计 A1/A3；原版 light check 排队按 tick 预算执行、未完必重排，
+/// LevelLightEngine.runLightUpdates）。
 fn relight_block_edit(
     chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
     target: BlockPos,
     old_id: u16,
     new_id: u16,
+    queue: &mut Vec<(ChunkPos, u8)>,
 ) {
     let cpos = target.chunk();
     let Some(handle) = chunks.get(&cpos) else {
@@ -240,17 +282,23 @@ fn relight_block_edit(
     // 本侧字节可能不变（暗格 0→0），邻区光进不来（update_block 文档 :552-
     // 556 明言拉方向由调用方补）——故对每条脏边再排一条反向同步，把邻块
     // 现值回喂本块。队列是 LIFO：每边先排 pull 后排 push，pop 序为
-    // push→pull，保证 pull 读到邻块被推之后的现值。
-    let mut queue: Vec<(ChunkPos, u8)> = Vec::new();
+    // push→pull，保证 pull 读到邻块被推之后的现值。同键去重由
+    // sync_light_edges 的 in-flight 集合兜底（pull 与 push 的 REMOVE 回报
+    // 常生成同一任务，审计 A1）。
     for side in 0..4u8 {
         if mask & (1 << side) != 0 {
             let (dx, dz) = side_delta(side);
             let npos = ChunkPos::new(cpos.x + dx, cpos.z + dz);
-            queue.push((npos, GameRuntime::opposite_side(side)));
-            queue.push((cpos, side));
+            let pull = (npos, GameRuntime::opposite_side(side));
+            let push = (cpos, side);
+            if !queue.contains(&pull) {
+                queue.push(pull);
+            }
+            if !queue.contains(&push) {
+                queue.push(push);
+            }
         }
     }
-    sync_light_edges(chunks, &mut queue);
 }
 
 /// 跨区块光照边派发队列（C1：原 border_synced 只做记账，光从不真正过界）。
@@ -262,13 +310,24 @@ fn relight_block_edit(
 /// propagateDecrease 幸存格按 stored 现值重播种的跨块等价，
 /// BlockLightEngine.java:103-105），级联把本侧现值回喂编辑块；ADD 不回报。
 /// 回报仅在边字节严格变化时触发，光级别有限，级联单调收敛；步数上限只是
-/// 防御性兜底。
+/// 防御性兜底——**预算耗尽不丢任务**：剩余留在 `queue` 里由调用方
+/// （`GameRuntime::pending_light_edges`）跨帧继续消化（审计 A3；原版
+/// LevelLightEngine 未完必重排、从不丢弃）。
+///
+/// 同键去重（审计 A1）：relight 排的 pull 与 push 的 REMOVE 回报常生成
+/// 同一 `(ChunkPos, side)` 任务；in-flight 集合让每条边每轮至多处理一次
+/// （对齐原版区块任务按距离合并去重，ChunkHolder/LevelLightEngine）。
 fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Vec<(ChunkPos, u8)>) {
+    let mut inflight: HashSet<(ChunkPos, u8)> = queue.iter().copied().collect();
     let mut steps = 0usize;
     while let Some((pos, side)) = queue.pop() {
+        inflight.remove(&(pos, side));
         if steps >= 512 {
+            // 当前出队任务也放回队列头部一并留待下帧（旧实现连它一起丢）。
+            queue.push((pos, side));
+            inflight.insert((pos, side));
             log::warn!(
-                "light edge sync budget exhausted, {} edge task(s) dropped",
+                "light edge sync budget exhausted, {} edge task(s) deferred to next frame",
                 queue.len()
             );
             break;
@@ -318,7 +377,7 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
             if dirty != 0 {
                 to.mark_dirty(mcv_core::dirty::MESH);
                 for bit in 0..4u8 {
-                    if dirty & (1 << bit) != 0 {
+                    if dirty & (1 << bit) != 0 && inflight.insert((npos, bit)) {
                         queue.push((npos, bit));
                     }
                 }
@@ -408,6 +467,30 @@ pub struct GameRuntime {
     meshed: HashSet<ChunkPos>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
+    /// stream() 帧计数（在途请求驻留计时基准；stream 是帧驱动非 tick 驱动）。
+    stream_frame: u64,
+    /// 已发出 worker 请求、尚未收到结果的区块 → 发出时的 `stream_frame`。
+    /// 在途区块不卸载（原版 PLAYER_LOADING ticket 释放要等 entity-ticking
+    /// future 完成，DistanceManager.java:87-104）；超时 300 帧（≈5s）视为
+    /// 失败可弃。
+    req_frames: HashMap<ChunkPos, u64>,
+    /// 卸载复活缓存（原版 ChunkMap.pendingUnloads，ChunkMap.java:388-392）：
+    /// 越环区块先从活动 `chunks` 摘除（GPU 网格条目同步释放），数据留在
+    /// 此处；重进请求环时原位复活、不重 IO 不重生成；每帧限量落盘，
+    /// 超容量（64）从最旧端强制落盘后丢弃。
+    pending_unloads: Vec<(ChunkPos, Arc<ChunkHandle>)>,
+    /// 跨区块光照边派发持久队列（审计 A1/A3/F2）：编辑路径只入队，
+    /// stream() 开头按步预算跨帧消化，未完不丢弃（原版 LevelLightEngine
+    /// 重排语义）。fixed_step 编辑栈内不再跑边同步。
+    pending_light_edges: Vec<(ChunkPos, u8)>,
+    /// 编辑源区块当帧优先重建网格（审计 A2/F3）：place/destroy 置位，
+    /// remesh 循环最先消费（预算内第一位），消除「已挖开仍画实心」的
+    /// 玩家正前方陈旧窗口；级联标脏的邻块仍走近优先预算流。
+    mesh_priority: Option<ChunkPos>,
+    /// mesher.build 连续失败计数（审计 F6 退避）：首败 log::error（真机
+    /// 取证坐标），后续同块重复失败降为 debug 不再刷屏；成功即清账。
+    /// 无头 NullMesher 恒失败 = 预期路径，只报一次。
+    mesh_fail: HashMap<ChunkPos, u32>,
     /// 运行时 mob 集合（ECS App：World + 调度 + 事件总线；组件见
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
@@ -720,6 +803,12 @@ impl GameRuntime {
             meshed: HashSet::new(),
             spawned: false,
             border_synced: HashMap::new(),
+            stream_frame: 0,
+            req_frames: HashMap::new(),
+            pending_unloads: Vec::new(),
+            pending_light_edges: Vec::new(),
+            mesh_priority: None,
+            mesh_fail: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
             // 攻击冷却 ticker，单位 tick（Player.attackStrengthTicker）；
             // 20 tick 起步 = 全武器满蓄力（attackSpeed≥1.0 → delay≤20 tick）。
@@ -932,6 +1021,109 @@ impl GameRuntime {
     /// （设置界面下限 4，正常运行恒取 3，此 min 仅为兜底）。
     fn load_radius(&self) -> i32 {
         self.render_dist.min(3)
+    }
+
+    // ---- 流式分层：模拟区 / 请求环 / 卸载环（fix/stream-collision）----
+    //
+    // 原版三层距离（审计 stream-arch §1）：加载 ticket 半径 = viewDistance
+    // （DistanceManager.java:43, :319-321），模拟半径独立字段默认 10
+    // （:48），玩家所在区块恒持 PLAYER_SIMULATION ticket（addPlayer
+    // :110-117、ChunkMap.move :1071-1096 随区块迁移），实体仅在模拟环内
+    // tick（ServerLevel.java:419），客户端收发环另有 vd+2 缓冲
+    // （ChunkTrackingView.java:71-80），FULL 之外还有生成晕圈
+    // （ChunkLevel.java:14-15）。本仓单进程一体，分层落地为：
+    //   请求环 = 模拟半径 sim_dist = rd+1（含原版 +1 支撑环），
+    //   可见网格半径 ≤ sim_dist（remesh 环过滤，杜绝「看得见却穿透」），
+    //   卸载阈值 = unload_dist = rd+4（迟滞带 3 环 ≥ 2，消除边界翻动；
+    //   旧值 rd+2 与请求环仅隔 1 环，是「动一下就换一批块」的直接来源），
+    //   玩家物理恒走真体素（sim_safe_radius 门 + clamp_to_sim_area 钳制）。
+    // 模拟环 ≫ 一步最远位移：钳制保证玩家与最近未就位区块恒隔 ≥1 整区块
+    // （16 格），而单个固定步（1/60 s）最大位移（疾跑 5.6 m/s、创造冲刺
+    // 飞行 20.2 m/s、击退初速叠加 ≈0.4 格）不足其 1/40。
+
+    /// 模拟/请求半径：调度器目标环内（Chebyshev ≤ 本值）区块最终全部
+    /// TerrainReady+，且可见网格只会建到本环内（物理安全区 ≥ 可见区）。
+    pub fn sim_dist(&self) -> i32 {
+        self.render_dist + 1
+    }
+
+    /// 卸载阈值：Chebyshev 距离 > 本值的区块退出活动表。比请求环多 3 环
+    /// 迟滞（要求 ≥2），原版等效余量 = 发书缓冲 vd+2 + FULL 生成晕。
+    pub fn unload_dist(&self) -> i32 {
+        self.sim_dist() + 3
+    }
+
+    /// 模拟安全半径：以 `pc` 为中心最大 r ≥ 0，使 Chebyshev ≤r 的环全部
+    /// ≥TerrainReady（体素已在）；玩家本块未就位返回 **-1**（物理门：
+    /// 整步冻结，26.1 玩家实体在区块就绪前不参与物理）。返回值同时
+    /// 导出钳制矩形（[`Self::clamp_to_sim_area`]），玩家 AABB 查询的列
+    /// 恒真体素。
+    pub fn sim_safe_radius(&self, pc: ChunkPos) -> i32 {
+        let ready = |c: ChunkPos| {
+            self.chunks
+                .get(&c)
+                .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+        };
+        if !ready(pc) {
+            return -1;
+        }
+        let max_r = self.unload_dist();
+        let mut r = 0;
+        while r < max_r {
+            let n = r + 1;
+            let all =
+                (-n..=n).all(|dx| (-n..=n).all(|dz| ready(ChunkPos::new(pc.x + dx, pc.z + dz))));
+            if !all {
+                break;
+            }
+            r = n;
+        }
+        r
+    }
+
+    /// 步末位置钳制：把玩家钉回已就位矩形——钳制块矩形取 `pc ± max(r−1, 0)`
+    /// 再内收 pad：`r ≥ 1` 时矩形区块再外扩一环（步进中原点位移 + AABB
+    /// 半宽的查询触达）仍整体落在已就位环 ≤r 内，pad = 玩家半宽 + 余量
+    /// 即可；`r = 0`（仅本块就位）时 pad 收到 1.0 格，触达不出本块。
+    /// 被钳轴向速度清零（贴原版：移动在已加载区边缘自然停止——玩家区块
+    /// 恒有 ticket、物理从不越界，DistanceManager.java:110-117，而非撞
+    /// 假石头或穿进虚空）。
+    fn clamp_to_sim_area(&mut self, pc: ChunkPos, r_safe: i32) {
+        debug_assert!(r_safe >= 0);
+        let m = (r_safe - 1).max(0);
+        let pad = if r_safe == 0 {
+            1.0
+        } else {
+            mcv_game::Player::HALF[0] + 0.02
+        };
+        let lo_x = (pc.x - m) as f32 * 16.0 + pad;
+        let hi_x = (pc.x + m + 1) as f32 * 16.0 - pad;
+        let lo_z = (pc.z - m) as f32 * 16.0 + pad;
+        let hi_z = (pc.z + m + 1) as f32 * 16.0 - pad;
+        let p = &mut self.player;
+        let nx = p.pos.x.clamp(lo_x, hi_x);
+        if nx != p.pos.x {
+            p.pos.x = nx;
+            p.vel.x = 0.0;
+        }
+        let nz = p.pos.z.clamp(lo_z, hi_z);
+        if nz != p.pos.z {
+            p.pos.z = nz;
+            p.vel.z = 0.0;
+        }
+        // 不变量兜底（debug）：钳制后玩家所在区块必须仍 ≥TerrainReady，
+        // 否则模拟区门形同虚设（隐形墙回归的前置条件）。
+        debug_assert!(
+            self.chunks
+                .get(&ChunkPos::new(
+                    (p.pos.x / 16.0).floor() as i32,
+                    (p.pos.z / 16.0).floor() as i32
+                ))
+                .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8)),
+            "clamp_to_sim_area 后玩家仍在未就位区块：pos={} r_safe={}",
+            p.pos,
+            r_safe
+        );
     }
 
     /// 出生搜索窗（区块 (0,0) ± [`Self::load_radius`]）是否全部
@@ -1179,14 +1371,29 @@ impl GameRuntime {
     }
 
     /// Persists chunks with the SAVE dirty bit (region files), clearing the
-    /// bit. Called periodically and before unload.
+    /// bit. Called periodically and at exit.
+    ///
+    /// 帧内常态写回不在这里：stream() 每帧 ≤2 块走 FIFO 落盘队列（写回
+    /// 预算，审计 §5.3），30s 全量调用通常只剩扫描。`None` = 全量兜底（退出安全，
+    /// 含 pending_unloads 复活缓存同步清空——这些块已离开活动表，退出
+    /// 前必须落盘）。`Some(pos)` = 单块即时存盘（未在册则跳过）。
     pub fn save_dirty(&mut self, only: Option<ChunkPos>) {
+        if only.is_none() {
+            let pend = std::mem::take(&mut self.pending_unloads);
+            for (_, h) in pend {
+                if h.dirty() & mcv_core::dirty::SAVE != 0
+                    && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+                {
+                    self.save_handle_io(&h);
+                }
+            }
+        }
         let keys: Vec<ChunkPos> = match only {
             Some(p) => vec![p],
             None => self.chunks.keys().copied().collect(),
         };
         for pos in keys {
-            let Some(handle) = self.chunks.get(&pos) else {
+            let Some(handle) = self.chunks.get(&pos).cloned() else {
                 continue;
             };
             if handle.dirty() & mcv_core::dirty::SAVE == 0 {
@@ -1195,23 +1402,37 @@ impl GameRuntime {
             if (handle.stage() as u8) < (Stage::TerrainReady as u8) {
                 continue;
             }
-            let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
-            let local = mcv_save::chunk_local(pos.x, pos.z);
-            let mut region = match mcv_save::RegionFile::open(&self.save_dir, rx, rz) {
-                Ok(r) => r,
-                Err(e) => {
-                    log::error!("region open failed {rx},{rz}: {e}");
-                    continue;
-                }
-            };
-            let voxels = handle.voxels.read().unwrap();
-            let ids = bytemuck::cast_slice(voxels.as_slice());
-            if let Err(e) = region.save_chunk(local, ids) {
-                log::error!("chunk save failed {pos:?}: {e}");
-            } else {
-                handle.clear_dirty(mcv_core::dirty::SAVE);
-            }
+            self.save_handle_io(&handle);
         }
+    }
+
+    /// 单区块 region 写盘（save_dirty 全量/预算流/pending_unloads 落盘
+    /// 共用）。成功清 SAVE 脏并返回 true；IO 失败保留脏位（下帧/下轮
+    /// 重试）并返回 false。
+    fn save_handle_io(&mut self, handle: &ChunkHandle) -> bool {
+        let pos = handle.pos;
+        if handle.dirty() & mcv_core::dirty::SAVE == 0
+            || (handle.stage() as u8) < (Stage::TerrainReady as u8)
+        {
+            return false;
+        }
+        let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
+        let local = mcv_save::chunk_local(pos.x, pos.z);
+        let mut region = match mcv_save::RegionFile::open(&self.save_dir, rx, rz) {
+            Ok(r) => r,
+            Err(e) => {
+                log::error!("region open failed {rx},{rz}: {e}");
+                return false;
+            }
+        };
+        let voxels = handle.voxels.read().unwrap();
+        let ids = bytemuck::cast_slice(voxels.as_slice());
+        if let Err(e) = region.save_chunk(local, ids) {
+            log::error!("chunk save failed {pos:?}: {e}");
+            return false;
+        }
+        handle.clear_dirty(mcv_core::dirty::SAVE);
+        true
     }
 
     /// 天气渲染参数（app 层 Scene 装配用）：`(day_factor 混合值, 雾色 RGB
@@ -1269,71 +1490,181 @@ impl GameRuntime {
 
     /// Request missing chunks in a spiral around the player (a few per call),
     /// unload far ones.
+    ///
+    /// 分层与迟滞（fix/stream-collision，参数依据见 [`Self::sim_dist`] 节
+    /// 头注释）：请求环 `sim_dist`（=rd+1）→ 卸载阈值 `unload_dist`
+    /// （=rd+4，迟滞 3 环）；卸载每帧 ≤4 块（原版 processUnloads 时间片，
+    /// ChunkMap.java:477-498）且先进 `pending_unloads` 复活缓存
+    /// （ChunkMap.java:388-392），重进环原位复活、不重 IO 不重生成；
+    /// 在途（Empty）请求 5s 驻留不撤回（对齐 ticket 释放等 future，
+    /// DistanceManager.java:87-104）。IO 全部预算化：卸载写盘每帧 ≤2、
+    /// 脏块写回每帧 ≤2（app.rs 30s 全量存盘退化为兜底扫描）。
     pub fn stream(&mut self) {
         let center = ChunkPos::new(
             (self.player.pos.x / 16.0).floor() as i32,
             (self.player.pos.z / 16.0).floor() as i32,
         );
-        // unload (saving dirty chunks first)
-        let far: Vec<ChunkPos> = self
+        self.stream_frame += 1;
+
+        // 光照边派发队列消化（审计 A3/F2）：编辑路径只入队，这里按步预算
+        // 跨帧处理，未完保留（原版 LevelLightEngine 重排语义）。放在最前，
+        // 让标脏的 MESH 当帧进入下面的 remesh 预算流。
+        if !self.pending_light_edges.is_empty() {
+            let mut q = std::mem::take(&mut self.pending_light_edges);
+            sync_light_edges(&self.chunks, &mut q);
+            self.pending_light_edges = q;
+        }
+
+        // ---- unload：迟滞环外、每帧 ≤4、pending_unloads 复活缓存 ----
+        let unload_r = self.unload_dist();
+        let mut far: Vec<ChunkPos> = self
             .chunks
             .keys()
-            .filter(|c| {
-                (c.x - center.x).abs() > self.render_dist + 2
-                    || (c.z - center.z).abs() > self.render_dist + 2
-            })
+            .filter(|c| (c.x - center.x).abs() > unload_r || (c.z - center.z).abs() > unload_r)
             .copied()
             .collect();
+        // 近端优先淘汰（同帧多候选时先处理离玩家近的，远期滞留短）。
+        far.sort_by_key(|c| (c.x - center.x).abs().max((c.z - center.z).abs()));
+        let mut evicted = 0usize;
         for c in far {
-            self.save_dirty(Some(c));
+            if evicted >= 4 {
+                break; // 时间片（原版 unloadQueue 按 tick 排空，ChunkMap.java:492）
+            }
+            let handle = self.chunks[&c].clone();
+            if handle.stage() == Stage::Empty {
+                // 在途请求驻留：worker 未回且发出 <5s（300 帧）不卸载，
+                // 杜绝「请求→出环撤回→回环重请求→再生成」乒乓（症状 5）。
+                let expired = self
+                    .req_frames
+                    .get(&c)
+                    .is_none_or(|f| self.stream_frame - f >= 300);
+                if !expired {
+                    continue;
+                }
+                self.req_frames.remove(&c);
+                self.chunks.remove(&c);
+                self.border_synced.remove(&c);
+                self.mesh_fail.remove(&c);
+                evicted += 1;
+                continue;
+            }
             self.chunks.remove(&c);
-            // 卸载即 forget：border_synced 记账必须同步清理，否则区块重进
-            // 视野时会跳过与新邻块的成对边同步（C1 配套清理）。
             self.border_synced.remove(&c);
+            self.mesh_fail.remove(&c);
             // 网格记账同步回收：render_chunks 里的 GPU 缓冲随条目 drop 释放，
             // meshed 集合删键保证重进视野时会重建网格（保持两者严格同步）。
             self.meshed.remove(&c);
             self.render_chunks
                 .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
+            // 数据不立即落盘/丢弃：进复活缓存，存盘按帧预算推进（原版
+            // saveChunksEagerly 时间片）；重进请求环时原位复活。
+            let entry = (c, handle);
+            if !self.pending_unloads.iter().any(|(p, _)| *p == c) {
+                self.pending_unloads.push(entry);
+            }
+            evicted += 1;
         }
+        // 复活缓存落盘预算：每帧把最前 ≤2 块脏数据写盘；超容量从最旧端
+        // 强制落盘后丢弃（有界内存）。
+        let mut pend = std::mem::take(&mut self.pending_unloads);
+        let mut saved = 0usize;
+        for (_, h) in pend.iter_mut() {
+            if saved >= 2 {
+                break;
+            }
+            if h.dirty() & mcv_core::dirty::SAVE != 0
+                && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+                && self.save_handle_io(h)
+            {
+                saved += 1;
+            }
+        }
+        while pend.len() > 64 {
+            let (pos, h) = pend.remove(0);
+            if h.dirty() & mcv_core::dirty::SAVE != 0
+                && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+            {
+                self.save_handle_io(&h);
+                log::debug!("pending_unloads overflow, flushed {pos:?}");
+            }
+        }
+        self.pending_unloads = pend;
+
+        // 脏块写回（审计 §5.3：app.rs 30s 全量存盘是周期性掉帧源）：
+        // 每帧 ≤2 块，30s 全量兜底通常只剩扫描。SAVE 位只在编辑与新生成
+        // 时置位（commit_terrain / mark_dirty，写盘成功即清），脏集本身
+        // 就是待落盘差量——按 (z,x) 稳定序从队头消耗（FIFO 落盘队列，
+        // 成功清脏自动前进）。不用轮转游标：脏集变小时游标取模会回卷，
+        // 加载洪流期对同一批 2 块逐帧重复 open+write（原版
+        // saveChunksEagerly 也只扫 dirty 集限时间片，ChunkMap.java:500-513）。
+        // IO 失败保脏位，下帧队头重试并 log::error。
+        let mut dirty_keys: Vec<ChunkPos> = self
+            .chunks
+            .iter()
+            .filter(|(_, h)| {
+                h.dirty() & mcv_core::dirty::SAVE != 0
+                    && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+            })
+            .map(|(p, _)| *p)
+            .collect();
+        if !dirty_keys.is_empty() {
+            dirty_keys.sort_unstable_by_key(|p| (p.z, p.x));
+            for pos in dirty_keys.into_iter().take(2) {
+                let handle = self.chunks[&pos].clone();
+                self.save_handle_io(&handle);
+            }
+        }
+
         // request in ring order; bounded per frame。
-        // 多请求一圈支撑环（render_dist+1，原版 view distance +1 边界块）：
-        // 可见最外环的网格需要 3×3 邻域在册，只请求到 render_dist 时外环
-        // 永远凑不齐邻居、永远建不了网格——真机上渲染边缘呈永久残缺带，
-        // 玩家移动时残带随视野推进逐块翻新（症状：往右动一点就换一批块）。
+        // 多请求一圈支撑环（sim_dist = render_dist+1，原版 view distance
+        // +1 边界块）：可见最外环的网格需要 3×3 邻域在册，只请求到
+        // render_dist 时外环永远凑不齐邻居、永远建不了网格——真机上渲染
+        // 边缘呈永久残缺带，玩家移动时残带随视野推进逐块翻新（症状：往右
+        // 动一点就换一批块）。
         let mut budget = 4;
-        'outer: for r in 0..=(self.render_dist + 1) {
+        'outer: for r in 0..=self.sim_dist() {
             for dx in -r..=r {
                 for dz in -r..=r {
                     if dx.abs() != r && dz.abs() != r {
                         continue; // ring only
                     }
                     let pos = ChunkPos::new(center.x + dx, center.z + dz);
-                    if !self.chunks.contains_key(&pos) {
-                        let handle = Arc::new(ChunkHandle::new(pos));
-                        if self.try_load_saved(&handle) {
-                            self.chunks.insert(pos, handle);
-                        } else {
-                            self.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
-                            self.scheduler.request(pos);
-                        }
-                        budget -= 1;
-                        if budget == 0 {
-                            break 'outer;
-                        }
+                    if self.chunks.contains_key(&pos) {
+                        continue;
+                    }
+                    // 复活优先（原版 pendingUnloads 命中，ChunkMap.java:388-
+                    // 392）：数据还在手里就不重开 IO、不重发 worker。
+                    if let Some(i) = self.pending_unloads.iter().position(|(p, _)| *p == pos) {
+                        let (_, h) = self.pending_unloads.remove(i);
+                        self.chunks.insert(pos, h);
+                        continue;
+                    }
+                    let handle = Arc::new(ChunkHandle::new(pos));
+                    if self.try_load_saved(&handle) {
+                        self.chunks.insert(pos, handle);
+                    } else {
+                        self.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
+                        self.scheduler.request(pos);
+                        self.req_frames.insert(pos, self.stream_frame);
+                    }
+                    budget -= 1;
+                    if budget == 0 {
+                        break 'outer;
                     }
                 }
             }
         }
-        // drain completed terrain
+        // drain completed terrain（结果到达即解除在途驻留记账）
         while let Ok(result) = self.scheduler.results().try_recv() {
             match result {
                 mcv_worldgen::GenResult::Terrain(Ok(out)) => {
+                    self.req_frames.remove(&out.pos);
                     if let Some(handle) = self.chunks.get(&out.pos) {
                         mcv_worldgen::commit_terrain(handle, out);
                     }
                 }
                 mcv_worldgen::GenResult::Terrain(Err((pos, rc))) => {
+                    self.req_frames.remove(&pos);
                     log::error!("terrain gen failed at {pos:?}: {rc}");
                 }
             }
@@ -1438,63 +1769,117 @@ impl GameRuntime {
             }
         }
         sync_light_edges(&self.chunks, &mut pair_edges);
+        // 成对边任务同样「预算耗尽不丢」（审计 A3 对 pair 路径的收口）：
+        // border_synced 已先行记账，残留若随手 Vec 丢弃即永久暗缝——并入
+        // 持久队列，下一帧 stream 开头的消化段续跑。
+        if !pair_edges.is_empty() {
+            for e in pair_edges {
+                if !self.pending_light_edges.contains(&e) {
+                    self.pending_light_edges.push(e);
+                }
+            }
+        }
 
         // mesh chunks: 3x3 loaded, center lit, dirty or missing。
         // 同样按玩家近优先排序（理由同 light init）：网格以玩家脚下的区块
         // 最先建成，远处补齐——不再出现「眼前的块没网格、远处的块先上屏」。
-        let mut remesh_budget = 2;
+        // 预算（审计 §4.3/A2）：初始装载（门控期）放宽 8/帧，进世界后
+        // 2/帧。可见网格半径 ≤ sim_dist（物理安全区 ≥ 可见区，杜绝
+        // 「看得见却穿透」；待卸滞留环不建网格不占预算）。
+        let mut remesh_budget: i32 = if self.phase == GamePhase::Loading {
+            8
+        } else {
+            2
+        };
+        // 编辑源块当帧优先（审计 A2/F3）：级联标脏的邻块仍走近优先预算流。
+        if let Some(p) = self.mesh_priority.take()
+            && self.build_chunk_mesh(p)
+        {
+            remesh_budget = remesh_budget.saturating_sub(1);
+        }
         for pos in self.sorted_keys(center) {
             if remesh_budget == 0 {
                 break;
             }
-            let handle = self.chunks[&pos].clone();
-            if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
+            if (pos.x - center.x).abs().max((pos.z - center.z).abs()) > self.sim_dist() {
                 continue;
             }
-            if !self.neighbors_ready(pos) {
-                continue;
-            }
-            let already = self.meshed.contains(&pos);
-            let dirty_mesh = handle.dirty() & mcv_core::dirty::MESH != 0;
-            if already && !dirty_mesh {
-                continue;
-            }
-            let mut handles: [Arc<ChunkHandle>; 9] = core::array::from_fn(|_| handle.clone());
-            for dz in -1i32..=1 {
-                for dx in -1i32..=1 {
-                    let idx = ((dz + 1) * 3 + (dx + 1)) as usize;
-                    handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
-                }
-            }
-            if let Some(rc) = self.mesher.build(pos, &handles) {
-                let origin = rc.origin;
-                let idx_count = rc.opaque_range.end;
-                // 原位替换已存在的网格条目：push 到尾部会让整个 Vec 每帧重排，
-                // 渲染器的槽位分配（scene.chunks 下标）随之漂移，高渲染距离下
-                // 超过 max_chunks 的截断集也逐帧变化——画面呈块状翻动。原位
-                // 替换保持「首次建网格」的稳定顺序，重网格不再搬动其他条目。
-                match self
-                    .render_chunks
-                    .iter()
-                    .position(|r| r.origin[0] == origin[0] && r.origin[2] == origin[2])
-                {
-                    Some(slot) => self.render_chunks[slot] = rc,
-                    None => self.render_chunks.push(rc),
-                }
-                // render_chunks 与 meshed 记账同步：弃旧、记新。
-                self.meshed.insert(pos);
-                handle.clear_dirty(mcv_core::dirty::MESH);
-                // 网格已建且经 MeshUploader 上传 GPU → 状态机终点
-                // Uploaded（chunk.rs:4 的 Empty→…→Uploaded；此前该状态
-                // 从未被推进，加载画面「就绪」判定依赖它）。无头 NullMesher
-                // 不产出网格、不推进，由测试手工 advance_to。
-                handle.advance_to(Stage::Uploaded);
-                // 真机取证埋点（logcat -s RustMcv）：网格入队/上传事件带
-                // 区块坐标与索引量——静止期反复出现即重网格循环实证。
-                log::debug!("mesh upload {pos:?} idx={idx_count}");
+            if self.build_chunk_mesh(pos) {
                 remesh_budget -= 1;
             }
         }
+    }
+
+    /// 单个区块的建网格+记账（stream remesh 流水与编辑源块优先通道共用）。
+    /// 返回 true = 本帧实际建了一块（消耗一格预算）。门槛：中心
+    /// ≥LightLocalReady、3×3 邻域就绪（[`Self::neighbors_ready`]）、且
+    /// （未建过 或 MESH 脏）。
+    fn build_chunk_mesh(&mut self, pos: ChunkPos) -> bool {
+        let Some(handle) = self.chunks.get(&pos).cloned() else {
+            return false;
+        };
+        if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
+            return false;
+        }
+        if !self.neighbors_ready(pos) {
+            return false;
+        }
+        let already = self.meshed.contains(&pos);
+        let dirty_mesh = handle.dirty() & mcv_core::dirty::MESH != 0;
+        if already && !dirty_mesh {
+            return false;
+        }
+        let mut handles: [Arc<ChunkHandle>; 9] = core::array::from_fn(|_| handle.clone());
+        for dz in -1i32..=1 {
+            for dx in -1i32..=1 {
+                let idx = ((dz + 1) * 3 + (dx + 1)) as usize;
+                handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
+            }
+        }
+        let Some(rc) = self.mesher.build(pos, &handles) else {
+            // 失败分支不得静默（审计 B2/F6）：首建失败 = 该块不在
+            // render_chunks——不可见却按真实体素碰撞（另一种「看不见却
+            // 实心」）；重网格失败 = 旧网格无限期陈旧。MESH 脏保留，
+            // 下帧预算流自动重试。计数退避：首败 error（真机取证坐标），
+            // 重复失败降 debug 不刷屏——无头 NullMesher 恒失败属预期，
+            // 全测试期只报一行。
+            let n = self.mesh_fail.entry(pos).or_insert(0);
+            *n += 1;
+            if *n == 1 {
+                log::error!("mesh build failed for {pos:?} (kept dirty, will retry)");
+            } else {
+                log::debug!("mesh build still failing for {pos:?} (n={n})");
+            }
+            return false;
+        };
+        self.mesh_fail.remove(&pos);
+        let origin = rc.origin;
+        let idx_count = rc.opaque_range.end;
+        // 原位替换已存在的网格条目：push 到尾部会让整个 Vec 每帧重排，
+        // 渲染器的槽位分配（scene.chunks 下标）随之漂移，高渲染距离下
+        // 超过 max_chunks 的截断集也逐帧变化——画面呈块状翻动。原位
+        // 替换保持「首次建网格」的稳定顺序，重网格不再搬动其他条目。
+        match self
+            .render_chunks
+            .iter()
+            .position(|r| r.origin[0] == origin[0] && r.origin[2] == origin[2])
+        {
+            Some(slot) => self.render_chunks[slot] = rc,
+            None => self.render_chunks.push(rc),
+        }
+        // render_chunks 与 meshed 记账同步：弃旧、记新。
+        self.meshed.insert(pos);
+        handle.clear_dirty(mcv_core::dirty::MESH);
+        // 网格已建且经 MeshUploader 上传 GPU → 状态机终点
+        // Uploaded（chunk.rs 实际路径 Empty→TerrainReady→LightLocalReady→
+        // Uploaded；Lit/MeshReady 为预留死态，见 chunk.rs 文档。加载画面
+        // 「就绪」判定依赖 Uploaded）。无头 NullMesher 不产出网格、不
+        // 推进，由测试手工 advance_to。
+        handle.advance_to(Stage::Uploaded);
+        // 真机取证埋点（logcat -s RustMcv）：网格入队/上传事件带
+        // 区块坐标与索引量——静止期反复出现即重网格循环实证。
+        log::debug!("mesh upload {pos:?} idx={idx_count}");
+        true
     }
 
     /// 在册区块按「玩家环距（Chebyshev）近优先」排序的键表，环内按
@@ -1784,7 +2169,26 @@ impl GameRuntime {
         // 区块就绪前不存在于客户端）：ZERO 坐在实体柱里会被去穿透乱推，
         // 投放路径（stream 出生投放块）会整体覆写 pos，期间步进纯浪费。
         let awaiting_spawn = !self.spawned && self.player.pos == Vec3::ZERO;
-        if !awaiting_spawn {
+        // ---- 模拟区门（fix/stream-collision：玩家永不走入未加载区）----
+        // 原版不变量：玩家区块恒持 PLAYER_SIMULATION ticket（DistanceManager
+        // .java:110-117，ChunkMap.move :1071-1096 随区块迁移），物理恒跑在
+        // 已加载真体素上；界外列查询得 VOID_AIR（Level.java:361-363）而非
+        // 石头。本仓生成异步，用「门 + 钳制」实现同一不变量：玩家所在
+        // 区块未 TerrainReady（超时放行前沿/重生后 IO 未回）则整步冻结
+        // （原版：玩家实体在区块就绪前不参与物理），就绪后步末再钳回
+        // 已就位矩形（clamp_to_sim_area，见流式分层节注释）。
+        let pc = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        // 投放等待期不必算安全半径（本块必然未就位，且省掉生成高峰期的
+        // 每步 O(rd²) 环扫描）。
+        let r_safe = if awaiting_spawn {
+            -1
+        } else {
+            self.sim_safe_radius(pc)
+        };
+        if !awaiting_spawn && r_safe >= 0 {
             let look = self.camera(1.0).dir();
             let f = Vec3::new(look.x, 0.0, look.z)
                 .try_normalize()
@@ -1880,6 +2284,10 @@ impl GameRuntime {
                 &mut self.player,
                 &step_input,
             );
+            // 步末钳制：一步最大位移（≤0.4 格）≪ 钳制余量（≥1 整区块），
+            // 常态不可达；只有生成/IO 掉队时才把玩家钉在已就位区边缘
+            // （替代旧「隐形石墙」）。
+            self.clamp_to_sim_area(pc, r_safe);
             // ---- 行为音效：脚步 / 落地 ----
             let delta = self.player.pos - before;
             let moved = delta.length();
@@ -1913,7 +2321,13 @@ impl GameRuntime {
                 let under = WorldView {
                     chunks: &self.chunks,
                 }
-                .block(BlockPos::new(p.x as i32, (p.y - 0.5) as i32, p.z as i32))
+                // floor 取整（coords 审计 P3：`as i32` 向零截断在负坐标
+                // 取错方块；全仓其余取整点均为 floor）。
+                .block(BlockPos::new(
+                    p.x.floor() as i32,
+                    (p.y - 0.5).floor() as i32,
+                    p.z.floor() as i32,
+                ))
                 .0;
                 if let Some(event) = step_event(under) {
                     self.audio
@@ -2640,6 +3054,11 @@ impl GameRuntime {
         }
         let k = 0.0025 * self.sens;
         self.player.yaw += dx as f32 * k;
+        // 折回 (−π, π]（审计 coords P4：yaw 无界累积使 f32 三角函数精度
+        // 随游玩时长退化；sin/cos 消费端取值不变）。
+        self.player.yaw = (self.player.yaw + std::f32::consts::PI)
+            .rem_euclid(std::f32::consts::TAU)
+            - std::f32::consts::PI;
         self.player.pitch = (self.player.pitch - dy as f32 * k).clamp(-1.55, 1.55);
     }
 
@@ -2683,6 +3102,12 @@ impl GameRuntime {
             return;
         }
         let target = BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2]);
+        // y 出界拒绝（coords 审计 P2：`local()` 按 rem_euclid(256) 折回，
+        // 顶面 255 上再放会写进 y=0——显示≠真实）；原版 build 高度界外
+        // 不可放置/破坏。
+        if !(0..256).contains(&target.y) {
+            return;
+        }
         // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
         // （26.1 交互仅方块实现，其余走未实现的 useItem）。
         let place_id = {
@@ -2725,7 +3150,16 @@ impl GameRuntime {
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
             // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
             //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
-            relight_block_edit(&self.chunks, target, old_id.0, new_id.0);
+            // 边派发只入队（stream 跨帧消化，审计 A1/F2），编辑源块进
+            // 当帧优先重建通道（审计 A2/F3）。
+            relight_block_edit(
+                &self.chunks,
+                target,
+                old_id.0,
+                new_id.0,
+                &mut self.pending_light_edges,
+            );
+            self.mesh_priority = Some(target.chunk());
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
                 self.hotbar.take_one(self.player.sel_slot);
@@ -2747,6 +3181,10 @@ impl GameRuntime {
     /// 正确工具，`hasCorrectToolForDrops` 门控）+ break 音效。挖掘进度完成
     /// 与创造秒破共用。
     fn destroy_block(&mut self, target: BlockPos) {
+        // y 出界拒绝（同 interact 放置；防 local() 绕回删到同列另一端）。
+        if !(0..256).contains(&target.y) {
+            return;
+        }
         let Some(handle) = self.chunks.get(&target.chunk()) else {
             return;
         };
@@ -2759,8 +3197,16 @@ impl GameRuntime {
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
         // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
-        // heightmap 维护（26.1 destroy → checkBlock）。
-        relight_block_edit(&self.chunks, target, old.0, 0);
+        // heightmap 维护（26.1 destroy → checkBlock）。边派发入队延后，
+        // 编辑源块当帧优先重建（审计 A1/A2/F2/F3）。
+        relight_block_edit(
+            &self.chunks,
+            target,
+            old.0,
+            0,
+            &mut self.pending_light_edges,
+        );
+        self.mesh_priority = Some(target.chunk());
         // 破坏爆裂碎屑（ClientLevel.addDestroyBlockEffect:942-973：满块
         // 0.25 密度 4×4×4=64 粒，取被破坏方块图集层的 1/4 随机小矩形）。
         self.particles.spawn_block_crack(
@@ -3491,6 +3937,21 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let p_eye = svc.player_pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
     let mut rng = || fast_rand();
     phys.for_each(|e, body| {
+        // 模拟环门（26.1 ServerLevel.java:419：实体仅当所在区块
+        // inEntityTickingRange 才 tick，模拟区外=冻结不动，从不查询未加载
+        // 列）。旧实现靠「未加载=石」代理，怪会在隐形石面上行走坠落；
+        // 世界视图未加载已改空气，这里显式冻结保持原版语义。
+        let own = ChunkPos::new(
+            (body.pos.x / 16.0).floor() as i32,
+            (body.pos.z / 16.0).floor() as i32,
+        );
+        if !svc
+            .chunks
+            .get(&own)
+            .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+        {
+            return;
+        }
         let tk = match ticks.get_mut(e) {
             Some(t) => t,
             None => return,
@@ -4615,12 +5076,19 @@ mod tests {
     }
 
     /// 模拟游戏路径：调用方写体素 → relight_block_edit 接线（同 interact/
-    /// destroy_block 的调用序）。
+    /// destroy_block 的调用序）。游戏路径边派发延后到 stream 消化；测试
+    /// 断言的是收敛终态，这里就地排空队列（同一收敛，仅时序折叠）。
     fn edit(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, at: BlockPos, old: u16, new: u16) {
         let h = &chunks[&at.chunk()];
         let [lx, ly, lz] = at.local();
         h.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(new);
-        relight_block_edit(chunks, at, old, new);
+        let mut queue = Vec::new();
+        relight_block_edit(chunks, at, old, new, &mut queue);
+        sync_light_edges(chunks, &mut queue);
+        assert!(
+            queue.is_empty(),
+            "测试排空后不应残留边任务（预算未耗尽前提）"
+        );
     }
 
     #[test]

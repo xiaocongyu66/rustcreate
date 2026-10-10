@@ -1,7 +1,12 @@
 //! Chunk storage and the chunk pipeline state machine.
 //!
 //! Stages advance one way; corrections only flip dirty bits.
-//! Empty -> TerrainReady -> LightLocalReady -> Lit -> MeshReady -> Uploaded.
+//! 实际推进路径（全仓 `advance_to` 唯一三处，mcv_logic game.rs）：
+//! `Empty -> TerrainReady -> LightLocalReady -> Uploaded`。
+//! `Lit`/`MeshReady` 是预留中间态（跨区块边光同步、网格编译完成的
+//! 记账点），当前流水线从不推进它们——比较「光照/网格完成度」请用
+//! `>= LightLocalReady` / `== Uploaded`，勿按六态全链写谓词
+//! （审计 stream-arch §2 / edit-mesh-staleness C3）。
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -14,7 +19,9 @@ pub enum Stage {
     Empty = 0,
     TerrainReady = 1,
     LightLocalReady = 2,
+    /// 预留：跨区块边光同步完成（现由 border_synced 记账，不推进本态）。
     Lit = 3,
+    /// 预留：网格编译完成（现直接推进 [`Self::Uploaded`]，不经过本态）。
     MeshReady = 4,
     Uploaded = 5,
 }
