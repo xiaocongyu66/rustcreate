@@ -100,7 +100,7 @@ pub fn scene_plains() -> Chunk {
                 } else {
                     stone
                 };
-                put(&mut c.0, x, y, z, id);
+                put(&mut c.0, x, y as i32, z, id);
             }
             if (x + z) % 5 == 0 {
                 put(&mut c.0, x, h as i32, z, flower);

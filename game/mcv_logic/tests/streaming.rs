@@ -55,7 +55,7 @@ fn lit_custom(
         for y in 0..=floor_top {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    vg[vidx(xx, y, zz)] = BlockId(1);
+                    vg[vidx(xx, y as i32, zz)] = BlockId(1);
                 }
             }
         }
@@ -340,7 +340,7 @@ fn timeout_release_keeps_streaming_catchup() {
 }
 
 /// 提取 `from` 的 `side` 边快照（mcv_light 边协议，0=+X 1=-X 2=+Z 3=-Z）。
-fn extract_edge(from: &ChunkHandle, side: u8) -> [u8; 4096] {
+fn extract_edge(from: &ChunkHandle, side: u8) -> [u8; mcv_light::EDGE_CELLS] {
     let vg = from.voxels.read().unwrap();
     let mut lg = from.light.write().unwrap();
     let hg = from.heightmap.read().unwrap();
@@ -355,7 +355,7 @@ fn extract_edge(from: &ChunkHandle, side: u8) -> [u8; 4096] {
 
 /// 把边快照按 REMOVE(1) 先 ADD(0) 后两相施加到 `to` 的 `side` 侧，
 /// 返回两相的脏掩码（镜像 game.rs `sync_light_edges` 的两相次序）。
-fn apply_edge_pair(to: &ChunkHandle, edge: &[u8; 4096], side: u8) -> (u8, u8) {
+fn apply_edge_pair(to: &ChunkHandle, edge: &[u8; mcv_light::EDGE_CELLS], side: u8) -> (u8, u8) {
     let mut out = (0u8, 0u8);
     for (i, op) in [1u8, 0u8].into_iter().enumerate() {
         let vg = to.voxels.read().unwrap();
@@ -435,7 +435,7 @@ fn floor_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
         for y in 0..5usize {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    v[vidx(xx, y, zz)] = BlockId(1);
+                    v[vidx(xx, y as i32, zz)] = BlockId(1);
                 }
             }
         }
