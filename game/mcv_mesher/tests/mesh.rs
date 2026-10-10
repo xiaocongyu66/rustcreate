@@ -1,7 +1,7 @@
 //! Synthetic-data tests for the C++ greedy mesher via `Mesher`.
 //! All light arrays are filled with 0xF0 (sky 15, block 0).
 
-use mcv_mesher::{CxxMeshBuffer, Mesher, Slot};
+use mcv_mesher::{MeshBuffer, Mesher, Slot};
 
 const VOL: usize = 65536;
 
@@ -58,7 +58,7 @@ struct Vtx {
 
 #[allow(clippy::almost_complete_range)]
 #[allow(unknown_lints, clippy::manual_chunks)]
-fn decode(buf: &CxxMeshBuffer) -> Vec<Vtx> {
+fn decode(buf: &MeshBuffer) -> Vec<Vtx> {
     buf.vertex_data()
         .chunks(24)
         .map(|b| {

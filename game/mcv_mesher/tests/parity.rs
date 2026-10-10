@@ -102,10 +102,10 @@ fn build_both(slots: &[Option<Slot<'_>>; 9], kind: u32, ctx: &str) -> (u32, u32)
     b.counts()
 }
 
-/// 两 pass 都对拍一遍。
-fn build_both_passes(slots: &[Option<Slot<'_>>; 9], ctx: &str) {
+/// 两 pass 都对拍一遍，返回末 pass（water）计数。
+fn build_both_passes(slots: &[Option<Slot<'_>>; 9], ctx: &str) -> (u32, u32) {
     build_both(slots, MESH_OPAQUE, ctx);
-    build_both(slots, MESH_WATER, ctx);
+    build_both(slots, MESH_WATER, ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -125,13 +125,8 @@ fn rust_geom_rule_matches_cpp_generated_table() {
         if !body.starts_with('{') {
             continue;
         }
-        let flat: Vec<&str> = body
-            .chars()
-            .filter(|c| *c != '{' && *c != '}')
-            .collect::<String>()
-            .split(',')
-            .map(str::trim)
-            .collect();
+        let compact: String = body.chars().filter(|c| *c != '{' && *c != '}').collect();
+        let flat: Vec<&str> = compact.split(',').map(str::trim).collect();
         assert_eq!(flat.len(), 10, "line {}: 意外字段数 {:?}", i + 1, flat);
         let def = &mcv_core::BLOCKS[count];
         assert_eq!(name.trim(), def.name, "id {count}: 表名漂移");
@@ -348,7 +343,7 @@ fn scene_light_gradient() -> Chunk {
         for x in 0..16usize {
             for z in 0..16usize {
                 let i = (y << 8) | (z << 4) | x;
-                c.1[i] = (((y * 13 + x * 7 + z * 3) % 16) << 4) | ((x + z) % 16) as u8;
+                c.1[i] = ((((y * 13 + x * 7 + z * 3) % 16) << 4) | ((x + z) % 16)) as u8;
             }
         }
     }
