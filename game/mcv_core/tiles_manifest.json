@@ -1659,5 +1659,265 @@
   "yellow_stained_glass_pane_top": "block/yellow_stained_glass_pane_top.png",
   "yellow_terracotta": "block/yellow_terracotta.png",
   "yellow_wool": "block/yellow_wool.png"
+ },
+ "animation": {
+  "note": "mcmeta animation 节转写（AnimationMetadataSection 语义，src-26.1 AnimationMetadataSection.java:10-38 / AnimationFrame.java / SpriteContents.java:113-163）。tiles: 贴图名→mcmeta animation 节逐字原样（frames 元素=裸帧号或 {index,time}；缺省帧序=条带顺序 0..N-1；frametime 默认 1；interpolate 默认 false；width/height 缺省= min 边正方形帧）。frame0_index: 显式 frames 的首帧号（原版初始上传帧，atlas.rs 解码据此裁帧；键缺失=0）。着色器按 tick 选帧采样属渲染侧二期，数据侧以本节锁语义。",
+  "frame0_index": {
+   "fire_0": 16,
+   "soul_fire_0": 16
+  },
+  "tiles": {
+   "chain_command_block_back": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "chain_command_block_front": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "chain_command_block_side": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "command_block_back": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "command_block_front": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "command_block_side": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "copper_lantern": {
+    "frametime": 8
+   },
+   "crimson_stem": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "exposed_copper_lantern": {
+    "frametime": 8
+   },
+   "fire_0": {
+    "frames": [
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ]
+   },
+   "firefly_bush_emissive": {
+    "frametime": 3
+   },
+   "kelp": {
+    "frametime": 2
+   },
+   "kelp_plant": {
+    "frametime": 2
+   },
+   "lantern": {
+    "frametime": 8
+   },
+   "lava_still": {
+    "frametime": 2,
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     18,
+     17,
+     16,
+     15,
+     14,
+     13,
+     12,
+     11,
+     10,
+     9,
+     8,
+     7,
+     6,
+     5,
+     4,
+     3,
+     2,
+     1
+    ]
+   },
+   "magma": {
+    "frametime": 8,
+    "interpolate": true,
+    "frames": [
+     0,
+     1,
+     2
+    ]
+   },
+   "nether_portal": {},
+   "oxidized_copper_lantern": {
+    "frametime": 8
+   },
+   "prismarine": {
+    "frametime": 300,
+    "interpolate": true,
+    "frames": [
+     0,
+     1,
+     0,
+     2,
+     0,
+     3,
+     0,
+     1,
+     2,
+     1,
+     3,
+     1,
+     0,
+     2,
+     1,
+     2,
+     3,
+     2,
+     0,
+     3,
+     1,
+     3
+    ]
+   },
+   "repeating_command_block_back": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "repeating_command_block_front": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "repeating_command_block_side": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "sculk": {
+    "frametime": 20,
+    "interpolate": true
+   },
+   "sculk_sensor_tendril_active": {
+    "frametime": 1
+   },
+   "sculk_vein": {
+    "frametime": 20,
+    "interpolate": true
+   },
+   "sea_lantern": {
+    "frametime": 5
+   },
+   "seagrass": {
+    "frametime": 2
+   },
+   "soul_fire_0": {
+    "frames": [
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29,
+     30,
+     31,
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13,
+     14,
+     15
+    ]
+   },
+   "soul_lantern": {
+    "frametime": 8
+   },
+   "stonecutter_saw": {
+    "interpolate": false,
+    "frametime": 1
+   },
+   "tall_seagrass_bottom": {
+    "frametime": 2
+   },
+   "warped_stem": {
+    "interpolate": true,
+    "frametime": 10
+   },
+   "water_still": {
+    "frametime": 2
+   },
+   "weathered_copper_lantern": {
+    "frametime": 8
+   }
+  }
  }
 }

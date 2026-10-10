@@ -101,6 +101,20 @@ LEGACY_OFFICIAL = {off for _, off, _ in LEGACY}
 # missing 哨兵贴图名（tiles_manifest.json 最后一层，无对应文件）。模型无贴图
 # 解析的方块（air/barrier/light/structure_void 等）全部指向该层，运行时由
 # mcv_core::atlas 固定为原版 missingno 品红标记（MissingTextureAtlasSprite）。
+#
+# 哨兵方块的可见性语义（audit #9 修复波 #125 核实）：
+#   light / cave_air / void_air / structure_void / bubble_column：
+#     原版 light 等【无可见模型】（LightBlock 纯光照实体，barrier 之外
+#     这些均无贴图渲染）→ 本网格器按不可见出几何（mesher.rs
+#     INVISIBLE_GEOM；tests/golden.rs 黄金件 geom=false 逐 id 锁死），
+#     指向哨兵层仅是无贴图时的兜底，世界里【不会】渲染品红块。
+#   barrier：
+#     原版 barrier 模型引 item/barrier 贴图渲染红圈（barrier.json
+#     cube_all textures.sprite=minecraft:item/barrier → normalize_tex
+#     丢弃非 block/ 命名空间 → 落哨兵层）。本引擎 items atlas 未接入
+#     （audit #8b，二期），网格器同样列 INVISIBLE_GEOM——不可见优于
+#     品红 missingno。二期接入 item 贴图后恢复红圈（黄金件层号冻结，
+#     届时随 items atlas 一并更新）。
 SENTINEL_NAME = "missing_no_texture"
 
 # 透明像素启发式之外，按名字判非 opaque 的词（玻璃/叶/冰/台阶/薄板等）。
@@ -325,6 +339,41 @@ def has_alpha(tex):
         return im.getextrema()[3][0] < 255
     except Exception:  # noqa: BLE001
         return False
+
+
+def parse_animation(tex):
+    """<tex>.png.mcmeta 的 animation 节 → (animation 原始 dict, 首帧号)。
+    无文件 / JSON 非法 / 无 animation 节 → None。
+
+    原版语义（src-26.1 行号引用，反编译不入仓）：
+      AnimationMetadataSection.java:10-24 —— frames（裸帧号或 {index,time}，
+      AnimationFrame.java:12-22）、width/height 缺省 = min 边正方形
+      （calculateFrameSize :25-38）、frametime 默认 1、interpolate 默认 false。
+      SpriteContents.java:113-163 —— 缺省帧序 = 条带顺序 0..N-1；显式帧序
+      校验 time>0 / index 越界并告警 unused 帧；帧位行主序
+      （AnimatedTexture.getFrameX/Y = idx % rowSize / idx // rowSize，
+      rowSize = 图宽 ÷ 帧宽）。
+    本引擎帧动画【播放】在渲染侧二期（manifest 帧层 + shader 按 tick 偏移
+    UV）；本函数只做数据侧转写（animation 节逐字入 manifest，锁语义）并算出
+    首帧号（frames 缺省→0；显式→frames[0].index，如 fire_0 首帧=16），供
+    atlas.rs 解码取「初始上传帧」（audit #2 的跨帧混采修复依据）。
+    """
+    p = LOCAL_TEX / (tex + ".png.mcmeta")
+    if not p.exists():
+        return None
+    try:
+        j = json.loads(p.read_text())
+    except Exception:  # noqa: BLE001
+        return None
+    a = j.get("animation")
+    if not isinstance(a, dict):
+        return None
+    first = 0
+    frames = a.get("frames")
+    if isinstance(frames, list) and frames:
+        f0 = frames[0]
+        first = f0.get("index", 0) if isinstance(f0, dict) else f0
+    return a, int(first)
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +632,22 @@ def main():
     if len(tile_names) >= 2048:
         print(f"[warn] 贴图数 {len(tile_names)} ≥ 2048 层预算（GLES 上限抬到 adapter 值但 <2048）!")
 
+    # --- mcmeta animation 节 → manifest（数据侧，修复波 #125 / audit #2 #4） ---
+    # 只收录 manifest 内贴图（wanted 去缺图后集合）；block/ 全库 54 张动画
+    # mcmeta，manifest 内 34 张（其余 20 张属未覆盖贴图，audit #6，二期随
+    # states/model 解析收敛）。animation 值 = mcmeta animation 节逐字转写
+    # （原版 Codec 字段名 frames/width/height/frametime/interpolate 原样保留）。
+    animations, frame0_index = {}, {}
+    for t in sorted(wanted):
+        parsed = parse_animation(t)
+        if parsed:
+            animations[renamed[t]] = parsed[0]
+            if parsed[1] != 0:
+                frame0_index[renamed[t]] = parsed[1]
+    stats["anim_mcmeta_manifest"] = len(animations)
+    print(f"mcmeta 动画转写 manifest: {len(animations)} 张"
+          f"（frame0_index 非零: {sorted(frame0_index)}）")
+
     # missing 哨兵层：排在全部真实贴图之后，专供「模型无贴图解析」的方块
     # （air/barrier 等）指向；渲染层把它固定为原版 missingno 品红标记
     # （MissingTextureAtlasSprite），且不参与磁盘加载（无对应文件）。
@@ -594,6 +659,17 @@ def main():
         "texture_root": "assets/minecraft/textures/block",
         "tile_index_to_file": tile_names + [SENTINEL_NAME],
         "file_to_virtual_path": {nm: name2path[nm] + ".png" for nm in tile_names},
+        "animation": {
+            "note": "mcmeta animation 节转写（AnimationMetadataSection 语义，src-26.1 "
+                    "AnimationMetadataSection.java:10-38 / AnimationFrame.java / "
+                    "SpriteContents.java:113-163）。tiles: 贴图名→mcmeta animation 节逐字原样"
+                    "（frames 元素=裸帧号或 {index,time}；缺省帧序=条带顺序 0..N-1；frametime "
+                    "默认 1；interpolate 默认 false；width/height 缺省= min 边正方形帧）。"
+                    "frame0_index: 显式 frames 的首帧号（原版初始上传帧，atlas.rs 解码据此裁帧；"
+                    "键缺失=0）。着色器按 tick 选帧采样属渲染侧二期，数据侧以本节锁语义。",
+            "frame0_index": frame0_index,
+            "tiles": animations,
+        },
     }, ensure_ascii=False, indent=1) + "\n")
 
     def tile_id(tex):
