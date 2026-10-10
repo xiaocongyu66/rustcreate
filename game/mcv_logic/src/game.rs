@@ -3383,7 +3383,7 @@ impl GameRuntime {
         // ApplyStatusEffectsConsumeEffect：概率掷（腐肉 0.8 / 蜘蛛眼 1.0）。
         // spawn_rng 输出 31 位（game.rs fast_rand 链），归一到 [0,1)。
         if let Some(eff) = food.effect {
-            let roll = f32::from_u32(spawn_rng()()) / 2147483648.0;
+            let roll = (spawn_rng()() as f32) / 2147483648.0;
             if mcv_item::food::effect_fires(&eff, roll) {
                 let kind = match eff.kind {
                     mcv_item::food::FoodEffectKind::Hunger => mcv_entity::Kind::Hunger,

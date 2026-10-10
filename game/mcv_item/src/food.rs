@@ -376,7 +376,7 @@ mod tests {
             );
         }
         assert_eq!(state, None, "无启动态不凭空续吃");
-        *state = Some(Eating {
+        state = Some(Eating {
             item: ROTTEN_FLESH,
             ticks: 0,
         });
@@ -407,14 +407,14 @@ mod tests {
         assert!(step_eating(true, true, Some(BONE), None, true, &mut state).is_none());
         assert_eq!(state, None);
         // 手上空了。
-        *state = Some(Eating {
+        state = Some(Eating {
             item: ROTTEN_FLESH,
             ticks: 3,
         });
         assert!(step_eating(true, true, None, None, true, &mut state).is_none());
         assert_eq!(state, None);
         // 满饥饿（can_eat=false）进行中的进食一并取消。
-        *state = Some(Eating {
+        state = Some(Eating {
             item: ROTTEN_FLESH,
             ticks: 3,
         });
