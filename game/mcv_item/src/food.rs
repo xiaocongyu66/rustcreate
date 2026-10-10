@@ -170,12 +170,12 @@ pub static FOODS: [(u16, FoodProperties); 3] = [
 
 /// 饱和增量（FoodConstants.java:30-32）：`nutrition × modifier × 2`。
 pub fn saturation_by_modifier(nutrition: i32, modifier: f32) -> f32 {
-    f32::from(nutrition) * modifier * 2.0
+    nutrition as f32 * modifier * 2.0
 }
 
 /// `FoodData.add`（FoodData.java:19-22）：hunger 钳 0..20、饱和钳 0..hunger。
 pub fn add_food(hunger: &mut f32, saturation: &mut f32, nutrition: i32, saturation_add: f32) {
-    *hunger = (*hunger + f32::from(nutrition)).clamp(0.0, 20.0);
+    *hunger = (*hunger + nutrition as f32).clamp(0.0, 20.0);
     *saturation = (*saturation + saturation_add).clamp(0.0, *hunger);
 }
 
