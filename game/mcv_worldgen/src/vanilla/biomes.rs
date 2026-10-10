@@ -285,7 +285,7 @@ pub fn biome_point_table() -> Vec<(ParameterPoint, Biome)> {
 /// 严格小于保持 26.1「首个最小者胜」的平局序）。
 #[must_use]
 pub fn pick_biome(table: &[(ParameterPoint, Biome)], t: &TargetPoint) -> Biome {
-    let mut best = table[0].fitness(t);
+    let mut best = table[0].0.fitness(t);
     let mut want = table[0].1;
     for (p, b) in table.iter().skip(1) {
         let f = p.fitness(t);

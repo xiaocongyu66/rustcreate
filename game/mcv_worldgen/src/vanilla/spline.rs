@@ -111,11 +111,12 @@ impl Spline {
                 derivatives,
             } => {
                 let input = coord.get(c);
-                let start = find_interval_start(locations, input);
+                let start_i = find_interval_start(locations, input);
                 let last = locations.len() - 1;
-                if start < 0 {
+                if start_i < 0 {
                     return linear_extend(input, locations, values[0].eval(c), derivatives, 0);
                 }
+                let start = start_i as usize;
                 if start == last {
                     return linear_extend(
                         input,
