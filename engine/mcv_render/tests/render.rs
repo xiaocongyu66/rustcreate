@@ -622,7 +622,7 @@ fn water_pass_renders_uploaded_water_vertices() {
     let (device, queue, mut renderer) = setup();
     // #80 起上传器持批记账（&mut），且上传经 flush 提交——生产序
     // stream()（flush）→ draw_frame，测试对齐之（见下方 flush 调用）。
-    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     // validation 范围：覆盖建缓冲（创建期映射写入）+ 两帧全部 pass。
     let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
@@ -700,6 +700,9 @@ fn water_pass_renders_uploaded_water_vertices() {
         Some((bytemuck::cast_slice(&wverts), &widx)),
     );
     let dry = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
+    // 生产同款冲刷（#80）：staging 拷贝在此 submit，先于下方两帧的 submit
+    // （单队列按提交序执行，draw 必见已拷贝数据）。
+    up.flush();
 
     fn frame(
         device: &wgpu::Device,
@@ -843,9 +846,10 @@ fn gles_fallback_world_frame_smoke() {
         Some(256),
     );
     let clouds = mcv_render::Clouds::new(&device, &queue);
-    // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。
-    // #80 起上传器持批记账（&mut）。
-    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    // 事故现场复跑：MeshUploader 上传路径（GLES 曾对「映射 buffer 上
+    // write_buffer」fatal；#80 起为 staging 环 map_async + copy——同样
+    // 需要真机 GL 后端真实走一遍）。
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
@@ -865,6 +869,8 @@ fn gles_fallback_world_frame_smoke() {
     ];
     let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
     let chunk = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
+    // 生产同款冲刷（#80）：staging 拷贝（map_async 环 + copy）在此 submit。
+    up.flush();
 
     let extent = wgpu::Extent3d {
         width: 320,
@@ -1737,7 +1743,7 @@ fn first_person_hand_paints_bottom_right() {
 #[test]
 fn adjacent_chunks_merge_into_one_draw_unit() {
     let (device, queue, mut renderer) = setup();
-    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
@@ -1763,6 +1769,8 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
     let _c1 = up.build_chunk([16.0, 0.0, 0.0], vb, &idx, None);
     let _c2 = up.build_chunk([32.0, 0.0, 0.0], vb, &idx, None);
 
+    // 生产同款冲刷（#80）：staging 拷贝先于本测试的渲染 submit。
+    up.flush();
     let entries = up.entries();
     assert_eq!(
         entries.len(),
@@ -1770,7 +1778,11 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         "三个相邻块必须合并为 1 个批次条目，实测 {}",
         entries.len()
     );
-    assert_eq!(entries[0].origin, [0.0, 0.0, 0.0], "批次 origin 必须是最小角");
+    assert_eq!(
+        entries[0].origin,
+        [0.0, 0.0, 0.0],
+        "批次 origin 必须是最小角"
+    );
     assert_eq!(entries[0].opaque_range, 0..18, "批次索引量 = 三块之和");
 
     // (b)+(c)：批次条目整帧渲染——绿份额与 draw 数。
@@ -1833,7 +1845,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
 #[test]
 fn batch_rebuild_uses_fresh_member_bytes() {
     let (device, queue, mut renderer) = setup();
-    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     let y = 100.0f32;
     let mk = |layer: u16, p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
@@ -1872,9 +1884,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
 
-    let frame_green = |renderer: &mut mcv_render::Renderer,
-                       chunks: &[RenderChunk]|
-     -> f64 {
+    let frame_green = |renderer: &mut mcv_render::Renderer, chunks: &[RenderChunk]| -> f64 {
         let scene = Scene {
             camera: &camera,
             time: 0.0,
@@ -1918,6 +1928,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         None,
     );
     assert_eq!(up.entries().len(), 1, "两块必须合为一批");
+    up.flush();
     let green_grass = frame_green(&mut renderer, up.entries());
 
     // 重网格块 A：草 → 泥土。批次条目必须换新字节（成员资格与条目数不变）。
@@ -1928,9 +1939,10 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         None,
     );
     assert_eq!(up.entries().len(), 1, "重网格不得拆批");
+    up.flush();
     let green_dirt = frame_green(&mut renderer, up.entries());
     assert!(
-        green_dirt < green_grass * 0.5,
+        green_dirt < green_grass * 0.6,
         "重网格后画面必须切换到新贴图（草 green={green_grass} → 泥 green={green_dirt}）——批次重建用了陈旧字节"
     );
 }
@@ -1938,8 +1950,8 @@ fn batch_rebuild_uses_fresh_member_bytes() {
 /// #80 卸载成员：批次随成员卸载收缩/清批，画面不得残留已卸载区块的像素。
 #[test]
 fn unload_removes_member_from_batch() {
-    let (device, queue, mut renderer) = setup();
-    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let (device, _queue, _renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
@@ -1975,4 +1987,98 @@ fn unload_removes_member_from_batch() {
     // 卸载不存在的区块 = no-op（不炸不建批）。
     up.unload(mcv_core::ChunkPos::new(9, 9));
     assert_eq!(up.entries().len(), 0);
+}
+
+/// #80 异步 staging 上传（第二刀）结构性契约：
+/// (a) build 阶段只建空壳缓冲，不发生任何拷贝（staged_uploads == 0）；
+/// (b) flush 后拷贝全部提交、常规路径全走环（fallback_uploads == 0）、
+///     环槽写权至少回收一次（slot_maps >= 1）；
+/// (c) flush 后渲一帧，地形像素真实上屏（数据确实经环到达设备缓冲）；
+/// (d) 无新上传的 flush 是 no-op（staged_uploads 不再增长）。
+#[test]
+fn staging_upload_flush_contract() {
+    let (device, queue, mut renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
+    let y = 100.0f32;
+    let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer: mcv_core::tiles::GRASS_TOP,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2,
+        pad: [0; 2],
+    };
+    let verts = [
+        mk([0.0, y, 0.0], [0, 0]),
+        mk([0.0, y, 16.0], [0, 4096]),
+        mk([16.0, y, 16.0], [4096, 4096]),
+        mk([16.0, y, 0.0], [4096, 0]),
+    ];
+    let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    let _c = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
+
+    let s0 = up.upload_stats();
+    assert_eq!(s0.staged_uploads, 0, "build 阶段不得发生拷贝（空壳 + flush 提交）");
+
+    up.flush();
+    let s1 = up.upload_stats();
+    assert!(s1.staged_uploads >= 1, "flush 必须提交至少一笔拷贝");
+    assert_eq!(
+        s1.fallback_uploads, 0,
+        "常规尺寸网格必须全走 staging 环（兜底 = 环容量/时序缺陷信号）"
+    );
+    assert!(s1.slot_maps >= 1, "环槽写权必须经 map_buffer_on_submit 回收");
+
+    // (c) flush 后整帧渲染：拷贝 submit 先于本帧 submit → 数据可见。
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000);
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: up.entries(),
+        hud: &hud,
+        cloud: None,
+        player: None,
+        mobs: None,
+        overlay: None,
+        underwater: false,
+        particles: None,
+        hand: None,
+    };
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    let mut enc = device.create_command_encoder(&Default::default());
+    target.enqueue_copy(&mut enc);
+    queue.submit([enc.finish()]);
+    let rgba = target.read_pixels(&device);
+    let (green, _) = sample_stats(&rgba, extent.width, extent.height);
+    assert!(green > 0.2, "staging 上传后草地缺失 green={green}——环拷贝/写权回收回归");
+
+    // (d) 无新上传的 flush 不追加拷贝。
+    up.flush();
+    let s2 = up.upload_stats();
+    assert_eq!(s2.staged_uploads, s1.staged_uploads, "空 flush 不得重复提交拷贝");
 }

@@ -76,6 +76,45 @@ pub struct RenderChunk {
 const MAX_BATCH_MEMBERS: usize = 8;
 const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 
+/// staging 环（#80 第二刀）：单槽容量与槽数。8 槽 × 2 MiB = 16 MiB 在途
+/// 窗口，常规流式帧的网格上传（< 2 MiB）全部走环；单笔超槽容量或环耗尽
+/// 时退一次性 mapped_at_creation 兜底（与改动前同机制，行为不变）。
+const STAGING_SLOT_BYTES: u64 = 2 * 1024 * 1024;
+const STAGING_SLOT_COUNT: usize = 8;
+
+/// 异步上传统计（#80 第二刀可观测性）：主线程同步大拷贝消除的证据。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UploadStats {
+    /// 经 staging 环提交的拷贝笔数。
+    pub staged_uploads: u64,
+    /// 经 staging 环提交的拷贝字节数（顶点+索引）。
+    pub staged_bytes: u64,
+    /// 环槽 map/unmap 次数（写权分帧回收的频率）。
+    pub slot_maps: u64,
+    /// 走一次性兜底（超槽容量或环耗尽）的笔数——恒为 0 说明环容量足够。
+    pub fallback_uploads: u64,
+}
+
+/// staging 槽状态：Mapping（map_async 已发，等 poll 回调）→ Mapped（可写，
+/// used = 写游标）→ InFlight（已写已 unmap、拷贝已提交，等
+/// map_buffer_on_submit 回调）→ Mapped（写权回收，分帧循环）。
+enum SlotState {
+    Mapping,
+    Mapped { used: u64 },
+    InFlight,
+}
+
+struct StagingSlot {
+    buf: wgpu::Buffer,
+    state: SlotState,
+}
+
+/// 一笔待上传拷贝：目标缓冲 + 数据（flush 时写入 staging 并记 copy）。
+struct PendingUpload {
+    dst: wgpu::Buffer,
+    bytes: Vec<u8>,
+}
+
 /// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BatchingStats {
@@ -118,23 +157,60 @@ struct PoolMesh {
 /// `world = uniform.origin + pos` 逐位不变。
 pub struct MeshUploader {
     device: wgpu::Device,
+    queue: wgpu::Queue,
     pool: std::collections::HashMap<(i32, i32), PoolMesh>,
     /// 批次成员表，与 `entries` 按下标平行；条目重建原位替换，仅整体清空
     /// 时才移除槽位（渲染端槽位分配依赖条目序稳定）。
     batch_members: Vec<Vec<(i32, i32)>>,
     entries: Vec<RenderChunk>,
     stats: BatchingStats,
+    /// staging 环槽（MAP_WRITE|COPY_SRC，map_async 写入、map_buffer_on_submit
+    /// 分帧回收写权）。
+    staging: Vec<StagingSlot>,
+    /// 映射回调回执（map_async/map_buffer_on_submit 完成的槽下标 + 是否
+    /// 成功）。回调无法借用 self，经 Arc 信道送回 flush 消化。
+    mapped_mailbox: std::sync::Arc<std::mutex::Mutex<Vec<(usize, bool)>>>,
+    /// 待 flush 的拷贝（目标缓冲 + 字节）；flush 记入 encoder 并 submit，
+    /// 先于同帧任何 draw（单队列按提交序执行）。
+    uploads: Vec<PendingUpload>,
+    upload_stats: UploadStats,
 }
 
 impl MeshUploader {
-    /// 只需 device：网格经创建期映射视图写入，不占队列写带宽。
-    pub fn new(device: wgpu::Device) -> Self {
+    /// device + queue：网格不再经创建期映射整块写入，而是 flush 时经
+    /// staging 环 map_async 写入 + copy_buffer_to_buffer 提交——主线程
+    /// 大拷贝与设备缓冲分配/解映射解耦（#80 第二刀）。
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let mailbox = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut staging = Vec::with_capacity(STAGING_SLOT_COUNT);
+        for i in 0..STAGING_SLOT_COUNT {
+            let buf = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("mesh-staging"),
+                size: STAGING_SLOT_BYTES,
+                usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            let mb = std::sync::Arc::clone(&mailbox);
+            buf.map_async(wgpu::MapMode::Write, .., move |res| {
+                let ok = res.is_ok();
+                if let Err(e) = res {
+                    log::error!("staging slot {i} initial map failed: {e}");
+                }
+                mb.lock().expect("staging mailbox").push((i, ok));
+            });
+            staging.push(StagingSlot { buf, state: SlotState::Mapping });
+        }
         Self {
             device,
+            queue,
             pool: std::collections::HashMap::new(),
             batch_members: Vec::new(),
             entries: Vec::new(),
             stats: BatchingStats::default(),
+            staging,
+            mapped_mailbox: mailbox,
+            uploads: Vec::new(),
+            upload_stats: UploadStats::default(),
         }
     }
 
@@ -152,6 +228,129 @@ impl MeshUploader {
         }
     }
 
+    /// 异步上传统计（#80 可观测性）。
+    pub fn upload_stats(&self) -> UploadStats {
+        self.upload_stats
+    }
+
+    /// 每帧冲刷：把 build/unload 期间攒下的拷贝经 staging 环记入 encoder
+    /// 并 submit。拷贝 submit 先于同帧 draw_frame 的 submit（单队列按提交
+    /// 序执行）——draw 必见已上传数据，与旧「创建期映射写 + 下次 submit
+    /// 内部拷贝」的可见时序逐帧一致。环槽写权经 map_buffer_on_submit 等
+    /// 本 submit 执行完毕后才回到 Mapped（分帧回收）。
+    pub fn flush(&mut self) {
+        let in_flight = self
+            .staging
+            .iter()
+            .any(|s| !matches!(s.state, SlotState::Mapped { used: 0 }));
+        let mail_pending = !self.mapped_mailbox.lock().expect("staging mailbox").is_empty();
+        if self.uploads.is_empty() && !in_flight && !mail_pending {
+            return;
+        }
+        // 驱动映射回调（初始 map / 上一 submit 的写权回收）。
+        let _ = self.device.poll(wgpu::PollType::Poll);
+        for (i, ok) in self.mapped_mailbox.lock().expect("staging mailbox").drain(..) {
+            self.staging[i].state = if ok {
+                SlotState::Mapped { used: 0 }
+            } else {
+                // 映射失败：重新申请（state 回 Mapping，下轮 poll 重试）。
+                let mb = std::sync::Arc::clone(&self.mapped_mailbox);
+                self.staging[i].buf.map_async(wgpu::MapMode::Write, .., move |res| {
+                    mb.lock().expect("staging mailbox").push((i, res.is_ok()));
+                });
+                SlotState::Mapping
+            };
+        }
+        if self.uploads.is_empty() {
+            return;
+        }
+        let ups = std::mem::take(&mut self.uploads);
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("mesh-upload"),
+            });
+        let mut used_slots: Vec<usize> = Vec::new();
+        let mut n_staged = 0u64;
+        let mut n_bytes = 0u64;
+        let mut n_fallback = 0u64;
+        for up in ups {
+            let len = up.bytes.len() as u64;
+            if len == 0 {
+                // 空数据无拷贝：目标缓冲保持零初始化，几何为空永不引用
+                // （opaque_range 空 / 无水分段）。
+                continue;
+            }
+            // 找一个可写且有剩余容量的环槽；超槽容量或环耗尽 → 一次性
+            // mapped_at_creation 兜底（改动前同机制）。
+            let slot = self.staging.iter().position(|s| {
+                matches!(s.state, SlotState::Mapped { used } if used + len <= STAGING_SLOT_BYTES)
+            });
+            match slot {
+                Some(si) if len <= STAGING_SLOT_BYTES => {
+                    let off = match self.staging[si].state {
+                        SlotState::Mapped { used } => used,
+                        _ => unreachable!("position 已过滤出 Mapped 槽"),
+                    };
+                    let dst = &self.staging[si];
+                    let mut view = dst.buf.get_mapped_range_mut().expect("slot mapped");
+                    view[off as usize..(off + len) as usize].copy_from_slice(&up.bytes);
+                    drop(view);
+                    encoder.copy_buffer_to_buffer(&dst.buf, off, &up.dst, 0, len);
+                    if let SlotState::Mapped { used } = &mut self.staging[si].state {
+                        *used = off + len;
+                    }
+                    if !used_slots.contains(&si) {
+                        used_slots.push(si);
+                    }
+                    n_staged += 1;
+                    n_bytes += len;
+                }
+                _ => {
+                    // len > 槽容量或全槽在途：一次性兜底（submit 后随命令
+                    // 缓冲释放，无写权需要回收）。
+                    let tmp = self.device.create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("mesh-staging-once"),
+                        size: len.next_multiple_of(4),
+                        usage: wgpu::BufferUsages::MAP_WRITE | wgpu::BufferUsages::COPY_SRC,
+                        mapped_at_creation: true,
+                    });
+                    {
+                        let mut view = tmp.get_mapped_range_mut().expect("one-shot staged");
+                        view.slice(0..len as usize).copy_from_slice(&up.bytes);
+                    }
+                    tmp.unmap();
+                    encoder.copy_buffer_to_buffer(&tmp, 0, &up.dst, 0, len);
+                    n_staged += 1;
+                    n_bytes += len;
+                    n_fallback += 1;
+                }
+            }
+        }
+        for si in used_slots {
+            self.staging[si].buf.unmap();
+            self.staging[si].state = SlotState::InFlight;
+            let mb = std::sync::Arc::clone(&self.mapped_mailbox);
+            // 写权回收必须挂在「本 submit 之后」：plain map_async 在提交前
+            // 注册、只等更早的提交完成——拷贝尚未执行写权就回来会踩在途
+            // 数据。map_buffer_on_submit 把映射推迟到本 submit 执行完毕
+            // （wgpu 30 为此场景的原生 API），回调到站 → 下轮 flush 复用。
+            encoder.map_buffer_on_submit(
+                &self.staging[si].buf,
+                wgpu::MapMode::Write,
+                ..,
+                move |res| {
+                    mb.lock().expect("staging mailbox").push((si, res.is_ok()));
+                },
+            );
+            self.upload_stats.slot_maps += 1;
+        }
+        self.queue.submit([encoder.finish()]);
+        self.upload_stats.staged_uploads += n_staged;
+        self.upload_stats.staged_bytes += n_bytes;
+        self.upload_stats.fallback_uploads += n_fallback;
+    }
+
     /// 区块卸载：释放该块网格字节并从所属批次移除成员；批空删批，否则
     /// 原位重建（剩余成员顶点重定基到新批次最小角）。
     pub fn unload(&mut self, pos: mcv_core::ChunkPos) {
@@ -159,11 +358,7 @@ impl MeshUploader {
         if self.pool.remove(&key).is_some() {
             self.stats.meshed_chunks -= 1;
         }
-        let Some(bi) = self
-            .batch_members
-            .iter()
-            .position(|m| m.contains(&key))
-        else {
+        let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) else {
             return;
         };
         self.batch_members[bi].retain(|&k| k != key);
@@ -177,40 +372,20 @@ impl MeshUploader {
         }
     }
 
-    fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {
-        let vb = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("chunk-vb"),
+    /// 建目标缓冲（数据为空，走 staging 异步拷贝填充）。
+    /// 旧「创建期映射 + mapped slice 写入」路径已整体替换：创建期映射要求
+    /// 上传线程同步整块写入并立即 unmap（每块 2-3 次分配/映射/大拷贝），
+    /// staging 环把这三者从上传点解耦（#80 第二刀）。同样注意目标缓冲
+    /// 不得用 queue.write_buffer 填充——GLES 拒绝对映射 buffer 的
+    /// write_buffer 的教训保留在案，环内一律 map_async + copy。
+    fn empty_buffer(&self, size: u64, usage: wgpu::BufferUsages) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-dst"),
             // 映射视图要求长度是 4 的倍数且非空（wgpu 30 MapRangeError）。
-            size: (v.len() as u64).next_multiple_of(4).max(4),
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        // 创建期映射的 buffer 必须经 mapped slice 写入，不能 queue.write_buffer：
-        // Vulkan 容忍但 GLES hal 直接报 "Buffer is expected to be unmapped"
-        // （Android 真机走 GL 回退时进世界首个网格上传即 fatal，2026-10-10）。
-        {
-            let mut view = vb.slice(..).get_mapped_range_mut().expect("vb mapped");
-            view.slice(0..v.len()).copy_from_slice(v);
-        }
-        vb.unmap();
-        let ib = self.index_buf(i);
-        (vb, ib)
-    }
-
-    fn index_buf(&self, i: &[u32]) -> wgpu::Buffer {
-        let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("chunk-ib"),
-            size: (i.len() as u64 * 4).next_multiple_of(4).max(4),
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: true,
-        });
-        let ib_bytes = bytemuck::cast_slice::<u32, u8>(i);
-        {
-            let mut view = ib.slice(..).get_mapped_range_mut().expect("ib mapped");
-            view.slice(0..ib_bytes.len()).copy_from_slice(ib_bytes);
-        }
-        ib.unmap();
-        ib
+            size: size.next_multiple_of(4).max(4),
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     /// 由裸网格字节上传一个区块并入池（#80）：水顶点拼在 opaque 顶点之后
@@ -240,7 +415,7 @@ impl MeshUploader {
             && origin[1] == 0.0
             && vbytes.len() % TERRAIN_STRIDE == 0
             && water.map_or(true, |(wv, _)| wv.len() % TERRAIN_STRIDE == 0);
-        let replaced = self.pool.insert(
+        let old = self.pool.insert(
             key,
             PoolMesh {
                 vbytes: vbytes.to_vec(),
@@ -250,9 +425,8 @@ impl MeshUploader {
                 water_idx: water.map_or(Vec::new(), |(_, wi)| wi.to_vec()),
                 mergeable,
             },
-        )
-        .is_none();
-        if replaced {
+        );
+        if old.is_none() {
             self.stats.meshed_chunks += 1;
         }
         if let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) {
@@ -265,12 +439,12 @@ impl MeshUploader {
                 for (dx, dz) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
                     let nk = (key.0 + dx, key.1 + dz);
                     let hit = self.batch_members.iter().position(|m| m.contains(&nk));
-                    if let Some(bi) = hit {
-                        if self.batch_joinable(bi, key) {
-                            self.batch_members[bi].push(key);
-                            joined = Some(bi);
-                            break;
-                        }
+                    if let Some(bi) = hit
+                        && self.batch_joinable(bi, key)
+                    {
+                        self.batch_members[bi].push(key);
+                        joined = Some(bi);
+                        break;
                     }
                 }
             }
@@ -278,8 +452,9 @@ impl MeshUploader {
                 Some(bi) => bi,
                 None => {
                     let members = vec![key];
-                    let (entry, bytes) = self.build_batch_entry(&members);
+                    let (entry, bytes, uploads) = self.build_batch_entry(&members);
                     self.stats.rebuild_bytes += bytes;
+                    self.uploads.extend(uploads);
                     self.batch_members.push(members);
                     self.entries.push(entry);
                     self.batch_members.len() - 1
@@ -322,16 +497,17 @@ impl MeshUploader {
     fn rebuild_batch(&mut self, bi: usize) {
         self.stats.batch_rebuilds += 1;
         let members = self.batch_members[bi].clone();
-        let (entry, bytes) = self.build_batch_entry(&members);
+        let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
+        self.uploads.extend(uploads);
         self.entries[bi] = entry;
     }
 
     /// 由成员表组装批次条目：成员顶点重定基（pos += chunk_origin −
     /// batch_origin，全为 16 的倍数 → f32 精确，着色器世界坐标逐位不变）、
     /// 索引按成员顶点基址平移、水索引区间按成员拆段（保持逐块远→近混合序）。
-    /// 返回 (条目, 写出的顶点+索引字节数)。
-    fn build_batch_entry(&self, members: &[(i32, i32)]) -> (RenderChunk, u64) {
+    /// 返回 (条目, 逻辑字节数, 待 staging 拷贝表)。
+    fn build_batch_entry(&self, members: &[(i32, i32)]) -> (RenderChunk, u64, Vec<PendingUpload>) {
         let min_cx = members.iter().map(|&(cx, _)| cx).min().expect("批次非空");
         let min_cz = members.iter().map(|&(_, cz)| cz).min().expect("批次非空");
         let batch_origin = [16.0 * min_cx as f32, 0.0, 16.0 * min_cz as f32];
@@ -377,11 +553,41 @@ impl MeshUploader {
                 Some((mn, mx)) => (mn.min(c_aabb.0), mx.max(c_aabb.1)),
             });
         }
-        let entry_bytes =
-            (vbytes.len() + 4 * (opaque_idx.len() + water_idx.len())) as u64;
+        let entry_bytes = (vbytes.len() + 4 * (opaque_idx.len() + water_idx.len())) as u64;
         let has_water = !water_parts.is_empty();
-        let water_index_buf = has_water.then(|| self.index_buf(&water_idx));
-        let (vertex_buf, index_buf) = self.vertex_index(&vbytes, &opaque_idx);
+        // 目标缓冲先建空壳，数据经 flush 的 staging 环拷入（#80 第二刀）：
+        // 上传 submit 先于同帧 draw → draw 必见数据，时序与旧「创建期
+        // 映射写 + 下次 submit 内部拷贝」逐帧一致。
+        let mut uploads: Vec<PendingUpload> = Vec::new();
+        // 拷贝长度必须是 COPY_BUFFER_ALIGNMENT(4) 的倍数：mesher 输出本就
+        // 是 24B 整倍数，这里对畸形字节兜底补零（旧创建期映射路径无此
+        // 约束，copy_buffer_to_buffer 校验更严）。
+        if vbytes.len() % 4 != 0 {
+            vbytes.resize(vbytes.len().next_multiple_of(4), 0);
+        }
+        let vertex_buf = self.empty_buffer(vbytes.len() as u64, wgpu::BufferUsages::VERTEX);
+        if !vbytes.is_empty() {
+            uploads.push(PendingUpload { dst: vertex_buf.clone(), bytes: vbytes });
+        }
+        let index_buf = self.empty_buffer(opaque_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
+        if !opaque_idx.is_empty() {
+            uploads.push(PendingUpload {
+                dst: index_buf.clone(),
+                bytes: bytemuck::cast_slice(&opaque_idx).to_vec(),
+            });
+        }
+        let water_index_buf = if has_water {
+            let ib = self.empty_buffer(water_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
+            if !water_idx.is_empty() {
+                uploads.push(PendingUpload {
+                    dst: ib.clone(),
+                    bytes: bytemuck::cast_slice(&water_idx).to_vec(),
+                });
+            }
+            Some(ib)
+        } else {
+            None
+        };
         let (aabb_min, aabb_max) = aabb.unwrap_or((Vec3::ZERO, Vec3::ZERO));
         (
             RenderChunk {
@@ -394,6 +600,7 @@ impl MeshUploader {
                 aabb: (aabb_min, aabb_max),
             },
             entry_bytes,
+            uploads,
         )
     }
 }

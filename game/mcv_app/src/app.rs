@@ -113,6 +113,11 @@ struct AppState {
     set_dist: i32,
     set_sens: f32,
     cached_device: Option<wgpu::Device>,
+    /// MeshUploader（#80 staging 异步上传）需要 queue 冲刷拷贝；与 device
+    /// 同源缓存（wgpu Queue 是 Arc 型克隆）。
+    cached_queue: Option<wgpu::Queue>,
+    /// #80 结构性指标日志节拍（~1 Hz 一行，取证不刷屏）。
+    stats_log: Option<std::time::Instant>,
     last_cursor: Option<(f64, f64)>,
     step_accum: f32,
     last_time: Option<std::time::Instant>,
@@ -1014,7 +1019,12 @@ impl AppState {
             log::error!("gpu not ready");
             return;
         };
-        let uploader = mcv_render::gpu::MeshUploader::new(device);
+        // #80 staging 异步上传：冲刷拷贝需要 queue（与 device 同源）。
+        let Some(queue) = self.runtime_queue() else {
+            log::error!("gpu queue not ready");
+            return;
+        };
+        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
         let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
         // 新世界：关屏延迟 500ms（26.1 Minecraft.java:2083 doWorldLoad
         // `new LevelLoadTracker(newWorld ? 500L : 0L)`）。
@@ -1076,6 +1086,12 @@ impl AppState {
         self.surface.as_ref()?;
         // GameRuntime 需要独立 device/queue；wgpu Device 是 Arc 型克隆。
         self.cached_device.clone()
+    }
+
+    /// #80 staging 上传冲刷所需的 queue（与 device 同源）。
+    fn runtime_queue(&self) -> Option<wgpu::Queue> {
+        self.surface.as_ref()?;
+        self.cached_queue.clone()
     }
 
     // ---- mcv_ui 屏幕栈接线（M8b 试点：KeyBinds 屏）----
@@ -1364,7 +1380,11 @@ impl AppState {
                 Err(_) => GameMode::Survival,
             }
         };
-        let uploader = mcv_render::gpu::MeshUploader::new(device);
+        // #80 staging 异步上传：冲刷拷贝需要 queue（与 device 同源）。
+        let Some(queue) = self.runtime_queue() else {
+            return;
+        };
+        let uploader = mcv_render::gpu::MeshUploader::new(device, queue);
         let mut runtime = GameRuntime::new(seed, uploader, dir, mode);
         // 载入存档：closeDelay = 0（26.1 `new LevelLoadTracker()` 默认值，
         // 与新世界的 500ms 区分，Minecraft.java:2083）。
@@ -1395,6 +1415,7 @@ impl ApplicationHandler for AppState {
                 // CWD → exe 同级，含 textures/ 才生效）。缺根 = 硬错误显式 log。
                 let pack = self.assets_dir();
                 self.cached_device = Some(device.clone());
+                self.cached_queue = Some(queue.clone());
                 self.renderer = Some(mcv_render::Renderer::new(
                     device.clone(),
                     queue.clone(),
@@ -2148,6 +2169,29 @@ impl AppState {
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);
+        // #80 结构性指标（真机取证通路，不进 HUD 像素）：~1 Hz 一行，
+        // 合批 draw 收敛（entries/chunks）与 staging 上传带宽（staged KB、
+        // fallback 笔数恒 0 = 环容量足够）。
+        let log_due = self
+            .stats_log
+            .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
+        if log_due {
+            self.stats_log = Some(std::time::Instant::now());
+            let st = renderer.last_frame_stats();
+            let ms = runtime.mesh_stats();
+            log::info!(
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={}",
+                st.opaque_draws,
+                st.water_draws,
+                ms.draw_entries,
+                ms.meshed_chunks,
+                ms.batch_rebuilds,
+                ms.rebuild_bytes / 1024,
+                ms.staged_uploads,
+                ms.staged_bytes / 1024,
+                ms.fallback_uploads,
+            );
+        }
         renderer.queue().present(frame);
     }
 }

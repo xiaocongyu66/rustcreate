@@ -54,6 +54,26 @@ impl GameMode {
     }
 }
 
+/// 网格侧结构性统计（#80 可观测性）：draw 收敛 + 异步上传带宽，
+/// app 层 ~1 Hz 打一行日志（不进 HUD 像素）。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct MeshStats {
+    /// 已上传网格的区块数。
+    pub meshed_chunks: usize,
+    /// 绘制条目数（批次 + 不可合并单块）。
+    pub draw_entries: usize,
+    /// 批次重建次数。
+    pub batch_rebuilds: u64,
+    /// 重建累计字节数。
+    pub rebuild_bytes: u64,
+    /// 经 staging 环提交的拷贝笔数。
+    pub staged_uploads: u64,
+    /// 经 staging 环提交的字节数。
+    pub staged_bytes: u64,
+    /// 一次性兜底笔数（超槽容量/环耗尽）。
+    pub fallback_uploads: u64,
+}
+
 /// Abstraction over the C++ mesher so the runtime wiring can land before
 /// the mesher itself merges.
 pub trait ChunkMesher: Send {
@@ -69,6 +89,15 @@ pub trait ChunkMesher: Send {
     /// 当前绘制条目表（#80 合批后 = 批次条目；无头实现恒空表）。
     fn entries(&self) -> &[RenderChunk] {
         &[]
+    }
+
+    /// 每帧冲刷异步上传（#80 第二刀）：staging 拷贝在此 submit，先于同帧
+    /// draw（stream 末尾调用，draw_frame 之前）。默认 no-op。
+    fn flush(&mut self) {}
+
+    /// 合批 + 异步上传统计（默认零值）。
+    fn mesh_stats(&self) -> MeshStats {
+        MeshStats::default()
     }
 }
 
@@ -122,6 +151,24 @@ impl ChunkMesher for RustMesher {
 
     fn entries(&self) -> &[RenderChunk] {
         self.uploader.entries()
+    }
+
+    fn flush(&mut self) {
+        self.uploader.flush();
+    }
+
+    fn mesh_stats(&self) -> MeshStats {
+        let b = self.uploader.batching_stats();
+        let u = self.uploader.upload_stats();
+        MeshStats {
+            meshed_chunks: b.meshed_chunks,
+            draw_entries: b.draw_entries,
+            batch_rebuilds: b.batch_rebuilds,
+            rebuild_bytes: b.rebuild_bytes,
+            staged_uploads: u.staged_uploads,
+            staged_bytes: u.staged_bytes,
+            fallback_uploads: u.fallback_uploads,
+        }
     }
 }
 
@@ -1924,6 +1971,10 @@ impl GameRuntime {
                 remesh_budget -= 1;
             }
         }
+        // 异步上传冲刷（#80 第二刀）：本帧 build/unload 攒下的网格拷贝在
+        // 此记入 staging 并 submit——先于同帧 draw_frame 的 submit（单队列
+        // 按提交序执行），draw 必见数据；状态机 Uploaded 推进时序不变。
+        self.mesher.flush();
     }
 
     /// 单个区块的建网格+记账（stream remesh 流水与编辑源块优先通道共用）。
@@ -3984,6 +4035,11 @@ impl GameRuntime {
     /// 当前绘制条目表（#80：合批批次条目，由 mesher 实现自持）。
     pub fn render_chunks(&self) -> &[RenderChunk] {
         self.mesher.entries()
+    }
+
+    /// 网格侧结构性统计（#80 可观测性：draw 收敛 + 异步上传带宽）。
+    pub fn mesh_stats(&self) -> MeshStats {
+        self.mesher.mesh_stats()
     }
 
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），
