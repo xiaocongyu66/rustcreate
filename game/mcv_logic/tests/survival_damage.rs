@@ -287,3 +287,58 @@ fn no_suffocation_with_clear_head() {
     run_ticks(&mut rt, 40);
     assert_eq!(rt.player.health, 20.0, "露天不窒息");
 }
+
+// ---------------------------------------------------------------------------
+// #95-4 虚空伤害规则（MEDIUM）
+// ---------------------------------------------------------------------------
+
+/// 生存虚空：y < WORLD_MIN_Y−64（Entity.checkBelowWorld:579-583）→
+/// fellOutOfWorld 4.0/tick（LivingEntity.java:2142-2144）走正常管线，
+/// i 帧节流 0.5s/跳，掉血直至死。
+#[test]
+fn void_deals_4_per_tick_until_death_survival() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("void"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    finish_loading(&mut rt);
+    rt.player.pos = Vec3::new(8.3, WORLD_MIN_Y - 70.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    // 阈值以下不触发（y=−63 > −64）。
+    rt.player.pos.y = WORLD_MIN_Y - 63.0;
+    run_ticks(&mut rt, 2);
+    assert_eq!(rt.player.health, 20.0, "y=−63 未越界不掉血");
+    // 越界（y=−70 < −64）→ 每 10 tick 一跳 4.0（i 帧门放行节奏）。
+    rt.player.pos.y = WORLD_MIN_Y - 70.0;
+    run_ticks(&mut rt, 11);
+    assert!(
+        (rt.player.health - 12.0).abs() < 1e-4,
+        "两跳 4.0（t1、t11），got {}",
+        rt.player.health
+    );
+    // 持续坠落 → 死亡置位（不再复活传送外的豁免）。
+    let mut guarded = 0;
+    while !rt.dead && guarded < 200 {
+        rt.fixed_step(1.0 / 60.0);
+        guarded += 1;
+    }
+    assert!(rt.dead, "生存虚空持续掉血致死（{guarded} 步内）");
+    assert_eq!(rt.player.health, 0.0);
+}
+
+/// 创造虚空照样死：out_of_world ∈ bypasses_invulnerability
+/// （tags/damage_type/bypasses_invulnerability.json）穿过创造免疫
+/// （Entity.isInvulnerableToBase:2955-2960）——旧实现创造无限坠落软锁。
+#[test]
+fn void_kills_creative_too() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("voidc"), GameMode::Creative);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    finish_loading(&mut rt);
+    rt.player.pos = Vec3::new(8.3, WORLD_MIN_Y - 70.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    let mut guarded = 0;
+    while !rt.dead && guarded < 200 {
+        rt.fixed_step(1.0 / 60.0);
+        guarded += 1;
+    }
+    assert!(rt.dead, "创造虚空穿过免疫照样死（{guarded} 步内）");
+    assert_eq!(rt.player.health, 0.0);
+}

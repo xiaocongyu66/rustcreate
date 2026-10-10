@@ -23,6 +23,11 @@ use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
 
+/// 世界竖直下界（体素布局 y 索引 ∈ 0..mcv_core::CHUNK_SY，方块/查询
+/// 均以 0 为底——`Level.getMinY()` 语义，Entity.checkBelowWorld 的
+/// 参照常数）。
+pub const WORLD_MIN_Y: f32 = 0.0;
+
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GameMode {
@@ -2657,10 +2662,16 @@ impl GameRuntime {
             }
         }
 
-        // ---- 虚空伤害（y < -10）：无视无敌帧的重击，死亡后传送回出生点上方 ----
-        if self.player.pos.y < -10.0 {
-            self.player.invulnerable = 0;
-            self.hurt_player(40.0, None);
+        // ---- 虚空（26.1 Entity.checkBelowWorld:579-583 y < getMinY()−64 →
+        // onBelowWorld；LivingEntity.onBelowWorld:2142-2144 → fellOutOfWorld
+        // **4.0F/tick 走正常 hurtServer 管线**（i 帧门节流成 0.5s/跳，不清
+        // 无敌帧）；类型 out_of_world ∈ bypasses_invulnerability
+        // （tags/damage_type/bypasses_invulnerability.json）→ 创造不豁免
+        // （Entity.isInvulnerableToBase:2955-2960 穿标签），照常死。
+        // 旧实现 y<−10 清无敌帧打 40 秒杀且创造无限坠落（软锁），两处均无
+        // 源码依据。minY 取世界常数（体素布局 y ∈ 0..CHUNK_SY）。
+        if self.player.pos.y < WORLD_MIN_Y - 64.0 {
+            self.hurt_ex(4.0, None, 0.0, true);
             if self.dead {
                 self.player.pos = Vec3::new(8.5, 200.0, 8.5);
                 self.player.vel = Vec3::ZERO;
