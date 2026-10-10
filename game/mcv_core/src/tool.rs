@@ -440,7 +440,7 @@ pub fn requirement(name: &str) -> Option<Requirement> {
 /// 按 [`BlockId`] 查（等价 `requirement(id.def().name)`，供无 mcv_item 依赖的
 /// engine 侧挖掘公式使用）。
 pub fn requirement_by_id(id: BlockId) -> Option<Requirement> {
-    requirement(&crate::BLOCKS[id.id() as usize].name)
+    requirement(crate::BLOCKS[id.id() as usize].name)
 }
 
 #[cfg(test)]
