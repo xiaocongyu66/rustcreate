@@ -3,9 +3,9 @@
 //! 第一阶段硬门禁。
 //!
 //! 铁律：对拍不过修 Rust 侧，禁改 cpp/**；断言只许收紧（逐字节相等），
-//! 不许放宽（无 epsilon、无抽样）。覆盖：4 seed × 5×5 区块网格（每 seed
-//! 不同偏移，两轴都含负坐标）= 100 对区块；voxels 65536×u16 + heightmap
-//! 256×u8 全量比对。噪声层另有 f32 位锚点单测（src/rust_noise.rs
+//! 不许放宽（无 epsilon、无抽样）。覆盖：4 seed × 4 个 5×5 区块网格偏移
+//! （两轴都含负坐标）= 400 对区块；voxels 65536×u16 + heightmap 256×u8
+//! 全量比对。噪声层另有 f32 位锚点单测（src/rust_noise.rs
 //! `#[cfg(test)]`，已知答案 + 位模式，无 epsilon）。
 
 use mcv_core::ChunkPos;
@@ -101,7 +101,9 @@ fn terrain_byte_parity_4_seeds_x_25_chunks() {
             }
         }
     }
-    assert_eq!(pairs, 100, "对拍覆盖应为 4 seed × 25 区块");
+    // 覆盖 = 4 seed × 4 网格偏移 × 25 区块 = 400 对（每 seed 4 片各含负
+    // 坐标的 5×5 邻域，远超派单下限 3 seed × 16 区块）。
+    assert_eq!(pairs, 400, "对拍覆盖应为 4 seed × 4 偏移 × 25 区块");
 }
 
 #[test]
