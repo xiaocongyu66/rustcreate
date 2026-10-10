@@ -1319,14 +1319,14 @@ mod tests {
         assert!((ab - 12.0).abs() < 1e-6);
         // 盾耗尽 → applyEffectTick 返回 false → 账本移除（:12-14）。
         let mut ab = 0.0f32;
-        let (mut hp, mut food) = (20.0f32, None);
+        let (mut hp, mut food): (f32, Option<&mut FoodMut>) = (20.0, None);
         let harms = book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
         assert!(harms.is_empty());
         assert!(!book.has(Kind::Absorption), "吸收 0 → 效果终止");
         // 盾>0 → 存续。
         book.apply_simple(Kind::Absorption, 100, 0);
         let mut ab = 4.0f32;
-        let (mut hp, mut food) = (20.0f32, None);
+        let (mut hp, mut food): (f32, Option<&mut FoodMut>) = (20.0, None);
         let _ = book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
         assert!(book.has(Kind::Absorption));
     }
@@ -1338,7 +1338,7 @@ mod tests {
         book.apply_simple(Kind::Speed, 5, 0);
         book.apply_simple(Kind::Regeneration, INFINITE, 1);
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food = None;
+        let mut food: Option<&mut FoodMut> = None;
         // 5 tick：速度到期消失；再生无限存续；期间回血 5 点
         //（50>>1=25 间隔内 phase 1..5 不触发，10+5=15 无再生增量——先验证时长）。
         for t in 0..5 {
@@ -1353,7 +1353,7 @@ mod tests {
         assert_eq!(active.duration, INFINITE);
         // 世界 tick 49→50 跨过 50>>1=25 的相位（50/25=2 触发点）。
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food = None;
+        let mut food: Option<&mut FoodMut> = None;
         assert!(
             book.tick(48, &mut hp, 20.0, &mut ab, food.as_deref_mut())
                 .is_empty()
@@ -1386,7 +1386,7 @@ mod tests {
         book.apply_simple(Kind::Regeneration, 10, 0);
         assert!(book.apply_simple(Kind::Regeneration, 5, 1));
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food = None;
+        let mut food: Option<&mut FoodMut> = None;
         // 前 5 tick amp1（50>>1=25 间隔不触发）；隐藏链同步递减 10→5。
         for _ in 0..5 {
             book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
@@ -1408,7 +1408,7 @@ mod tests {
         assert_eq!((a.amplifier, a.duration), (2, 10));
         // 10 tick 后弱效果接续 20 tick。
         let (mut hp, mut ab) = (20.0f32, 0.0f32);
-        let mut food = None;
+        let mut food: Option<&mut FoodMut> = None;
         for _ in 0..10 {
             book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
         }
@@ -1552,7 +1552,7 @@ mod tests {
         book.apply_simple(Kind::Poison, 20, 2);
         book.apply_simple(Kind::Regeneration, 20, 2);
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food = None;
+        let mut food: Option<&mut FoodMut> = None;
         let mut total_harm = 0.0f32;
         let mut heals = 0;
         for w in 0..20 {
