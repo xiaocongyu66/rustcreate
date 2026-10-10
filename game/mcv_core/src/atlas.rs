@@ -149,7 +149,7 @@ fn mip_tables() -> &'static ([u16; 256], [u8; 1024]) {
             } else {
                 12.92 * x
             };
-            *slot = (f32::from(srgb) * 255.0 + 0.5) as u8;
+            *slot = (srgb * 255.0 + 0.5) as u8;
         }
         (s2l, l2s)
     })
@@ -871,6 +871,118 @@ mod frame_tests {
                 && cb.contains("\"interpolate\": true")
                 && !cb.contains("\"frames\""),
             "{cb}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod mip_tests {
+    use super::*;
+
+    fn payload_len_mip0() -> usize {
+        LAYERS * TILE_PX * TILE_PX * 4
+    }
+
+    /// 线性域均值（`ARGB.meanLinear`）：黑白棋盘（2x2 内 2 黑 2 白）的
+    /// mip1 = LINEAR_TO_SRGB[(0+0+1023+1023)/4=511] = 187；旧 sRGB 域直
+    /// 平均得 127（audit #10 的「暗晕」方向）。alpha 全 255 → MEAN 路径
+    /// （无 solidify/a2c），alpha 均值恒 255。
+    #[test]
+    fn mip1_averages_in_linear_domain() {
+        let (s2l, l2s) = mip_tables();
+        assert_eq!((s2l[0], s2l[255]), (0, 1023));
+        assert_eq!(l2s[511], 187, "0.5 linear → sRGB 187（ARGB.java:15-20）");
+        let mut mip0 = vec![0u8; payload_len_mip0()];
+        for layer in 0..LAYERS {
+            for y in 0..TILE_PX {
+                for x in 0..TILE_PX {
+                    let o = (layer * TILE_PX * TILE_PX + y * TILE_PX + x) * 4;
+                    let v = if (x + y) % 2 == 0 { 0 } else { 255 };
+                    mip0[o] = v;
+                    mip0[o + 1] = v;
+                    mip0[o + 2] = v;
+                    mip0[o + 3] = 255;
+                }
+            }
+        }
+        let mut mip1 = vec![0u8; LAYERS * 8 * 8 * 4];
+        generate_mip1(&mip0, &mut mip1);
+        for probe in [0usize, 7, 63] {
+            let o = probe * 4;
+            assert_eq!(
+                &mip1[o..o + 4],
+                &[187, 187, 187, 255],
+                "mip1 px {probe}：期望线性域均值 187（旧 sRGB 均值得 127）"
+            );
+        }
+    }
+
+    /// cutout solidify（`TextureUtil.solidify:130-184`）：alpha==0 像素取
+    /// 最近不透明像素 RGB（alpha 仍 0）→ mip1 红色不被透明像素的黑 RGB
+    /// 拖暗（旧实现 4 像素均值出 (50,12,12)）。a2c 只改 alpha 不改 RGB。
+    #[test]
+    fn cutout_mip_solidifies_transparent_rgb() {
+        let (s2l, l2s) = mip_tables();
+        let expect = [
+            l2s[s2l[200] as usize],
+            l2s[s2l[50] as usize],
+            l2s[s2l[50] as usize],
+        ];
+        assert_eq!(expect, [200, 50, 50], "sRGB 表往返应保序（1024 级足够）");
+        const L: usize = 100;
+        let mut mip0 = vec![0u8; payload_len_mip0()];
+        // 其余层：不透明白（MEAN 路径，不参与本断言）。
+        for p in mip0.chunks_mut(4) {
+            p.copy_from_slice(&[255, 255, 255, 255]);
+        }
+        let base = L * TILE_PX * TILE_PX * 4;
+        // L 层：仅 (0,0) 不透明红，其余全透明黑 RGB（PNG 常见残留形态）。
+        for i in 0..TILE_PX * TILE_PX {
+            mip0[base + i * 4..base + i * 4 + 4].copy_from_slice(&[0, 0, 0, 0]);
+        }
+        mip0[base..base + 4].copy_from_slice(&[200, 50, 50, 255]);
+        let mut mip1 = vec![0u8; LAYERS * 8 * 8 * 4];
+        generate_mip1(&mip0, &mut mip1);
+        let o0 = (L * 8 * 8) * 4; // mip1 像素 (0,0)
+        assert_eq!(
+            &mip1[o0..o0 + 3],
+            &[200, 50, 50],
+            "solidify 后 2x2 均值 RGB 保持红（旧 sRGB 黑混得 (50,12,12)）"
+        );
+        // 邻块 (1,1)：4 透明像素也被 solidify 成红（alpha 0），RGB 不再是黑。
+        let o1 = o0 + 4;
+        assert_eq!(&mip1[o1..o1 + 3], &[200, 50, 50]);
+        // a2c：desired=mip0 覆盖（1/225），best_scale=1，alpha += 0.025 偏置
+        //（MipmapGenerator.java:82）→ 63→69 与 0→6，均 >0 且 <255。
+        let a0 = mip1[o0 + 3];
+        let a1 = mip1[o1 + 3];
+        assert!(
+            a0 > 0 && a0 < 255 && a1 > 0,
+            "a2c alpha 写回 a0={a0} a1={a1}"
+        );
+    }
+
+    /// 半透明（0<alpha<255、无 alpha==0）层 = MEAN 策略（Transparency
+    /// 的 hasTransparent 只数 alpha==0，NativeImage.java:515-528）：
+    /// 不 solidify，alpha 整数直均。
+    #[test]
+    fn translucent_layer_uses_mean_not_cutout() {
+        const L: usize = 7;
+        let mut mip0 = vec![0u8; payload_len_mip0()];
+        for p in mip0.chunks_mut(4) {
+            p.copy_from_slice(&[255, 255, 255, 255]);
+        }
+        let base = L * TILE_PX * TILE_PX * 4;
+        for i in 0..TILE_PX * TILE_PX {
+            mip0[base + i * 4..base + i * 4 + 4].copy_from_slice(&[255, 255, 255, 180]);
+        }
+        let mut mip1 = vec![0u8; LAYERS * 8 * 8 * 4];
+        generate_mip1(&mip0, &mut mip1);
+        let o = (L * 8 * 8) * 4;
+        assert_eq!(
+            &mip1[o..o + 4],
+            &[255, 255, 255, 180],
+            "水类半透明层 mip1 均值保语义"
         );
     }
 }
