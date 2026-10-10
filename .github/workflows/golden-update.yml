@@ -1,0 +1,34 @@
+# 临时 job（任务板 v6 几何升原版的黄金重锚通道）：
+# `gh workflow run golden-update.yml --ref feat/geometry-384` 触发，
+# GOLDEN_UPDATE=1 跑 worldgen/mesher 两个 golden 测试重写黄金件，
+# 整体打成 artifact；本机 `gh run download` 落盘提交后本文件即删。
+# CI 三 job 的常规绿灯门不受本文件影响（只有 workflow_dispatch 触发）。
+name: golden-update
+on:
+  workflow_dispatch:
+
+jobs:
+  regen:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ALSA dev headers (tinyaudio Linux backend)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Regen worldgen golden
+        env:
+          GOLDEN_UPDATE: "1"
+        run: cargo test --locked -p mcv_worldgen --test golden
+      - name: Regen mesher golden
+        env:
+          GOLDEN_UPDATE: "1"
+        run: cargo test --locked -p mcv_mesher --test golden
+      - uses: actions/upload-artifact@v4
+        with:
+          name: golden-v6
+          path: |
+            game/mcv_worldgen/tests/golden/terrain_parity.tsv
+            game/mcv_worldgen/tests/golden/terrain/
+            game/mcv_mesher/tests/golden/mesh_random_batch.tsv
+            game/mcv_mesher/tests/golden/mesh_scenes/
