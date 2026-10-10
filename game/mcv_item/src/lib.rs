@@ -5,6 +5,7 @@ pub mod anvil;
 pub mod bow;
 pub mod crafting;
 pub mod enchant;
+pub mod food;
 pub mod inventory;
 pub mod mining;
 
@@ -262,6 +263,9 @@ pub const DIRT_ITEM: u16 = 32;
 pub const GRASS_ITEM: u16 = 33;
 pub const SAND_ITEM: u16 = 34;
 pub const LEAVES_ITEM: u16 = 35;
+// 怪物掉落杂物（36 起与 ITEMS 表序一致；食物属性见 [`food::FOODS`]）。
+pub const ROTTEN_FLESH: u16 = 36;
+pub const SPIDER_EYE: u16 = 41;
 // 掉落经济（任务板 #90）：矿石产物/杂项，id 与 ITEMS 追加序一致（43 起）。
 pub const RAW_IRON: u16 = 43;
 pub const RAW_GOLD: u16 = 44;

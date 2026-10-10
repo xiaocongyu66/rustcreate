@@ -23,6 +23,9 @@ pub struct TouchEffects {
     /// input.jump 拉回 false（触屏没有键盘按键释放事件，若只按住置真、
     /// 松开不置假，jump 会永远悬真：落地自动连跳/飞行中永久上升）。
     pub jump_released: bool,
+    /// 放置键**松开沿**（同 jump_released 的道理）：进食/弓的按住态依赖
+    /// 运行时 input.placing 持续为真，松开沿负责拉回 false。
+    pub place_released: bool,
 }
 
 #[derive(Default)]
@@ -40,6 +43,9 @@ pub struct TouchState {
     place_id: Option<u64>,
     pub jump_held: bool,
     pub mine_held: bool,
+    /// 放置键按住态（与 place_id 同步维护；运行时镜像 input.placing 用，
+    /// 进食按住不松的推进依赖它）。
+    pub place_held: bool,
     effects: TouchEffects,
 }
 
@@ -95,6 +101,7 @@ impl TouchState {
                     self.mine_held = true;
                 } else if Self::hit(px, py, BTN_R * 1.4, x, y) {
                     self.place_id = Some(id);
+                    self.place_held = true;
                     self.effects.place = true;
                 } else if x >= hx && x <= hx + hw && y >= hy - 12.0 && y <= hy + hh + 12.0 {
                     let idx = ((x - hx) / 40.0) as usize;
@@ -148,6 +155,8 @@ impl TouchState {
                 }
                 if self.place_id == Some(id) {
                     self.place_id = None;
+                    self.place_held = false;
+                    self.effects.place_released = true;
                 }
             }
         }

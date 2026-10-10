@@ -524,6 +524,12 @@ pub struct GameRuntime {
     pub particles: mcv_render::particles::ParticleEngine,
     /// 弓蓄力账本（Some=按住蓄力中的 tick 数；状态机 [`mcv_item::bow`]）。
     bow_hold: Option<u32>,
+    /// 进食账本（Some=按住进食中；状态机 [`mcv_item::food::step_eating`]，
+    /// 启动沿在 interact 的食物分支、松开/换手即取消）。
+    eat_hold: Option<mcv_item::food::Eating>,
+    /// 右键重触发延迟（tick，原版 `Minecraft.rightClickDelay = 4`；完食后
+    /// 按住右键由此节流连吃，空手/非食物不受影响）。
+    eat_cooldown: u32,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
     pub hardcore_death: bool,
     /// 渲染距离（区块），设置界面可调。
@@ -830,6 +836,8 @@ impl GameRuntime {
             effects: mcv_entity::EffectBook::default(),
             particles: mcv_render::particles::ParticleEngine::new(),
             bow_hold: None,
+            eat_hold: None,
+            eat_cooldown: 0,
             hardcore_death: false,
             render_dist: RENDER_DIST,
             sens: 1.0,
@@ -1313,6 +1321,14 @@ impl GameRuntime {
                     self.player.pitch = p.pitch;
                     self.player.flying = p.flying;
                     self.player.sel_slot = p.sel_slot as usize;
+                    // v5 生存数值（v1–v4 解码器已给开局默认值）：退出重进/
+                    // 死亡重生不丢饥饿饱和账——不持久化则进食白吃。
+                    self.player.health = p.health;
+                    self.player.hunger = p.hunger;
+                    self.player.saturation = p.saturation;
+                    self.player.exhaustion = p.exhaustion;
+                    self.air_supply = p.air_supply;
+                    self.difficulty = crate::difficulty::Difficulty::by_id(p.difficulty);
                     // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
                     // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
                     if !p.hotbar.is_empty() || !p.main.is_empty() {
@@ -1380,6 +1396,14 @@ impl GameRuntime {
                     .iter()
                     .map(|s| (s.item, s.count, s.damage))
                     .collect(),
+                // v5:生存数值（health/hunger/saturation/exhaustion/air/
+                // difficulty）随档——进食成果跨会话成立。
+                health: self.player.health,
+                hunger: self.player.hunger,
+                saturation: self.player.saturation,
+                exhaustion: self.player.exhaustion,
+                air_supply: self.air_supply,
+                difficulty: self.difficulty.id(),
             }),
         };
         let tmp = self.save_dir.join("level.meta.tmp");
@@ -1985,6 +2009,14 @@ impl GameRuntime {
         if fx.place {
             self.interact(true);
         }
+        // 放置键沿（与 jump 同一双向纪律）：按住置真、松开沿置假——进食
+        // 的按住推进依赖 input.placing 持续为真，仅按沿触发会让进食下一拍
+        // 即被取消；触摸启用后镜像，不覆盖桌面鼠标按下态（同 mine 注记）。
+        if self.touch.place_held {
+            self.input.placing = true;
+        } else if fx.place_released {
+            self.input.placing = false;
+        }
         // 摇杆 → 移动方向
         if let Some((dx, dy)) = self.touch.stick_direction() {
             // 摇杆向上推 = 前进
@@ -2547,6 +2579,36 @@ impl GameRuntime {
                         player_owned: true,
                     },
                 );
+            }
+        }
+
+        // ---- 进食（Consumable 26.1）：按住右键推进、松开/换手取消、
+        // 吃满 eat_ticks 结算（结算体 = finish_eating，20Hz tick 语义）----
+        if self.on_tick && self.eat_cooldown > 0 {
+            self.eat_cooldown -= 1;
+        }
+        // 按住右键的重触发（原版 Minecraft.handleKeybinds：rightClickDelay
+        // 到 0 且 use 键仍按住 → startUseItem；try_begin_eating 内部自带
+        // 工作台拦截与可吃门，非食物空转零成本）。
+        if self.on_tick && self.input.placing && self.eat_cooldown == 0 && self.eat_hold.is_none() {
+            self.try_begin_eating();
+        }
+        {
+            let held = {
+                let s = self.hotbar.selected(self.player.sel_slot);
+                (!s.is_empty()).then_some(s.item)
+            };
+            let food = held.and_then(mcv_item::food::food_properties);
+            let can_eat = food.is_some_and(|f| self.can_eat_now(f));
+            if let Some(done) = mcv_item::food::step_eating(
+                self.input.placing,
+                self.on_tick,
+                held,
+                food,
+                can_eat,
+                &mut self.eat_hold,
+            ) {
+                self.finish_eating(done);
             }
         }
 
@@ -3152,6 +3214,13 @@ impl GameRuntime {
         if self.phase == GamePhase::Loading {
             return;
         }
+        // 食物右键 = 启动进食（26.1 Item.use → Consumable.startConsuming，
+        // Item.java:189-192）。进食不依赖视线命中（方块 use 优先的拦截——
+        // 本仓唯一可交互方块是工作台——已由 app 层在进入本函数前完成）；
+        // 空手/非食物返回 false，走原放置路径、行为零变化。
+        if place && self.try_begin_eating() {
+            return;
+        }
         let view = WorldView {
             chunks: &self.chunks,
         };
@@ -3247,6 +3316,99 @@ impl GameRuntime {
                     .play_event(&format!("{group}.place"), p, [eye.x, eye.y, eye.z], 1.0);
             }
         }
+    }
+
+    // ---- 进食（26.1 Consumable；属性表/状态机见 mcv_item::food）----
+
+    /// 工作台方块 id（app 层同款按注册名查；查不到回退已知值 252）。
+    fn crafting_table(&self) -> u16 {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "crafting_table")
+            .unwrap_or(252) as u16
+    }
+
+    /// `Player.canEat`（Player.java:1581-1582）的本仓并入式：
+    /// invulnerable（创造）|| canAlwaysEat || needsFood（hunger < 20）。
+    fn can_eat_now(&self, food: &mcv_item::food::FoodProperties) -> bool {
+        self.mode == GameMode::Creative
+            || mcv_item::food::can_eat(self.player.hunger, food.can_always_eat)
+    }
+
+    /// 右键 use 入口的食物分支（`Item.use` Item.java:189-192 →
+    /// `Consumable.startConsuming` Consumable.java:64-77）：选中槽是食物且
+    /// 可吃 → 落启动账、返回 true（右键不再走放置）；否则 false 行为不变。
+    /// 按住期间的推进在 fixed_step（每 on_tick +1），松开即取消。
+    fn try_begin_eating(&mut self) -> bool {
+        if self.dead || self.eat_cooldown > 0 {
+            return false;
+        }
+        // 方块 use 优先（26.1 startUseItem 先试 block use）：工作台在档。
+        if self
+            .look_block()
+            .is_some_and(|(_, id)| id == self.crafting_table())
+        {
+            return false;
+        }
+        let selected = self.hotbar.selected(self.player.sel_slot);
+        if selected.is_empty() {
+            return false;
+        }
+        let item = selected.item;
+        let Some(food) = mcv_item::food::food_properties(item) else {
+            return false;
+        };
+        if !self.can_eat_now(food) {
+            return false;
+        }
+        self.eat_hold = Some(mcv_item::food::Eating { item, ticks: 0 });
+        true
+    }
+
+    /// 完食结算（`FoodProperties.onConsume` FoodProperties.java:40-49 +
+    /// `Consumable.onConsume` Consumable.java:78-94）：
+    /// FoodData.eat（nutrition 回饥饿、饱和走公式与溢出钳）→ 效果概率掷 →
+    /// 物品 −1（创造豁免，vanilla hasInfiniteMaterials）→ 右键重触发延迟。
+    fn finish_eating(&mut self, item: u16) {
+        let Some(food) = mcv_item::food::food_properties(item) else {
+            return;
+        };
+        // FoodData.eat(int, float)（FoodData.java:24-26；溢出规则 :19-22）。
+        mcv_item::food::eat(
+            &mut self.player.hunger,
+            &mut self.player.saturation,
+            i32::from(food.nutrition),
+            food.saturation_modifier,
+        );
+        // ApplyStatusEffectsConsumeEffect：概率掷（腐肉 0.8 / 蜘蛛眼 1.0）。
+        // spawn_rng 输出 31 位（game.rs fast_rand 链），归一到 [0,1)。
+        if let Some(eff) = food.effect {
+            let roll = f32::from_u32(spawn_rng()()) / 2147483648.0;
+            if mcv_item::food::effect_fires(&eff, roll) {
+                let kind = match eff.kind {
+                    mcv_item::food::FoodEffectKind::Hunger => mcv_entity::Kind::Hunger,
+                    mcv_item::food::FoodEffectKind::Poison => mcv_entity::Kind::Poison,
+                };
+                self.effects
+                    .apply_simple(kind, eff.duration_ticks, eff.amplifier);
+            }
+        }
+        if self.mode != GameMode::Creative {
+            self.hotbar.take_one(self.player.sel_slot);
+        }
+        // 按住右键的连吃节奏 = 原版 rightClickDelay（4 tick）。
+        self.eat_cooldown = mcv_item::food::RIGHT_CLICK_DELAY_TICKS;
+    }
+
+    /// 进食进度 0..=1（HUD 进度条备用通路；进度画面与第一人称 EAT 抖动
+    /// 动画待 HUD/手代理落地后接线，登记 TODO 不做）。
+    pub fn eat_progress(&self) -> Option<f32> {
+        let eating = self.eat_hold.as_ref()?;
+        let total = mcv_item::food::food_properties(eating.item)
+            .map_or(u32::from(mcv_item::food::DEFAULT_EAT_TICKS), |f| {
+                f.consume_ticks()
+            });
+        Some((eating.ticks as f32 / total.max(1) as f32).min(1.0))
     }
 
     /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落/耐久/exhaustion
@@ -5475,5 +5637,201 @@ mod tick_tests {
         // burst 封顶 4（卡顿/后台回归防级联）。
         let mut burst = 0.0f64;
         assert_eq!(accumulate_ticks(&mut burst, 10.0), 4);
+    }
+
+    // ---- 进食整链（26.1 Consumable；板载 #94）----
+
+    use mcv_item::ItemStack as ItemSt;
+
+    /// 转 Playing 态并把玩家摆在地表（共用 fill_neighborhood 装配）。
+    fn playing_rt(tag: &str) -> GameRuntime {
+        let mut rt = headless_rt(tag);
+        fill_neighborhood(&mut rt);
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.phase, GamePhase::Playing, "前置：邻域齐备已转游玩");
+        rt
+    }
+
+    /// 按住右键吃满 33 tick（启动沿 + 32 tick 推进 + 1 步结算余量）。
+    fn hold_eat(rt: &mut GameRuntime, ticks: usize) {
+        rt.input.placing = true;
+        rt.interact(true);
+        for _ in 0..ticks {
+            rt.fixed_step(1.0 / 20.0);
+        }
+    }
+
+    #[test]
+    fn eat_rotten_flesh_restores_hunger_and_consumes_stack() {
+        let mut rt = playing_rt("eat-bread-chain");
+        // 面包数值面在 mcv_item::food 测试（登记不造）；此处用可得腐肉
+        // 走整链：nutrition 4 → hunger 15 + 4 = 19。
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 15.0;
+        rt.player.saturation = 0.0;
+        hold_eat(&mut rt, 35);
+        assert_eq!(rt.player.hunger, 19.0, "完食回饥饿（FoodData.eat）");
+        // 饱和 = 4×0.1×2 = 0.8（FoodConstants.java:30-32）。
+        assert!((rt.player.saturation - 0.8).abs() < 1e-4);
+        assert_eq!(rt.hotbar.slots[0].count, 2, "生存消耗一格（stack.consume）");
+        assert!(rt.eat_hold.is_none(), "完食清账");
+        assert_eq!(rt.eat_progress(), None);
+    }
+
+    #[test]
+    fn eat_spider_eye_applies_poison_effect() {
+        // 蜘蛛眼 chance 1.0 → 效果可确定性断言（腐肉 0.8 概率面在
+        // mcv_item::food::effect_fires 纯函数测试覆盖）。
+        let mut rt = playing_rt("eat-eye");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::SPIDER_EYE, 1);
+        rt.player.hunger = 10.0;
+        hold_eat(&mut rt, 35);
+        assert_eq!(rt.player.hunger, 12.0, "nutrition 2 回饥饿");
+        assert!(rt.effects.has(mcv_entity::Kind::Poison), "完食挂 poison");
+        // 施加值 100（Consumables.java:62-64）来自 food 表（mcv_item 测试锁
+        // 死）；在账剩余 = 100 − 3：apply 落在第 32 步，第 33–35 步 effects
+        // .tick 各扣 1。
+        assert_eq!(
+            rt.effects.get(mcv_entity::Kind::Poison).map(|a| a.duration),
+            Some(97),
+            "剩余时长按 tick 递减（MobEffectInstance.advance）"
+        );
+        assert!(rt.hotbar.slots[0].is_empty(), "最后一件吃完槽清空");
+    }
+
+    #[test]
+    fn releasing_mid_eat_cancels_and_keeps_stack() {
+        let mut rt = playing_rt("eat-cancel");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 15.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_some(), "按下沿启动进食");
+        assert!(rt.eat_progress().is_some(), "进度通路备用");
+        for _ in 0..10 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        // 松手 = releaseUsing 取消：不吃、不扣、进度不保留。
+        rt.input.placing = false;
+        rt.fixed_step(1.0 / 20.0);
+        assert!(rt.eat_hold.is_none());
+        assert_eq!(rt.player.hunger, 15.0, "取消不结算");
+        assert_eq!(rt.hotbar.slots[0].count, 3, "取消不扣物品");
+        // 重新按住 = 从头吃（重启启动沿，进度归零）。
+        rt.input.placing = true;
+        rt.interact(true);
+        assert_eq!(rt.eat_hold.map(|e| e.ticks), Some(0), "重新起步 tick 0");
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.eat_hold.map(|e| e.ticks), Some(1));
+    }
+
+    #[test]
+    fn full_hunger_refuses_food_and_keeps_stack() {
+        // 满饥饿 nutrition 浪费规则：needsFood 门拒吃（Player.java:1581-1582）。
+        let mut rt = playing_rt("eat-full");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 20.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_none(), "满饥饿拒吃");
+        assert_eq!(rt.hotbar.slots[0].count, 3);
+        // 按住也不经 fixed_step 起吃（auto-repeat 同被门拦）。
+        for _ in 0..10 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.player.hunger, 20.0);
+        assert_eq!(rt.hotbar.slots[0].count, 3);
+    }
+
+    #[test]
+    fn chained_holding_eats_until_cap_twenty() {
+        // 连续按住：连吃节奏 = rightClickDelay 4 tick + 32 tick 进食，
+        // 到 20 上限即被 needsFood 门拦下，剩余腐肉不扣。
+        let mut rt = playing_rt("eat-chain");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 16);
+        rt.player.hunger = 1.0;
+        rt.player.saturation = 0.0;
+        hold_eat(&mut rt, 0);
+        // hunger 1 → 5 次腐肉到 20；每次 32 + 4 = 36 tick，给足 5×37 步。
+        for _ in 0..(5 * 37 + 34) {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.player.hunger, 20.0, "钳 0..20（FoodData.java:20）");
+        assert!(rt.eat_hold.is_none(), "满饥饿连吃中止");
+        // 5 块下肚（1+4×5=20 恰好），第 6 次起不吃 → 剩 11。
+        assert_eq!(rt.hotbar.slots[0].count, 11);
+    }
+
+    #[test]
+    fn creative_eats_without_consuming_stack() {
+        // 创造 invulnerable 免 needsFood 门（vanilla canEat），hasInfinite
+        // 材料不扣（ Consumable.onConsume stack.consume 豁免）。
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (
+            "eat-creative",
+            std::process::id(),
+            std::time::SystemTime::now(),
+        )
+            .hash(&mut h);
+        let dir = std::env::temp_dir().join(format!("mcv-eat-creative-{:x}", h.finish()));
+        let mut rt = GameRuntime::new_headless(20261010, dir, GameMode::Creative);
+        fill_neighborhood(&mut rt);
+        rt.fixed_step(1.0 / 20.0);
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 5);
+        rt.player.hunger = 20.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_some(), "创造 invulnerable 可吃");
+        for _ in 0..35 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.hotbar.slots[0].count, 5, "创造不扣物品");
+        assert_eq!(rt.player.hunger, 20.0, "满值钳制");
+    }
+
+    #[test]
+    fn survival_stats_survive_save_load_roundtrip() {
+        // v5 存档：hunger/saturation/exhaustion/health/air/difficulty 退出
+        // 重进不失忆——不持久化则进食白吃（板载 #94 硬绑定条）。
+        let mut rt = headless_rt("stats-save");
+        rt.player.health = 13.5;
+        rt.player.hunger = 17.0;
+        rt.player.saturation = 4.25;
+        rt.player.exhaustion = 39.75;
+        let dir = rt.save_dir.clone();
+        rt.save_meta();
+        let mut rt2 = GameRuntime::new_headless(20261010, dir, GameMode::Survival);
+        rt2.load_meta();
+        assert_eq!(rt2.player.health, 13.5);
+        assert_eq!(rt2.player.hunger, 17.0);
+        assert_eq!(rt2.player.saturation, 4.25);
+        assert_eq!(rt2.player.exhaustion, 39.75);
+        assert_eq!(rt2.air_supply(), MAX_AIR_SUPPLY, "未下水满气");
+        assert_eq!(rt2.difficulty, crate::difficulty::Difficulty::Normal);
+    }
+
+    #[test]
+    fn survival_stats_and_difficulty_restore_from_meta() {
+        // 难度与空气也随档：难度掉血曲线、溺水账不因重进重置。
+        let mut rt = headless_rt("stats-hard");
+        rt.difficulty = crate::difficulty::Difficulty::Hard;
+        rt.player.hunger = 6.0;
+        rt.player.health = 9.0;
+        rt.air_supply = 120;
+        let dir = rt.save_dir.clone();
+        rt.save_meta();
+        let mut rt2 = GameRuntime::new_headless(20261010, dir, GameMode::Survival);
+        rt2.load_meta();
+        assert_eq!(rt2.difficulty, crate::difficulty::Difficulty::Hard);
+        assert_eq!(rt2.player.hunger, 6.0);
+        assert_eq!(rt2.player.health, 9.0);
+        assert_eq!(rt2.air_supply(), 120);
     }
 }
