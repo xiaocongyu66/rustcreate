@@ -233,6 +233,7 @@ fn side_delta(side: u8) -> (i32, i32) {
 ///    做增量重光照；未初始化时直接返回，主循环稍后的 `init` 会全量覆盖。
 /// 3. 光发生变化的边界交给 [`sync_light_edges`] 跨区块派发，光变块的
 ///    MESH 脏在派发路径内标好（网格顶点烘焙光照字节）。
+///
 /// `queue` = 跨区块边派发队列（调用方持有：游戏路径传
 /// [`GameRuntime::pending_light_edges`] 跨帧消化，测试路径就地
 /// [`sync_light_edges`] 排空）。本函数只做块内增量重光照与双向任务
@@ -1791,10 +1792,10 @@ impl GameRuntime {
             2
         };
         // 编辑源块当帧优先（审计 A2/F3）：级联标脏的邻块仍走近优先预算流。
-        if let Some(p) = self.mesh_priority.take() {
-            if self.build_chunk_mesh(p) {
-                remesh_budget = remesh_budget.saturating_sub(1);
-            }
+        if let Some(p) = self.mesh_priority.take()
+            && self.build_chunk_mesh(p)
+        {
+            remesh_budget = remesh_budget.saturating_sub(1);
         }
         for pos in self.sorted_keys(center) {
             if remesh_budget == 0 {
