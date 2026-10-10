@@ -52,8 +52,10 @@ pub struct RenderChunk {
 /// 网格上传器：游戏层只交出顶点/索引字节，拿回 [`RenderChunk`]。
 ///
 /// 这是引擎把 wgpu 挡在游戏层之外的唯一入口——C++ mesher 产出裸字节，
-/// 本结构负责建 GPU 缓冲；游戏层因此不 `use wgpu`。水几何只上传独立索引
-/// 缓冲、复用 opaque 顶点缓冲（与既有渲染语义一致）。
+/// 本结构负责建 GPU 缓冲；游戏层因此不 `use wgpu`。水几何经
+/// [`MeshUploader::build_chunk`] 的 `water` 参数上传：水顶点拼在 opaque
+/// 顶点之后共用一个 vb、水索引独立成缓冲并整体偏移 opaque 顶点数（旧文档
+/// 「只上传独立索引缓冲」描述的是 H1 修复前缺水顶点的行为，已纠正）。
 pub struct MeshUploader {
     device: wgpu::Device,
 }

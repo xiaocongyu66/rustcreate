@@ -588,6 +588,206 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
     (n, bb)
 }
 
+/// 水 pass 上传契约回归（2026-10-10 审计 H1 的 CI 洞封堵）：bug 存活数月的
+/// 根因是整仓没有任何测试驱动水 pass——build_chunk 旧签名只收水索引、水顶点
+/// 字节从未上传 GPU，water draw 把基址 0 的水索引绑到 opaque 顶点缓冲上
+/// （GLES 越界 INVALID_OPERATION 静默跳过、桌面越界读画垃圾）。本测试
+/// **独立构造**水顶点/水索引（索引基址 0，模拟真 mesher 的裸输出——索引
+/// 偏移正是 build_chunk 的职责，测试验证的就是这个偏移契约），走
+/// build_chunk → draw_frame 全管线，三重断言：
+/// (a) 差分（有水帧 − 无水帧）：水面确实画出像素（预期 ~3.2k px，见下方
+///     投影仿真）——water_range/水索引缓冲任一环节静默跳过即 diff=0；
+/// (b) 差分像素竖直位置落在天空带（y<60，既有约定）与地面带（y≥120）之间
+///     ——索引偏移回归时水被画到 opaque 顶点（岸线 y=100，投影带
+///     112..163）即越出本带；
+/// (c) 全帧无 validation error（push/pop_error_scope）——GLES 越界索引回归
+///     必抓（lavapipe 有 robust buffer access 会静默补零画错位，由 (a)/(b)
+///     兜底）。
+///
+/// 阈值定标（非拍脑袋）：解码仓库内原版 water_still.png——16x512 条带、
+/// 调色板全灰度 165..216、alpha=180（fs_water 忽略 alpha、且明示水不染色
+///），水面片元 = 灰度×shade(1.0) 以 fog≈0.92 与雾色混合 → 屏上 ≈
+/// 166..215 的**中性微蓝灰**（b−r≈4）。派单设想的「蓝像素 b>r+30」谓词
+/// 对真实素材不成立（biome 水染色未接线是另一码事，不在本测试范围），
+/// 改用「亮中性灰」签名：min(rgb)>140 且 g≤r+12 且 |g−b|≤8——草地
+/// （g−r≈50+）、泥土（|g−b|≈30）、天空（g−r≈20+）均不落入。
+#[test]
+fn water_pass_renders_uploaded_water_vertices() {
+    let (device, queue, mut renderer) = setup();
+    let up = mcv_render::gpu::MeshUploader::new(device.clone());
+    // validation 范围：覆盖建缓冲（创建期映射写入）+ 两帧全部 pass。
+    let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
+
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    // 与 terrain 测试同机位：水面投影带 y 86.8..114.5、岸线带 112..163、
+    // 天空带 <60（相机 pos+(0,EYE_HEIGHT,0)，pitch −0.62）。
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+
+    // opaque：近岸草地（y=100，z 8..16）+ 塘底泥土（y=99.5，z 0..8）。
+    // 水面盖在塘底上方 0.1、比岸线低 0.4——派单语义「地面下 ~0.4」的塘面。
+    let ground = |p: [f32; 3], uv: [u16; 2], layer: u16| Tv {
+        pos: p,
+        uv,
+        layer,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2, // face_id +Y
+        pad: [0; 2],
+    };
+    let verts = [
+        ground([0.0, 100.0, 8.0], [0, 0], mcv_core::tiles::GRASS_TOP),
+        ground([0.0, 100.0, 16.0], [0, 4096], mcv_core::tiles::GRASS_TOP),
+        ground(
+            [16.0, 100.0, 16.0],
+            [4096, 4096],
+            mcv_core::tiles::GRASS_TOP,
+        ),
+        ground([16.0, 100.0, 8.0], [4096, 0], mcv_core::tiles::GRASS_TOP),
+        ground([0.0, 99.5, 0.0], [0, 0], mcv_core::tiles::DIRT),
+        ground([0.0, 99.5, 8.0], [0, 4096], mcv_core::tiles::DIRT),
+        ground([16.0, 99.5, 8.0], [4096, 4096], mcv_core::tiles::DIRT),
+        ground([16.0, 99.5, 0.0], [4096, 0], mcv_core::tiles::DIRT),
+    ];
+    let idx: [u32; 12] = [0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+
+    // 水：塘面 y=99.6、z 0..8，满 tile uv（0..4096），独立构造、索引基址 0。
+    // flags = +Y face_id | 波浪位（真 mesher：顶面上是空气 → wave=1，
+    // mesher.cpp emit_quad；ao4=0xFF → ao=3 全角全亮）。
+    let water_v = |p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer: mcv_core::tiles::WATER, // water_still，manifest 层 789
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 0x2 | 0x8,
+        pad: [0; 2],
+    };
+    let wverts = [
+        water_v([0.0, 99.6, 0.0], [0, 0]),
+        water_v([0.0, 99.6, 8.0], [0, 4096]),
+        water_v([16.0, 99.6, 8.0], [4096, 4096]),
+        water_v([16.0, 99.6, 0.0], [4096, 0]),
+    ];
+    let widx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+
+    let wet = up.build_chunk(
+        [0.0, 0.0, 0.0],
+        bytemuck::cast_slice(&verts),
+        &idx,
+        Some((bytemuck::cast_slice(&wverts), &widx)),
+    );
+    let dry = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
+
+    fn frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut mcv_render::Renderer,
+        target: &OffscreenTarget,
+        chunk: &RenderChunk,
+        camera: &Camera,
+    ) -> Vec<u8> {
+        let (sun, day) = mcv_render::sun_state(6000); // noon
+        let hud: Vec<HudQuad> = Vec::new();
+        let scene = Scene {
+            camera,
+            time: 0.0,
+            day_factor: day,
+            fog_tint: [1.0, 1.0, 1.0],
+            fog_density_mult: 1.0,
+            sun_dir: sun,
+            moon_phase: 0,
+            width: 320.0,
+            height: 240.0,
+            chunks: std::slice::from_ref(chunk),
+            hud: &hud,
+            cloud: None,
+            player: None,
+            mobs: None,
+            overlay: None,
+            underwater: false,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        target.read_pixels(device)
+    }
+
+    let dry_px = frame(&device, &queue, &mut renderer, &target, &dry, &camera);
+    let wet_px = frame(&device, &queue, &mut renderer, &target, &wet, &camera);
+
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        for (name, px) in [
+            ("water-pass-dry.png", &dry_px),
+            ("water-pass-wet.png", &wet_px),
+        ] {
+            let png = mcv_render::offscreen::encode_png(extent.width, extent.height, px);
+            let _ = std::fs::write(std::path::Path::new(&dir).join(name), png);
+        }
+    }
+
+    let scope_err = pollster::block_on(guard.pop());
+    assert!(
+        scope_err.is_none(),
+        "水 pass 帧产生 validation error: {scope_err:?}——越界索引/缓冲接线回归（GLES 会静默跳 draw 的那类错误）"
+    );
+
+    // (a)+(b) 差分：水面像素数 + 竖直位置（天空带与地面带之间）。
+    let (diff, bbox) = a_diff_pixels(&dry_px, &wet_px);
+    assert!(
+        diff > 800,
+        "水面差分像素缺失（water pass 被静默跳过？）diff={diff}（bbox {bbox:?}）——塘面投影区 ~3.2k px"
+    );
+    let (_x0, y0, _x1, y1) = bbox.expect("diff>0 必有包围盒");
+    assert!(
+        y0 > 60 && y1 < 120,
+        "水像素竖直位置越带（y {y0}..{y1}，应落在天空带 <60 与地面带 ≥120 之间）——索引偏移/基址契约回归时水会画到 opaque 顶点位（岸线投影带 112..163）"
+    );
+
+    // 水面像素签名：投影水带框（x 90..230，y 84..118）内「亮中性灰」像素。
+    // 有水帧必须大量存在；无水帧同框只有草地/泥土/天空（均不落入谓词）。
+    let water_gray = |px: &[u8]| -> usize {
+        let mut n = 0usize;
+        for y in 84..118u32 {
+            for x in 90..230u32 {
+                let o = ((y * extent.width + x) * 4) as usize;
+                let (r, g, b) = (px[o], px[o + 1], px[o + 2]);
+                let (r, g, b) = (r as i32, g as i32, b as i32);
+                if r.min(g).min(b) > 140 && g <= r + 12 && (g - b).abs() <= 8 {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let wet_gray = water_gray(&wet_px);
+    let dry_gray = water_gray(&dry_px);
+    assert!(
+        wet_gray > 800,
+        "水带缺少水面像素（预期 ~3.2k）：wet_gray={wet_gray}——water_still 层采样/水 pass 接线回归"
+    );
+    assert!(
+        dry_gray < 200,
+        "无水帧出现水面签名像素 {dry_gray}——背景误判（签名谓词失效）"
+    );
+}
+
 /// GLES 后端守护（2026-10-10 真机两连 fatal：cloud.wgsl naga 校验、GLES 拒绝
 /// 对创建期映射 buffer 做 queue.write_buffer）。CI render-headless 全走
 /// lavapipe Vulkan，GLES 回退后端的 buffer 映射/上传语义从未覆盖。本测试
