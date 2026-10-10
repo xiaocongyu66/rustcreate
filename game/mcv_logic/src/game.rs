@@ -3904,7 +3904,12 @@ impl GameRuntime {
             };
             let air = self.air_supply.clamp(0, MAX_AIR_SUPPLY);
             if under_water || air < MAX_AIR_SUPPLY {
-                let bubbles = |offset: i32| ((air + offset) * 10).div_ceil(MAX_AIR_SUPPLY);
+                // 桶数换算对齐原版 Mth.ceil((air+offset)*10/max)（Gui.java:926
+                // getCurrentAirSupplyBubble；CI rustc 无 i32::div_ceil，且原版
+                // 本就是浮点 ceil——air+offset ≥ −2·10 = −20，f32 距离内精确）。
+                let bubbles = |offset: i32| {
+                    (((air + offset) * 10) as f32 / MAX_AIR_SUPPLY as f32).ceil() as i32
+                };
                 let full = bubbles(-2);
                 let popping = bubbles(0);
                 let empty = 10 - bubbles(if air != 0 && under_water { 1 } else { 0 });
