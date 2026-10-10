@@ -23,6 +23,11 @@ use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
 
+/// 世界竖直下界（体素布局 y 索引 ∈ 0..mcv_core::CHUNK_SY，方块/查询
+/// 均以 0 为底——`Level.getMinY()` 语义，Entity.checkBelowWorld 的
+/// 参照常数）。
+pub const WORLD_MIN_Y: f32 = 0.0;
+
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GameMode {
@@ -585,6 +590,11 @@ pub struct GameRuntime {
     /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
     /// prone 模型接线在 mcv_app（遗留清单，见报告）。
     swimming: bool,
+    /// 玩家剩余燃烧 tick（26.1 Entity.remainingFireTicks，Entity.java:534-544
+    /// 服务端分支：>0 时每 20 tick 1 点 on_fire 伤害并每 tick −1；点燃入口
+    /// lavaIgnite/fireIgnite，:607-640）。创造不死但同样挂燃烧账
+    /// （hurt_player 创造豁免在伤害侧，燃烧账照记——与原版一致）。
+    pub fire_ticks: i32,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -871,6 +881,7 @@ impl GameRuntime {
             air_supply: MAX_AIR_SUPPLY,
             swimming: false,
             was_in_water: false,
+            fire_ticks: 0,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
@@ -920,6 +931,38 @@ impl GameRuntime {
     /// 不建模）；`lastHurtByMobTimestamp`/`lastHurtMobTimestamp` 只用于仇恨
     /// 记录（LivingEntity.java:241-244），不构成本门的一部分——按源码实况实现。
     pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
+        // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
+        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
+        // mob_attack/player_attack.json = 0.1；创造豁免同原版
+        // abilities.invulnerable（Player.causeFoodExhaustion:1561-1567）。
+        self.hurt_ex(amount, from, if from.is_some() { 0.1 } else { 0.0 }, false);
+    }
+
+    /// 火系伤害统一入口（damage_type effects=burning 家族：lava/in_fire/
+    /// on_fire，均 ∈ IS_FIRE 标签）：现役防火效果 → 整段免伤
+    /// （LivingEntity.hurtServer:1163-1165 `source.is(IS_FIRE) &&
+    /// hasEffect(FIRE_RESISTANCE) → return false`）。
+    fn hurt_fire(&mut self, amount: f32, food_exhaustion: f32) {
+        if self.effects.has(mcv_entity::Kind::FireResistance) {
+            return;
+        }
+        self.hurt_ex(amount, None, food_exhaustion, false);
+    }
+
+    /// hurt_player 的参数化内核：`food_exhaustion` = damage_type.json 的
+    /// exhaustion 值（lava/in_fire = 0.1、on_fire/in_wall/out_of_world/starve/
+    /// drown = 0.0）；`bypass_creative` = 伤害类型 ∈ bypasses_invulnerability
+    /// 标签（仅 out_of_world/fell_out_of_world，tags/damage_type/
+    /// bypasses_invulnerability.json：values = [out_of_world, generic_kill]）
+    /// ——创造免疫走 Entity.isInvulnerableToBase:2955-2960 的
+    /// `invulnerable && !BYPASSES_INVULNERABILITY` 门，穿标签的伤害照常结算。
+    fn hurt_ex(
+        &mut self,
+        amount: f32,
+        from: Option<Vec3>,
+        food_exhaustion: f32,
+        bypass_creative: bool,
+    ) {
         // 难度缩放（Player.hurtServer:692-706）：仅 scalesWithDifficulty 伤
         // 害源（DamageSource.java:92-97 = LivingEntity 造成且非玩家 → 本仓
         // mob 近战/箭/爆炸，`from` 有值）参与；和平归 0 直接免伤结算。
@@ -932,7 +975,7 @@ impl GameRuntime {
             return;
         }
         let p = &mut self.player;
-        if p.health <= 0.0 || self.mode == GameMode::Creative {
+        if p.health <= 0.0 || (self.mode == GameMode::Creative && !bypass_creative) {
             return;
         }
         let guard = p.invulnerable > 10;
@@ -955,12 +998,9 @@ impl GameRuntime {
         p.absorption = (p.absorption - absorbed).max(0.0);
         p.health -= dmg;
         // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
-        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
-        // mob_attack/player_attack.json = 0.1，fall/out_of_world.json = 0.0；
-        // 本入口 `from` 有值 ≙ 实体攻击。创造已在上方豁免（对应
-        // Player.causeFoodExhaustion:1561-1567 的 abilities.invulnerable 门）。
-        if from.is_some() {
-            p.exhaustion = (p.exhaustion + 0.1).min(EXHAUSTION_MAX);
+        // causeFoodExhaustion(source.getFoodExhaustion())）。
+        if food_exhaustion > 0.0 {
+            p.exhaustion = (p.exhaustion + food_exhaustion).min(EXHAUSTION_MAX);
         }
         if let Some(src) = from {
             let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
@@ -972,16 +1012,23 @@ impl GameRuntime {
         if p.health <= 0.0 {
             p.health = 0.0;
             self.dead = true;
+            // clearFire（26.1 Player.die:554-555 死亡即熄灭）。
+            self.fire_ticks = 0;
             if self.mode == GameMode::Hardcore {
                 self.hardcore_death = true;
             }
             // 死亡掉落（26.1 Player.die → Inventory.dropAll，keepInventory
-            // 默认 false）：快捷栏逐格生成 ItemDrop（拾取延迟 40 tick =
-            // 2 s，LivingEntity.java:3398），与 mob 死亡掉落同一生成路径，
-            // 再清栏。
+            // 默认 false）：全 36 格（快捷栏 9 + 主背包 27）逐格生成
+            // ItemDrop（拾取延迟 40 tick = 2 s，LivingEntity.java:3398），
+            // 与 mob 死亡掉落同一生成路径，再清栏。旧实现只掉快捷栏 9 格，
+            // main 27 格死亡保留 = 变相 keepInventory。
+            // KNOWN-DIVERGENCE：原版 Player.die 还会掉合成光标手持堆
+            // （AbstractContainerMenu carried）；本工程光标堆存活在 mcv_app
+            // 的 UI 会话层（CraftScreen.cursor，app.rs 持有），Game 状态层
+            // 不可达，暂不掉落。
             let at = p.pos + Vec3::Y * 0.9;
             let mut rng = spawn_rng();
-            for s in &self.hotbar.slots {
+            for s in self.hotbar.slots.iter().chain(self.hotbar.main.iter()) {
                 if !s.is_empty() {
                     mcv_entity::spawn_item_drop(
                         &mut self.mobs_app.world,
@@ -1022,6 +1069,8 @@ impl GameRuntime {
         self.fall_y = None;
         self.air_supply = MAX_AIR_SUPPLY;
         self.swimming = false;
+        // 燃烧不随复活保留（26.1 死亡 clearFire，Player.die:554）。
+        self.fire_ticks = 0;
         // 26.1 重生与首次进入同走加载画面：handleRespawn →
         // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
         // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
@@ -2330,8 +2379,18 @@ impl GameRuntime {
                 );
             }
             self.was_in_water = in_water;
+            // 攀附中免摔落账（原版 handleOnClimbable 每拍 resetFallDistance，
+            // LivingEntity.java:2644）——谓词与 physics::step 同源
+            // on_climbable（贴面即达，见 LADDER_PROBE 注）。
+            let on_ladder = !self.player.flying
+                && mcv_game::physics::on_climbable(
+                    &WorldView {
+                        chunks: &self.chunks,
+                    },
+                    &mcv_game::Aabb::from_player(self.player.pos),
+                );
             // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
-            if !self.player.flying && !in_water {
+            if !self.player.flying && !in_water && !on_ladder {
                 if self.player.on_ground {
                     self.fall_y = None;
                 } else {
@@ -2339,7 +2398,7 @@ impl GameRuntime {
                     self.fall_y = Some(self.fall_y.map_or(y, |f| f.max(y)));
                 }
             } else {
-                self.fall_y = None; // 飞行/游泳免疫摔落
+                self.fall_y = None; // 飞行/游泳/攀附免疫摔落
             }
             let step_input = mcv_game::StepInput {
                 wish_dir,
@@ -2435,14 +2494,39 @@ impl GameRuntime {
                 self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
             }
             // 事件式 exhaustion 累加（原版在移动/跳跃事件即时加，非每 tick）：
-            // 冲刺地面水平位移 0.1/m、走路/潜行 0.0/m 且只计水平分量
-            // （ServerPlayer.checkMovementStatistics:1443-1456 +
-            // FoodConstants.java:25-27）；跳跃 = 冲刺跳 0.2 / 普通跳 0.05
-            // （ServerPlayer.jumpFromGround:1532-1540 +
+            // 水中 0.01/m——游泳/眼下水按 3D 距离、水面行进按水平距离
+            // （ServerPlayer.checkMovementStatistics:1422-1439 +
+            // FoodConstants.java:28 EXHAUSTION_SWIM），优先序 isSwimming >
+            // eyeInFluid(WATER) > inWater > onGround 与原版 else-if 链一致
+            // （self.swimming 为上一拍值，姿态位本拍尾才翻转，1 tick 滞后）。
+            // 地面冲刺 0.1/m、走路/潜行 0.0/m 且只计水平分量
+            // （checkMovementStatistics:1443-1456 + FoodConstants.java:25-27，
+            // 旧实现水中零消耗为登记差异，本提交消解）；跳跃 = 冲刺跳 0.2 /
+            // 普通跳 0.05（ServerPlayer.jumpFromGround:1532-1540 +
             // FoodConstants.java:21-22，旧实现恒 0.2 高估普通跳）。
             if self.mode != GameMode::Creative {
+                // 眼位水样（eyeInFluid(WATER) 分支判据，:1428）。
+                let eyes_in_water = {
+                    let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                    let ec = eye.floor().as_ivec3();
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    d.liquid && d.name == "water"
+                };
                 let p = &mut self.player;
-                if p.on_ground {
+                let moved_3d = delta.length();
+                let water_cost = if self.swimming || eyes_in_water {
+                    0.01 * moved_3d
+                } else if in_water {
+                    0.01 * moved_h
+                } else {
+                    0.0
+                };
+                if water_cost > 0.0 {
+                    p.exhaustion = (p.exhaustion + water_cost).min(EXHAUSTION_MAX);
+                } else if p.on_ground {
                     p.exhaustion =
                         (p.exhaustion + move_exhaustion(sprinting, moved_h)).min(EXHAUSTION_MAX);
                 }
@@ -2453,10 +2537,12 @@ impl GameRuntime {
             }
             // FoodData.tick 每 game tick 一次（26.1 FoodData.java:32-72）：
             // exhaustion>4 先扣 1 饱和、饱和耗尽才扣饥饿；回血/饥饿掉血走
-            // tickTimer（和平封顶 10 为本仓既有登记偏差）。
+            // tickTimer（和平封顶 10 为本仓既有登记偏差）。饿死拍命中时由
+            // 调用方走完整 hurt 管线（FoodData.java:64 hurtServer(starve)，
+            // i 帧门/死亡结算/受伤音照常；exhaustion 按 starve.json=0.0）。
             if self.on_tick && self.mode != GameMode::Creative {
                 let p = &mut self.player;
-                food_data_tick(
+                let starve = food_data_tick(
                     &mut p.exhaustion,
                     &mut p.saturation,
                     &mut p.hunger,
@@ -2464,26 +2550,78 @@ impl GameRuntime {
                     &mut self.food_tick_timer,
                     self.difficulty,
                 );
+                if starve {
+                    self.hurt_player(1.0, None);
+                }
             }
             // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
             if self.on_tick {
-                let view = WorldView {
-                    chunks: &self.chunks,
-                };
                 // 眼位流体（原版 isEyeInFluid(**WATER**)，LivingEntity.java:417
                 // 只认水不认岩浆；eye_in_water 是挖掘惩罚用的“任意流体”版，
                 // 语义不同不能复用）。
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let ec = eye.floor().as_ivec3();
-                let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
-                let eyes_water = eye_def.liquid && eye_def.name == "water";
                 let feet_pos = BlockPos::new(
                     self.player.pos.x.floor() as i32,
                     self.player.pos.y.floor() as i32,
                     self.player.pos.z.floor() as i32,
                 );
-                let feet_def = view.block(feet_pos).def();
-                let feet_water = feet_def.liquid && feet_def.name == "water";
+                // 借用隔离：view 的不可变借用只在取数块内存活（旧写法 view
+                // 活满全段，与下方 hurt_*/particles 可变借用冲突 = E0502，
+                // 前任提交从未绿过 CI）。BlockId::def() 返回 &'static
+                // BlockDef，格定义可安全带出借用域。
+                let (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate) = {
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    let eyes_water = eye_def.liquid && eye_def.name == "water";
+                    let feet_def = view.block(feet_pos).def();
+                    let feet_water = feet_def.liquid && feet_def.name == "water";
+                    // ---- 方块接触伤害（26.1 InsideBlockEffectApplier：
+                    // 与实体 AABB 重叠的每格触发 entityInside）----
+                    // 岩浆（LavaFluid.entityInside:119-123）：CLEAR_FREEZE +
+                    // LAVA_IGNITE（Entity.lavaIgnite:607-611 点燃 15s）+
+                    // Entity::lavaHurt:613-624 → lava() 4.0F/tick（i 帧节流成
+                    // 4.0/s）。判据按 AABB 与岩浆格任一重叠近似为「脚部或眼部
+                    // 格是岩浆」（本引擎单点采样脚/眼，1.8 m 身高横跨 ≤3 格，
+                    // 差异登记 KNOWN-DIVERGENCE）。
+                    let in_lava = (feet_def.liquid && feet_def.name == "lava")
+                        || (eye_def.liquid && eye_def.name == "lava");
+                    // 火焰方块（BaseFireBlock.entityInside:131-137）：FIRE_IGNITE
+                    // （fireIgnite:139-155 → igniteForSeconds(8)=160 tick，只增
+                    // 不减）+ in_fire() fireDamage/tick（i 帧节流）。数值：
+                    // FireBlock 构造 1.0F（FireBlock.java Vineflower 反编译失败，
+                    // 按 vanilla 常量；SoulFireBlock.java:22 = 2.0F 实读确认）。
+                    // 判据同岩浆：脚/眼格任一是火（KNOWN-DIVERGENCE 单点采样）。
+                    let fire_dmg = if feet_def.name == "soul_fire" || eye_def.name == "soul_fire" {
+                        Some(2.0)
+                    } else if feet_def.name == "fire" || eye_def.name == "fire" {
+                        Some(1.0)
+                    } else {
+                        None
+                    };
+                    // 窒息（26.1 LivingEntity.baseTick:405-406 isInWall → inWall()
+                    // 1.0F/tick，i 帧门自然节流 ~1/s；Entity.isInWall:2164-2182 =
+                    // 眼位 0.8×width 窄盒（1e-6 高 → 仅眼位所在 y 层）与
+                    // suffocating 方块求交；suffocating 默认判据 =
+                    // blocksMotion && 满碰撞立方（BlockBehaviour.java:1004）→
+                    // 本仓按 solid 全立方近似）。
+                    let eye_suffocate = {
+                        let hw = mcv_game::Player::HALF[0] * 0.8;
+                        let mut hit = false;
+                        for bx in (eye.x - hw).floor() as i32..=(eye.x + hw).floor() as i32 {
+                            for bz in (eye.z - hw).floor() as i32..=(eye.z + hw).floor() as i32 {
+                                let d = view.block(BlockPos::new(bx, ec.y, bz)).def();
+                                hit |= d.solid
+                                    && !d.liquid
+                                    && mcv_core::Shape::from_u8(d.shape) == mcv_core::Shape::Cube;
+                            }
+                        }
+                        hit
+                    };
+                    (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate)
+                };
                 // 姿态位（Pose.SWIMMING 的驱动源，Entity.java:1558-1564 +
                 // Player.java:1410-1416；第三人称 prone 模型接线遗留）。
                 self.swimming = swimming_tick(
@@ -2518,6 +2656,30 @@ impl GameRuntime {
                     // 环境伤害不进难度缩放（DamageSource.java:92-97 判据
                     // = 实体伤害，hurt_player 的 from=None 分支同语义）。
                     self.hurt_player(2.0, None);
+                }
+                if in_lava {
+                    // lavaIgnite：igniteForSeconds(15) = 300 tick（只增不减，
+                    // igniteForTicks:634-640 `remainingFireTicks < n` 门）。
+                    self.fire_ticks = self.fire_ticks.max(15 * 20);
+                    // lavaHurt：lava() 4.0F（Entity.java:613-624，含
+                    // GENERIC_BURN 音，音效接 event 表后再挂）。
+                    self.hurt_fire(4.0, 0.1);
+                }
+                // 燃烧结算（Entity.baseTick:534-544）：remainingFireTicks>0
+                // 且每 20 tick 边界且**不在岩浆**（岩浆侧 lavaHurt 每 tick
+                // 独立结算）→ on_fire() 1.0F；随后每 tick −1。
+                if self.fire_ticks > 0 {
+                    if self.fire_ticks % 20 == 0 && !in_lava {
+                        self.hurt_fire(1.0, 0.0);
+                    }
+                    self.fire_ticks -= 1;
+                }
+                if let Some(dmg) = fire_dmg {
+                    self.fire_ticks = self.fire_ticks.max(8 * 20);
+                    self.hurt_fire(dmg, 0.1);
+                }
+                if eye_suffocate {
+                    self.hurt_ex(1.0, None, 0.0, false);
                 }
             }
             // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
@@ -2633,10 +2795,16 @@ impl GameRuntime {
             }
         }
 
-        // ---- 虚空伤害（y < -10）：无视无敌帧的重击，死亡后传送回出生点上方 ----
-        if self.player.pos.y < -10.0 {
-            self.player.invulnerable = 0;
-            self.hurt_player(40.0, None);
+        // ---- 虚空（26.1 Entity.checkBelowWorld:579-583 y < getMinY()−64 →
+        // onBelowWorld；LivingEntity.onBelowWorld:2142-2144 → fellOutOfWorld
+        // **4.0F/tick 走正常 hurtServer 管线**（i 帧门节流成 0.5s/跳，不清
+        // 无敌帧）；类型 out_of_world ∈ bypasses_invulnerability
+        // （tags/damage_type/bypasses_invulnerability.json）→ 创造不豁免
+        // （Entity.isInvulnerableToBase:2955-2960 穿标签），照常死。
+        // 旧实现 y<−10 清无敌帧打 40 秒杀且创造无限坠落（软锁），两处均无
+        // 源码依据。minY 取世界常数（体素布局 y ∈ 0..CHUNK_SY）。
+        if self.player.pos.y < WORLD_MIN_Y - 64.0 {
+            self.hurt_ex(4.0, None, 0.0, true);
             if self.dead {
                 self.player.pos = Vec3::new(8.5, 200.0, 8.5);
                 self.player.vel = Vec3::ZERO;
@@ -3935,6 +4103,56 @@ impl GameRuntime {
                     quads.extend(g.sprite_full("food_half", fx, y_base, 9.0 * s, 9.0 * s, tint));
                 }
             }
+            // 空气泡（26.1 Gui.extractAirBubbles:884-927）：眼下在水或
+            // air<满值（300）才显示；行位 = 心/饥饿行上一行（yLineAir =
+            // yLineBase − 10，:790 vehicleHearts==0 分支）；右缘镜像
+            // x = xRight − (i−1)·8 − 9（:905，i 从 1 起）。三态映射：
+            // 满 = ceil((air−2)·10/300)（:926 getCurrentAirSupplyBubble
+            // offset −2）、爆裂位 = ceil(air·10/300)（offset 0，仅水下且
+            // 满≠爆裂位，:898/:908-911）、空 = 10 − ceil((air+delay)·10/300)，
+            // delay = air≠0 且水下 ? 1 : 0（:921-923）。简化不建模：爆裂帧
+            // 时长 2（AIR_BUBBLE_POPPING_DURATION:129，客户端瞬时态）与空泡
+            // 随机抖动（:912 tickCount%2）、pop 音（playAirBubblePoppedSound
+            // :929——BUBBLE_POP 事件未进音效表）。
+            let under_water = {
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let ec = eye.floor().as_ivec3();
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                d.liquid && d.name == "water"
+            };
+            let air = self.air_supply.clamp(0, MAX_AIR_SUPPLY);
+            if under_water || air < MAX_AIR_SUPPLY {
+                // 桶数换算对齐原版 Mth.ceil((air+offset)*10/max)（Gui.java:926
+                // getCurrentAirSupplyBubble；CI rustc 无 i32::div_ceil，且原版
+                // 本就是浮点 ceil——air+offset ≥ −2·10 = −20，f32 距离内精确）。
+                let bubbles = |offset: i32| {
+                    (((air + offset) * 10) as f32 / MAX_AIR_SUPPLY as f32).ceil() as i32
+                };
+                let full = bubbles(-2);
+                let popping = bubbles(0);
+                let empty = 10 - bubbles(if air != 0 && under_water { 1 } else { 0 });
+                let y_air = y_base - 10.0 * s;
+                for b in 1..=10i32 {
+                    let bx = x_right - (b - 1) as f32 * 8.0 * s - 9.0 * s;
+                    if b <= full {
+                        quads.extend(g.sprite_full("air", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    } else if full != popping && b == popping && under_water {
+                        quads.extend(g.sprite_full(
+                            "air_bursting",
+                            bx,
+                            y_air,
+                            9.0 * s,
+                            9.0 * s,
+                            tint,
+                        ));
+                    } else if b > 10 - empty {
+                        quads.extend(g.sprite_full("air_empty", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    }
+                }
+            }
         } else {
             // 回退：旧程序化准星 + 快捷栏
             let (cx, cy) = (width * 0.5 - 1.0, height * 0.5 - 8.0);
@@ -5031,12 +5249,16 @@ pub fn move_exhaustion(sprinting: bool, horizontal_m: f32) -> f32 {
 /// 1. exhaustion **>4**（FoodData.java:35 严格大于，非 >=4）扣 4，先扣 1 点
 ///    饱和度、饱和见底才扣饥饿；
 /// 2. 回血快线：饱和>0 且 hunger≥20 且受伤，每 10 tick 回 min(饱和,6)/6 HP，
-///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52）；
+///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52；naturalRegen 游
+///    戏规则默认 true，本仓无 gamerules 设施按默认建模）；
 /// 3. 回血慢线：hunger≥18 且受伤，每 80 tick 回 1 HP，代价 exhaustion+6
 ///    （FoodData.java:53-59，FoodConstants.java:20 EXHAUSTION_HEAL=6.0——旧实现
 ///    回血零代价）；
-/// 4. 饥饿掉血：hunger=0 每 80 tick 掉 1（难度封顶为既有登记偏差：一律按
-///    和平封顶 10）。
+/// 4. 饥饿掉血：hunger=0 每 80 tick 一拍，难度封顶门 `health>10 || HARD ||
+///    (health>1 && NORMAL)`（FoodData.java:63）。命中时返回 true，**由调用
+///    方走完整受伤管线**（原版 `player.hurtServer(…starve(), 1.0F)`，
+///    FoodData.java:64；旧实现就地 `health -= 1.0` 绕过 i 帧门/死亡结算，
+///    已消解）。starve.json exhaustion = 0.0。
 pub fn food_data_tick(
     exhaustion: &mut f32,
     saturation: &mut f32,
@@ -5044,7 +5266,7 @@ pub fn food_data_tick(
     health: &mut f32,
     tick_timer: &mut u32,
     difficulty: crate::difficulty::Difficulty,
-) {
+) -> bool {
     if *exhaustion > 4.0 {
         *exhaustion -= 4.0;
         if *saturation > 0.0 {
@@ -5075,14 +5297,14 @@ pub fn food_data_tick(
         if *tick_timer >= 80 {
             // 封顶表（FoodData.java:63 `health > 10 || HARD || (health > 1 && NORMAL)`，
             // 和平/简单只掉到 10）——旧「一律封顶 10」登记偏差已消解。
-            if crate::difficulty::starve_can_hurt(*health, difficulty) {
-                *health -= 1.0;
-            }
+            let starve = crate::difficulty::starve_can_hurt(*health, difficulty);
             *tick_timer = 0;
+            return starve; // 伤害由调用方走 hurt 管线（FoodData.java:64）。
         }
     } else {
         *tick_timer = 0;
     }
+    false
 }
 
 /// 满气（26.1 `Entity.getMaxAirSupply` = **300**，Entity.java:2739-2741；
