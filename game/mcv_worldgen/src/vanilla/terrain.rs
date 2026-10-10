@@ -14,8 +14,33 @@
 //!   「随机破面」效果（NOTES-terrain §6 的既有取舍）；
 //! - noodle / pillars 不在本 v1 管线（任务只点名双洞穴：意面 + 奶酪），
 //!   Noodle 通道以常数 64 代入（min 不生效）。
+//!
+//! 洞穴/山脊噪声通道（2026-10-11 质量门修订）：全部改走 `NormalNoise`
+//! fBm + 26.1 noise 参数表（data/minecraft/worldgen/noise/*.json），不再
+//! 用裸单倍频 OS2S——裸单倍频的值分布（σ≈0.42）远宽于 26.1 的
+//! NormalNoise 归一（σ≈0.14-0.30，按表而定），曾把地下空气占比推到
+//! ~18%（quality::cave_air_in_bands 红）。逐通道对位：
+//! - cave_entrance.json:1-9（firstOctave -7, [0.4,0.5,1.0]）；
+//! - cave_layer.json:1-5（-8, [1.0]）—— vanilla 求值 (xz·1, y·8)
+//!   （NoiseRouterData.java:292 `noise(CAVE_LAYER, 8.0)` 单参重载 = yScale），
+//!   非旧实现的 (xz·8, y·8)（轴错位，洞穴失去水平层理）；
+//! - cave_cheese.json:1-15（-8, [0.5,1,2,1,2,1,0,2,0]）—— vanilla
+//!   (xz·1, y·2/3)（NoiseRouterData.java:295），非旧 (xz·2/3, y·1)；
+//! - spaghetti_3d_rarity/1/2、spaghetti_2d_modulator、spaghetti_2d、
+//!   spaghetti_2d_thickness：各 [1.0]，firstOctave -11/-7/-11（同名 json）；
+//! - spaghetti_2d_elevation.json（-8, [1.0]）：vanilla 是 **2D** 通道
+//!   （NoiseRouterData.java:273-275 `mappedNoise(…, yScale=0.0, -8, +8)`，
+//!   列常量），mapFromUnitTo 值域 [-8,+8]——旧实现按 3D 采样且
+//!   span_map(n,0,-8)·8 给出 [-64,0]，层状意面（layerRidged）整体错位；
+//!   且 vanilla 的 layerRidged 立方内含 thickness（NoiseRouterData.java:278
+//!   `.add(slopedSpaghetti, thickness).cube()`），旧实现漏加；
+//! - spaghetti_roughness / spaghetti_roughness_modulator（-5/-8, [1.0]）：
+//!   vanilla 是一个共享的 spaghettiRoughnessFunction（NoiseRouterData.java:213-220，
+//!   entrances 与 underground 分支同源），modulator 求值 scale (1,1)——
+//!   旧实现两处各派一套盐且 modulator 频率 ×2；
+//! - jagged.json（-16, [1.0]×16）：山脊锯齿通道同改 NormalNoise
+//!   （NoiseRouterData.java:99 `noise(JAGGED, 1500.0, 0.0)`）。
 
-use crate::os2s::smooth;
 use crate::vanilla::climate::ClimateSampler;
 use crate::vanilla::noise::NormalNoise;
 use crate::vanilla::spline::{Builder, Coord, Spline};
@@ -342,7 +367,15 @@ pub fn overworld_offset_spline() -> Spline {
         .build()
 }
 
-// ---------- 洞穴噪声通道（全部 OS2S 内核） ----------
+// ---------- 洞穴/山脊噪声参数（26.1 data/minecraft/worldgen/noise/*.json） ----------
+
+const AMPS_1: [f64; 1] = [1.0];
+/// cave_entrance.json:1-9。
+const AMPS_CAVE_ENTRANCE: [f64; 3] = [0.4, 0.5, 1.0];
+/// cave_cheese.json:1-15。
+const AMPS_CAVE_CHEESE: [f64; 9] = [0.5, 1.0, 2.0, 1.0, 2.0, 1.0, 0.0, 2.0, 0.0];
+/// jagged.json:1-21（16 × 1.0）。
+const AMPS_JAGGED: [f64; 16] = [1.0; 16];
 
 /// 意面稀有度量化（NoiseRouterData.QuantizedSpaghettiRarity.getSpaghettiRarity3D）。
 fn spaghetti_rarity_3d(rarity_factor: f64) -> f64 {
@@ -372,109 +405,77 @@ fn spaghetti_rarity_2d(rarity_factor: f64) -> f64 {
     }
 }
 
-/// CaveEntrances 函数（NoiseRouterData.entrances）：洞口/意面雕刻带。
-/// 入参 (bx, y_mc, bz)；返回 entrances 值（< 0 ⇒ 雕空）。
-pub fn entrances_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = (world_seed ^ 0x0000_CAFE_0001_u64) as i64;
-    // spaghetti3DRarityModulator = noise(SPAGHETTI_3D_RARITY, 2.0, 1.0)
-    let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x11, bx * 2.0, y_mc, bz * 2.0) as f64;
-    let rarity = spaghetti_rarity_3d(rarity_mod);
-    // WeirdScaledSampler TYPE1: rarity · |noise_i(bx/rarity, by/rarity, bz/rarity)|
-    let w1 = rarity
-        * smooth::noise3_ImproveXZ(s ^ 0x21, bx / rarity, y_mc / rarity, bz / rarity).abs() as f64;
-    let w2 = rarity
-        * smooth::noise3_ImproveXZ(s ^ 0x22, bx / rarity, y_mc / rarity, bz / rarity).abs() as f64;
-    // thickness = mapped(SPAGHETTI_3D_THICKNESS, -0.065, -0.088)
-    let thick_n = smooth::noise3_ImproveXZ(s ^ 0x23, bx, y_mc, bz) as f64;
-    let thick = span_map(thick_n, -0.065, -0.088);
-    let sp3d = (w1.max(w2) + thick).clamp(-1.0, 1.0);
-    // roughness = mapped(SPIDER_ROUGHNESS_MODULATOR, 0.0, -0.1) · (|noise| − 0.4)
-    let rough_mod = span_map(
-        smooth::noise3_ImproveXZ(s ^ 0x24, bx * 2.0, y_mc, bz * 2.0) as f64,
-        0.0,
-        -0.1,
-    );
-    let rough = rough_mod * (smooth::noise3_ImproveXZ(s ^ 0x25, bx, y_mc, bz).abs() as f64 - 0.4);
-    // bigEntrances = noise(CAVE_ENTRANCE, 0.75, 0.5) + 0.37 + yClampedGradient(-10, 30, 0.3, 0)
-    let big_noise = smooth::noise3_ImproveXZ(s ^ 0x26, bx * 0.75, y_mc * 0.5, bz * 0.75) as f64;
-    let big = big_noise + 0.37 + y_grad(y_mc, -10.0, 30.0, 0.3, 0.0);
-    big.min(sp3d + rough)
-}
-
-/// Underground 函数（NoiseRouterData.spaghetti2D）：层状意面雕刻带。
-pub fn spaghetti2d_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = (world_seed ^ 0x0000_CAFE_0002_u64) as i64;
-    // spaghetti2DRarityModulator = noise(SPAGHETTI_2D_MODULATOR, 2.0, 1.0)
-    let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x31, bx * 2.0, y_mc, bz * 2.0) as f64;
-    let rarity = spaghetti_rarity_2d(rarity_mod);
-    // WeirdScaledSampler TYPE2
-    let cave = rarity
-        * smooth::noise3_ImproveXZ(s ^ 0x32, bx / rarity, y_mc / rarity, bz / rarity).abs() as f64;
-    // elevation = mapped(SPAGHETTI_2D_ELEVATION, 0.0, floorDiv(-64, 8)) × 8.0
-    let elev = span_map(
-        smooth::noise3_ImproveXZ(s ^ 0x33, bx, y_mc, bz) as f64,
-        0.0,
-        -8.0,
-    ) * 8.0;
-    // thickness2 = mapped(SPAGHETTI_2D_THICKNESS, 2.0, 1.0, -0.6, -1.3)
-    let thick2 = span_map(
-        smooth::noise3_ImproveXZ(s ^ 0x34, bx * 2.0, y_mc, bz * 2.0) as f64,
-        -0.6,
-        -1.3,
-    );
-    let sloped_spaghetti = (elev + y_grad(y_mc, -64.0, 320.0, 8.0, -40.0)).abs();
-    let layer_ridged = sloped_spaghetti * sloped_spaghetti * sloped_spaghetti;
-    let cave_noise = cave + 0.083 * thick2;
-    cave_noise.max(layer_ridged).clamp(-1.0, 1.0)
-}
-
-/// UnderGround 奶酪函数（NoiseRouterData.underground）：奶酪大洞雕刻带。
-pub fn underground_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64, sloped_cheese: f64) -> f64 {
-    let s = (world_seed ^ 0x0000_CAFE_0003_u64) as i64;
-    // layer = noise(CAVE_LAYER, 8.0)
-    let layer = smooth::noise3_ImproveXZ(s ^ 0x41, bx * 8.0, y_mc * 8.0, bz * 8.0) as f64;
-    let layerized = 4.0 * layer * layer;
-    // cheese = noise(CAVE_CHEESE, 2/3)
-    let cheese =
-        smooth::noise3_ImproveXZ(s ^ 0x42, bx * (2.0 / 3.0), y_mc, bz * (2.0 / 3.0)) as f64;
-    let solidified =
-        (0.27 + cheese).clamp(-1.0, 1.0) + (1.5 - 0.64 * sloped_cheese).clamp(0.0, 0.5);
-    layerized + solidified
-}
-
 /// 每列编排结果。
 #[derive(Clone, Copy, Debug)]
 pub struct ColumnState {
     pub offset: f64,
     pub factor: f64,
     pub unscaled_jag: f64,
-    /// 列常量（采样点 (bx·1500, 0, bz·1500) 与 y 无关，随列提升出体素循环）。
+    /// jaggedness 通道列常量（noise(JAGGED, 1500.0, 0.0)：yScale=0 → 2D，
+    /// 采样点 (bx·1500, 0, bz·1500) 与 y 无关，提升出体素循环）。
     pub jag_noise: f64,
+    /// SPAGHETTI_2D_ELEVATION 列常量（vanilla yScale=0 的 2D 通道，
+    /// NoiseRouterData.java:273-275；mapFromUnitTo → [-8, +8]）。
+    pub sp2d_elev: f64,
     pub surface_ours: i32,
     pub ocean: bool,
 }
 
 /// density 编排器 — NoiseRouter 式编排（offset/factor/jaggedness 样条 +
-/// 各 3D 通道 → 最终 density 判实心）。
+/// 各 3D 通道 → 最终 density 判实心）。洞穴/山脊通道全部为 NormalNoise
+/// fBm（26.1 noise 参数表；域盐沿用 channel_seed 同款派生：NormalNoise::new
+/// 内部 noise_seed(world, salt) = splitmix64(world ^ salt)）。
 pub struct Orchestrator {
     climate: ClimateSampler,
     offset_spline: Spline,
     factor_spline: Spline,
     jag_spline: Spline,
     base_3d: NormalNoise,
-    world_seed: u64,
+    // 洞穴/山脊通道（26.1 noise json 表）
+    cave_entrance: NormalNoise,
+    sp3d_rarity: NormalNoise,
+    sp3d_1: NormalNoise,
+    sp3d_2: NormalNoise,
+    sp3d_thickness: NormalNoise,
+    sp_roughness_mod: NormalNoise,
+    sp_roughness: NormalNoise,
+    sp2d_mod: NormalNoise,
+    sp2d: NormalNoise,
+    sp2d_elevation: NormalNoise,
+    sp2d_thickness: NormalNoise,
+    cave_layer: NormalNoise,
+    cave_cheese: NormalNoise,
+    jagged: NormalNoise,
 }
 
 impl Orchestrator {
     #[must_use]
     pub fn new(world_seed: u64) -> Self {
+        // 域盐沿用旧通道派生（raw 时代 seed = channel_seed(world, DOMAIN) =
+        // splitmix64(world ^ DOMAIN)，与 NormalNoise::new 的 noise_seed 同式）。
+        let n = |salt: u64, first_octave: i32, amps: &'static [f64]| {
+            NormalNoise::new(world_seed, salt, first_octave, amps)
+        };
         Self {
             climate: ClimateSampler::new(world_seed),
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
             jag_spline: overworld_jaggedness_spline(),
-            base_3d: NormalNoise::new(world_seed, 0x00B1_3D00, -7, &[1.0, 1.0, 1.0]),
-            world_seed,
+            base_3d: n(0x00B1_3D00, -7, &[1.0, 1.0, 1.0]),
+            cave_entrance: n(0x0000_CAFE_0001 ^ 0x26, -7, &AMPS_CAVE_ENTRANCE),
+            sp3d_rarity: n(0x0000_CAFE_0001 ^ 0x11, -11, &AMPS_1),
+            sp3d_1: n(0x0000_CAFE_0001 ^ 0x21, -7, &AMPS_1),
+            sp3d_2: n(0x0000_CAFE_0001 ^ 0x22, -7, &AMPS_1),
+            sp3d_thickness: n(0x0000_CAFE_0001 ^ 0x23, -8, &AMPS_1),
+            sp_roughness_mod: n(0x0B00_5E51, -8, &AMPS_1),
+            sp_roughness: n(0x0B00_5E52, -5, &AMPS_1),
+            sp2d_mod: n(0x0000_CAFE_0002 ^ 0x31, -11, &AMPS_1),
+            sp2d: n(0x0000_CAFE_0002 ^ 0x32, -7, &AMPS_1),
+            sp2d_elevation: n(0x0000_CAFE_0002 ^ 0x33, -8, &AMPS_1),
+            sp2d_thickness: n(0x0000_CAFE_0002 ^ 0x34, -11, &AMPS_1),
+            cave_layer: n(0x0000_CAFE_0003 ^ 0x41, -8, &AMPS_1),
+            cave_cheese: n(0x0000_CAFE_0003 ^ 0x42, -8, &AMPS_CAVE_CHEESE),
+            jagged: n(0x7A66ED, -16, &AMPS_JAGGED),
         }
     }
 
@@ -491,22 +492,87 @@ impl Orchestrator {
         let surface_mc = (128.0 + 128.0 * offset).clamp(-64.0, 320.0);
         let surface_ours =
             (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(4, SY - 10);
-        // jaggedness 噪声列常量：采样点 (bx·1500, 0, bz·1500) 不随 y 变，
-        // 提升到列级（每体素省 1 次 3D 噪声，值逐位不变）。
-        let jag_noise = smooth::noise3_ImproveXZ(
-            crate::vanilla::channel_seed(self.world_seed, 0x7A66ED),
-            f64::from(block_x) * 1500.0,
-            0.0,
-            f64::from(block_z) * 1500.0,
-        ) as f64;
+        // jaggedness 通道：noise(JAGGED, 1500.0, 0.0)（NoiseRouterData.java:99），
+        // yScale=0 → 列常量，提升到列级（每体素省 32 次倍频求值，值逐位不变）。
+        let jag_x = f64::from(block_x) * 1500.0;
+        let jag_z = f64::from(block_z) * 1500.0;
+        let jag_noise = self.jagged.get_value(jag_x, 0.0, jag_z);
+        // 层状意面海拔：2D 通道（yScale=0，NoiseRouterData.java:273-275），
+        // 列常量；mapFromUnitTo(noise, -8.0, 8.0)。
+        let elev_n = self.sp2d_elevation.get_value(f64::from(block_x), 0.0, f64::from(block_z));
+        let sp2d_elev = span_map(elev_n, -8.0, 8.0);
         ColumnState {
             offset,
             factor,
             unscaled_jag,
             jag_noise,
+            sp2d_elev,
             surface_ours,
             ocean: surface_ours <= SEA,
         }
+    }
+
+    /// spaghettiRoughnessFunction（NoiseRouterData.java:213-220）：
+    /// mapped(SPAGHETTI_ROUGHNESS_MODULATOR, 0.0, -0.1) · (|noise(SPAGHETTI_ROUGHNESS)| − 0.4)。
+    /// vanilla 在 entrances 与 underground 分支共用同一函数（旧实现两处各派
+    /// 一套盐、modulator 频率 ×2，均已收回）。
+    fn spaghetti_roughness(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        let mod_v = span_map(self.sp_roughness_mod.get_value(bx, y_mc, bz), 0.0, -0.1);
+        mod_v * (self.sp_roughness.get_value(bx, y_mc, bz).abs() - 0.4)
+    }
+
+    /// CaveEntrances 函数（NoiseRouterData.entrances:223-241）：洞口/意面雕刻带。
+    /// 返回 entrances 值（< 0 ⇒ 雕空）。
+    fn entrances(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        // spaghetti3DRarityModulator = noise(SPAGHETTI_3D_RARITY, 2.0, 1.0)
+        let rarity_mod = self.sp3d_rarity.get_value(bx * 2.0, y_mc, bz * 2.0);
+        let rarity = spaghetti_rarity_3d(rarity_mod);
+        // WeirdScaledSampler TYPE1: rarity · |noise_i(bx/rarity, by/rarity, bz/rarity)|
+        let w1 = rarity * self.sp3d_1.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
+        let w2 = rarity * self.sp3d_2.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
+        // thickness = mapped(SPAGHETTI_3D_THICKNESS, -0.065, -0.088)
+        let thick = span_map(self.sp3d_thickness.get_value(bx, y_mc, bz), -0.065, -0.088);
+        let sp3d = (w1.max(w2) + thick).clamp(-1.0, 1.0);
+        // bigEntrances = noise(CAVE_ENTRANCE, 0.75, 0.5) + 0.37 + yClampedGradient(-10, 30, 0.3, 0)
+        let big_noise = self.cave_entrance.get_value(bx * 0.75, y_mc * 0.5, bz * 0.75);
+        let big = big_noise + 0.37 + y_grad(y_mc, -10.0, 30.0, 0.3, 0.0);
+        big.min(sp3d + self.spaghetti_roughness(bx, y_mc, bz))
+    }
+
+    /// spaghetti_2D 函数（NoiseRouterData.spaghetti2D:268-286）：层状意面雕刻带。
+    fn spaghetti_2d(&self, cs: &ColumnState, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        // spaghetti2DRarityModulator = noise(SPAGHETTI_2D_MODULATOR, 2.0, 1.0)
+        let rarity_mod = self.sp2d_mod.get_value(bx * 2.0, y_mc, bz * 2.0);
+        let rarity = spaghetti_rarity_2d(rarity_mod);
+        // WeirdScaledSampler TYPE2
+        let cave = rarity * self.sp2d.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
+        // thickness2 = mapped(SPAGHETTI_2D_THICKNESS, 2.0, 1.0, -0.6, -1.3)
+        let thick2 = span_map(
+            self.sp2d_thickness.get_value(bx * 2.0, y_mc, bz * 2.0),
+            -0.6,
+            -1.3,
+        );
+        // slopedSpaghetti = |elev(2D 列常量) + yClampedGradient(-64, 320, 8, -40)|
+        let sloped_spaghetti = (cs.sp2d_elev + y_grad(y_mc, -64.0, 320.0, 8.0, -40.0)).abs();
+        // layerRidged = (slopedSpaghetti + thickness)³（NoiseRouterData.java:278：
+        // thickness 在立方内——旧实现漏加）
+        let inner = sloped_spaghetti + thick2;
+        let layer_ridged = inner * inner * inner;
+        let cave_noise = cave + 0.083 * thick2;
+        cave_noise.max(layer_ridged).clamp(-1.0, 1.0)
+    }
+
+    /// UnderGround 奶酪函数（NoiseRouterData.underground:289-306）：
+    /// layerized + clamp(0.27+cheese) + clamp(1.5−0.64·slopedCheese)。
+    /// 求值坐标对位 vanilla：cave_layer (xz·1, y·8)（NoiseRouterData.java:293）、
+    /// cave_cheese (xz·1, y·2/3)（:295）。
+    fn underground(&self, bx: f64, y_mc: f64, bz: f64, sloped_cheese: f64) -> f64 {
+        let layer = self.cave_layer.get_value(bx, y_mc * 8.0, bz);
+        let layerized = 4.0 * layer * layer;
+        let cheese = self.cave_cheese.get_value(bx, y_mc * (2.0 / 3.0), bz);
+        let solidified =
+            (0.27 + cheese).clamp(-1.0, 1.0) + (1.5 - 0.64 * sloped_cheese).clamp(0.0, 0.5);
+        layerized + solidified
     }
 
     /// 最终 density 场值（> 0 实心）。
@@ -523,31 +589,15 @@ impl Orchestrator {
         // base_3d_noise：随机破面（自有双层 fBm 近 BlendedNoise）
         let base_3d_v = self.base_3d.get_value(bx * 2.0, y_mc * 0.75, bz * 2.0);
         let sloped = initial + base_3d_v;
-        // 双洞穴
-        let e = entrances_value(self.world_seed, bx, y_mc, bz);
+        // 双洞穴（sloped_cheese 的 rangeChoice 分界 1.5625，overworld.json
+        // final_density 的 range_choice max_exclusive）
+        let e = self.entrances(bx, y_mc, bz);
         let caves = if sloped < 1.5625 {
             sloped.min(5.0 * e)
         } else {
-            let sp2d = spaghetti2d_value(self.world_seed, bx, y_mc, bz);
-            let rough = span_map(
-                smooth::noise3_ImproveXZ(
-                    crate::vanilla::channel_seed(self.world_seed, 0x0B00_5E51),
-                    bx * 2.0,
-                    y_mc,
-                    bz * 2.0,
-                ) as f64,
-                0.0,
-                -0.1,
-            ) * (smooth::noise3_ImproveXZ(
-                crate::vanilla::channel_seed(self.world_seed, 0x0B00_5E52),
-                bx,
-                y_mc,
-                bz,
-            )
-            .abs() as f64
-                - 0.4);
-            let u = underground_value(self.world_seed, bx, y_mc, bz, sloped);
-            (u.min(e)).min(sp2d + rough)
+            let sp2d = self.spaghetti_2d(cs, bx, y_mc, bz);
+            let u = self.underground(bx, y_mc, bz, sloped);
+            (u.min(e)).min(sp2d + self.spaghetti_roughness(bx, y_mc, bz))
         };
         // slide（slideOverworld: -64, 384, 80, 64, -0.078125, 0, 24, 0.1171875）
         let top_factor = y_grad(y_mc, 240.0, 256.0, 1.0, 0.0);

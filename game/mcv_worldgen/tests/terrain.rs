@@ -1,7 +1,19 @@
 //! Terrain kernel behavior tests against the C++ implementation.
+//!
+//! 后端显式钉在 `Legacy`（C++ oracle 的 Rust 镜像，tests/parity.rs 已把它与
+//! FFI 路径逐字节对拍锁定）：本文件断言的是 legacy 内核行为（NOTES-terrain
+//! 的常数体系、树木/花装饰、洞穴带），历史上一律跑在该后端上。#91 把
+//! `generate_terrain` 的缺省后端切到 vanilla 后，这些用例若继续走缺省就会
+//! 被静默改靶（vanilla v1 管线无装饰 pass，`trees_and_grass_present` 等按
+//! 构造不可达）——vanilla 的统计质量门在 tests/quality.rs，两套互不替代。
 
 use mcv_core::{BlockId, CHUNK_VOL, ChunkPos};
-use mcv_worldgen::generate_terrain;
+use mcv_worldgen::{TerrainBackend, TerrainOutput, generate_terrain_with};
+
+/// 与旧 `generate_terrain(seed, pos)` 同形，但显式选 legacy 后端（见文件头）。
+fn gen(seed: u64, cx: i32, cz: i32) -> Result<TerrainOutput, i32> {
+    generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
+}
 
 const AIR: u16 = 0;
 const STONE: u16 = 1;
@@ -26,22 +38,22 @@ fn voxels_of(t: &mcv_worldgen::TerrainOutput) -> &[u16] {
 
 #[test]
 fn deterministic_same_seed() {
-    let a = generate_terrain(42, ChunkPos::new(3, -7)).expect("gen");
-    let b = generate_terrain(42, ChunkPos::new(3, -7)).expect("gen");
+    let a = gen(42, ChunkPos::new(3, -7)).expect("gen");
+    let b = gen(42, ChunkPos::new(3, -7)).expect("gen");
     assert_eq!(voxels_of(&a), voxels_of(&b));
     assert_eq!(a.heightmap, b.heightmap);
 }
 
 #[test]
 fn different_seed_differs() {
-    let a = generate_terrain(1, ChunkPos::new(0, 0)).expect("gen");
-    let b = generate_terrain(2, ChunkPos::new(0, 0)).expect("gen");
+    let a = gen(1, ChunkPos::new(0, 0)).expect("gen");
+    let b = gen(2, ChunkPos::new(0, 0)).expect("gen");
     assert_ne!(voxels_of(&a), voxels_of(&b));
 }
 
 #[test]
 fn heightmap_matches_topmost_blocking() {
-    let t = generate_terrain(42, ChunkPos::new(0, 0)).expect("gen");
+    let t = gen(42, ChunkPos::new(0, 0)).expect("gen");
     let vox = voxels_of(&t);
     for z in 0..16usize {
         for x in 0..16usize {
@@ -68,7 +80,7 @@ fn bedrock_floor_and_sea_water() {
     let mut saw_water = false;
     for cx in -6..=6 {
         for cz in -6..=6 {
-            let t = generate_terrain(7, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             assert_eq!(vox[vidx(0, 0, 0)], BEDROCK);
             assert_eq!(vox[vidx(15, 0, 15)], BEDROCK);
@@ -90,7 +102,7 @@ fn cave_rate_in_band() {
     let mut cave = 0usize;
     for cx in -2..=2 {
         for cz in -2..=2 {
-            let t = generate_terrain(99, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(99, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
@@ -141,7 +153,7 @@ fn height_distribution_spans_band() {
     let mut max = 0usize;
     for cx in -8..=8 {
         for cz in -8..=8 {
-            let t = generate_terrain(3, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(3, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
@@ -170,7 +182,7 @@ fn surface_dominated_by_grass_and_stone() {
     for seed in [3u64, 7, 11] {
         for cx in -3..=3 {
             for cz in -3..=3 {
-                let t = generate_terrain(seed, ChunkPos::new(cx, cz)).expect("gen");
+                let t = gen(seed, ChunkPos::new(cx, cz)).expect("gen");
                 let vox = voxels_of(&t);
                 for z in 0..16usize {
                     for x in 0..16usize {
@@ -210,7 +222,7 @@ fn trees_and_grass_present() {
     let mut leaves = 0;
     for cx in -6..=6 {
         for cz in -6..=6 {
-            let t = generate_terrain(5, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(5, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             grass += vox.iter().filter(|&&b| b == GRASS).count();
             logs += vox.iter().filter(|&&b| b == LOG).count();
@@ -229,7 +241,7 @@ fn forest_density_shapes_tree_count() {
     let mut logs = 0;
     for cx in -10..=10 {
         for cz in -10..=10 {
-            let t = generate_terrain(11, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(11, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             logs += vox.iter().filter(|&&b| b == LOG).count();
         }
@@ -246,7 +258,7 @@ fn beach_sand_below_sea_level() {
     let mut found = false;
     'outer: for cx in -8..=8 {
         for cz in -8..=8 {
-            let t = generate_terrain(7, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {

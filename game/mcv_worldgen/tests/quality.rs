@@ -33,6 +33,14 @@ impl Rng {
 use mcv_worldgen::vanilla as wg;
 
 /// 1) 群系占比：512×512 列网格（区块级稀疏采样），各群系 2%-35%。
+///
+/// River 一度实测 1.76% 越下界——裁决为**修生成器**（非放松本带）：26.1 的
+/// river 是 weirdness 谷地带 span(-0.05,0.05)（OverworldBiomeBuilder.java:217
+/// addValleys）在特定 cont/erosion 组合的细条带（:753-815），其占比由
+/// `NormalNoise` 双层独立语义决定；src/vanilla/noise.rs 曾两层共用倍频种子
+/// （NormalNoise.java:51-53 要求两次 create 各自 fork，XoroshiroRandomSource
+/// .java:38-40），通道 σ 抬高 ~1.4× 使谷地带占比塌缩。独立化后 River
+/// 回到 ~3.9%（两 seed 验证），本带 2%-35% 原样保留。
 #[test]
 fn biome_distribution_in_bands() {
     let mut counts = std::collections::HashMap::new();
@@ -97,6 +105,14 @@ fn sea_land_ratio_in_bands() {
 }
 
 /// 3) 洞穴空气占比：地下随机单元中空气占比 3%-12%。
+///
+/// 一度实测 18.39% 越上界——裁决为**修生成器**（非放松本带）：src/vanilla/
+/// terrain.rs 的洞穴通道原为裸单倍频 OS2S，值分布远宽于 26.1 NormalNoise
+/// 归一（cave_cheese/cave_entrance/cave_layer 等 json 参数表，σ≈0.14-0.30），
+/// 且 cave_layer/cave_cheese 轴错位、spaghetti_2d_elevation 误作 3D 且值域
+/// [-64,0]（26.1 为 2D 列常量、mapFromUnitTo [-8,+8]，NoiseRouterData
+/// .java:273-278）。按 26.1 逐通道对位后实测 ~7.5-8.6%（两 seed），本带
+/// 3%-12% 原样保留。
 #[test]
 fn cave_air_in_bands() {
     let orch = wg::terrain::Orchestrator::new(SEED);
