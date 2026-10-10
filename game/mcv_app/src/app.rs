@@ -140,6 +140,12 @@ struct AppState {
     step_accum: f32,
     last_time: Option<std::time::Instant>,
     save_timer: Option<std::time::Instant>,
+    /// B-4（波#127-3）：窗口失焦时刻。原版 `pauseIfInactive`
+    /// （Minecraft.java:1388-1397）：失焦 && pauseOnLostFocus（默认 true，
+    /// Options.java:320）&& 距最后活动 >500ms → pauseGame。None=有焦。
+    focus_lost_at: Option<std::time::Instant>,
+    /// C-2（波#127-3）：Android 挂起前的主增益（后台静音，回前台恢复）。
+    gain_before_suspend: Option<f32>,
     /// 本启动会话随机 splash 短语
     splash: &'static str,
     /// splash 动画时间基准
@@ -1754,6 +1760,12 @@ impl AppState {
 
 impl ApplicationHandler for AppState {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        // C-2（波#127-3）：回前台解除后台静音（与 suspended 的主增益归零配对）。
+        if let Some(g) = self.gain_before_suspend.take()
+            && let Some(rt) = self.runtime.as_ref()
+        {
+            rt.audio.set_master_gain(g);
+        }
         if self.surface.is_some() {
             return;
         }
@@ -1854,6 +1866,16 @@ impl ApplicationHandler for AppState {
             runtime.save_dirty(None);
             runtime.save_meta();
         }
+        // C-2（波#127-3）：后台音频挂起——cpal 回调线程独立于事件循环，
+        // 不处理则回后台继续出声（发热/耗电+基线「后台=暂停」违和）。
+        // mcv_audio 无流级 suspend API（登记债），主增益归零 = 全静音近似；
+        // resumed 恢复挂起前增益。
+        if let Some(rt) = self.runtime.as_ref()
+            && self.gain_before_suspend.is_none()
+        {
+            self.gain_before_suspend = Some(rt.audio.master_gain());
+            rt.audio.set_master_gain(0.0);
+        }
         self.surface = None;
         self.window = None;
         // runtime persists; its GPU buffers die with the device on Android —
@@ -1885,6 +1907,17 @@ impl ApplicationHandler for AppState {
                     sp.config.width = cw;
                     sp.config.height = ch;
                     // reconfigure happens lazily in redraw
+                }
+            }
+            WindowEvent::Focused(focused) => {
+                // B-4（波#127-3）：只记失焦时刻，判定在 redraw 每帧做
+                // （原版 pauseIfInactive 是每帧检查：失焦 && 距最后活动
+                // >500ms → pauseGame，Minecraft.java:1388-1397）。回焦清账
+                // ——暂停屏不随回焦自动关闭（原版同样停在 PauseScreen）。
+                if focused {
+                    self.focus_lost_at = None;
+                } else if self.focus_lost_at.is_none() {
+                    self.focus_lost_at = Some(std::time::Instant::now());
                 }
             }
             WindowEvent::KeyboardInput {
@@ -2456,6 +2489,23 @@ impl AppState {
                 sp.surface.configure(&device, &sp.config);
                 sp.depth = Self::depth_view(&device, sp.config.width, sp.config.height);
             }
+        }
+
+        // B-4（波#127-3）：失焦自动暂停 = 原版 pauseIfInactive
+        // （Minecraft.java:1388-1397，每帧检查）：失焦 && pauseOnLostFocus
+        // （默认 true）&& 距最后活动 >500ms → pauseGame(false)（:1595 只在
+        // screen==null 开屏 → 本仓门 InGame；加载/死亡对应 LevelLoading/
+        // DeathScreen 有屏态，不叠暂停）。pauseOnLostFocus 入 options.txt
+        // 登记债（options.rs 红线外）。
+        if self.screen == Screen::InGame
+            && runtime.phase != mcv_logic::game::GamePhase::Loading
+            && !runtime.dead
+            && self
+                .focus_lost_at
+                .is_some_and(|t| t.elapsed().as_millis() >= 500)
+        {
+            enter_pause(runtime, &mut self.screen, &self.window);
+            self.focus_lost_at = None;
         }
 
         // simulation ticks
