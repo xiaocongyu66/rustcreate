@@ -27,21 +27,38 @@ pub fn extract_assets(app: &AndroidApp, data: &Path) {
     if std::fs::read(&stamp).ok().as_deref() == Some(manifest.as_slice()) {
         return;
     }
+    // 失败绝不落 stamp：否则首启解包残缺会被 stamp 永久缓存（下次启动
+    // 直接命中缓存跳过重解，缺素材变成不可自愈的死局——2026-10-10 审计
+    // 指出的静默降级洞）。
     let mut n = 0usize;
+    let mut failed: Vec<&str> = Vec::new();
     for line in String::from_utf8_lossy(&manifest).lines() {
         let name = line.trim();
         if name.is_empty() || !ALLOW_PREFIXES.iter().any(|p| name.starts_with(p)) {
             continue;
         }
-        let Some(bytes) = read(name) else { continue };
+        let Some(bytes) = read(name) else {
+            failed.push(name);
+            continue;
+        };
         let dest = data.join(name);
         if let Some(dir) = dest.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
         if std::fs::write(&dest, bytes).is_ok() {
             n += 1;
+        } else {
+            failed.push(name);
         }
     }
-    let _ = std::fs::write(&stamp, &manifest);
-    log::info!("extracted {n} asset files to {}", data.display());
+    if failed.is_empty() {
+        let _ = std::fs::write(&stamp, &manifest);
+        log::info!("extracted {n} asset files to {}", data.display());
+    } else {
+        log::error!(
+            "asset extract INCOMPLETE: {n} ok, {} failed (first: {}); stamp NOT written, next launch retries",
+            failed.len(),
+            failed[0]
+        );
+    }
 }

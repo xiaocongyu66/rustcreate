@@ -49,6 +49,7 @@ fn id_of(name: &str) -> u16 {
 
 struct Vtx {
     pos: [f32; 3],
+    uv: [u16; 2],
     tex: u16,
     sky: u8,
     ao: u8,
@@ -64,6 +65,10 @@ fn decode(buf: &CxxMeshBuffer) -> Vec<Vtx> {
             let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
             Vtx {
                 pos: [f(0), f(4), f(8)],
+                uv: [
+                    u16::from_le_bytes([b[12], b[13]]),
+                    u16::from_le_bytes([b[14], b[15]]),
+                ],
                 tex: u16::from_le_bytes([b[16], b[17]]),
                 sky: b[19],
                 ao: b[20],
@@ -71,6 +76,55 @@ fn decode(buf: &CxxMeshBuffer) -> Vec<Vtx> {
             }
         })
         .collect()
+}
+
+/// UV 单位回归（2026-10-10 真机纯色事故）：一个方块面必须横跨整 tile
+/// 0..65535。旧实现 kUvPerBlock=65535/16 把「1 tile」当「16 方块」，
+/// 每面只采样 tile 左上 1 纹素 → 全平台纯色。原版烘焙规则：每个面吃满
+/// sprite 满幅 0..1（FaceBakery.java:26-35/166）。
+#[test]
+fn uv_spans_full_tile_per_block() {
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, 3); // grass block floating in air
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+
+    for (qi, quad) in decode(&buf).chunks(4).enumerate() {
+        for axis in 0..2 {
+            let lo = quad.iter().map(|v| v.uv[axis] as i32).min().unwrap();
+            let hi = quad.iter().map(|v| v.uv[axis] as i32).max().unwrap();
+            assert_eq!(
+                hi - lo,
+                65535,
+                "quad {qi} uv axis {axis}: single block must span full tile, got {lo}..{hi}"
+            );
+        }
+    }
+}
+
+/// 贪心合并面的 uv 环绕：2 方块宽的面跨度 = 2×65535 mod 65536 = 65534
+/// （旧 saturate-at-65535 写法会把合并面钉死在 tile 边界=纯色）。
+#[test]
+fn greedy_merged_face_uv_wraps_past_one_tile() {
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, 3);
+    put(&mut c.0, 9, 8, 8, 3); // 2-block strip merges along x
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+
+    let merged = decode(&buf).chunks(4).any(|q| {
+        (0..2).any(|axis| {
+            let lo = q.iter().map(|v| v.uv[axis] as i32).min().unwrap();
+            let hi = q.iter().map(|v| v.uv[axis] as i32).max().unwrap();
+            hi - lo == 65534
+        })
+    });
+    assert!(
+        merged,
+        "2-block merged face must wrap uv mod 65536 (expect span 65534)"
+    );
 }
 
 #[test]

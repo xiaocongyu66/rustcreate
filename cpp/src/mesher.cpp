@@ -33,9 +33,14 @@ constexpr uint16_t kBarrier = 0xFFFF;
 #define MCV_ID(v) ((v) &0x0FFFu)
 #define MCV_STATE(v) (((v) >> 12) & 0xFu)
 
-/* UV units per block edge: 65535 / 16, so a full 16-block quad fills the
- * u16 range exactly (repeat wrap comes from the sampler, values & 0xFFFF). */
-constexpr float kUvPerBlock = 4095.9375f;
+/* UV units per block edge: one block edge spans a FULL tile (65535),
+ * matching the vanilla bake rule where every face covers the sprite's
+ * entire 0..1 uv range (FaceBakery.java:26-35/166 — per-block full-uv).
+ * The old 65535/16 treated a tile as 16 blocks wide, so every face
+ * sampled only the tile's top-left texel → flat tint-colored blocks on
+ * all backends (2026-10-10 real-device incident). Repeat wrap comes from
+ * the sampler; merged quads rely on mod-65536 wrap in uv_coord. */
+constexpr float kUvPerBlock = 65535.0f;
 constexpr float kWaterTopSink = 0.1f;
 
 enum FaceId {
@@ -287,11 +292,13 @@ void grid_axes(int axis, int* ux, int* uy, int* uz, int* vx, int* vy,
 }
 
 uint16_t uv_coord(float blocks) {
+    /* Merged quads run past one tile; wrap mod 65536 (u16) keeps the
+     * repeat-wrapped coordinate (max error 1/65535 texel < 0.004px).
+     * Saturating at 65535 here would pin the whole merged face to one
+     * texel — the flat-color bug in miniature. */
     float scaled = blocks * kUvPerBlock + 0.5f;
-    if (scaled >= 65535.0f) {
-        return 65535;
-    }
-    return static_cast<uint16_t>(scaled);
+    uint32_t wrapped = static_cast<uint32_t>(scaled) & 0xFFFFu;
+    return static_cast<uint16_t>(wrapped);
 }
 
 bool same_key(const Cell& a, const Cell& b) {
