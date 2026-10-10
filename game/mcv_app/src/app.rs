@@ -3061,7 +3061,11 @@ mod tests {
                 fires.push(i);
             }
         }
-        assert_eq!(fires, vec![11, 23], "按住周期 = 12 步 = 4 tick");
+        assert_eq!(
+            fires,
+            vec![11, 23, 35],
+            "按住周期 = 12 步 = 4 tick（0..40 内三跳）"
+        );
         // 松开：冷却照减（原版 tick 无条件 `rightClickDelay--`），不发火。
         let mut u2 = RightUseRepeat::default();
         u2.on_fire();
