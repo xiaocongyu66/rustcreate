@@ -246,21 +246,32 @@ impl MeshUploader {
             .staging
             .iter()
             .any(|s| !matches!(s.state, SlotState::Mapped { used: 0 }));
-        let mail_pending = !self.mapped_mailbox.lock().expect("staging mailbox").is_empty();
+        let mail_pending = !self
+            .mapped_mailbox
+            .lock()
+            .expect("staging mailbox")
+            .is_empty();
         if self.uploads.is_empty() && !in_flight && !mail_pending {
             return;
         }
         // 驱动映射回调（初始 map / 上一 submit 的写权回收）。
         let _ = self.device.poll(wgpu::PollType::Poll);
-        for (i, ok) in self.mapped_mailbox.lock().expect("staging mailbox").drain(..) {
+        for (i, ok) in self
+            .mapped_mailbox
+            .lock()
+            .expect("staging mailbox")
+            .drain(..)
+        {
             self.staging[i].state = if ok {
                 SlotState::Mapped { used: 0 }
             } else {
                 // 映射失败：重新申请（state 回 Mapping，下轮 poll 重试）。
                 let mb = std::sync::Arc::clone(&self.mapped_mailbox);
-                self.staging[i].buf.map_async(wgpu::MapMode::Write, .., move |res| {
-                    mb.lock().expect("staging mailbox").push((i, res.is_ok()));
-                });
+                self.staging[i]
+                    .buf
+                    .map_async(wgpu::MapMode::Write, .., move |res| {
+                        mb.lock().expect("staging mailbox").push((i, res.is_ok()));
+                    });
                 SlotState::Mapping
             };
         }
@@ -303,8 +314,13 @@ impl MeshUploader {
                         _ => unreachable!("上方循环已过滤出 Mapped 槽"),
                     };
                     let dst = &self.staging[si];
-                    let mut view = dst.buf.slice(..).get_mapped_range_mut().expect("slot mapped");
-                    view.slice(off as usize..(off + len) as usize).copy_from_slice(&up.bytes);
+                    let mut view = dst
+                        .buf
+                        .slice(..)
+                        .get_mapped_range_mut()
+                        .expect("slot mapped");
+                    view.slice(off as usize..(off + len) as usize)
+                        .copy_from_slice(&up.bytes);
                     drop(view);
                     encoder.copy_buffer_to_buffer(&dst.buf, off, &up.dst, 0, len);
                     if let SlotState::Mapped { used } = &mut self.staging[si].state {

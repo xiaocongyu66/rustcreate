@@ -1950,7 +1950,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
 /// #80 卸载成员：批次随成员卸载收缩/清批，画面不得残留已卸载区块的像素。
 #[test]
 fn unload_removes_member_from_batch() {
-    let (device, _queue, _renderer) = setup();
+    let (device, queue, _renderer) = setup();
     let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
@@ -2020,7 +2020,10 @@ fn staging_upload_flush_contract() {
     let _c = up.build_chunk([0.0, 0.0, 0.0], bytemuck::cast_slice(&verts), &idx, None);
 
     let s0 = up.upload_stats();
-    assert_eq!(s0.staged_uploads, 0, "build 阶段不得发生拷贝（空壳 + flush 提交）");
+    assert_eq!(
+        s0.staged_uploads, 0,
+        "build 阶段不得发生拷贝（空壳 + flush 提交）"
+    );
 
     up.flush();
     let s1 = up.upload_stats();
@@ -2029,7 +2032,10 @@ fn staging_upload_flush_contract() {
         s1.fallback_uploads, 0,
         "常规尺寸网格必须全走 staging 环（兜底 = 环容量/时序缺陷信号）"
     );
-    assert!(s1.slot_maps >= 1, "环槽写权必须经 map_buffer_on_submit 回收");
+    assert!(
+        s1.slot_maps >= 1,
+        "环槽写权必须经 map_buffer_on_submit 回收"
+    );
 
     // (c) flush 后整帧渲染：拷贝 submit 先于本帧 submit → 数据可见。
     let extent = wgpu::Extent3d {
@@ -2075,10 +2081,16 @@ fn staging_upload_flush_contract() {
     queue.submit([enc.finish()]);
     let rgba = target.read_pixels(&device);
     let (green, _) = sample_stats(&rgba, extent.width, extent.height);
-    assert!(green > 0.2, "staging 上传后草地缺失 green={green}——环拷贝/写权回收回归");
+    assert!(
+        green > 0.2,
+        "staging 上传后草地缺失 green={green}——环拷贝/写权回收回归"
+    );
 
     // (d) 无新上传的 flush 不追加拷贝。
     up.flush();
     let s2 = up.upload_stats();
-    assert_eq!(s2.staged_uploads, s1.staged_uploads, "空 flush 不得重复提交拷贝");
+    assert_eq!(
+        s2.staged_uploads, s1.staged_uploads,
+        "空 flush 不得重复提交拷贝"
+    );
 }
