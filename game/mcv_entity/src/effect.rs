@@ -1202,6 +1202,7 @@ mod tests {
             })
         );
         // 非治疗系即时无动作。
+        harms.clear();
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
         apply_instant(
             Kind::Saturation,
