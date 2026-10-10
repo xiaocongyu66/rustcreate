@@ -19,7 +19,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use glam::Vec3;
-use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage, dirty, vidx};
+use mcv_core::{
+    BlockId, BlockPos, ChunkHandle, ChunkPos, Stage, WORLD_MAX_Y, WORLD_MIN_Y, dirty, vidx,
+};
 use mcv_game::VoxelAccess;
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime, WorldView};
 
@@ -730,40 +732,46 @@ fn inflight_request_survives_walkaway() {
 }
 
 /// y 越界不绕回（coords 审计 P2 + 任务板 #60）：越界列读空气而非绕回
-/// 同列另一端；heightmap 全柱遮光时饱和 255 而非 u8 溢出绕 0。
+/// 同列另一端；heightmap 全柱遮光时饱和钳到列顶而非绕回。v6：界与
+/// 饱和值随 384/min_y=-64 绝对域走。
 #[test]
 fn y_out_of_bounds_never_wraps() {
     let h = floor_chunk(0, 0);
     {
         let mut v = h.voxels.write().unwrap();
-        for y in 0..256usize {
-            v[vidx(4, y, 4)] = BlockId(1); // 全柱石头，顶格 = y255
+        for y in WORLD_MIN_Y..WORLD_MAX_Y {
+            v[vidx(4, y, 4)] = BlockId(1); // 全柱石头，顶格 = WORLD_MAX_Y−1
         }
     }
     let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
     chunks.insert(ChunkPos::new(0, 0), h.clone());
     let view = WorldView { chunks: &chunks };
     assert_eq!(
-        view.block(BlockPos::new(4, 255, 4)),
+        view.block(BlockPos::new(4, WORLD_MAX_Y - 1, 4)),
         BlockId(1),
         "界内顶格照旧"
     );
     assert_eq!(
-        view.block(BlockPos::new(4, 256, 4)),
+        view.block(BlockPos::new(4, WORLD_MAX_Y, 4)),
         BlockId(0),
-        "y≥256 必须空气（旧行为 rem_euclid 绕回 y=0 读到实心=隐形地板/幽灵块）"
+        "y≥WORLD_MAX_Y 必须空气（越界索引绕回 = 隐形地板/幽灵块）"
     );
     assert_eq!(
-        view.block(BlockPos::new(4, -1, 4)),
-        BlockId(0),
-        "y<0 必须空气（旧行为绕回 y=255）"
+        view.block(BlockPos::new(4, WORLD_MIN_Y, 4)),
+        BlockId(1),
+        "界内底格照旧"
     );
-    // heightmap 饱和：全柱遮光（含 y255）→ 255，不得绕回 0。
+    assert_eq!(
+        view.block(BlockPos::new(4, WORLD_MIN_Y - 1, 4)),
+        BlockId(0),
+        "y<WORLD_MIN_Y 必须空气（旧行为绕回列顶）"
+    );
+    // heightmap 饱和：全柱遮光（含列顶）→ 钳到 WORLD_MAX_Y−1，不得绕回。
     let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
     let hm = mcv_worldgen::recompute_heightmap(&ids);
     assert_eq!(
         hm[(4 << 4) | 4],
-        255,
-        "顶盖遮光 heightmap 饱和 255（u8 绕 0 = 出生/碰撞错位）"
+        (WORLD_MAX_Y - 1) as i16,
+        "顶盖遮光 heightmap 饱和钳列顶（绕回低槽 = 出生/碰撞错位）"
     );
 }
