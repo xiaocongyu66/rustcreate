@@ -14,6 +14,8 @@ pub mod noise;
 pub mod spline;
 pub mod terrain;
 
+pub use biomes::Biome;
+
 /// 世界高（自研 256）。
 pub const SY: i32 = 256;
 /// 海平面（自研 96；26.1 原生 63 → 归一位置 0.33，自研 96/256 = 0.375 保留

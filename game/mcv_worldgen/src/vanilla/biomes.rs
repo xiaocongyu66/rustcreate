@@ -20,7 +20,7 @@
 //!   六参数含义与取最近机制逐一保留。
 
 /// 本世界支持的群系（10 个，任务拍板）。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Biome {
     Plains,
     Forest,
@@ -140,15 +140,6 @@ const H_MID: [Param; 5] = [
     Param::point(0.0),
     Param::point(0.2),
     Param::point(0.65),
-];
-const E_FULL: [Param; 7] = [
-    Param::span(-1.0, -0.78),
-    Param::span(-0.78, -0.375),
-    Param::span(-0.375, -0.2225),
-    Param::span(-0.2225, 0.05),
-    Param::span(0.05, 0.45),
-    Param::span(0.45, 0.55),
-    Param::span(0.55, 1.0),
 ];
 const FULL: Param = Param::span(-1.0, 1.0);
 const MID: Param = Param::point(0.0);

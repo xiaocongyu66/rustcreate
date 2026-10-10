@@ -269,6 +269,12 @@ pub fn overworld_jaggedness_spline() -> Spline {
 }
 
 /// buildErosionOffsetSpline（TerrainProvider:235-288）：侵蚀 → 山脊/高原/平原。
+// 参数集 1:1 对位 26.1 TerrainProvider.buildErosionOffsetSpline:235-246 的
+// 标量形参（lowValley/hill/tallHill/mountainFactor/plain/swamp +
+// includeExtremeHills/saddle；erosion/ridges 坐标由样条求值器持有，
+// offsetTransformer 在 Rust 侧由 Builder 直接收值）——原生即 8 元，
+// 不做结构体打包。
+#[allow(clippy::too_many_arguments)]
 fn erosion_offset_spline(
     low_valley: f64,
     hill: f64,
@@ -369,7 +375,7 @@ fn spaghetti_rarity_2d(rarity_factor: f64) -> f64 {
 /// CaveEntrances 函数（NoiseRouterData.entrances）：洞口/意面雕刻带。
 /// 入参 (bx, y_mc, bz)；返回 entrances 值（< 0 ⇒ 雕空）。
 pub fn entrances_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = (world_seed ^ 0x0CAFE_0001_u64) as i64;
+    let s = (world_seed ^ 0x0000_CAFE_0001_u64) as i64;
     // spaghetti3DRarityModulator = noise(SPAGHETTI_3D_RARITY, 2.0, 1.0)
     let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x11, bx * 2.0, y_mc, bz * 2.0) as f64;
     let rarity = spaghetti_rarity_3d(rarity_mod);
@@ -397,7 +403,7 @@ pub fn entrances_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
 
 /// Underground 函数（NoiseRouterData.spaghetti2D）：层状意面雕刻带。
 pub fn spaghetti2d_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = (world_seed ^ 0x0CAFE_0002_u64) as i64;
+    let s = (world_seed ^ 0x0000_CAFE_0002_u64) as i64;
     // spaghetti2DRarityModulator = noise(SPAGHETTI_2D_MODULATOR, 2.0, 1.0)
     let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x31, bx * 2.0, y_mc, bz * 2.0) as f64;
     let rarity = spaghetti_rarity_2d(rarity_mod);
@@ -424,7 +430,7 @@ pub fn spaghetti2d_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
 
 /// UnderGround 奶酪函数（NoiseRouterData.underground）：奶酪大洞雕刻带。
 pub fn underground_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64, sloped_cheese: f64) -> f64 {
-    let s = (world_seed ^ 0x0CAFE_0003_u64) as i64;
+    let s = (world_seed ^ 0x0000_CAFE_0003_u64) as i64;
     // layer = noise(CAVE_LAYER, 8.0)
     let layer = smooth::noise3_ImproveXZ(s ^ 0x41, bx * 8.0, y_mc * 8.0, bz * 8.0) as f64;
     let layerized = 4.0 * layer * layer;
@@ -433,8 +439,7 @@ pub fn underground_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64, sloped_ch
         smooth::noise3_ImproveXZ(s ^ 0x42, bx * (2.0 / 3.0), y_mc, bz * (2.0 / 3.0)) as f64;
     let solidified =
         (0.27 + cheese).clamp(-1.0, 1.0) + (1.5 - 0.64 * sloped_cheese).clamp(0.0, 0.5);
-    let base_cave_density = layerized + solidified;
-    base_cave_density
+    layerized + solidified
 }
 
 /// 每列编排结果。
@@ -483,7 +488,7 @@ impl Orchestrator {
         //（y_clamp 斜率 -1/128 格/密度单位）
         let surface_mc = (128.0 + 128.0 * offset).clamp(-64.0, 320.0);
         let surface_ours =
-            (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(4, (SY - 10) as i32);
+            (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(4, SY - 10);
         ColumnState {
             offset,
             factor,

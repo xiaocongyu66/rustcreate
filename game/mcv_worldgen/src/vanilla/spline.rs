@@ -188,8 +188,10 @@ mod tests {
             .point(0.0, 1.0)
             .point(1.0, 2.0)
             .build();
-        let mut c = Climate::default();
-        c.continents = 0.5;
+        let c = Climate {
+            continents: 0.5,
+            ..Climate::default()
+        };
         // t=0.5：lerp=1.5 + 0.25*(a+(b-a)*0.5)，a = 1*1-(1-0)=0，b = -(2-1)= -1
         // 值 = 1.5 + 0.25*(-0.5) = 1.375
         assert!((s.eval(&c) - 1.375).abs() < 1e-12);
@@ -202,8 +204,10 @@ mod tests {
             .point_d(-1.0, 1.0, 2.0)
             .point(1.0, 3.0)
             .build();
-        let mut c = Climate::default();
-        c.erosion = -2.0;
+        let mut c = Climate {
+            erosion: -2.0,
+            ..Climate::default()
+        };
         assert!((s.eval(&c) - (1.0 + 2.0 * (-2.0 - (-1.0)))).abs() < 1e-12);
         c.erosion = 5.0;
         assert!((s.eval(&c) - 3.0).abs() < 1e-12);
@@ -217,9 +221,11 @@ mod tests {
             .point(1.0, 1.5)
             .build();
         let outer = Builder::new(Coord::Continents).spline(0.0, inner).build();
-        let mut c = Climate::default();
-        c.continents = 0.0;
-        c.ridges_folded = 0.5;
+        let c = Climate {
+            continents: 0.0,
+            ridges_folded: 0.5,
+            ..Climate::default()
+        };
         assert!((outer.eval(&c) - 1.0).abs() < 1e-12);
     }
 }
