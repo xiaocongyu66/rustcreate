@@ -105,7 +105,8 @@ fn mending_two_per_xp() {
 #[test]
 fn enchant_defs_match_261_json() {
     // (name, weight, anvil, min base+per, max base+per) —— 逐条摘自 json。
-    let table: &[(&str, u32, u8, (u32, u32), (u32, u32))] = &[
+    type EnchantRow = (&'static str, u32, u8, (u32, u32), (u32, u32));
+    let table: &[EnchantRow] = &[
         ("protection", 10, 1, (1, 11), (12, 11)), // protection.json
         ("feather_falling", 5, 2, (5, 6), (11, 6)), // feather_falling.json anvil=2
         ("blast_protection", 2, 4, (5, 8), (13, 8)), // blast_protection.json 13+8/4
