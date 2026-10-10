@@ -10,8 +10,9 @@ mod mesher;
 
 pub use mesher::{MeshData, block_geom, build_mesh};
 
-/// One loaded chunk slot: voxel ids (65536 u16) and light bytes (65536),
-/// layout `(y<<8)|(z<<4)|x`; light low nibble = block, high nibble = sky.
+/// One loaded chunk slot: voxel ids (98304 u16) and light bytes (98304),
+/// layout `mcv_core::vidx`（v6：384 高，y 为绝对世界 y）; light low nibble =
+/// block, high nibble = sky.
 #[derive(Clone, Copy)]
 pub struct Slot<'a> {
     pub voxels: &'a [u16],

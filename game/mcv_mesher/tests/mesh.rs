@@ -3,7 +3,8 @@
 
 use mcv_mesher::{MeshData, Mesher, Slot};
 
-const VOL: usize = 65536;
+// v6：384 高绝对 y 域，索引走 mcv_core::vidx（y 为绝对世界 y）。
+const VOL: usize = mcv_core::CHUNK_VOL;
 
 type Chunk = (Box<[u16; VOL]>, Box<[u8; VOL]>);
 
@@ -12,7 +13,7 @@ fn chunk(id: u16, light: u8) -> Chunk {
 }
 
 fn put(vox: &mut [u16; VOL], x: usize, y: usize, z: usize, id: u16) {
-    vox[(y << 8) | (z << 4) | x] = id;
+    vox[mcv_core::vidx(x, y as i32, z)] = id;
 }
 
 /// All 9 slots loaded: center chunk plus 8 copies of `side` (usually air).
