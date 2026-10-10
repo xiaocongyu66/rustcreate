@@ -190,7 +190,12 @@ fn leaving_ladder_restores_gravity() {
 /// 常数核对：爬升 0.12 块/tick、缓降钳 0.15 块/tick（原版 file:line）。
 #[test]
 fn ladder_consts_match_vanilla() {
-    assert_eq!(consts::LADDER_CLIMB_SPEED, 0.12 * 20.0);
-    assert_eq!(consts::LADDER_SLIDE_SPEED, 0.15 * 20.0);
-    assert_eq!(consts::LADDER_H_CLAMP, 0.15 * 20.0);
+    // f32 下 0.12·20 = 2.3999999 ≠ 字面量 2.4——按容差核对语义等值。
+    for (got, want, name) in [
+        (consts::LADDER_CLIMB_SPEED, 0.12 * 20.0, "CLIMB"),
+        (consts::LADDER_SLIDE_SPEED, 0.15 * 20.0, "SLIDE"),
+        (consts::LADDER_H_CLAMP, 0.15 * 20.0, "H_CLAMP"),
+    ] {
+        assert!((got - want).abs() < 1e-4, "{name}: {got} vs {want}");
+    }
 }
