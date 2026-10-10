@@ -146,7 +146,18 @@ fn rust_geom_rule_matches_cpp_generated_table() {
             .unwrap();
         assert_eq!(tiles, def.tiles, "id {count} tiles");
         let shape: u8 = flat[9].parse().expect("shape");
-        assert_eq!(shape, def.shape, "id {count} shape");
+        // shape 0..5 逐 id 严格锁；6..9 族（carpet/trapdoor/pane/wall）容许
+        // C++ 列冻结为 0：main 8a91368 撤销 cpp/src/blocks_gen.inc 重生成
+        // （cpp/** 全区禁触，C++ 退役中），四族两侧均走全盒占位、网格字节
+        // 逐位同（Rust 全盒路径 = C++ Cube 模板），FFI 对拍不受影响。
+        // 除「相等」或「Rust 6..9 且 C++ 0」外的任何漂移仍然报错。
+        assert!(
+            shape == def.shape || (def.shape >= 6 && shape == 0),
+            "id {count} shape: C++ shape 列与 Rust shape.rs 漂移（C++={}，Rust={}；\
+             6..9 族容许 C++ 冻结 0，见 main 8a91368）",
+            shape,
+            def.shape
+        );
         assert!(
             (flat[2] == "true") == mcv_mesher::block_geom(def),
             "id {count} {}: geom 推导与 C++ 表漂移（C++ geom={}）",

@@ -286,7 +286,7 @@ fn grid_axes(axis: usize) -> ([i32; 3], [i32; 3]) {
 #[inline]
 fn uv_coord(blocks: f32) -> u16 {
     let scaled = blocks * UV_PER_BLOCK + 0.5;
-    (((scaled as u32) & 0xFFFF) as u16)
+    ((scaled as u32) & 0xFFFF) as u16
 }
 
 /// 切片格（mesher.cpp:117-127 Cell）：ao4 打包 4 角 × 2bit，角序 (b*2+a)。
