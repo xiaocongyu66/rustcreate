@@ -1199,7 +1199,7 @@ mod tests {
         let m = build_mob_mesh();
         let pose = MobPose::default();
         let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
-        let r = m.slices[MobModelKind::Zombie as usize];
+        let r = &m.slices[MobModelKind::Zombie as usize];
         // 部位序：头0 身1 右臂2 左臂3，各 24 顶点。
         let x_span = |part: usize| {
             let (mut lo, mut hi) = (f32::MAX, f32::MIN);
