@@ -233,6 +233,28 @@ fn player_death_scatters_hotbar_as_drops() {
     assert_eq!(drops.len(), 2, "非空格逐格掉落: {drops:?}");
 }
 
+/// 新档背包回归锁：全模式（生存/创造）快捷栏与主背包构造即空。
+/// 原版依据：26.1 Inventory.java:56 items = NonNullList.withSize(36,
+/// ItemStack.EMPTY)，:62-65 构造只挂 player/equipment 引用、从不发放
+/// 物品——旧实现开局塞铁剑/创造 8 格调试方块均无源码依据（真机投诉）。
+#[test]
+fn fresh_world_inventory_is_empty_in_all_modes() {
+    for mode in [GameMode::Survival, GameMode::Creative] {
+        let dir = tmp_world(&format!("empty-inv-{mode:?}"));
+        let rt = GameRuntime::new_headless(20261010, dir, mode);
+        assert!(
+            rt.hotbar.slots.iter().all(|s| s.is_empty()),
+            "{mode:?} 新档快捷栏必须全空（无开局发放）: {:?}",
+            rt.hotbar.slots
+        );
+        assert!(
+            rt.hotbar.main.iter().all(|s| s.is_empty()),
+            "{mode:?} 新档主背包必须全空: {:?}",
+            rt.hotbar.main
+        );
+    }
+}
+
 /// 到达距离常数：生存 4.4 成 / 4.6 败，创造 4.6 成（4.5/5.0）。
 /// 观测量 = mining_overlay 的准星 DDA —— 与 interact/start_mining 共用
 /// 同一 `block_interaction_reach`（mcv_game::raycast::REACH + 创造 0.5）。

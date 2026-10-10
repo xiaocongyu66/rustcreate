@@ -767,27 +767,12 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
-        // 开局装备:铁剑(旧单格行为)。创造另发 8 格可放方块(开发期
-        // 创造背包未做,给旧调试快捷栏的等价子集;水/基岩不可入栏)。
-        let mut hotbar = mcv_item::Hotbar::empty();
-        hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1);
-        if mode == GameMode::Creative {
-            for (i, item) in [
-                mcv_item::STONE_ITEM,
-                mcv_item::DIRT_ITEM,
-                mcv_item::GRASS_ITEM,
-                mcv_item::SAND_ITEM,
-                mcv_item::COBBLESTONE,
-                mcv_item::PLANKS,
-                mcv_item::LOG,
-                mcv_item::LEAVES_ITEM,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                hotbar.slots[1 + i] = mcv_item::ItemStack::new(item, 64);
-            }
-        }
+        // 新档背包全模式为空（26.1 Inventory.java:56 items 初始化为
+        // 36×ItemStack.EMPTY，:62-65 构造只挂 player/equipment 引用、从不
+        // 发放物品；生存/创造皆然）。旧实现无条件发铁剑（旧单格行为）+
+        // 创造另发 8 格调试方块（开发期创造背包未做的替代品，分页 UI 已
+        // 实现故理由消失）——均无源码依据且被真机投诉，删除。
+        let hotbar = mcv_item::Hotbar::empty();
         let mut rt = Self {
             seed,
             chunks: HashMap::new(),
@@ -1313,8 +1298,9 @@ impl GameRuntime {
                     self.player.pitch = p.pitch;
                     self.player.flying = p.flying;
                     self.player.sel_slot = p.sel_slot as usize;
-                    // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
-                    // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
+                    // v3 起存档带快捷栏;v1/v2 读为空——新档 assemble 不再
+                    // 发放（空栏即原版态），空存档热栏保持空即可。物品 id
+                    // 越界(旧档)整槽跳过。
                     if !p.hotbar.is_empty() || !p.main.is_empty() {
                         let mut h = mcv_item::Hotbar::empty();
                         let mk = |(item, count, damage): (u16, u8, u16)| {
