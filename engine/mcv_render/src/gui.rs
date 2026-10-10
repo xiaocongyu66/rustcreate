@@ -11,7 +11,7 @@
 use crate::gpu::HudQuad;
 
 /// 核心 HUD 精灵条目:`textures/` 下的原版路径 → 逻辑尺寸。缺一整表弃用。
-const CORE_SPRITES: [(&str, &str, u32, u32); 13] = [
+const CORE_SPRITES: [(&str, &str, u32, u32); 16] = [
     ("logo", "gui/title/minecraft.png", 256, 64),
     ("button", "gui/sprites/widget/button.png", 200, 20),
     (
@@ -40,6 +40,12 @@ const CORE_SPRITES: [(&str, &str, u32, u32); 13] = [
     ("food_empty", "gui/sprites/hud/food_empty.png", 9, 9),
     ("food_full", "gui/sprites/hud/food_full.png", 9, 9),
     ("food_half", "gui/sprites/hud/food_half.png", 9, 9),
+    // 空气泡三态（26.1 Gui.java:103-105 AIR/AIR_POPPING/AIR_EMPTY_SPRITE，
+    // Gui.java:127 AIR_BUBBLE_SIZE=9）：extractAirBubbles 用，路径即 jar 内
+    // 原版 hud/air*.png。
+    ("air", "gui/sprites/hud/air.png", 9, 9),
+    ("air_bursting", "gui/sprites/hud/air_bursting.png", 9, 9),
+    ("air_empty", "gui/sprites/hud/air_empty.png", 9, 9),
 ];
 
 /// 物品图标条目(名字 = mcv_item::ItemDef.name,快捷栏直接按名查)。

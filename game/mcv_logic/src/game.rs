@@ -3882,6 +3882,51 @@ impl GameRuntime {
                     quads.extend(g.sprite_full("food_half", fx, y_base, 9.0 * s, 9.0 * s, tint));
                 }
             }
+            // 空气泡（26.1 Gui.extractAirBubbles:884-927）：眼下在水或
+            // air<满值（300）才显示；行位 = 心/饥饿行上一行（yLineAir =
+            // yLineBase − 10，:790 vehicleHearts==0 分支）；右缘镜像
+            // x = xRight − (i−1)·8 − 9（:905，i 从 1 起）。三态映射：
+            // 满 = ceil((air−2)·10/300)（:926 getCurrentAirSupplyBubble
+            // offset −2）、爆裂位 = ceil(air·10/300)（offset 0，仅水下且
+            // 满≠爆裂位，:898/:908-911）、空 = 10 − ceil((air+delay)·10/300)，
+            // delay = air≠0 且水下 ? 1 : 0（:921-923）。简化不建模：爆裂帧
+            // 时长 2（AIR_BUBBLE_POPPING_DURATION:129，客户端瞬时态）与空泡
+            // 随机抖动（:912 tickCount%2）、pop 音（playAirBubblePoppedSound
+            // :929——BUBBLE_POP 事件未进音效表）。
+            let under_water = {
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let ec = eye.floor().as_ivec3();
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                d.liquid && d.name == "water"
+            };
+            let air = self.air_supply.clamp(0, MAX_AIR_SUPPLY);
+            if under_water || air < MAX_AIR_SUPPLY {
+                let bubbles = |offset: i32| ((air + offset) * 10).div_ceil(MAX_AIR_SUPPLY);
+                let full = bubbles(-2);
+                let popping = bubbles(0);
+                let empty = 10 - bubbles(if air != 0 && under_water { 1 } else { 0 });
+                let y_air = y_base - 10.0 * s;
+                for b in 1..=10i32 {
+                    let bx = x_right - (b - 1) as f32 * 8.0 * s - 9.0 * s;
+                    if b <= full {
+                        quads.extend(g.sprite_full("air", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    } else if full != popping && b == popping && under_water {
+                        quads.extend(g.sprite_full(
+                            "air_bursting",
+                            bx,
+                            y_air,
+                            9.0 * s,
+                            9.0 * s,
+                            tint,
+                        ));
+                    } else if b > 10 - empty {
+                        quads.extend(g.sprite_full("air_empty", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    }
+                }
+            }
         } else {
             // 回退：旧程序化准星 + 快捷栏
             let (cx, cy) = (width * 0.5 - 1.0, height * 0.5 - 8.0);
