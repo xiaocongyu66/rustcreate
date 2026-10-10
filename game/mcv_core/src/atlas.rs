@@ -145,7 +145,7 @@ fn mip_tables() -> &'static ([u16; 256], [u8; 1024]) {
         for (i, slot) in l2s.iter_mut().enumerate() {
             let x = i as f32 / 1023.0;
             let srgb = if x >= 0.0031308 {
-                ((1.055 * f64::from(x).powf(0.416_666_666_666_666_7) - 0.055) as f32)
+                (1.055 * f64::from(x).powf(0.416_666_666_666_666_7) - 0.055) as f32
             } else {
                 12.92 * x
             };
@@ -312,7 +312,8 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
     const S: usize = TILE_PX / 2;
     for layer in 0..LAYERS {
         let mut work = [0u8; TILE_PX * TILE_PX * 4];
-        work.copy_from_slice(&mip0[layer * TILE_PX * TILE_PX * 4..][..work.len()]);
+        let off = layer * TILE_PX * TILE_PX * 4;
+        work.copy_from_slice(&mip0[off..off + work.len()]);
         let cutout = work.chunks(4).any(|p| p[3] == 0);
         // 原始覆盖度只依赖 alpha，solidify 不改 alpha（alpha 保持 0），
         // 计算时机与原版先后均可（原版先 solidify 再测，:102-116）。
