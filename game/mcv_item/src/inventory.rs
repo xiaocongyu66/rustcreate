@@ -279,17 +279,32 @@ static DROP_TABLE: &[DropRow] = &[
     // 木与木板(既有)。
     row(&["log"], "log", 1, 1, 1000),
     row(&["planks"], "planks", 1, 1, 1000),
-    // 树叶族:树苗/苹果/木棍三独立池(oak_leaves.json;注册表无 oak_leaves,
-    // 旧表 "leaves" 即橡树叶位)。苹果只橡树 0.5%o;树苗橡/桦/云杉/金合欢/
-    // 深板橡 5%o、丛林 2.5%o(各 *_leaves.json table_bonus 基数)。
+    // 树叶族(oak_leaves.json;注册表无 oak_leaves,旧表 "leaves" 即橡树叶位):
+    // 树苗/木棍/苹果三独立池,table_bonus 基数=无 Fortune 概率。木棍池:
+    // 六树叶各有(全 *_leaves.json chances[0]=0.02, set_count uniform 1-2;
+    // 门 = inverted(shears|silk),本引擎未注册剪刀/silk → 恒放行)。苹果池:
+    // 橡树与深色橡树各有 0.5%(oak_leaves.json 与 dark_oak_leaves.json 均带
+    // apple 池 chances[0]=0.005;旧注释"苹果只橡树"与 26.1 相悖已改)。
+    // 树苗:橡/桦/云杉/金合欢/深板橡 5%、丛林 2.5%(table_bonus 基数)。
     row(&["leaves"], "oak_sapling", 1, 1, 50),
     row(&["leaves"], "apple", 1, 1, 5),
     row(&["leaves"], "stick", 1, 2, 20),
     row(&["birch_leaves"], "birch_sapling", 1, 1, 50),
+    row(&["birch_leaves"], "stick", 1, 2, 20),
     row(&["spruce_leaves"], "spruce_sapling", 1, 1, 50),
+    row(&["spruce_leaves"], "stick", 1, 2, 20),
     row(&["acacia_leaves"], "acacia_sapling", 1, 1, 50),
+    row(&["acacia_leaves"], "stick", 1, 2, 20),
     row(&["dark_oak_leaves"], "dark_oak_sapling", 1, 1, 50),
+    row(&["dark_oak_leaves"], "apple", 1, 1, 5),
+    row(&["dark_oak_leaves"], "stick", 1, 2, 20),
     row(&["jungle_leaves"], "jungle_sapling", 1, 1, 25),
+    row(&["jungle_leaves"], "stick", 1, 2, 20),
+    // 雪(snow.json 按 layers 1..8 各分支 set_count=layers 掉雪球;本引擎无
+    // 方块状态、雪按单层建模 → 1 个)。snow_block.json 无 silk 分支掉 4 个
+    // (silk 分支掉自身;本引擎无 silk 附魔,恒走非 silk 侧)。
+    row(&["snow"], "snowball", 1, 1, 1000),
+    row(&["snow_block"], "snowball", 4, 4, 1000),
 ];
 
 /// 明确"silk touch 才有掉落"的方块(glass.json:池条件只放行 silk)。

@@ -125,22 +125,44 @@ fn oak_leaves_three_independent_pools() {
     );
 }
 
-/// 4. 各树种的树苗族（birch/spruce/acacia/dark_oak 5%o、jungle 2.5%o）。
+/// 4. 各树种树叶全池（各 *_leaves.json）：树苗（5%o、丛林 2.5%o）+ 木棍
+///    （六树叶各有 2%o ×1-2）+ 苹果（oak_leaves.json 与 dark_oak_leaves.json
+///    各有 0.5%o 池——"苹果只橡树"为旧表误记）。
 #[test]
 fn tree_leaves_sapling_families() {
-    let table = [
-        ("birch_leaves", "birch_sapling"),
-        ("spruce_leaves", "spruce_sapling"),
-        ("acacia_leaves", "acacia_sapling"),
-        ("dark_oak_leaves", "dark_oak_sapling"),
-        ("jungle_leaves", "jungle_sapling"),
+    let table: &[(&str, &[(&str, u8)])] = &[
+        ("birch_leaves", &[("birch_sapling", 1), ("stick", 1)]),
+        ("spruce_leaves", &[("spruce_sapling", 1), ("stick", 1)]),
+        ("acacia_leaves", &[("acacia_sapling", 1), ("stick", 1)]),
+        (
+            "dark_oak_leaves",
+            &[("dark_oak_sapling", 1), ("apple", 1), ("stick", 1)],
+        ),
+        ("jungle_leaves", &[("jungle_sapling", 1), ("stick", 1)]),
     ];
-    for (leaves, sapling) in table {
+    for (leaves, want) in table {
         let got = names(&drops_for_block(bid(leaves), &mut rng(0)));
-        assert_eq!(got, [(sapling, 1)], "{leaves} 树苗族");
-        // 全不中：无苹果/木棍（非橡树池）。
+        assert_eq!(got, *want, "{leaves} 全池（rng 0 全命中）");
+        // 全不中（600‰ > 全部池）。
         assert!(drops_for_block(bid(leaves), &mut rng(600)).is_empty());
     }
+}
+
+/// 4b. 雪族掉落：snow.json 按 layers 1..8 各 set_count=layers 掉雪球
+///    （本引擎无方块状态、雪按单层建模 → 1）；snow_block.json 无 silk
+///    分支 set_count 4（silk 掉自身；本引擎无 silk 附魔恒走 4 分支）。
+#[test]
+fn snow_family_drops_snowballs() {
+    assert_eq!(
+        names(&drops_for_block(bid("snow"), &mut rng(0))),
+        [("snowball", 1)],
+        "雪层 = 1 层 → 1 雪球"
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("snow_block"), &mut rng(0))),
+        [("snowball", 4)],
+        "雪块无 silk → 4 雪球"
+    );
 }
 
 /// 5. 掉落门裁决用例：**徒手挖铁矿无掉落、石镐挖铁矿掉 raw_iron**。

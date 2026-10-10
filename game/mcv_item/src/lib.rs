@@ -239,6 +239,10 @@ pub static ITEMS: [ItemDef; 58] = [
         0,
         0
     ),
+    // 雪球（snow.json 单层 1 个 / snow_block.json 无 silk 4 个的掉落物；
+    // 追加在尾部保持旧 id 序列化稳定，堆叠沿用 Material 全局 64，原版 16
+    // 的差异 def! 无 stack 参数槽、非本轮引入的引擎约定差）。
+    def!("snowball", ItemKind::Material, 0.0, 0.0, 0, 0),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
