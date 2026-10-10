@@ -2,8 +2,9 @@
 
 use mcv_item::crafting::EMPTY_SLOT;
 use mcv_item::{
-    DIAMOND_ITEM, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemStack, PLANKS, STICK,
-    STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil, crafting, enchant,
+    DIAMOND_ITEM, DIAMOND_PICKAXE_INDEX, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX,
+    ItemStack, PLANKS, STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil,
+    crafting, enchant,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u32 {
@@ -65,14 +66,16 @@ fn tool_melee_durability_is_two_sword_one() {
         mcv_item::WOODEN_SHOVEL_INDEX,
     ] {
         assert_eq!(
-            mcv_item::ITEMS[idx as usize].item_damage_per_attack, 2,
+            mcv_item::ITEMS[idx as usize].item_damage_per_attack,
+            2,
             "{} 工具近战应扣 2（Weapon(2)）",
             mcv_item::ITEMS[idx as usize].name
         );
     }
     for idx in [WOODEN_SWORD_INDEX, STONE_SWORD_INDEX, IRON_SWORD_INDEX] {
         assert_eq!(
-            mcv_item::ITEMS[idx as usize].item_damage_per_attack, 1,
+            mcv_item::ITEMS[idx as usize].item_damage_per_attack,
+            1,
             "{} 剑近战应扣 1（Weapon(1)）",
             mcv_item::ITEMS[idx as usize].name
         );
@@ -122,8 +125,16 @@ fn enchant_defs_match_261_json() {
         let d = enchant::ENCHANTS.iter().find(|e| e.name == *name).unwrap();
         assert_eq!(d.weight, *w, "{name} weight");
         assert_eq!(d.anvil_cost, *anvil, "{name} anvil_cost");
-        assert_eq!((d.min_cost.base, d.min_cost.per_level_above_first), *min, "{name} min");
-        assert_eq!((d.max_cost.base, d.max_cost.per_level_above_first), *max, "{name} max");
+        assert_eq!(
+            (d.min_cost.base, d.min_cost.per_level_above_first),
+            *min,
+            "{name} min"
+        );
+        assert_eq!(
+            (d.max_cost.base, d.max_cost.per_level_above_first),
+            *max,
+            "{name} max"
+        );
     }
 }
 
@@ -299,11 +310,14 @@ fn anvil_pure_rename_keeps_tax() {
 /// 修料映射 = tags/item/*_tool_materials.json（旧实现木具用煤炭、石具无门）。
 #[test]
 fn anvil_repair_materials_match_tags() {
-    use mcv_item::{COBBLESTONE, COBBLED_DEEPSLATE, ItemStack as IS};
+    use mcv_item::{COBBLED_DEEPSLATE, COBBLESTONE, ItemStack as IS};
     let p = |id: u16| IS::new(id, 1);
     // wooden → #planks（wooden_tool_materials.json）
     assert!(p(PLANKS).is_repair_material_for(WOODEN_PICKAXE_INDEX));
-    assert!(!p(mcv_item::COAL).is_repair_material_for(WOODEN_PICKAXE_INDEX), "煤炭修木具为旧 bug");
+    assert!(
+        !p(mcv_item::COAL).is_repair_material_for(WOODEN_PICKAXE_INDEX),
+        "煤炭修木具为旧 bug"
+    );
     // stone → cobblestone/cobbled_deepslate（stone_tool_materials.json，
     // blackstone 未注册缺席）
     assert!(p(COBBLESTONE).is_repair_material_for(STONE_PICKAXE_INDEX));

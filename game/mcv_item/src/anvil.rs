@@ -73,7 +73,8 @@ pub fn combine(
                 .saturating_sub(merged.min(u32::from(target.max_damage())) as u16);
             op_price += 2; // :169 price += 2
             // enchant merge
-            op_price = op_price.saturating_add(apply_enchants(&mut out, &sacrifice.enchants, false));
+            op_price =
+                op_price.saturating_add(apply_enchants(&mut out, &sacrifice.enchants, false));
         } else {
             return AnvilResult {
                 output: None,
@@ -197,8 +198,8 @@ impl ItemStack {
     /// - copper → copper_ingot（本引擎无铜工具，物品亦未注册，天然缺席）
     pub fn is_repair_material_for(&self, target: u16) -> bool {
         use crate::{
-            COBBLESTONE, COBBLED_DEEPSLATE, DIAMOND_ITEM, GOLD_INGOT, IRON_INGOT,
-            NETHERITE_INGOT, PLANKS,
+            COBBLED_DEEPSLATE, COBBLESTONE, DIAMOND_ITEM, GOLD_INGOT, IRON_INGOT, NETHERITE_INGOT,
+            PLANKS,
         };
         // 原版语义：仅 damageable（带 durability 组件）物品有 repairable
         // 门（AnvilMenu.java:133 `result.isDamageableItem() &&
