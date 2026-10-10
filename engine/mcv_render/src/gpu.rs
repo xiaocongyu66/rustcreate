@@ -442,8 +442,8 @@ impl MeshUploader {
         let mergeable = origin[0] == 16.0 * key.0 as f32
             && origin[2] == 16.0 * key.1 as f32
             && origin[1] == 0.0
-            && vbytes.len() % TERRAIN_STRIDE == 0
-            && water.map_or(true, |(wv, _)| wv.len() % TERRAIN_STRIDE == 0);
+            && vbytes.len().is_multiple_of(TERRAIN_STRIDE)
+            && water.is_none_or(|(wv, _)| wv.len().is_multiple_of(TERRAIN_STRIDE));
         let old = self.pool.insert(
             key,
             PoolMesh {
@@ -591,7 +591,7 @@ impl MeshUploader {
         // 拷贝长度必须是 COPY_BUFFER_ALIGNMENT(4) 的倍数：mesher 输出本就
         // 是 24B 整倍数，这里对畸形字节兜底补零（旧创建期映射路径无此
         // 约束，copy_buffer_to_buffer 校验更严）。
-        if vbytes.len() % 4 != 0 {
+        if !vbytes.len().is_multiple_of(4) {
             vbytes.resize(vbytes.len().next_multiple_of(4), 0);
         }
         let vertex_buf = self.empty_buffer(vbytes.len() as u64, wgpu::BufferUsages::VERTEX);
@@ -645,7 +645,7 @@ fn rebase_positions(v: &mut [u8], dx: f32, dz: f32) {
     if dx == 0.0 && dz == 0.0 {
         return;
     }
-    for vtx in v.chunks_exact_mut(TERRAIN_STRIDE) {
+    for vtx in v.as_chunks_mut::<TERRAIN_STRIDE>().0 {
         let mut x = f32::from_le_bytes([vtx[0], vtx[1], vtx[2], vtx[3]]);
         let mut z = f32::from_le_bytes([vtx[8], vtx[9], vtx[10], vtx[11]]);
         x += dx;
