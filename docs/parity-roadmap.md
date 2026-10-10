@@ -8,7 +8,7 @@
 
 | 参照包（文件数） | 机制主题 | 引擎落点 | 状态 |
 |---|---|---|---|
-| world/level/levelgen (425) | 噪声列/密度函数/洞穴/树/装饰物 | mcv_worldgen + cpp/terrain | 🔨 波1-B 常数校准 |
+| world/level/levelgen (425) | 噪声列/密度函数/洞穴/树/装饰物 | mcv_worldgen + cpp/terrain | 🔨 波1-B 常数校准；Rust 地形内核已落地（rust_terrain/rust_noise，oracle 对拍锁定，默认切换待任务板） |
 | world/level/chunk (54) | 区块分段存储、heightmap、section 序列化 | mcv_core Chunk + mcv_save | 🔨 波1-E |
 | world/level/lighting (15) | 天光柱/衰减/发光表/removal 队列 | mcv_light | 🔨 波1-C |
 | world/level/block (461) | 方块属性（硬度/爆炸抗性/发光/遮挡/tick） | mcv_core BLOCKS | 🔨 波1-E |
