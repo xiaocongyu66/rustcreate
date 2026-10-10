@@ -1513,8 +1513,11 @@ fn four_mobs_paint_with_vanilla_textures() {
 /// 第一人称手持渲染离屏像素断言（任务板 #93）：
 /// (a) 空手帧 vs 无手持帧 diff > 阈值——手臂像素确实上屏（真机投诉「没有手臂」回归锁）；
 /// (b) 持方块帧 vs 空手帧 diff > 阈值——手持方块像素上屏；
-/// (c) 两处 diff 的包围盒都落在屏幕右下区域——位置/缩放对标原版观感；
-/// (d) 覆盖建缓冲到全部 pass 的 validation 无错误。
+/// (c) 各帧 diff 的包围盒都落在屏幕右下区域——位置/缩放对标原版观感；
+/// (d) 挥臂半程帧 vs 静止帧 diff > 阈值——swing 快照确实被渲染消费（挖掘/攻击挥臂上屏）；
+/// (e) 手持物品图标帧 vs 空手帧 diff > 阈值——icon quad 三件接线（uniform 喂帧/
+///     quad 索引/视→世界角点换算）缺一即静默只画手臂；
+/// (f) 覆盖建缓冲到全部 pass 的 validation 无错误。
 #[test]
 fn first_person_hand_paints_bottom_right() {
     let (device, queue, mut renderer) = setup_with_assets(Some(&workspace_assets()));
@@ -1618,8 +1621,8 @@ fn first_person_hand_paints_bottom_right() {
         }
     }
 
-    // 带 w/h 的像素 diff（阈值取通道和 30）：返回包围盒供区域断言。
-    let diff_bbox = |a: &[u8], b: &[u8], w: u32, h: u32| -> (usize, Option<(u32, u32, u32, u32)>) {
+    // 带 w 的像素 diff（阈值取通道和 30）：返回包围盒供区域断言。
+    let diff_bbox = |a: &[u8], b: &[u8], w: u32| -> (usize, Option<(u32, u32, u32, u32)>) {
         let mut n = 0usize;
         let mut bb: Option<(u32, u32, u32, u32)> = None;
         for (i, (p, q)) in a.chunks(4).zip(b.chunks(4)).enumerate() {
@@ -1638,20 +1641,20 @@ fn first_person_hand_paints_bottom_right() {
     };
 
     // (a) 手臂像素上屏：空手帧必须与空场景不同。
-    let (arm_diff, arm_bb) = diff_bbox(&none, &empty, extent.width, extent.height);
+    let (arm_diff, arm_bb) = diff_bbox(&none, &empty, extent.width);
     assert!(
         arm_diff > 100,
         "空手帧缺少手臂像素：diff={arm_diff}（bbox {arm_bb:?}）——第一人称手臂管线被静默跳过？"
     );
     // (b) 手持方块像素上屏：持方块帧与空手帧必须显著不同。
-    let (blk_diff, blk_bb) = diff_bbox(&empty, &block, extent.width, extent.height);
+    let (blk_diff, blk_bb) = diff_bbox(&empty, &block, extent.width);
     assert!(
         blk_diff > 100,
         "持方块帧缺少手持方块像素：diff={blk_diff}（bbox {blk_bb:?}）"
     );
     // (c) 原版观感：手臂与手持物的像素都在右下象限。
     let in_bottom_right = |bb: Option<(u32, u32, u32, u32)>| {
-        let (x0, y0, x1, y1) = bb.expect("diff>0 必有包围盒");
+        let (x0, y0, ..) = bb.expect("diff>0 必有包围盒");
         x0 >= extent.width / 2 && y0 >= extent.height / 2
     };
     assert!(
@@ -1661,6 +1664,53 @@ fn first_person_hand_paints_bottom_right() {
     assert!(
         in_bottom_right(blk_bb),
         "手持方块像素越出右下象限（bbox {blk_bb:?}）——摆放常数回归"
+    );
+
+    // (d) 挥臂消费链上屏：swing 快照必须驱动画面变化（game 层
+    // swing_progress → Scene.hand.swing → 臂/手持物矩阵的端到端）。
+    // 挖掘中每 tick 重触发的劈砍若只停留在快照字段，本断言 diff=0 即红。
+    let swung = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Block(1),
+            swing: 0.5, // 半程 = 劈砍角最大（sin(√0.5·π)）
+        }),
+    );
+    let (swing_diff, swing_bb) = diff_bbox(&block, &swung, extent.width);
+    assert!(
+        swing_diff > 100,
+        "挥臂半程帧与静止帧 diff={swing_diff}（bbox {swing_bb:?}）——swing_progress 快照未被渲染消费"
+    );
+    assert!(
+        in_bottom_right(swing_bb),
+        "挥臂像素越出右下象限（bbox {swing_bb:?}）——挥臂锚点/旋转常数回归"
+    );
+
+    // (e) 手持物品图标（sprite 路径）：icon quad 的 uniform 喂帧 + quad 索引
+    // + 视→世界角点换算三件接线缺一即只有手臂（diff=0 红）。
+    let sprite = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Sprite("diamond"),
+            swing: 0.0,
+        }),
+    );
+    let (icon_diff, icon_bb) = diff_bbox(&empty, &sprite, extent.width);
+    assert!(
+        icon_diff > 100,
+        "手持物品图标帧缺少图标像素：diff={icon_diff}（bbox {icon_bb:?}）——hand_icon uniform/索引/世界换算接线回归"
+    );
+    assert!(
+        in_bottom_right(icon_bb),
+        "手持图标像素越出右下象限（bbox {icon_bb:?}）——图标锚点常数回归"
     );
 
     let scope_err = pollster::block_on(guard.pop());

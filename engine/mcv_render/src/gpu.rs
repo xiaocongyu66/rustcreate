@@ -399,7 +399,6 @@ pub struct Renderer {
     hand_icon_pipeline: wgpu::RenderPipeline,
     hand_uniform: wgpu::Buffer,
     hand_bind: wgpu::BindGroup,
-    gui_view: wgpu::TextureView,
     hand_terrain_vbuf: wgpu::Buffer,
     hand_terrain_ibuf: wgpu::Buffer,
     pub max_chunks: u32,
@@ -418,6 +417,14 @@ pub struct PlayerUniforms {
 }
 
 const _: () = assert!(size_of::<PlayerUniforms>() == 832);
+
+/// player_uniform 的手持 pass 右臂槽偏移（槽 1，256B 动态偏移对齐）。
+/// 槽 0 = 世界 pass 玩家本体，槽 1 = 第一人称手持右臂，两者同一 submit
+/// 内不争写（queue.write_buffer 无法插入两个 render pass 之间）。
+const PLAYER_HAND_SLOT_OFF: u64 = (size_of::<PlayerUniforms>() as u64).next_multiple_of(256);
+
+/// 单 quad 索引（手持物品图标路径；与方块展开首 quad 的角序一致）。
+const QUAD_INDICES: [u32; 6] = [0, 1, 2, 0, 2, 3];
 
 fn terrain_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
@@ -1165,9 +1172,11 @@ impl Renderer {
         });
         let origins_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-origins"),
-            // 末尾多留 1 槽给挖掘 overlay 的 origin（dynamic offset =
-            // max_chunks * 256），复用 terrain/water 的绑定组布局。
-            size: (max_chunks as u64 + 1) * 256,
+            // 末尾多留 2 槽：overlay 的 origin（dynamic offset =
+            // max_chunks * 256）与手持方块 origin（(max_chunks+1) * 256，
+            // wgpu 建缓冲零初始化 = (0,0,0)，方块顶点已是世界坐标直通），
+            // 复用 terrain/water 的绑定组布局。
+            size: (max_chunks as u64 + 2) * 256,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1698,7 +1707,10 @@ impl Renderer {
         let player_index_slices = mesh.slices.clone();
         let player_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("player-uniforms"),
-            size: size_of::<PlayerUniforms>() as u64,
+            // 槽 0 = 世界 pass 玩家本体；槽 1（PLAYER_HAND_SLOT_OFF）=
+            // 第一人称手持右臂（独立槽位，手持 pass 与世界 pass 同一次
+            // submit 内不争写同一 uniform）。
+            size: PLAYER_HAND_SLOT_OFF + size_of::<PlayerUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1857,6 +1869,8 @@ impl Renderer {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
+        // 图标绑定组在构造期捕获 GUI 精灵表视图（图集运行期不重建，
+        // 与 hud_bind 同生命周期约定），hand_uniform 每帧在 draw_hand 写入。
         let hand_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hand-bind"),
             layout: &hand_bind_layout,
@@ -2032,7 +2046,6 @@ impl Renderer {
             hand_icon_pipeline,
             hand_uniform,
             hand_bind,
-            gui_view,
             hand_terrain_vbuf,
             hand_terrain_ibuf,
             max_chunks,
@@ -2463,6 +2476,14 @@ impl Renderer {
             }
         }
 
+        // 第一人称手持 pass：世界之后、HUD 之前，同一次 submit 内**清深度**
+        // 独立 pass（26.1 GameRenderer.java:724-729：clearDepthTexture →
+        // renderItemInHand）。手持不被世界深度裁剪，而 HUD 又画在手持之上
+        // （原版 gui 渲染序在 hand 之后）。
+        if let Some(hand) = scene.hand {
+            self.draw_hand(&mut encoder, color, depth, &cam, hand);
+        }
+
         // HUD pass
         if !scene.hud.is_empty() {
             // 防溢出:菜单铺贴 quad 数量超预期时截断并告警,而不是 panic
@@ -2511,27 +2532,24 @@ impl Renderer {
         }
 
         self.queue.submit([encoder.finish()]);
-
-        // 第一人称手持 pass：世界（含 HUD）之后独立提交，**清深度**再画
-        // （26.1 GameRenderer.java:724-729：clearDepthTexture → renderItemInHand）。
-        // 手持部件之间保留自身遮挡（臂/方块深度互测），但不被世界深度裁剪。
-        if let Some(hand) = scene.hand {
-            self.draw_hand(color, depth, cam, hand);
-        }
     }
 
-    /// 第一人称手持 pass：右臂盒体（player 管线右臂切片）+ 手持方块
-    /// 缩小立方体（terrain 管线直通）或物品图标 quad（hand 管线）。
+    /// 第一人称手持 pass：右臂盒体（player 管线右臂切片 + 独立 uniform 槽）
+    /// + 手持方块缩小立方体（terrain 管线直通）或物品图标 quad（hand 管线）。
+    /// 在 draw_frame 的世界 pass 与 HUD pass 之间被调用，自起**清深度**的
+    /// 独立 render pass（26.1 GameRenderer.java:724-729）。
     fn draw_hand(
         &mut self,
+        encoder: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,
         depth: &wgpu::TextureView,
         cam: &Camera,
         hand: crate::hand::HandRender,
     ) {
         let swing = hand.swing.clamp(0.0, 1.0);
-        // (a) 手臂：player_uniform 槽位 4（右臂切片 meta.y=4）写挥臂矩阵。
-        //     世界 pass 已提交，此处覆写只影响本 pass，下一帧重写。
+        // (a) 手臂：独立 uniform 槽（偏移 1024，256B 对齐）写挥臂矩阵——
+        //     手持 pass 与世界 pass 同一次 submit，必须与世界玩家本体（槽 0）
+        //     争写隔离；槽位 4 = 右臂切片（顶点 meta.y=4）。
         let mut models = [glam::Mat4::IDENTITY; PART_COUNT];
         models[crate::player_mesh::P_R_ARM] = crate::hand::hand_arm_matrix(cam, swing);
         if self.skins_loaded {
@@ -2542,8 +2560,11 @@ impl Renderer {
             for (m, dst) in models.iter().zip(mu.models.iter_mut()) {
                 *dst = m.to_cols_array_2d();
             }
-            self.queue
-                .write_buffer(&self.player_uniform, 0, bytemuck::bytes_of(&mu));
+            self.queue.write_buffer(
+                &self.player_uniform,
+                PLAYER_HAND_SLOT_OFF,
+                bytemuck::bytes_of(&mu),
+            );
         }
 
         // (b) 手持方块立方体顶点（世界空间，origin 槽置零直通 terrain）。
@@ -2609,8 +2630,18 @@ impl Renderer {
             for uv in uvs.iter_mut() {
                 *uv = map(*uv, (uv0, uv1));
             }
+            // hand.rs 产出的是**视空间**角点，与手持方块同路：经相机正交基
+            // + 眼位转世界坐标（vs_hand_icon 的 uniform 只带世界 view_proj）。
+            let (r, u, b) = crate::hand::camera_basis(cam);
+            let basis = glam::Mat4::from_cols(
+                r.extend(0.0),
+                u.extend(0.0),
+                b.extend(0.0),
+                glam::Vec3::ZERO.extend(1.0),
+            );
+            let eye = cam.pos + glam::Vec3::new(0.0, crate::EYE_HEIGHT, 0.0);
             icon = Some(std::array::from_fn(|k| PlayerVertex {
-                pos: pts[k].to_array(),
+                pos: (eye + basis.transform_point3(pts[k])).to_array(),
                 uv: [(uvs[k][0] * 255.0) as u8, (uvs[k][1] * 255.0) as u8],
                 _pad: [0; 2],
                 meta: [0u32, 0u32],
@@ -2621,11 +2652,6 @@ impl Renderer {
             return;
         }
 
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("hand"),
-            });
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hand"),
@@ -2651,24 +2677,25 @@ impl Renderer {
                 multiview_mask: None,
             });
 
-            // 臂（皮肤切片 0=steve；挥臂矩阵已写 player_uniform）。
+            // 臂（皮肤切片 0=steve；挥臂矩阵已写 player_uniform 手持槽）。
             if self.skins_loaded {
                 let slice = self.player_index_slices[0][crate::player_mesh::P_R_ARM].clone();
                 pass.set_pipeline(&self.player_pipeline);
-                pass.set_bind_group(0, &self.player_bind, &[0]);
+                pass.set_bind_group(0, &self.player_bind, &[PLAYER_HAND_SLOT_OFF as u32]);
                 pass.set_vertex_buffer(0, self.player_vbuf.slice(..));
                 pass.set_index_buffer(self.player_ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(slice, 0, 0..1);
             }
 
-            // 手持方块（origin 槽置零 + terrain 管线；不透明语义写深度）。
+            // 手持方块（专用 origin 槽置零 + terrain 管线；不透明语义写深度）。
             if let Some((verts, idx)) = cube {
                 self.queue
                     .write_buffer(&self.hand_terrain_vbuf, 0, bytemuck::cast_slice(&verts));
                 self.queue
                     .write_buffer(&self.hand_terrain_ibuf, 0, bytemuck::cast_slice(&idx));
-                // origin 动态槽复用 overlay pad（世界 pass 已提交，覆写安全）。
-                let off = self.max_chunks * 256;
+                // 专用 origin 槽（overlay 槽归世界 pass 的裂纹/描边，同一次
+                // submit 内争写互踩）。
+                let off = (self.max_chunks + 1) * 256;
                 self.queue.write_buffer(
                     &self.origins_buf,
                     off as wgpu::BufferAddress,
@@ -2681,10 +2708,21 @@ impl Renderer {
                 pass.draw_indexed(0..36, 0, 0..1);
             }
 
-            // 物品图标（不写深度；复用 vbuf 前 4 顶点与 ibuf 前 6 索引）。
+            // 物品图标（不写深度；uniform 每帧喂世界 view_proj；quad 索引
+            // 单独写——sprite 路径没有方块 36 索引可复用）。
             if let Some(verts) = icon {
                 self.queue
                     .write_buffer(&self.hand_terrain_vbuf, 0, bytemuck::bytes_of(&verts));
+                self.queue.write_buffer(
+                    &self.hand_uniform,
+                    0,
+                    bytemuck::bytes_of(&cam.view_proj().to_cols_array_2d()),
+                );
+                self.queue.write_buffer(
+                    &self.hand_terrain_ibuf,
+                    0,
+                    bytemuck::bytes_of(&QUAD_INDICES),
+                );
                 pass.set_pipeline(&self.hand_icon_pipeline);
                 pass.set_bind_group(0, &self.hand_bind, &[]);
                 pass.set_vertex_buffer(
@@ -2692,13 +2730,13 @@ impl Renderer {
                     self.hand_terrain_vbuf.slice(..(4 * PLAYER_STRIDE) as u64),
                 );
                 pass.set_index_buffer(
-                    self.hand_terrain_ibuf.slice(..36),
+                    self.hand_terrain_ibuf
+                        .slice(..QUAD_INDICES.len() as u64 * 4),
                     wgpu::IndexFormat::Uint32,
                 );
-                pass.draw_indexed(0..6, 0, 0..1);
+                pass.draw_indexed(0..QUAD_INDICES.len() as u32, 0, 0..1);
             }
         }
-        self.queue.submit([encoder.finish()]);
     }
 
     pub fn device(&self) -> &wgpu::Device {

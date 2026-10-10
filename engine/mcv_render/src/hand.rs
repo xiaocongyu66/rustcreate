@@ -122,12 +122,18 @@ pub fn hand_block_rotation(cam: &Camera, swing: f32) -> Mat4 {
     tilt * Mat4::from_rotation_y(PI * 0.25)
 }
 
-/// 手持物品图标 quad：视空间中心 + 旋转（微转向观者左上方）与边长。
+/// 手持物品图标 quad：视空间中心 + 旋转与边长。
 /// 返回 (角点视空间坐标 ×4, 对应 uv ×4)，角序与 player_mesh 面展开一致
 /// （左上/右上/右下/左下）。
+///
+/// 静止姿态 = 面向观者的平面（26.1 普通物品走 WHACK 挥臂接线，rest 时
+/// `applyItemArmAttackTransform` 的 rotY(45°)/rotY(-45°) 书挡相消、净旋转
+/// 恒等；builtin/generated 的 sprite 经 firstperson_righthand 旋转后观感
+/// 即"举卡面朝自己"），只保留原版 display 旋转 [0,-90,25] 里的 25° 面内
+/// 滚转（绕视轴旋转不破坏平面性）。挥臂时叠加绕右轴劈砍。
 pub fn hand_icon_quad(cam: &Camera, swing: f32) -> ([Vec3; 4], [[f32; 2]; 4]) {
     let tilt = Mat4::from_axis_angle(camera_basis(cam).0, swing_tilt(swing));
-    let rot = tilt * Mat4::from_rotation_x(-0.15) * Mat4::from_rotation_y(0.55);
+    let rot = tilt * Mat4::from_rotation_z(25.0f32.to_radians());
     let c = ITEM_POS + swing_translate(swing);
     let s = ICON_SIZE * 0.5;
     let corners = [

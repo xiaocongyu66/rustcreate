@@ -3679,14 +3679,16 @@ impl GameRuntime {
             });
         // 挖掘长按挥臂（continueAttack :1628 挖中方块即 swing；半程重启规则
         // 令挥臂周期 = duration/2 = 3 tick，与原版挖掘节奏一致）。
+        // 碎屑方块 id 先行取出：Idle 分支后续要用，不能让 `view`（&self.chunks
+        // 的不可变借用）横跨下面的 `self.swing()`（E0502）。
+        let debris = target.map(|p| (p, view.block(p).0));
         if hit.is_some() {
             self.swing();
         }
         match self.mine.continue_tick(hit) {
             MineTick::Broken(p) => self.destroy_block(p),
             MineTick::Idle => {
-                if let Some(p) = target {
-                    let b = view.block(p).0;
+                if let Some((p, b)) = debris {
                     self.particles.spawn_hit(
                         [p.x as f64, p.y as f64, p.z as f64],
                         face,
