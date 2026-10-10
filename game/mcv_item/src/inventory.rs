@@ -367,14 +367,13 @@ static DROP_TABLE: &[DropRow] = &[
     row(&["ancient_debris"], "ancient_debris", 1, 1, 1000),
 ];
 
-/// 明确"silk touch 才有掉落"的方块(池条件只放行 silk → 本引擎无 silk 恒
-/// 不掉;单列出来是给"误加进 DROP_TABLE"设一道测试闸)。26.1 json 实证:
-/// - glass / *_stained_glass(_pane):glass.json、red_stained_glass.json 等
-///   —— pool 条件 `match_tool silk_touch min 1`;
-/// - ice / packed_ice / blue_ice:ice.json 同构(无 silk 零掉)。
-/// 16 色 = white/orange/magenta/light_blue/yellow/lime/pink/gray/light_gray/
-///     cyan/purple/blue/brown/green/red/black(注册表 *_stained_glass[_pane]
-///     共 32 名)。
+// 明确"silk touch 才有掉落"的方块(池条件只放行 silk → 本引擎无 silk 恒
+// 不掉;单列出来是给"误加进 DROP_TABLE"设一道测试闸)。26.1 json 实证:
+// glass.json / red_stained_glass.json 等与 ice.json / packed_ice.json /
+// blue_ice.json 同构 = pool 条件 `match_tool silk_touch min 1`、无 silk
+// 零掉;16 色染色玻璃/板(white/orange/magenta/light_blue/yellow/lime/pink/
+// gray/light_gray/cyan/purple/blue/brown/green/red/black)注册表
+// *_stained_glass[_pane] 共 32 名。
 pub const NO_DROP: &[&str] = &[
     "glass",
     "glass_pane",
