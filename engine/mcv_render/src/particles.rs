@@ -99,6 +99,13 @@ pub trait ParticleWorld {
     fn is_water(&self, _x: i32, _y: i32, _z: i32) -> bool {
         true
     }
+    /// 所在格流体顶面高度（格内相对 0..=1；无水回 0）。WaterDrop 的
+    /// 「没入方块/流体顶面即移除」判据（`WaterDropParticle.java:48-55`）
+    /// 用；固体形状部分由 [`collide_voxel`] 的满格碰撞近似承担（模块头
+    /// 差异项），这里只补流体面。
+    fn fluid_top(&self, _x: i32, _y: i32, _z: i32) -> f64 {
+        0.0
+    }
 }
 
 /// 无世界实现（测试 / 无碰撞场景）。
@@ -601,6 +608,55 @@ impl ParticleEngine {
         }
     }
 
+    /// 雨粒子（26.1 `ParticleTypes.RAIN` = **WaterDropParticle**，
+    /// `ParticleResources.java:117`；纹理 rain.json → splash_0..3，与
+    /// SPLASH 同图集；生成侧由天气层按 `WeatherEffectRenderer.
+    /// tickRainParticles`（WeatherEffectRenderer.java:224-268）驱动）。
+    /// 构造 = `WaterDropParticle.java:11-19`：aux 速度全 0（:258-266 传
+    /// 0,0,0，`xd *= 0.3` 后仍 0）、`yd = rand·0.2+0.1`（出生先上跳）、
+    /// size 0.01、gravity 0.06、lifetime = 8/(rand·0.8+0.2)。
+    pub fn spawn_rain_drop(&mut self, x: f64, y: f64, z: f64) {
+        let mut q = QuadData::born(&mut self.rng);
+        q.bb_width = 0.01;
+        q.bb_height = 0.01;
+        q.layer = self.rng.next_bounded(sprites::SPLASH_COUNT) + sprites::SPLASH_BASE;
+        q.tex_set = 1;
+        let yd = self.rng.next_f32() as f64 * 0.2 + 0.1;
+        self.spawn(Kind::WaterDrop, [x, y, z], [0.0, yd, 0.0], false, q);
+        let Some(&i) = self.live.back() else { return };
+        self.gravity[i as usize] = 0.06;
+    }
+
+    /// 溺水气泡（26.1 `broadcastEntityEvent(67)` → `makeDrownParticles`，
+    /// LivingEntity.java:2087-2088/:2113-2123）：8 个 BUBBLE，出生偏移 =
+    /// `random.triangle(0,1)` = nextDouble−nextDouble ∈ [-1,1]（
+    /// RandomSource.java:59-61），速度 = 实体 movement（BubbleParticle
+    /// 构造 ×0.2±rand·0.02，BubbleParticle.java:21-28，与 splash 波 1
+    /// 同款构造）。
+    pub fn spawn_drown_bubbles(&mut self, x: f64, y: f64, z: f64, mv: [f64; 3]) {
+        for _ in 0..8 {
+            let ox = self.rng.next_f64() - self.rng.next_f64();
+            let oy = self.rng.next_f64() - self.rng.next_f64();
+            let oz = self.rng.next_f64() - self.rng.next_f64();
+            let mut q = QuadData::born(&mut self.rng);
+            q.bb_width = 0.02;
+            q.bb_height = 0.02;
+            q.quad_size *= self.rng.next_f32() * 0.6 + 0.2;
+            q.layer = sprites::BUBBLE;
+            q.tex_set = 1;
+            let dx = mv[0] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            let dy = mv[1] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            let dz = mv[2] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            self.spawn(
+                Kind::Bubble,
+                [x + ox, y + oy, z + oz],
+                [dx, dy, dz],
+                false,
+                q,
+            );
+        }
+    }
+
     /// 受击 crit（26.1 `CritParticle.Provider`，CritParticle.java:117-126；
     /// `Player.attack` 命中驱动）。`indicator=true` 走 DamageIndicator 变体
     /// （CritParticle.java:88-104：lifetime=20、ya+1 上飘）。
@@ -705,6 +761,18 @@ impl ParticleEngine {
                     }
                     self.xd[i] *= 0.7;
                     self.zd[i] *= 0.7;
+                }
+                // WaterDropParticle.java:48-55：本格形状顶面/流体顶面高于
+                // 粒子 y → 移除（雨滴落到水面/方块面即灭，雨族的
+                // 「落地判据」；固体面由 collide_voxel 满格近似提前截停）。
+                let (cx, cy, cz) = (
+                    self.x[i].floor() as i32,
+                    self.y[i].floor() as i32,
+                    self.z[i].floor() as i32,
+                );
+                let off = world.fluid_top(cx, cy, cz);
+                if off > 0.0 && self.y[i] < cy as f64 + off {
+                    self.lifetime[i] = 0;
                 }
             }
             Kind::Bubble => {
@@ -1379,5 +1447,101 @@ mod tests {
             4,
             "behind-camera particle culled (QuadParticleGroup.java:35)"
         );
+    }
+
+    #[test]
+    fn rain_drop_ctor_matches_water_drop() {
+        // spawn_rain_drop = WaterDropParticle 构造全集（WaterDropParticle.
+        // java:11-19；aux 速度 = 0，WeatherEffectRenderer.java:258-266）：
+        // gravity 0.06、初速上跳 0.1..0.3、lifetime = 8/(rand·0.8+0.2)
+        // ∈ [8,40]、纹理 splash_0..3（assets particles/rain.json）。
+        let mut e = ParticleEngine::with_seed(21);
+        e.spawn_rain_drop(0.5, 8.0, 0.5);
+        let i = *e.live.back().unwrap() as usize;
+        assert_eq!(
+            e.kind[i],
+            Kind::WaterDrop,
+            "RAIN 粒子 = WaterDropParticle（ParticleResources.java:117）"
+        );
+        assert!((e.gravity[i] - 0.06).abs() < 1e-6, "gravity 0.06（:17）");
+        assert!(
+            e.yd[i] >= 0.1 && e.yd[i] < 0.3,
+            "yd = rand·0.2+0.1 上跳（:14），got {}",
+            e.yd[i]
+        );
+        assert_eq!(e.xd[i], 0.0);
+        assert_eq!(e.zd[i], 0.0);
+        assert!(
+            e.lifetime[i] >= 8 && e.lifetime[i] <= 40,
+            "lifetime 8/(rand·0.8+0.2)（:18）, got {}",
+            e.lifetime[i]
+        );
+        assert_eq!(e.rend[i].tex_set, 1);
+        assert!(
+            e.rend[i].layer < sprites::SPLASH_BASE + sprites::SPLASH_COUNT,
+            "雨纹理 = splash_0..3（rain.json 与 splash.json 同图集；             SPLASH_BASE=0 下界恒真，clippy::absurd_extreme_comparisons 省）"
+        );
+        // 首 tick 上跳（yd ≥ 0.1 > gravity 0.06）。
+        let y0 = e.y[i];
+        e.tick(&NoWorld);
+        assert!(e.y[i] > y0, "首 tick 上跳");
+    }
+
+    #[test]
+    fn rain_drop_dies_at_fluid_surface() {
+        // WaterDropParticle.java:48-55：y < 本格形状/流体顶面 → remove
+        // （雨滴落水即灭的判据；固体面由 collide_voxel 满格截停承担）。
+        struct WaterCell;
+        impl ParticleWorld for WaterCell {
+            fn is_solid(&self, _x: i32, _y: i32, _z: i32) -> bool {
+                false
+            }
+            fn fluid_top(&self, _x: i32, y: i32, _z: i32) -> f64 {
+                if y == 8 { 1.0 } else { 0.0 }
+            }
+        }
+        let mut e = ParticleEngine::with_seed(23);
+        e.spawn_rain_drop(0.5, 8.4, 0.5); // y 8.4 < 8+1.0 → 首 tick 判死
+        e.tick(&WaterCell);
+        assert!(e.is_empty(), "没入流体顶面即移除（:48-55）");
+        // 无水世界不触发该判据（fluid_top 默认 0）。
+        let mut e2 = ParticleEngine::with_seed(23);
+        e2.spawn_rain_drop(0.5, 8.4, 0.5);
+        e2.tick(&NoWorld);
+        assert_eq!(e2.len(), 1, "无流体面不误杀");
+    }
+
+    #[test]
+    fn drown_bubbles_are_8_and_die_outside_water() {
+        // makeDrownParticles（LivingEntity.java:2113-2123）：8 个 BUBBLE、
+        // 偏移 triangle(0,1) ∈ [-1,1]；离水即灭（BubbleParticle.java:43-45）。
+        struct Air;
+        impl ParticleWorld for Air {
+            fn is_solid(&self, _x: i32, _y: i32, _z: i32) -> bool {
+                false
+            }
+            fn is_water(&self, _x: i32, _y: i32, _z: i32) -> bool {
+                false
+            }
+        }
+        let mut e = ParticleEngine::with_seed(11);
+        e.spawn_drown_bubbles(0.5, 8.5, 0.5, [0.4, -0.2, 0.0]);
+        assert_eq!(e.len(), 8, "8 BUBBLE（LivingEntity.java:2116）");
+        let i = *e.live.front().unwrap() as usize;
+        assert_eq!(e.kind[i], Kind::Bubble);
+        // triangle 偏移域。
+        for &slot in &e.live {
+            let i = slot as usize;
+            for (v, c) in [(e.x[i], 0.5), (e.y[i], 8.5), (e.z[i], 0.5)] {
+                assert!((v - c).abs() <= 1.0 + 1e-9, "triangle offset ∈ [-1,1]");
+            }
+        }
+        // 水中存活（NoWorld is_water 默认 true）、空气中下一 tick 全灭。
+        let mut ew = ParticleEngine::with_seed(11);
+        ew.spawn_drown_bubbles(0.5, 8.5, 0.5, [0.0, 0.0, 0.0]);
+        ew.tick(&NoWorld);
+        assert_eq!(ew.len(), 8, "水中存活");
+        e.tick(&Air);
+        assert!(e.is_empty(), "离水即灭（BubbleParticle.java:43-45）");
     }
 }

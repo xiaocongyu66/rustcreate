@@ -152,5 +152,16 @@ pub const SWIM_LOOK_STEER_K: f32 = 5.71;
 /// 且抬升 0.6 后无碰撞 → 置位。水下按墙攀爬与跳出水面均源于此）。
 pub const SWIM_EXIT_SPEED: f32 = 6.0;
 
+/// 自动上台阶高度（maxUpStep）：STEP_HEIGHT 属性默认 **0.6** 块
+/// （Attributes.java:85-86 `RangedAttribute("step_height", 0.6, 0.0, 10.0)`；
+/// LivingEntity.maxUpStep :3911-3913 玩家无骑乘修正时直取该值）。
+/// 半砖（0.5）可步行登上，整块（1.0）不可。
+///
+/// 派单说法「我们 0.5」与源码实况不符：本仓此前**没有**任何自动上台阶
+/// 机制（0.5 是 `physics::MAX_SUBSTEP` 扫掠子步上限，语义无关）；本次
+/// 按原版 `Entity.collide` 候选台阶高度重试（Entity.java:1080-1106 +
+/// collectCandidateStepUpHeights :1111-1136）补上，取原版 0.6。
+pub const STEP_HEIGHT: f32 = 0.6;
+
 /// 固定物理步长：1/60 s。
 pub const FIXED_DT: f32 = 1.0 / 60.0;

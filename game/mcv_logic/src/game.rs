@@ -162,6 +162,20 @@ impl mcv_render::particles::ParticleWorld for ParticleRt<'_> {
         };
         view.block(BlockPos::new(x, y, z)).def().liquid
     }
+
+    /// 水体顶面高度（WaterDrop「没入流体面即灭」判据，WaterDropParticle.
+    /// java:48-55）：本仓无半流体（流动水按满格存）→ 满高 1.0。
+    fn fluid_top(&self, x: i32, y: i32, z: i32) -> f64 {
+        let view = WorldView {
+            chunks: self.chunks,
+        };
+        let def = view.block(BlockPos::new(x, y, z)).def();
+        if def.liquid && def.name == "water" {
+            1.0
+        } else {
+            0.0
+        }
+    }
 }
 
 /// 边号 → 相邻区块方向：0=+X 1=-X 2=+Z 3=-Z（与 mcv_light 的边编码一致）。
@@ -463,6 +477,14 @@ pub struct GameRuntime {
     /// LocalPlayer.java:835-836 窗口 7 tick = 350ms；Player.aiStep:443-445
     /// 每 tick −1）。首按沿置 7，窗口内再按沿 → 切换 abilities.flying。
     flight_jump_trigger: f32,
+    /// 空气供给（Entity.java:2739-2741 getMaxAirSupply = 300；消耗/恢复/
+    /// 溺水伤害结算见 [`air_supply_tick`]，LivingEntity.java:417-439）。
+    air_supply: i32,
+    /// 游泳姿态（Entity shared flag bit4，Entity.java:2657-2659/:2669-2671；状态机
+    /// [`swimming_tick`]，Entity.java:1558-1564 + Player.java:1410-1416）。
+    /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
+    /// prone 模型接线在 mcv_app（遗留清单，见报告）。
+    swimming: bool,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -732,6 +754,8 @@ impl GameRuntime {
             smoothed_progress: 0.0,
             jump_held_prev: false,
             flight_jump_trigger: 0.0,
+            air_supply: MAX_AIR_SUPPLY,
+            swimming: false,
             was_in_water: false,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
@@ -868,6 +892,8 @@ impl GameRuntime {
         self.player.flying = self.mode == GameMode::Creative;
         self.dead = false;
         self.fall_y = None;
+        self.air_supply = MAX_AIR_SUPPLY;
+        self.swimming = false;
         // 26.1 重生与首次进入同走加载画面：handleRespawn →
         // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
         // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
@@ -1613,6 +1639,9 @@ impl GameRuntime {
                 chunks: &self.chunks,
             };
             self.particles.tick(&pw);
+            // 雨粒子：tick 后按天气强度在世界里补原版 RAIN 粒子
+            // （原版同为 tick 尾客户端生成，LevelRenderer.java:1164）。
+            self.spawn_rain_particles();
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
@@ -1927,6 +1956,61 @@ impl GameRuntime {
                     &mut self.food_tick_timer,
                     self.difficulty,
                 );
+            }
+            // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
+            if self.on_tick {
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                // 眼位流体（原版 isEyeInFluid(**WATER**)，LivingEntity.java:417
+                // 只认水不认岩浆；eye_in_water 是挖掘惩罚用的“任意流体”版，
+                // 语义不同不能复用）。
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let ec = eye.floor().as_ivec3();
+                let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                let eyes_water = eye_def.liquid && eye_def.name == "water";
+                let feet_pos = BlockPos::new(
+                    self.player.pos.x.floor() as i32,
+                    self.player.pos.y.floor() as i32,
+                    self.player.pos.z.floor() as i32,
+                );
+                let feet_def = view.block(feet_pos).def();
+                let feet_water = feet_def.liquid && feet_def.name == "water";
+                // 姿态位（Pose.SWIMMING 的驱动源，Entity.java:1558-1564 +
+                // Player.java:1410-1416；第三人称 prone 模型接线遗留）。
+                self.swimming = swimming_tick(
+                    self.swimming,
+                    sprinting,
+                    in_water,
+                    eyes_water && in_water,
+                    feet_water,
+                    self.player.flying,
+                );
+                // 空气供给（LivingEntity.java:417-439）：创造 invulnerable
+                // 免溺（:422-423），旁观者本仓无。
+                let drown = air_supply_tick(
+                    &mut self.air_supply,
+                    eyes_water,
+                    self.mode != GameMode::Creative,
+                );
+                if drown {
+                    // broadcastEntityEvent(67) → makeDrownParticles：8 个
+                    // BUBBLE（LivingEntity.java:2087-2088/:2113-2123）。
+                    // 出生点 = 实体坐标（getY() = 脚底，:2121-2122，偏移
+                    // triangle ±1 自行散布全身，无 +0.5 抬升）。
+                    let p = self.player.pos;
+                    let v = [
+                        self.player.vel.x as f64,
+                        self.player.vel.y as f64,
+                        self.player.vel.z as f64,
+                    ];
+                    self.particles
+                        .spawn_drown_bubbles(p.x as f64, p.y as f64, p.z as f64, v);
+                    // damageSources().drown() 2.0F（LivingEntity.java:428）；
+                    // 环境伤害不进难度缩放（DamageSource.java:92-97 判据
+                    // = 实体伤害，hurt_player 的 from=None 分支同语义）。
+                    self.hurt_player(2.0, None);
+                }
             }
         }
 
@@ -2474,6 +2558,70 @@ impl GameRuntime {
         self.eye_in_water(&WorldView {
             chunks: &self.chunks,
         })
+    }
+
+    /// 空气供给 0..=300（原版气泡 HUD 消费；HUD 接线登记遗留，见报告）。
+    pub fn air_supply(&self) -> i32 {
+        self.air_supply
+    }
+
+    /// 游泳姿态（26.1 `Pose.SWIMMING` 驱动源，Player.java:342-361 +
+    /// :1662-1664；第三人称 prone 模型/气泡 HUD 消费）。
+    pub fn is_swimming(&self) -> bool {
+        self.swimming
+    }
+
+    /// 雨粒子生成（26.1 `WeatherEffectRenderer.tickRainParticles`，
+    /// WeatherEffectRenderer.java:224-268）：按 `count = 0.225·(2r+1)²·
+    /// rainLevel²`（:232）在相机四周 `weatherRadius`=10（Options.java:
+    /// 178-184 默认）随机列，查 MOTION_BLOCKING heightmap（本仓 chunk
+    /// heightmap 即首空 y，与 `getHeightmapPos().getY()` 同语义，但
+    /// **不计流体**是 worldgen 基线差异，下方手动补流体面）、相机高度
+    /// ±10 过滤（:239-240）、方块/流体顶面出生（:247-254）。
+    /// 生物群系降水门（:241/:282-288）本仓无 biome 系统 → 恒 RAIN；
+    /// 岩浆/岩浆块/营火→SMOKE 分支（:255-257）同理未接（KNOWN-DIVERGENCE，
+    /// 登记报告）。原版雨"雨幕"是 `textures/environment/rain.png` 列渲染
+    /// （WeatherEffectRenderer.java:57/:121-159），属渲染器扩展 → 遗留。
+    fn spawn_rain_particles(&mut self) {
+        let rain_level = self.weather.rain_level();
+        if rain_level <= 0.0 {
+            return;
+        }
+        let radius = RAIN_PARTICLE_RADIUS;
+        let count = rain_particle_count(rain_level, radius);
+        let p = self.player.pos;
+        // 相机 = 眼位（原版 `BlockPos.containing(camera.position())`，
+        // :228；第一人称相机即在眼睛，y = 脚底 + EYE）。
+        let cam = BlockPos::new(
+            p.x.floor() as i32,
+            (p.y + mcv_game::Player::EYE).floor() as i32,
+            p.z.floor() as i32,
+        );
+        let span = (2 * radius + 1) as u32;
+        for _ in 0..count {
+            let x = cam.x + (fast_rand() % span) as i32 - radius;
+            let z = cam.z + (fast_rand() % span) as i32 - radius;
+            let col = BlockPos::new(x, 0, z);
+            if !self.chunks.contains_key(&col.chunk()) {
+                continue; // 原版 hasChunk 门（getPrecipitationAt :283-285）
+            }
+            let mut top = self.surface_at(x, z);
+            if top <= 0 {
+                continue; // 原版 heightmapPos.getY() > minY 门（:238）
+            }
+            // heightmap 不计流体（recompute_heightmap 基线）→ 上溯流体面
+            // （原版 particleY = max(blockTop, fluidTop)，:252-254）。
+            while top < 255 && self.block_at(BlockPos::new(x, top, z)).def().liquid {
+                top += 1;
+            }
+            if top > cam.y + 10 || top < cam.y - 10 {
+                continue;
+            }
+            let rx = fast_rand() as f64 / u32::MAX as f64;
+            let rz = fast_rand() as f64 / u32::MAX as f64;
+            self.particles
+                .spawn_rain_drop(x as f64 + rx, top as f64, z as f64 + rz);
+        }
     }
 
     /// 固定步余量（partialTickTime 0..1，26.1 Minecraft.getFrameTime 语义）：
@@ -4155,6 +4303,86 @@ pub fn food_data_tick(
     } else {
         *tick_timer = 0;
     }
+}
+
+/// 满气（26.1 `Entity.getMaxAirSupply` = **300**，Entity.java:2739-2741；
+/// 即派单「水下 air 供给 300 tick」的原版出处）。
+pub const MAX_AIR_SUPPLY: i32 = 300;
+
+/// 每 game tick 的空气供给结算（26.1 `LivingEntity.baseTick` 水门分支，
+/// LivingEntity.java:417-439；`shouldTakeDrowningDamage` :487-489；
+/// decrease/increaseAirSupply :565-579）。返回 true = 本 tick 触发溺水
+/// 伤害（原版 `damageSources().drown(), 2.0F`，:428）。
+///
+/// - 眼下水 + 可溺水：供给 −1/tick（`decreaseAirSupply`，OXYGEN_BONUS
+///   属性默认 0 → 无跳过概率，:565-575）；`air ≤ −20` 时伤害并把供给
+///   清回 0（:425-429）→ 满气后第 320 tick 首伤、之后每 20 tick 一伤。
+/// - 眼下水 + 不可溺水（创造 `abilities.invulnerable`，:422-423）：
+///   不减、不伤、**也不回**（原版水下回气只有水下呼吸药水分支 :430-432）。
+/// - 眼未下水：+4/tick 恢复到上限（`increaseAirSupply` :577-579）。
+pub fn air_supply_tick(air: &mut i32, eyes_in_water: bool, can_drown: bool) -> bool {
+    if eyes_in_water {
+        if !can_drown {
+            return false;
+        }
+        *air -= 1;
+        if *air <= -20 {
+            // LivingEntity.java:425-429（清 0 + broadcastEvent(67) + hurt 2.0）。
+            *air = 0;
+            return true;
+        }
+        false
+    } else if *air < MAX_AIR_SUPPLY {
+        *air = (*air + 4).min(MAX_AIR_SUPPLY);
+        false
+    } else {
+        false
+    }
+}
+
+/// 游泳姿态状态机（26.1 `Entity.updateSwimming`，Entity.java:1558-1564；
+/// 创造飞行恒关 `Player.updateSwimming`，Player.java:1410-1416）。
+/// 原版判据（`isPassenger` 恒假，本仓无骑乘）：
+/// - 维持：`sprinting && isInWater`（身体触水即可，不必没顶）；
+/// - 起步：`sprinting && isUnderWater`（=wasEyeInWater && isInWater，
+///   Entity.java:1536-1538）`&& 脚下格流体为水`（blockPosition 的
+///   FluidState is WATER，:1562-1563）。
+///
+/// `sprinting` 传带饥饿门的冲刺态（LocalPlayer.java:1133 → Player.java
+/// :1569-1571，GameRuntime 侧已算）。
+pub fn swimming_tick(
+    prev: bool,
+    sprinting: bool,
+    in_water: bool,
+    under_water: bool,
+    feet_water: bool,
+    flying: bool,
+) -> bool {
+    if flying {
+        return false;
+    }
+    if prev {
+        sprinting && in_water
+    } else {
+        sprinting && under_water && feet_water
+    }
+}
+
+/// 雨粒子半径（26.1 客户端设置 `weatherRadius` 默认 **10**、范围 3..10，
+/// Options.java:178-184；调用点 LevelRenderer.java:1164。本仓无该设置
+/// 界面，直取默认值——设置接线登记遗留）。
+pub const RAIN_PARTICLE_RADIUS: i32 = 10;
+
+/// 雨粒子每 tick 生成数（`WeatherEffectRenderer.tickRainParticles`，
+/// WeatherEffectRenderer.java:232：`count = (int)(0.225·(2r+1)²·rainLevel²)`；
+/// ParticleStatus 减半分支 :231-232 本仓无粒子质量设置，恒 FULL）。
+pub fn rain_particle_count(rain_level: f32, radius: i32) -> u32 {
+    if rain_level <= 0.0 {
+        return 0;
+    }
+    let diameter = 2 * radius + 1;
+    let area = (diameter * diameter) as f32;
+    (0.225 * area * rain_level * rain_level) as u32
 }
 
 /// 射线 vs AABB（slab 法）：返回原点到入射点的距离（原点在盒内取 0）。

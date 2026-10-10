@@ -8,11 +8,14 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat::{attack_strength, cooldown_damage_scale, invulnerable_gate};
+use mcv_game::Player;
+use mcv_game::physics::{StepInput, step};
 use mcv_item::ItemStack;
 use mcv_logic::difficulty::Difficulty;
 use mcv_logic::game::{
-    ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, WorldView, block_hit_t, food_data_tick, move_exhaustion,
-    pick_attack_target, ray_aabb_t,
+    ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, MAX_AIR_SUPPLY, RAIN_PARTICLE_RADIUS, WorldView,
+    air_supply_tick, block_hit_t, food_data_tick, move_exhaustion, pick_attack_target,
+    rain_particle_count, ray_aabb_t, swimming_tick,
 };
 use mcv_render::{day_factor, sun_state};
 
@@ -308,4 +311,244 @@ fn wall_between_player_and_mob_blocks_attack() {
     assert!(pick_attack_target(eye, dir, &far, None).is_none());
     // 打偏（瞄准上方）不命中。
     assert!(pick_attack_target(eye, Vec3::new(0.0, 1.0, 0.0), &mobs, None).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// 水与移动还原（fix/water-movement）：空气/溺水 tick 数、步高、潜行防跌落、
+// 游泳状态机、雨粒子密度。Java 依据均为 src-26.1。
+// ---------------------------------------------------------------------------
+
+/// 测试用：按注册名查方块 id（与 engine tests/physics.rs::id_of 同款）。
+fn id_of(name: &str) -> u16 {
+    (0..mcv_core::BLOCKS.len() as u16)
+        .find(|i| mcv_core::BLOCKS[*i as usize].name == name)
+        .unwrap()
+}
+
+/// 单区块世界（x/z 0..15）：`floor_max_x` 列以内铺 y≤9 石头地表。
+fn floor_chunk(floor_max_x: i32) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
+    {
+        let mut v = h.voxels.write().unwrap();
+        for x in 0..floor_max_x {
+            for z in 0..16 {
+                for y in 0..=9usize {
+                    v[(y << 8) | (z << 4) | x as usize] = BlockId(1);
+                }
+            }
+        }
+    }
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+fn walk_world(h: Arc<ChunkHandle>) -> HashMap<ChunkPos, Arc<ChunkHandle>> {
+    let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    chunks.insert(ChunkPos::new(0, 0), h);
+    chunks
+}
+
+#[test]
+fn drown_air_supply_tick_table() {
+    // 满气 300（Entity.java:2739-2741 getMaxAirSupply）。
+    assert_eq!(MAX_AIR_SUPPLY, 300);
+    let mut air = MAX_AIR_SUPPLY;
+    // 水下前 300 tick：只耗不伤（air 300→0，LivingEntity.java:424/565-575）。
+    for t in 1..=300 {
+        assert!(
+            !air_supply_tick(&mut air, true, true),
+            "tick {t} 不应触发伤害"
+        );
+    }
+    assert_eq!(air, 0);
+    // air 0 → −20 再 19 tick 无伤，第 20 tick 触发（shouldTakeDrowningDamage
+    // `air ≤ −20`，LivingEntity.java:487-489 + 伤害 :425-428）。
+    for t in 1..=19 {
+        assert!(!air_supply_tick(&mut air, true, true), "尾段 tick {t}");
+    }
+    assert_eq!(air, -19);
+    assert!(
+        air_supply_tick(&mut air, true, true),
+        "第 320 tick 溺水伤害"
+    );
+    assert_eq!(air, 0, "伤害 tick 空气清 0（:426）");
+    // 之后每 20 tick 一伤。
+    for _ in 0..19 {
+        assert!(!air_supply_tick(&mut air, true, true));
+    }
+    assert!(
+        air_supply_tick(&mut air, true, true),
+        "第二发（每 20 tick）"
+    );
+    // 出水恢复 +4/tick（LivingEntity.java:577-579），上限 300。
+    let mut air = 0;
+    for _ in 0..74 {
+        assert!(!air_supply_tick(&mut air, false, true));
+    }
+    assert_eq!(air, 296, "+4/tick");
+    assert!(!air_supply_tick(&mut air, false, true));
+    assert_eq!(air, 300, "封顶 300");
+    for _ in 0..10 {
+        assert!(!air_supply_tick(&mut air, false, true));
+    }
+    assert_eq!(air, 300, "不越上限");
+    // 创造（abilities.invulnerable，LivingEntity.java:422-423）：水下
+    // 不耗不伤也不回（原版水下回气只走药水分支 :430-432）。
+    let mut air = MAX_AIR_SUPPLY;
+    for _ in 0..400 {
+        assert!(!air_supply_tick(&mut air, true, false), "创造免溺");
+    }
+    assert_eq!(air, MAX_AIR_SUPPLY);
+}
+
+#[test]
+fn swimming_state_machine_matches_update_swimming() {
+    // 维持：sprinting && isInWater（身体触水即可，Entity.java:1560）。
+    assert!(swimming_tick(true, true, true, false, false, false));
+    // 起步：sprinting && isUnderWater && 脚下格水（:1561-1563）。
+    assert!(swimming_tick(false, true, true, true, true, false));
+    assert!(
+        !swimming_tick(false, true, true, false, true, false),
+        "浅水（眼未没入）不起步"
+    );
+    assert!(
+        !swimming_tick(false, true, true, true, false, false),
+        "脚下非水格不起步"
+    );
+    assert!(
+        !swimming_tick(false, false, true, true, true, false),
+        "不按冲刺不起步"
+    );
+    // 松开冲刺 / 出水 → 退出。
+    assert!(!swimming_tick(true, false, true, true, true, false));
+    assert!(!swimming_tick(true, true, false, true, true, false));
+    // 创造飞行恒 false（Player.java:1410-1416）。
+    assert!(!swimming_tick(false, true, true, true, true, true));
+    assert!(!swimming_tick(true, true, true, true, true, true));
+}
+
+#[test]
+fn rain_particle_count_formula() {
+    // WeatherEffectRenderer.java:232 count = (int)(0.225·(2r+1)²·level²)。
+    assert_eq!(
+        rain_particle_count(0.0, RAIN_PARTICLE_RADIUS),
+        0,
+        "无雨不生成"
+    );
+    assert_eq!(rain_particle_count(1.0, 10), 99, "0.225·441 = 99.225 → 99");
+    assert_eq!(rain_particle_count(0.5, 10), 24, "0.225·441·0.25 → 24");
+    assert_eq!(RAIN_PARTICLE_RADIUS, 10, "Options.java:178-184 默认 10");
+    assert_eq!(rain_particle_count(1.0, 3), 11, "0.225·49 = 11.025 → 11");
+}
+
+#[test]
+fn step_height_is_vanilla_06() {
+    // Attributes.java:85-86 STEP_HEIGHT 默认 0.6（派单「我们 0.5」为误，
+    // 本仓此前无步高机制——见 consts.rs 注释）。
+    assert_eq!(mcv_game::consts::STEP_HEIGHT, 0.6);
+}
+
+#[test]
+fn walk_up_half_slab_without_jumping() {
+    // 自动上台阶（Entity.collide:1089-1106）：候选 = 脚底上方 ≤0.6 的
+    // 碰撞面。下半砖 0.5 ≤ 0.6 → 平地走路（不按跳）应登上。
+    let h = floor_chunk(16);
+    {
+        let slab = id_of("oak_slab");
+        let mut v = h.voxels.write().unwrap();
+        for z in 0..16usize {
+            v[(10 << 8) | (z << 4) | 5] = BlockId(slab); // state 0 = 下半砖
+        }
+    }
+    let chunks = walk_world(h);
+    let view = WorldView { chunks: &chunks };
+    let mut p = Player {
+        pos: Vec3::new(3.0, 10.0, 8.0),
+        ..Default::default()
+    };
+    let input = StepInput {
+        wish_dir: Vec3::X,
+        sprint: true,
+        ..Default::default()
+    };
+    // 单列半砖走过去还会走下来，所以验「600 步内存在踏上砖面的一瞬」
+    // （原版行为：踏上 → 走过 → 走下）。
+    let mut climbed = false;
+    for _ in 0..600 {
+        step(&view, &mut p, &input);
+        if p.pos.y > 10.45 && p.on_ground {
+            climbed = true;
+            break;
+        }
+    }
+    assert!(climbed, "600 步内应不跳登上半砖（STEP_HEIGHT 0.6 ≥ 0.5）");
+    assert!(
+        p.pos.y > 10.45 && p.pos.y < 10.6,
+        "半砖顶 10.5，got {}",
+        p.pos.y
+    );
+    assert!(p.pos.x > 4.6, "登临点在半砖列前缘，got {}", p.pos.x);
+}
+
+#[test]
+fn full_block_still_blocks_walking() {
+    // 1.0 > STEP_HEIGHT 0.6 → 无候选高度，走路撞墙不登（对比跳上一格台阶
+    // 既有测试 physics_calib::jump_onto_one_block）。
+    let h = floor_chunk(16);
+    {
+        let mut v = h.voxels.write().unwrap();
+        for z in 0..16usize {
+            v[(10 << 8) | (z << 4) | 5] = BlockId(1); // 整块石头
+        }
+    }
+    let chunks = walk_world(h);
+    let view = WorldView { chunks: &chunks };
+    let mut p = Player {
+        pos: Vec3::new(3.0, 10.0, 8.0),
+        ..Default::default()
+    };
+    let input = StepInput {
+        wish_dir: Vec3::X,
+        sprint: true,
+        ..Default::default()
+    };
+    for _ in 0..600 {
+        step(&view, &mut p, &input);
+    }
+    assert!(p.pos.y < 10.05, "不登整块，got {}", p.pos.y);
+    assert!(p.pos.x < 4.8, "停在墙前，got {}", p.pos.x);
+}
+
+#[test]
+fn sneak_edge_guard_blocks_falling() {
+    // 潜行防跌落（Player.maybeBackOffFromEdge，Player.java:880-933）：
+    // 地表止于 x=8（体素 0..=7），潜行走向边缘停在沿口、不坠；对照组
+    // 不潜行则走出边缘下落。
+    let mk = |sneak: bool| {
+        let chunks = walk_world(floor_chunk(8));
+        let view = WorldView { chunks: &chunks };
+        let mut p = Player {
+            pos: Vec3::new(5.0, 10.0, 8.0),
+            ..Default::default()
+        };
+        let input = StepInput {
+            wish_dir: Vec3::X,
+            sneak,
+            sprint: true,
+            ..Default::default()
+        };
+        for _ in 0..600 {
+            step(&view, &mut p, &input);
+        }
+        (p.pos.x, p.pos.y)
+    };
+    let (xs, ys) = mk(true);
+    assert!(ys > 9.9, "潜行不掉下去，got y={ys}");
+    assert!(xs > 7.0, "应走到近沿口，got x={xs}");
+    // AABB 后缘不能完全离开支撑面（canFallAtLeast 盒内缩 1e-7）：
+    // 中心 ≤ 8.3 − ε（半宽 0.3）。
+    assert!(xs < 8.35, "停在沿口内，got x={xs}");
+    let (xn, yn) = mk(false);
+    assert!(yn < 9.5, "不潜行走出边缘应下坠，got y={yn}");
+    assert!(xn > xs, "对照组走得更远");
 }
