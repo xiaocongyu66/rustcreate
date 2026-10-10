@@ -4,6 +4,7 @@
 //! [`CreativePicker`] 是创造模式物品选择页。
 //! 物品守恒是硬约束:`close()` 必须归还网格 + 光标的全部物品。
 
+use crate::game::GameRuntime;
 use mcv_item::crafting::{self, EMPTY_SLOT};
 use mcv_item::{HOTBAR_SLOTS, Hotbar, ItemStack, MAIN_SLOTS};
 
@@ -33,13 +34,14 @@ fn click_slot(slot: &mut ItemStack, cursor: &mut ItemStack, left: bool) {
         if cursor.is_empty() && slot.is_empty() {
             return;
         }
-        if !cursor.is_empty()
-            && !slot.is_empty()
-            && can_merge(cursor, slot)
-            && slot.count < Hotbar::max_stack(slot.item)
-        {
-            // 整段填进部分堆:移 min(cursor, 槽余量)。
+        if !cursor.is_empty() && !slot.is_empty() && can_merge(cursor, slot) {
             let max = Hotbar::max_stack(slot.item);
+            if slot.count >= max {
+                // 同类满槽 = 原地无操作(vanilla isSameItemSameComponents →
+                // safeInsert(cap=0),ACM:452-454):绝不把满堆"钓"进光标。
+                return;
+            }
+            // 整段填进部分堆:移 min(cursor, 槽余量)。
             let mv = cursor.count.min(max - slot.count);
             slot.count += mv;
             cursor.count -= mv;
@@ -131,25 +133,28 @@ impl CraftScreen {
         click_slot(hb.slot_mut(i), &mut self.cursor, left);
     }
 
-    /// 从结果槽取物(ACM:438-465 + ResultSlot.onTake)。`right` = true 右键取
-    /// ceil(半)(ACM:445);同物光标装不下时取部分(min(所需,光标余量),
-    /// Slot.tryRemove 语义,ACM:459-465)。成功则网格各占用格 −1(整体消耗
-    /// 一次,半取同样消耗)。
+    /// 从结果槽取物(ACM:438-465 + ResultSlot.onTake)。空光标:`right` = true
+    /// 取 ceil(半)(ACM:445)。光标同物(结果槽 mayPlace=false,落 ACM:459-465
+    /// 并堆分支)= tryRemove(结果数, 光标余量) 一次补满,**右键不分半**;
+    /// 装不下时取部分。成功则网格各占用格 −1(整体消耗一次,半取同样消耗)。
     pub fn take_result(&mut self, right: bool) -> bool {
         let Some(res) = self.result() else {
             return false;
         };
-        let want = if right {
+        let same_fill = !self.cursor.is_empty()
+            && self.cursor.item == res.item
+            && self.cursor.damage == 0
+            && self.cursor.enchants.is_empty();
+        // 光标同物(mayPlace=false 槽)= tryRemove(结果数, 光标余量) 一次
+        // 补满,右键不分半(ACM:459-465);空光标才走左整右半(ACM:445)。
+        let want = if right && !same_fill {
             res.count.div_ceil(2)
         } else {
             res.count
         };
         let take = if self.cursor.is_empty() {
             want
-        } else if self.cursor.item == res.item
-            && self.cursor.damage == 0
-            && self.cursor.enchants.is_empty()
-        {
+        } else if same_fill {
             let room = Hotbar::max_stack(res.item) - self.cursor.count;
             want.min(room)
         } else {
@@ -178,6 +183,50 @@ impl CraftScreen {
         }
         out.extend(self.grid.into_iter().filter(|s| !s.is_empty()));
         out
+    }
+
+    /// 原版关屏语义的两路拆分(CM:96-99 `removed`→`clearContainer` = 网格物
+    /// **drop 到世界**;carried 走 dropOrPlaceInInventory = 先背包后 drop 余量,
+    /// ACM:588-596):返回 (carried, 网格掉落清单),调用方分别按
+    /// add→drop 余量 / [`drop_container_items`] 处理,禁静默吞物(审计 #52)。
+    pub fn close_to_world(self) -> (Option<ItemStack>, Vec<ItemStack>) {
+        let cursor = if self.cursor.is_empty() {
+            None
+        } else {
+            Some(self.cursor)
+        };
+        (
+            cursor,
+            self.grid.into_iter().filter(|s| !s.is_empty()).collect(),
+        )
+    }
+}
+
+/// 把成堆物品丢进世界(原版 `clearContainer`→`Level.dropItem`,CM:96-99 /
+/// IM:87-94):容器界面关闭/死亡时归还网格与背包溢出余量的落地通道,
+/// 数据丢失级兜底(审计 #52:关屏满栏静默丢弃禁止)。拾取延迟同普通
+/// 挖掘掉落(PICKUP_DELAY),生成点 = 玩家上方 0.9(死亡掉落同基准)。
+pub fn drop_container_items(rt: &mut GameRuntime, stacks: &[ItemStack]) {
+    let at = rt.player.pos + glam::Vec3::new(0.0, 0.9, 0.0);
+    let mut seed = rt.game_ticks.wrapping_mul(6364136223846793005) | 1;
+    let mut rng = move || {
+        seed = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (seed >> 33) as u32
+    };
+    for s in stacks {
+        if s.is_empty() {
+            continue;
+        }
+        mcv_entity::spawn_item_drop(
+            &mut rt.mobs_app.world,
+            at,
+            s.item,
+            s.count,
+            mcv_entity::PICKUP_DELAY,
+            &mut rng,
+        );
     }
 }
 
@@ -429,6 +478,57 @@ mod tests {
             back.iter()
                 .all(|s| s.item == PLANKS || s.item == COBBLESTONE || s.item == STICK)
         );
+    }
+
+    #[test]
+    fn left_click_same_kind_full_slot_noop() {
+        // 审计 #36：同类满槽左键 no-op（vanilla isSameItemSameComponents →
+        // safeInsert(cap=0)，ACM:452-454），不许把满堆"钓"进光标。
+        let mut cs = CraftScreen::new(2);
+        cs.grid[0] = stack(COBBLESTONE, 64);
+        cs.cursor = stack(COBBLESTONE, 10);
+        cs.click_grid(0, true);
+        assert_eq!(cs.cursor.count, 10, "光标不许换到满堆");
+        assert_eq!(cs.grid[0].count, 64);
+        // 背包槽同判据。
+        let mut hb = Hotbar::empty();
+        hb.slots[0] = stack(COBBLESTONE, 64);
+        cs.cursor = stack(COBBLESTONE, 10);
+        cs.click_inv(0, true, &mut hb);
+        assert_eq!(cs.cursor.count, 10);
+        assert_eq!(hb.slots[0].count, 64);
+    }
+
+    #[test]
+    fn right_click_result_fills_same_kind_cursor() {
+        // 审计 #40：光标同物时右键结果槽 = ACM:459-465 一次补满，不分半。
+        // 木棍配方两板竖排 → 4 根；光标 60 根右键 → 直接 64（旧实现只 +2）。
+        let mut cs = CraftScreen::new(2);
+        cs.grid[0] = stack(PLANKS, 1);
+        cs.grid[2] = stack(PLANKS, 1);
+        cs.cursor = stack(STICK, 60);
+        assert!(cs.take_result(true));
+        assert_eq!(cs.cursor.count, 64, "右键补满 = min(结果数, 光标余量)");
+        assert!(cs.grid.iter().all(|s| s.is_empty()), "补满同样消耗网格");
+    }
+
+    #[test]
+    fn close_to_world_splits_cursor_and_grid_drops() {
+        // 审计 #52：关屏网格物走世界掉落通道（CM:96-99），carried 单独
+        // 归还（先背包后 drop 余量），两路不许混。
+        let mut cs = CraftScreen::new(2);
+        cs.grid[0] = stack(PLANKS, 3);
+        cs.grid[3] = stack(COBBLESTONE, 7);
+        cs.cursor = stack(STICK, 5);
+        let (cursor, drops) = cs.close_to_world();
+        assert_eq!(cursor.map(|s| (s.item, s.count)), Some((STICK, 5)));
+        assert_eq!(drops.len(), 2, "非空网格格全部进掉落清单");
+        assert!(drops.iter().any(|s| s.item == PLANKS && s.count == 3));
+        assert!(drops.iter().any(|s| s.item == COBBLESTONE && s.count == 7));
+        // 空格不进清单；光标空 → None。
+        let empty = CraftScreen::new(2);
+        let (c, d) = empty.close_to_world();
+        assert!(c.is_none() && d.is_empty());
     }
 
     #[test]
