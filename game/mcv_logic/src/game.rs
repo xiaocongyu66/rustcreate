@@ -1823,7 +1823,7 @@ impl GameRuntime {
                 let mut light_locked = handle.light.write().unwrap();
                 let hm_locked = handle.heightmap.read().unwrap();
                 let voxels: Vec<u16> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
-                let hm: Vec<u8> = hm_locked.to_vec();
+                let hm: Vec<i16> = hm_locked.to_vec();
                 let mut view = mcv_light::LightChunk {
                     voxels: &voxels,
                     light: &mut light_locked[..],
@@ -2022,7 +2022,7 @@ impl GameRuntime {
             Err(_) => return false,
         };
         let mut ids = vec![0u16; mcv_core::CHUNK_VOL];
-        let mut hm = [mcv_core::WORLD_MIN_Y; 256];
+        let mut hm = [mcv_core::WORLD_MIN_Y as i16; 256];
         if region
             .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut ids, &mut hm)
             .is_err()

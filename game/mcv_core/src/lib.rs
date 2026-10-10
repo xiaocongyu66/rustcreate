@@ -416,9 +416,9 @@ impl BlockId {
 
 /// Chunk voxel storage owned by Rust; C++ borrows per call.
 ///
-/// 内存预算（u16 加宽 + v6 几何 384 后）：体素 192 KiB/区块 + 光照 96 KiB
-/// + 高度图（i16×256）512 B。视距 8（17×17 = 289 区块）≈ 289 × 288.5 KiB
-/// ≈ 81 MiB 体素+光照常驻（刀 5 的 resident 断言按此重估）。
+/// 内存预算（u16 加宽 + v6 几何 384 后）：体素 192 KiB/区块、光照 96 KiB、
+/// 高度图（i16×256）512 B。视距 8（17×17 = 289 区块）≈ 289 × 288.5 KiB，
+/// 即约 81 MiB 体素+光照常驻（刀 5 的 resident 断言按此重估）。
 /// 网格缓冲（mcv_mesher，纯 Rust 自有缓冲）只存网格不存体素，预算不变。
 pub struct ChunkVoxels(pub Box<[BlockId; CHUNK_VOL]>);
 
