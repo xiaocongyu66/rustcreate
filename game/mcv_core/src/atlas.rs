@@ -313,7 +313,9 @@ pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
     for layer in 0..LAYERS {
         let mut work = [0u8; TILE_PX * TILE_PX * 4];
         let off = layer * TILE_PX * TILE_PX * 4;
-        work.copy_from_slice(&mip0[off..off + work.len()]);
+        // 长度表达式绝不能再借 work（copy_from_slice 的 &mut self 借用
+        // 覆盖整个调用，E0502——CI run 38094574994）：用常量长度。
+        work.copy_from_slice(&mip0[off..off + TILE_PX * TILE_PX * 4]);
         let cutout = work.chunks(4).any(|p| p[3] == 0);
         // 原始覆盖度只依赖 alpha，solidify 不改 alpha（alpha 保持 0），
         // 计算时机与原版先后均可（原版先 solidify 再测，:102-116）。
