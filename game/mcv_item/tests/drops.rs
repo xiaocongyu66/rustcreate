@@ -111,7 +111,7 @@ fn oak_leaves_three_independent_pools() {
     // 木棍数量上界 2：掷点序列 (100,100,0,1) → 树苗不中（100 ≥ 50）、
     // 苹果不中、木棍中（0 < 20）、数量掷点 1 % 2 = 1 → 1+1 = 2。
     let mut seq = {
-        let mut rolls = [100u32, 100, 0, 1];
+        let rolls = [100u32, 100, 0, 1];
         let mut i = 0usize;
         move || {
             let v = rolls[i.min(3)];
