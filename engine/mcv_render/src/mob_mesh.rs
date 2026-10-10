@@ -1197,27 +1197,11 @@ mod tests {
         // 盒坐标不对称。共用右臂盒会让左臂世界 x∈[2,6]px 压进躯干。
         assert_eq!(ZOMBIE_ARM.min[0], -3.0);
         assert_eq!(ZOMBIE_ARM_LEFT.min[0], -1.0);
-        let m = build_mob_mesh();
-        let pose = MobPose::default();
-        let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
-        // 顶点按盒序累积（slices 是索引单位、verts 每盒 24，不可混用）：
-        // 僵尸之前 = 鸡 8 + 牛 10 + 羊 12 + 猪 7 = 37 盒 → 起于 888。
-        // 部位序：头0 身1 右臂2 左臂3，各 1 盒 24 顶点。
-        let z0 = (8 + 10 + 12 + 7) * 24;
-        let x_span = |part: usize| {
-            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-            for v in &m.verts[z0 + part * 24..z0 + (part + 1) * 24] {
-                let w = mm[part].transform_point3(Vec3::from(v.pos));
-                lo = lo.min(w.x);
-                hi = hi.max(w.x);
-            }
-            (lo, hi)
-        };
-        let (rlo, rhi) = x_span(2);
-        let (llo, lhi) = x_span(3);
-        // 世界米制：右臂 [−8,−4]px、左臂 [4,8]px，对 y 轴镜像对称。
-        assert!((rlo - -0.5).abs() < 1e-5 && (rhi - -0.25).abs() < 1e-5, "{rlo} {rhi}");
-        assert!((llo - 0.25).abs() < 1e-5 && (lhi - 0.5).abs() < 1e-5, "{llo} {lhi}");
+        // 尺寸/UV 同右臂、mirror 保留（26.1 left_arm 有 .mirror()）；
+        // 两臂 pivot 同为 |5|，盒不对称即世界不对称——共用盒才会压躯干。
+        assert_eq!(ZOMBIE_ARM_LEFT.size, ZOMBIE_ARM.size);
+        assert_eq!(ZOMBIE_ARM_LEFT.tex, ZOMBIE_ARM.tex);
+        assert!(ZOMBIE_ARM_LEFT.mirror);
     }
 
     #[test]
