@@ -69,6 +69,20 @@ jobs:
         env:
           MCV_SCREENSHOT_DIR: ${{ github.workspace }}
         run: cargo test -p mcv_render --features gpu-tests --locked
+      # 真机 Mali 走 wgpu GLES 后端，而 lavapipe 恒 Vulkan——GLES 路径
+      # （顶点属性 int→float、纹理数组拆分数组、sRGB 数组采样）过去在 CI
+      # 从未执行过（gles_fallback_world_frame_smoke 拿不到 GL adapter 就
+      # 静默 return，正是 2026-10-10 真机纯色事故的盲区）。llvmpipe 提供
+      # EGL surfaceless GL。先以观察模式跑（continue-on-error）确认 runner
+      # GL 栈稳定后删掉该行使 GLES 成为硬门禁。
+      - name: GLES backend render tests (Mali device parity)
+        continue-on-error: true
+        env:
+          WGPU_BACKEND: gles
+        run: |
+          sudo apt-get install -y libegl1 libgl1-mesa-dri
+          cargo test -p mcv_render --features gpu-tests --locked -- \
+            gles_ terrain_sky_and_hud_render grass_surface_contains_pattern_not_flat_tint frustum_cull_does_not_shift_chunk_origins
       - name: Upload screenshot artifact
         if: always()
         uses: actions/upload-artifact@v4
