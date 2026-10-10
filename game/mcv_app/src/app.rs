@@ -34,6 +34,24 @@ enum Screen {
     Creative,
 }
 
+/// 该界面是否停游戏 tick —— 原版 `Screen.isPauseScreen()` 的本仓映射
+/// （26.1 Screen.java:426-428 默认 true；PauseScreen 无覆写 → 暂停；
+/// DeathScreen.java:149-151 与 AbstractContainerScreen.java:640-642
+/// 覆写 false → 死亡/容器界面世界照常跑）。本仓 Screen::Paused 是唯一
+/// isPauseScreen=true 的界面；redraw 据此门掉 fixed_step 喂步
+/// （Minecraft.java:1300-1308 每帧重算 pause、:1773 tick() `!this.pause` 门）。
+fn is_pause_screen(screen: Screen) -> bool {
+    matches!(screen, Screen::Paused)
+}
+
+/// 玩法输入（移动/跳跃/快捷栏/视角）是否放行 —— 原版 KeyMapping 只在
+/// Screen==null 时驱动游戏（有屏时键盘归屏幕，暂停菜单里玩家不能走动；
+/// 死亡界面输入由 game.rs 每步清零，此处一并门掉）。
+/// 加载态另由 `GamePhase::Loading` 门（LevelLoadingScreen 语义，先于本门）。
+fn gameplay_input_allowed(screen: Screen) -> bool {
+    matches!(screen, Screen::InGame)
+}
+
 /// 菜单按钮：命中测试用。
 struct MenuButton {
     id: &'static str,
@@ -194,6 +212,33 @@ fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
         winit::window::CursorGrabMode::None
     });
     w.set_cursor_visible(!grab);
+}
+
+/// 本帧要喂的固定步数（redraw 的 tick 喂入点，抽成纯函数供回归测试）。
+/// 暂停 = 0 步（B-1，原版 `!this.pause` 门）；否则累加墙钟差、按 1/60s
+/// 出步——追帧预算钳 0.2s（A-3 已登记债：原版 0.5s，本波不动）。
+fn feed_steps(paused: bool, step_accum: &mut f32, dt: f32) -> u32 {
+    if paused {
+        return 0;
+    }
+    *step_accum = (*step_accum + dt).min(0.2);
+    let mut n = 0;
+    while *step_accum >= 1.0 / 60.0 {
+        *step_accum -= 1.0 / 60.0;
+        n += 1;
+    }
+    n
+}
+
+/// 进暂停（波#127 B-1）：对齐 26.1 `Minecraft.setScreen`（:1119-1150）——
+/// `KeyMapping.releaseAll()`（:1148）在开屏瞬间释放全部按压态。我们若只门
+/// 分发不清账：暂停期间松开事件被屏幕栈挡掉，`input.forward/mining/placing`
+/// 悬真，恢复即“没人碰键盘也往前走/挖”。清 input 同时覆盖触摸按动态
+/// （game.rs 每步从 touch 镜像，恢复后以实际触摸态为准，无残留）。
+fn enter_pause(runtime: &mut GameRuntime, screen: &mut Screen, window: &Option<Arc<Window>>) {
+    runtime.input = Default::default();
+    *screen = Screen::Paused;
+    set_cursor(window, false);
 }
 
 /// 关合成界面（原版 `removed` 语义，审计 #52 数据丢失修复）：
@@ -1892,15 +1937,19 @@ impl ApplicationHandler for AppState {
                 // 移动/暂停全部不响应——原版 Screen 非 null 时游戏键不派发，
                 // 且 LevelLoadingScreen.shouldCloseOnEsc=false（:64-67）。
                 let loading = runtime.phase == mcv_logic::game::GamePhase::Loading;
+                // 波#127 B-1/D-5：屏幕栈门——原版 KeyMapping 只在 Screen==null
+                // 时驱动玩法（暂停菜单里 WASD/数字键不写 input、不切槽）。
+                // `playing` = 游玩屏幕 + 非加载态。
+                let playing = !loading && gameplay_input_allowed(self.screen);
                 // 快捷栏：MC 是 9 个独立键位，本引擎键位表单动作单键，暂直绑
                 if pressed
-                    && !loading
+                    && playing
                     && let Some(slot) = mcv_platform::keybind::hotbar_slot(code)
                 {
                     runtime.player.sel_slot = slot;
                 }
                 // F5 切视角不在 MC 键位表内(GT引擎扩展),保持硬编码
-                if pressed && !loading && code == KeyCode::F5 {
+                if pressed && playing && code == KeyCode::F5 {
                     runtime.cycle_camera();
                 }
                 // E 开/关背包(MC E=inventory)：生存/极限 = 随身 2x2 合成页，
@@ -1933,20 +1982,24 @@ impl ApplicationHandler for AppState {
                 }
                 if let Some(vk) = mcv_platform::keybind::vkey_of(code) {
                     match self.keymap.action_for(vk) {
-                        Some(Action::Forward) if !loading => runtime.input.forward = pressed,
-                        Some(Action::Back) if !loading => runtime.input.back = pressed,
-                        Some(Action::Left) if !loading => runtime.input.left = pressed,
-                        Some(Action::Right) if !loading => runtime.input.right = pressed,
-                        Some(Action::Jump) if !loading => runtime.input.jump = pressed,
-                        Some(Action::Sneak) if !loading => runtime.input.sneak = pressed,
-                        Some(Action::Sprint) if !loading => runtime.input.sprint = pressed,
-                        Some(Action::FlyToggle) if pressed && !loading => {
+                        // 波#127 B-1：玩法动作只认 `playing`（暂停/死亡界面里
+                        // 键盘不得再写 runtime.input——原版 KeyMapping 门）。
+                        Some(Action::Forward) if playing => runtime.input.forward = pressed,
+                        Some(Action::Back) if playing => runtime.input.back = pressed,
+                        Some(Action::Left) if playing => runtime.input.left = pressed,
+                        Some(Action::Right) if playing => runtime.input.right = pressed,
+                        Some(Action::Jump) if playing => runtime.input.jump = pressed,
+                        Some(Action::Sneak) if playing => runtime.input.sneak = pressed,
+                        Some(Action::Sprint) if playing => runtime.input.sprint = pressed,
+                        Some(Action::FlyToggle) if pressed && playing => {
                             runtime.player.flying = !runtime.player.flying;
                         }
                         Some(Action::Pause) if pressed && !loading => match self.screen {
                             Screen::InGame => {
-                                self.screen = Screen::Paused;
-                                set_cursor(&self.window, false);
+                                // 进暂停：releaseAll 语义清按压态（26.1 setScreen
+                                // :1148），否则暂停期间松开事件被门挡掉、恢复后
+                                // 输入悬真。
+                                enter_pause(runtime, &mut self.screen, &self.window);
                             }
                             Screen::Paused => {
                                 self.screen = Screen::InGame;
@@ -2404,10 +2457,15 @@ impl AppState {
             .last_time
             .replace(now)
             .map_or(0.016, |t| now.duration_since(t).as_secs_f32());
-        self.step_accum = (self.step_accum + dt).min(0.2);
-        while self.step_accum >= 1.0 / 60.0 {
+        // 波#127 B-1：暂停 = 停 tick（26.1 Minecraft.java:1300-1308 每帧重算
+        // pause = screen.isPauseScreen()；:1773 tick() 内 `!this.pause` 门住
+        // level/gameMode.tick）。死亡/容器界面 isPauseScreen=false，世界照常
+        // 跑（B-3 正例，本门保持其现状）。last_time 照常刷新：恢复后不拿暂停
+        // 时长追帧（追帧预算另有 0.2s 钳，A-3）。
+        let paused = is_pause_screen(self.screen);
+        let n = feed_steps(paused, &mut self.step_accum, dt);
+        for _ in 0..n {
             runtime.fixed_step(1.0 / 60.0);
-            self.step_accum -= 1.0 / 60.0;
         }
         // 开着背包死亡：面板收起 + 网格/光标走世界掉落实体
         // （drop_container_items 通道已接；fixed_step 死亡丢弃刚清完 36 格，
@@ -2507,8 +2565,16 @@ impl AppState {
         let mut models = [glam::Mat4::IDENTITY; 12];
         if has_player {
             let speed = glam::Vec3::new(runtime.player.vel.x, 0.0, runtime.player.vel.z).length();
-            self.walk_anim =
-                mcv_render::update_walk_animation(self.walk_anim.0, self.walk_anim.1, speed, dt);
+            // 暂停冻结走路动画（B-1 伴生：原版 limbSwing 在 tick 域推进，
+            // 暂停=不 tick=腿停摆；我们渲染帧驱动，需显式门）。
+            if !paused {
+                self.walk_anim = mcv_render::update_walk_animation(
+                    self.walk_anim.0,
+                    self.walk_anim.1,
+                    speed,
+                    dt,
+                );
+            }
             let pose = mcv_render::PlayerPose {
                 pos: runtime.player.pos,
                 yaw: runtime.player.yaw,
@@ -2583,5 +2649,84 @@ impl AppState {
             );
         }
         renderer.queue().present(frame);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 唯一临时存档目录（照 mcv_logic/tests/runtime.rs 的做法，测试并行安全）。
+    fn tmp_world(tag: &str) -> std::path::PathBuf {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (tag, std::process::id(), std::time::SystemTime::now()).hash(&mut h);
+        std::env::temp_dir().join(format!("mcv-app-{}-{:x}", tag, h.finish()))
+    }
+
+    /// B-1（暂停停 tick，行为级）：用真实 GameRuntime 走 redraw 的喂步路径
+    /// （feed_steps + fixed_step），InGame 下 1 秒墙钟 = 20 tick；进暂停后
+    /// 同样喂 1 秒，time_ticks 一格不动（昼夜/饥饿/mob AI 全在 fixed_step
+    /// 域内，随之冻结）；死亡/容器界面（isPauseScreen=false，26.1
+    /// DeathScreen.java:149 / AbstractContainerScreen.java:640）保持走时。
+    #[test]
+    fn paused_screen_freezes_world_ticks() {
+        let mut rt = GameRuntime::new_headless(11, tmp_world("pause-tick"), GameMode::Survival);
+        let mut acc = 0.0f32;
+        let feed = |rt: &mut GameRuntime, acc: &mut f32, paused: bool| {
+            for _ in 0..60 {
+                let n = feed_steps(paused, acc, 1.0 / 60.0);
+                for _ in 0..n {
+                    rt.fixed_step(1.0 / 60.0);
+                }
+            }
+        };
+        feed(&mut rt, &mut acc, false);
+        assert_eq!(rt.time_ticks, 20, "InGame 喂 1s 墙钟 = 20 tick（20 TPS）");
+
+        // 进暂停（走真实入口 enter_pause）：tick 冻结 + 按压态释放。
+        rt.input.forward = true;
+        rt.input.mining = true;
+        let mut screen = Screen::InGame;
+        enter_pause(&mut rt, &mut screen, &None);
+        assert_eq!(screen, Screen::Paused);
+        assert!(
+            !rt.input.forward,
+            "进暂停须 releaseAll（setScreen :1148 语义）"
+        );
+        assert!(!rt.input.mining, "挖/放按压态一并释放，恢复后无悬真");
+        let t0 = rt.time_ticks;
+        feed(&mut rt, &mut acc, is_pause_screen(screen));
+        assert_eq!(
+            rt.time_ticks, t0,
+            "暂停界面喂 1s 世界 0 tick（原版 !pause 门）"
+        );
+
+        // 正例保持：死亡/合成界面不停 tick。
+        for s in [Screen::Death, Screen::Crafting, Screen::Creative] {
+            assert!(!is_pause_screen(s), "{s:?} 非 isPauseScreen，世界照常跑");
+            feed(&mut rt, &mut acc, is_pause_screen(s));
+            assert_eq!(rt.time_ticks, t0 + 20, "{s:?} 界面下 1s 应再走 20 tick");
+        }
+    }
+
+    /// B-1/D-5（暂停拦输入）：玩法输入门只认 InGame——暂停菜单里 WASD/跳/
+    /// 潜行/数字键不得再写 runtime.input（原版 KeyMapping 在 Screen!=null
+    /// 时不驱动游戏；键盘分发的 `playing` 门直接用本函数）。
+    #[test]
+    fn pause_menu_blocks_gameplay_input() {
+        assert!(gameplay_input_allowed(Screen::InGame));
+        for s in [
+            Screen::Paused,
+            Screen::Death,
+            Screen::Crafting,
+            Screen::Creative,
+            Screen::KeyBinds,
+        ] {
+            assert!(
+                !gameplay_input_allowed(s),
+                "{s:?} 界面有屏，玩法键须被屏幕栈拦截"
+            );
+        }
     }
 }
