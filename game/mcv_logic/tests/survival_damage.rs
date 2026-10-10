@@ -64,13 +64,13 @@ fn build_platform(rt: &mut GameRuntime) {
         let mut v = h.voxels.write().unwrap();
         for (x, z) in [(8usize, 8usize), (8, 7), (7, 8)] {
             for y in 0..70usize {
-                v[y << 8 | z << 4 | x] = BlockId(1);
+                v[mcv_core::vidx(x, y as i32, z)] = BlockId(1);
             }
         }
         for y in 70..86usize {
             for z in 7..10usize {
                 for x in 7..10usize {
-                    v[y << 8 | z << 4 | x] = BlockId(0);
+                    v[mcv_core::vidx(x, y as i32, z)] = BlockId(0);
                 }
             }
         }
@@ -84,7 +84,7 @@ fn build_platform(rt: &mut GameRuntime) {
 /// 单格写体素（区块 (0,0) 内）。
 fn set_block(rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: BlockId) {
     let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
-    h.voxels.write().unwrap()[y << 8 | z << 4 | x] = id;
+    h.voxels.write().unwrap()[mcv_core::vidx(x, y as i32, z)] = id;
     h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
 }
 

@@ -26,7 +26,7 @@ fn world_chunk(lit: bool) -> HashMap<ChunkPos, Arc<ChunkHandle>> {
         let mut vox = h.voxels.write().unwrap();
         for ly in 0..64usize {
             for i in 0..256usize {
-                vox[(ly << 8) | i] = BlockId(1); // stone
+                vox[mcv_core::vidx(i & 15, ly as i32, i >> 4)] = BlockId(1); // stone
             }
         }
     }
@@ -416,7 +416,7 @@ fn wall_blocks_target_acquisition() {
         // x=10 整面石墙（y 64..80），切断 (8.5→13.5) 视线。
         for y in 64..80usize {
             for z in 0..16usize {
-                vox[(y << 8) | (z << 4) | 10] = BlockId(1);
+                vox[mcv_core::vidx(10, y as i32, z)] = BlockId(1);
             }
         }
     }
@@ -449,7 +449,7 @@ fn pathfinds_around_two_high_wall() {
         let mut vox = h.voxels.write().unwrap();
         // 单列 2 格高墙 x=10, z=8, y=64/65（切断直线，不挡绕行）。
         for y in 64..66usize {
-            vox[(y << 8) | (8 << 4) | 10] = BlockId(1);
+            vox[mcv_core::vidx(10, y as i32, 8)] = BlockId(1);
         }
     }
     let player = Vec3::new(12.0, 64.0, 8.0);
