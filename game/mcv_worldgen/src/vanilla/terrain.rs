@@ -448,6 +448,8 @@ pub struct ColumnState {
     pub offset: f64,
     pub factor: f64,
     pub unscaled_jag: f64,
+    /// 列常量（采样点 (bx·1500, 0, bz·1500) 与 y 无关，随列提升出体素循环）。
+    pub jag_noise: f64,
     pub surface_ours: i32,
     pub ocean: bool,
 }
@@ -489,10 +491,19 @@ impl Orchestrator {
         let surface_mc = (128.0 + 128.0 * offset).clamp(-64.0, 320.0);
         let surface_ours =
             (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(4, SY - 10);
+        // jaggedness 噪声列常量：采样点 (bx·1500, 0, bz·1500) 不随 y 变，
+        // 提升到列级（每体素省 1 次 3D 噪声，值逐位不变）。
+        let jag_noise = smooth::noise3_ImproveXZ(
+            crate::vanilla::channel_seed(self.world_seed, 0x7A66ED),
+            f64::from(block_x) * 1500.0,
+            0.0,
+            f64::from(block_z) * 1500.0,
+        ) as f64;
         ColumnState {
             offset,
             factor,
             unscaled_jag,
+            jag_noise,
             surface_ours,
             ocean: surface_ours <= SEA,
         }
@@ -505,13 +516,7 @@ impl Orchestrator {
         let bz = f64::from(block_z);
         let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
         // jaggedness = unscaled · halfNegative(jaggedNoise @ bx·1500)
-        let jag_noise = smooth::noise3_ImproveXZ(
-            crate::vanilla::channel_seed(self.world_seed, 0x7A66ED),
-            bx * 1500.0,
-            0.0,
-            bz * 1500.0,
-        ) as f64;
-        let jag = cs.unscaled_jag * half_negative(jag_noise);
+        let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
         // initial = 4 · quarterNegative(factor·(depth + jag))
         let depth = y_clamp(y_mc) + cs.offset;
         let initial = 4.0 * quarter_negative(cs.factor * (depth + jag));
@@ -612,6 +617,11 @@ pub fn generate(
             }
         }
     }
+    // 高度图与 cpp kernel pass 3 / 存档重算（crate::recompute_heightmap）
+    // 同一谓词（damp!=0 且非流体）——直接复用，三方由构造保证逐块一致。
+    // （此前 vanilla 路径漏写高度图，恒 0 提交：出生列搜索全部 reject。）
+    let hm = crate::recompute_heightmap(out_voxels);
+    out_heightmap[..256].copy_from_slice(&hm[..]);
     Ok(())
 }
 

@@ -45,3 +45,11 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# 地形 2.0：vanilla 管线每体素 ~15-20 次 OS2S 噪声求值，dev 无优化下单块
+# 数百 ms——mcv_logic 流式就绪回归（600/1200 帧窗）在 CI debug 构建下等不
+# 到 7×7 出生窗就绪。仅对本 crate 在 dev profile 开 O3；Rust 无 fast-math
+#（逐操作 IEEE，无 FMA 收缩/结合性重排），tests/os2s_golden 位型锁与
+# legacy↔oracle 对拍不受影响。
+[profile.dev.package.mcv_worldgen]
+opt-level = 3

@@ -8,7 +8,7 @@
 //! 采样口径：3D 指标用列/单元级函数直接采样（生成路径另有全区块确定性
 //! 测试锁字节），同 seed 下与分块生成同构、成本可控。
 
-use mcv_core::{BlockId, ChunkPos};
+use mcv_core::ChunkPos;
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SEED: u64 = 0x7E_A20_0B1_u64;
@@ -108,10 +108,8 @@ fn cave_air_in_bands() {
         let wz = (rng.below(1024) as i32) - 512;
         let cs = orch.column_state(wx, wz);
         let y = rng.below(80) as i32 + 8; // 地下主体带
-        if y < cs.surface_ours {
-            if orch.density(&cs, wx, y, wz) <= 0.0 {
-                air += 1;
-            }
+        if y < cs.surface_ours && orch.density(&cs, wx, y, wz) <= 0.0 {
+            air += 1;
         }
     }
     let pct = 100.0 * air as f64 / total as f64;
