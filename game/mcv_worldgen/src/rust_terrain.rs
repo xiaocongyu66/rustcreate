@@ -230,7 +230,7 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
         if !(0..SY).contains(&y) {
             continue;
         }
-        let r = if dy <= -1 { 2 } else { 1 };
+        let r: i32 = if dy <= -1 { 2 } else { 1 };
         for dx in -r..=r {
             for dz in -r..=r {
                 if dy == 1 && dx.abs() + dz.abs() > 1 {
