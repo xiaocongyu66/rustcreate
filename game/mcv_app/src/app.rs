@@ -131,8 +131,10 @@ struct AppState {
     walk_anim: (f32, f32),
     /// 键位映射（MC KeyBindingRegistry 对应物；持久化 keybindings.txt）
     keymap: mcv_game::keymap::KeyMap,
-    /// 键位重映射捕获状态机（见 binds_ui）
-    binds: crate::binds_ui::BindCapture,
+    /// mcv_ui GUI 上下文（GUI scale 换算；M8b 试点：KeyBinds 屏）
+    ui_ctx: mcv_ui::UiContext,
+    /// mcv_ui 屏幕栈（KeyBinds 屏已在栈上；其余屏迁移清单见报告）
+    ui_stack: mcv_ui::ScreenStack,
     /// 合成界面状态（仅 Screen::Crafting 期间 Some）。
     craft: Option<mcv_logic::ui::CraftScreen>,
     /// 创造取物页状态（仅 Screen::Creative 期间 Some）。
@@ -725,128 +727,19 @@ impl AppState {
                 );
             }
             Screen::KeyBinds => {
-                use mcv_game::keymap::Action;
-                let lang = self.lang();
-                q.extend(text::text_quads_centered(
-                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Title),
-                    w * 0.5,
-                    12.0 * s,
-                    s,
-                    [1.0, 1.0, 1.0, 1.0],
-                ));
-                // 16 行动作行 + 底部三按钮；行高自适应窗口高度
-                let top = 26.0 * s;
-                let y_btn = h - (btn_h + 4.0 * s);
-                let avail = (y_btn - 8.0 * s - top).max(16.0 * s);
-                let row_h = (avail / Action::ALL.len() as f32).min(16.0 * s);
-                for (i, a) in Action::ALL.iter().enumerate() {
-                    let y = top + i as f32 * row_h;
-                    let capturing = self.binds.state == crate::binds_ui::Capture::Capturing(*a);
-                    let conflict = self.binds.conflict == Some(*a);
-                    // 行背景：button 贴图染色（捕获=青，冲突=红）。素材红线
-                    // （2026-10）：缺素材不画纯色矩形假按钮行，仅保留文字。
-                    let tint = if conflict {
-                        [1.0, 0.5, 0.5, 1.0]
-                    } else if capturing {
-                        [0.6, 0.85, 1.0, 1.0]
-                    } else {
-                        [1.0, 1.0, 1.0, 1.0]
-                    };
-                    if let Some(g) = gui {
-                        q.extend(g.nine_slice(
-                            if capturing { "button_hl" } else { "button" },
-                            x,
-                            y,
-                            btn_w,
-                            row_h,
-                            3,
-                            s,
-                            tint,
-                        ));
-                    }
-                    // 左动作名 + 右当前键；过宽时等比缩小（mc_button 同款策略）
-                    let label = crate::binds_ui::action_label(lang, *a);
-                    let key = if capturing {
-                        crate::binds_ui::ui_text(lang, crate::binds_ui::Text::PressKey)
-                    } else {
-                        self.keymap.get(*a).display()
-                    };
-                    let max_w = (btn_w - 8.0 * s).max(8.0);
-                    let lw = text::text_width(label, s);
-                    let kw = text::text_width(key, s);
-                    let ts = if lw + kw > max_w {
-                        s * max_w / (lw + kw)
-                    } else {
-                        s
-                    };
-                    let ty = y + (row_h - 8.0 * ts) * 0.5;
-                    let label_col = if capturing {
-                        [0.7, 0.9, 1.0, 1.0]
-                    } else if conflict {
-                        [1.0, 0.55, 0.55, 1.0]
-                    } else {
-                        [1.0, 1.0, 1.0, 1.0]
-                    };
-                    q.extend(text::text_quads(label, x + 4.0 * s, ty, ts, label_col));
-                    q.extend(text::text_quads(
-                        key,
-                        x + btn_w - 4.0 * s - text::text_width(key, ts),
-                        ty,
-                        ts,
-                        [1.0, 1.0, 1.0, 1.0],
-                    ));
-                    self.menu_hot.push(MenuButton {
-                        id: crate::binds_ui::BIND_IDS[i],
-                        x,
-                        y,
-                        w: btn_w,
-                        h: row_h,
-                    });
+                // M8b 试点：按键重映射屏迁入 mcv_ui 屏幕栈——布局/命中/
+                // 三态贴图/tooltip 全在框架内，此处只做接线（逻辑像素）。
+                self.ui_ctx.update(w as i32, h as i32, 0);
+                if let Some(top) = self.ui_stack.top_mut()
+                    && let Some(kb) = top
+                        .as_any()
+                        .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
+                {
+                    kb.refresh_rows(&self.keymap);
                 }
-                // 底部：恢复默认 / 保存 / 返回（一行三等分）
-                let bw3 = (btn_w - gap * 2.0) / 3.0;
-                Self::mc_button(
-                    &mut q,
-                    &mut self.menu_hot,
-                    gui,
-                    hover,
-                    "bind_reset",
-                    x,
-                    y_btn,
-                    bw3,
-                    btn_h,
-                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Restore),
-                    s,
-                    false,
-                );
-                Self::mc_button(
-                    &mut q,
-                    &mut self.menu_hot,
-                    gui,
-                    hover,
-                    "bind_save",
-                    x + bw3 + gap,
-                    y_btn,
-                    bw3,
-                    btn_h,
-                    crate::binds_ui::ui_text(lang, crate::binds_ui::Text::Save),
-                    s,
-                    false,
-                );
-                Self::mc_button(
-                    &mut q,
-                    &mut self.menu_hot,
-                    gui,
-                    hover,
-                    "bind_back",
-                    x + (bw3 + gap) * 2.0,
-                    y_btn,
-                    bw3,
-                    btn_h,
-                    crate::i18n::t(lang, "gui.back"),
-                    s,
-                    false,
-                );
+                let mut g = mcv_ui::UiGraphics::new(&self.ui_ctx, (t * 1000.0) as u64);
+                self.ui_stack.draw(&mut g, gui);
+                q.extend(g.into_quads());
             }
             Screen::Paused => {
                 let lang = self.lang();
@@ -1196,8 +1089,86 @@ impl AppState {
         self.cached_device.clone()
     }
 
+    // ---- mcv_ui 屏幕栈接线（M8b 试点：KeyBinds 屏）----
+
+    /// 打开按键重映射屏：压 mcv_ui 屏幕栈（对照 minecraft setScreen）。
+    fn open_keybinds(&mut self) {
+        let (w, h) = match self.surface.as_ref() {
+            Some(sp) => (sp.config.width as i32, sp.config.height as i32),
+            None => (0, 0),
+        };
+        self.ui_ctx.update(w, h, 0);
+        self.ui_stack.push(
+            Box::new(crate::binds_ui::KeyBindsScreen::new(self.lang())),
+            &self.ui_ctx,
+        );
+        self.screen = Screen::KeyBinds;
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// 关闭按键重映射屏：pop 触发 on_close（取消捕获）后回设置页。
+    fn close_keybinds(&mut self) {
+        self.ui_stack.pop();
+        self.screen = Screen::Settings;
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// mcv_ui 控件事件 → 键位屏动作（行=捕获，底部=恢复/保存/返回）。
+    fn handle_binds_events(&mut self) {
+        let events = {
+            let Some(top) = self.ui_stack.top_mut() else {
+                return;
+            };
+            let Some(kb) = top
+                .as_any()
+                .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
+            else {
+                return;
+            };
+            kb.take_events()
+        };
+        for ev in events {
+            let mcv_ui::widget::UiEvent::Click { id } = ev else {
+                continue;
+            };
+            if id < mcv_game::keymap::Action::ALL.len() {
+                if let Some(top) = self.ui_stack.top_mut()
+                    && let Some(kb) = top
+                        .as_any()
+                        .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
+                {
+                    kb.begin_row(id, &mut self.keymap);
+                }
+            } else if id == crate::binds_ui::ID_RESET {
+                if let Some(top) = self.ui_stack.top_mut()
+                    && let Some(kb) = top
+                        .as_any()
+                        .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
+                {
+                    kb.restore_defaults(&mut self.keymap);
+                }
+            } else if id == crate::binds_ui::ID_SAVE {
+                self.save_keybinds();
+            } else if id == crate::binds_ui::ID_BACK {
+                self.close_keybinds();
+            }
+        }
+    }
+
     /// 菜单指针点击（桌面鼠标/触屏统一入口）。
     fn handle_menu_pointer(&mut self, x: f64, y: f64) {
+        if self.screen == Screen::KeyBinds {
+            // mcv_ui 屏幕栈路由：物理 → 逻辑像素；栈非空即消费（关闭时
+            // 输入穿透规则：屏幕打开期间游戏输入不派发）
+            let (lx, ly) = self.ui_ctx.to_logical(x as f32, y as f32);
+            self.ui_stack.mouse_down(lx, ly, 0);
+            self.handle_binds_events();
+            return;
+        }
         if self.screen == Screen::Worlds {
             let (px, py) = (x as f32, y as f32);
             let hit = self.world_hot.iter().find(|(_, bx, by, bw, bh)| {
@@ -1262,25 +1233,8 @@ impl AppState {
             (Screen::Settings, "clouds") => self.set_clouds = (self.set_clouds + 1) % 3,
             (Screen::Settings, "lang") => self.set_lang = (self.set_lang + 1) % 2,
             (Screen::Settings, "back") => self.screen = Screen::Main,
-            (Screen::Settings, "keybinds") => {
-                self.binds.cancel();
-                self.screen = Screen::KeyBinds;
-            }
-            (Screen::KeyBinds, "bind_reset") => {
-                self.keymap.restore_default();
-                self.binds.cancel();
-            }
-            (Screen::KeyBinds, "bind_save") => self.save_keybinds(),
-            (Screen::KeyBinds, "bind_back") => {
-                self.binds.cancel();
-                self.screen = Screen::Settings;
-            }
-            (Screen::KeyBinds, id) => {
-                // 动作行点击 → 进入捕获，下一次按键重绑
-                if let Some(i) = crate::binds_ui::bind_index_of(id) {
-                    self.binds.begin(mcv_game::keymap::Action::ALL[i]);
-                }
-            }
+            (Screen::Settings, "keybinds") => self.open_keybinds(),
+            // KeyBinds 屏的点击已改走 mcv_ui 屏幕栈（handle_binds_events）
             (Screen::Paused, "resume") => self.screen = Screen::InGame,
             (Screen::Paused, "savequit") => self.quit_to_menu(false),
             (Screen::Death, "respawn") => {
@@ -1540,16 +1494,26 @@ impl ApplicationHandler for AppState {
                     },
                 ..
             } => {
-                // 键位界面：键盘只服务重映射捕获，不回灌游戏/暂停逻辑
+                // 键位界面：键盘只服务重映射捕获（等待按键模态），不回灌
+                // 游戏/暂停逻辑；未捕获时 Esc 关屏（走屏幕栈 on_close）
                 if self.screen == Screen::KeyBinds {
                     if state == ElementState::Pressed
                         && let Some(vk) = mcv_platform::keybind::vkey_of(code)
                     {
-                        if matches!(self.binds.state, crate::binds_ui::Capture::Capturing(_)) {
-                            self.binds.key_down(&mut self.keymap, vk);
-                        } else if vk == mcv_game::keymap::VKey::Escape {
-                            // 未在捕获时 Esc = 退出键位界面（MC 行为）
-                            self.screen = Screen::Settings;
+                        let esc = vk == mcv_game::keymap::VKey::Escape;
+                        let mut close = false;
+                        if let Some(top) = self.ui_stack.top_mut()
+                            && let Some(kb) = top
+                                .as_any()
+                                .downcast_mut::<crate::binds_ui::KeyBindsScreen>()
+                        {
+                            let consumed = kb.key_input(Some(vk), &mut self.keymap);
+                            if esc && !consumed {
+                                close = true;
+                            }
+                        }
+                        if close {
+                            self.close_keybinds();
                         }
                         if let Some(w) = self.window.as_ref() {
                             w.request_redraw();
@@ -1634,7 +1598,8 @@ impl ApplicationHandler for AppState {
                             Screen::Death => {} // MC：死亡界面 Esc 无效
                             Screen::Main => event_loop.exit(),
                             // 键位界面的按键在入口已被拦截，此为穷尽性兜底
-                            Screen::KeyBinds => self.screen = Screen::Settings,
+                            // （走 close_keybinds 保证栈同步弹出）
+                            Screen::KeyBinds => self.close_keybinds(),
                         },
                         // Inventory(F)/Debug(F3)/Screenshot(F2)/PickBlock：
                         // 引擎侧功能属波4（背包/F3/截图），先接分发留位
@@ -1643,7 +1608,11 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                if self.screen == Screen::InGame
+                if self.screen == Screen::KeyBinds {
+                    // mcv_ui 悬停路由（物理 → 逻辑像素；tooltip 延迟基准）
+                    let (lx, ly) = self.ui_ctx.to_logical(position.x as f32, position.y as f32);
+                    self.ui_stack.mouse_move(lx, ly);
+                } else if self.screen == Screen::InGame
                     && let (Some(runtime), Some(last)) = (self.runtime.as_mut(), self.last_cursor)
                 {
                     runtime.look(position.x - last.0, position.y - last.1);
@@ -1682,6 +1651,24 @@ impl ApplicationHandler for AppState {
                         && let Some(cur) = self.last_cursor
                     {
                         self.handle_craft_pointer(cur.0, cur.1, button == MouseButton::Left);
+                    }
+                    return;
+                }
+                // 键位界面：按下/松开都路由给 mcv_ui 屏幕栈（滑杆松开
+                // 音效等依赖 release 事件）。
+                if self.screen == Screen::KeyBinds {
+                    if let Some(cur) = self.last_cursor {
+                        let (lx, ly) = self.ui_ctx.to_logical(cur.0 as f32, cur.1 as f32);
+                        let b = if button == MouseButton::Left { 0 } else { 1 };
+                        match state {
+                            ElementState::Pressed => {
+                                self.ui_stack.mouse_down(lx, ly, b);
+                                self.handle_binds_events();
+                            }
+                            ElementState::Released => {
+                                self.ui_stack.mouse_up(lx, ly, b);
+                            }
+                        }
                     }
                     return;
                 }

@@ -52,7 +52,7 @@
 | 列表式选项页（滑条/循环钮，`OptionsList`） | 🔨 | 现为 +/− 按钮堆叠，无滑条控件（`AbstractOptionSliderButton`） |
 | 视频子菜单（`VideoSettingsScreen`：FOV/粒子/阴影/实体距离/垂直同步/帧率上限/云雾距离…） | 🔨 | 只有渲染距离 + 云三态 |
 | 鼠标子菜单（灵敏度/Y 反转/滚动） | 🔨 | 只有灵敏度 |
-| 按键绑定（`ControlsScreen`/`KeyBindsScreen`：改键/搜索/重置） | ⬜ | `mcv_game/keymap.rs` 已建 Action→键位表，但 **app.rs 未接**（硬编码 match），也无改键 UI |
+| 按键绑定（`ControlsScreen`/`KeyBindsScreen`：改键/搜索/重置） | 🔨 | KeyBindsScreen 已迁 `mcv_ui` 屏幕栈（改键捕获/冲突提示/恢复默认/保存）；搜索与逐项重置未做 |
 | 声音子菜单（`SoundOptionsScreen` 分类音量） | ⬜ | mcv_audio 有混音器但无音量 UI |
 | 语言列表（`LanguageSelectScreen`：可搜索全量列表） | 🔨 | EN↔CN 二态切换；34 个 key 待扩充 |
 | 聊天设置/无障碍设置 | ⬜ | 依赖聊天/字体缩放功能 |
@@ -121,7 +121,7 @@
 | 工作台 `CraftingScreen` 3×3 + 输出格（`mcv_item::crafting` 逻辑已有！） | ⬜ | 只差 UI 粘合层 |
 | 配方书（`recipebook/*`，知识解锁 + 一键合成） | ⬜ | 波5 |
 | 方块容器 UI（箱子/熔炉 `ContainerScreen` 176×(114+18×行)） | ⬜ | 等箱子/熔炉方块存在再说 |
-| 拖拽/拆分堆叠/Shift 快速移动（`AbstractContainerScreen` 交互模型） | ⬜ | 触摸端：点选→点放 两段式替代拖拽 |
+| 拖拽/拆分堆叠/Shift 快速移动（`AbstractContainerScreen` 交互模型） | 🔨 | `mcv_ui::slot` 容器槽位状态机已建（doClick 纯数据移植 + 三类拖拽分发 + quickcraft）；背包屏接线待做（现 craft_ui 临时接线迁过去） |
 | 掉落物拾取（挖掘产物进背包，`ItemEntity`） | ⬜ | 现在挖掉方块直接消失，无掉落逻辑接物品 |
 
 ## 11. 其它原版 Screen（对照后建议处理）

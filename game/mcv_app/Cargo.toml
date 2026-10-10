@@ -23,6 +23,7 @@ mcv_platform.workspace = true
 mcv_game.workspace = true
 mcv_render.workspace = true
 mcv_save.workspace = true
+mcv_ui.workspace = true
 mcv_audio.workspace = true
 glam.workspace = true
 
