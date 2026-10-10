@@ -430,7 +430,7 @@ fn can_place_block_rules() {
 /// 嵌入固体态的单轴推进：只应就近推出所嵌盒的最近面，绝不能隔着整块
 /// 向反方向瞬移（沙坑挣扎回归锁：玩家嵌在 x∈[2,3] 的沙格内向 -X 移动，
 /// 旧实现把「前方格 max.x=3.0」也当候选，`max` 选中 3.0 后钳位面落在
-/// 玩家身后 1.17 m 处，delta 修正直接把玩家甩到沙块东侧——每帧在沙里
+/// 玩家身后 1.5 m 处，delta 修正直接把玩家甩到沙块东侧——每帧在沙里
 /// 被弹来弹去，即真机“老是能到沙子里面”的挣扎表现；新实现过滤位于
 /// 自身反向边界之后的候选面，只就近推到 x≈2.0 的紧邻面）。
 #[test]
@@ -441,7 +441,7 @@ fn embedded_player_ejects_nearest_face_not_through_block() {
     world.set(1, 1, 0, STONE);
     world.set(2, 1, 0, STONE);
 
-    // 嵌入 [1,2]∪[2,3] 的沙面（脚底 x=1.9，盒 x∈[1.9,2.5]），向 -X 推：
+    // 嵌入 [1,2]∪[2,3] 的沙面（脚底中心 x=1.9，盒 x∈[1.6,2.2]），向 -X 推：
     // 旧实现候选 {2.0, 3.0} 取 max=3.0 → 玩家被甩到 x≈3.0；新实现只接受
     // max.x ≤ 自身 max 边界的候选 → 面=2.0，就近推出。
     let mut p = ground_player(1.9, 1.0, 0.5);
@@ -459,7 +459,7 @@ fn embedded_player_ejects_nearest_face_not_through_block() {
     let mut p = ground_player(2.45, 1.0, 0.5);
     p.vel = Vec3::new(4.0, 0.0, 0.0);
     let mut aabb = Aabb::from_player(p.pos);
-    // 盒 x∈[2.45,3.05]：+X 推进后候选 {2.0(身后，过滤), 3.0} → 面=3.0。
+    // 盒 x∈[2.15,2.75]：+X 推进后候选 {2.0(身后，过滤), 3.0} → 面=3.0。
     assert!(move_axis(&world, &mut p, &mut aabb, Axis::X, 0.066));
     assert!(
         aabb.max.x > 2.5,
