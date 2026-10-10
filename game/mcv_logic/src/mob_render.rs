@@ -1,11 +1,12 @@
 //! mob 渲染拼装：从 mobs ECS World 收集 [`MobInstance`] 供 `Scene.mobs`。
 //!
-//! 主控接线（集成点，见报告）：
-//! 1. `GameRuntime::fixed_step` 里在 mob AI/物理之后调用
-//!    [`collect_mob_instances`]（或带视距裁剪的 [`collect_mob_instances_in`]），
-//!    缓存到运行时（如 `rt.mob_draw_cache`）；
-//! 2. mcv_app 的主场景装配处把 `scene.mobs` 指向该缓存；
-//! 3. 贴图上传已由 `Renderer::new` 内建（assets 根存在即自动加载）。
+//! 主控接线（已落地）：
+//! 1. mcv_app 的 in-game 场景装配处每帧调用 [`collect_mob_instances_in`]（视距
+//!    裁剪 = 渲染距离），结果以 `Some(&instances[..])` 喂 `scene.mobs`；
+//! 2. 贴图上传由 `Renderer::new` 内建（assets 根存在即自动加载 9 层数组）；
+//! 3. 依赖面：被收集的 World 须注册被动组件（WanderState/AnimState——
+//!    read 未注册类型会 panic），GameRuntime 构造时统一注册。敌对怪
+//!    不持有这两组件，姿态走零相位静止路径，不 panic。
 
 use glam::Vec3;
 use mcv_ecs::World;
@@ -14,18 +15,23 @@ use mcv_ecs::World;
 use mcv_render::MobInstance;
 use mcv_render::mob_mesh::{MAX_MOB_PARTS, MobModelKind, MobPose, mob_model_matrices};
 
-/// 把 `mcv_entity::MobId` 映射到渲染侧模型种类（缺贴图变体时用 temperate）。
+/// 把 `mcv_entity::MobId` 映射到渲染侧模型种类（缺贴图变体时用 temperate；
+/// 敌对四怪各自有专属贴图层）。
 pub const fn model_kind(id: mcv_entity::MobId) -> Option<MobModelKind> {
     match id {
         mcv_entity::MobId::CHICKEN => Some(MobModelKind::Chicken),
         mcv_entity::MobId::COW => Some(MobModelKind::Cow),
         mcv_entity::MobId::SHEEP => Some(MobModelKind::Sheep),
         mcv_entity::MobId::PIG => Some(MobModelKind::Pig),
+        mcv_entity::MobId::ZOMBIE => Some(MobModelKind::Zombie),
+        mcv_entity::MobId::SKELETON => Some(MobModelKind::Skeleton),
+        mcv_entity::MobId::CREEPER => Some(MobModelKind::Creeper),
+        mcv_entity::MobId::SPIDER => Some(MobModelKind::Spider),
         _ => None,
     }
 }
 
-/// 收集全部被动生物实例（无剔除；量小，数百实体下开销可忽略）。
+/// 收集全部生物实例（无剔除；量小，数百实体下开销可忽略）。
 pub fn collect_mob_instances(world: &World) -> Vec<MobInstance> {
     collect_mob_instances_in(world, None)
 }
@@ -90,11 +96,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn model_kind_covers_four_passives() {
-        assert!(model_kind(mcv_entity::MobId::CHICKEN).is_some());
-        assert!(model_kind(mcv_entity::MobId::COW).is_some());
-        assert!(model_kind(mcv_entity::MobId::SHEEP).is_some());
-        assert!(model_kind(mcv_entity::MobId::PIG).is_some());
-        assert!(model_kind(mcv_entity::MobId::ZOMBIE).is_none());
+    fn model_kind_covers_all_spawnable() {
+        // 被动四怪 + 敌对四怪全部有模型映射（自然生成通道只出这八种，
+        // 见 GameRuntime 的 spawner 分支）。
+        for id in [
+            mcv_entity::MobId::CHICKEN,
+            mcv_entity::MobId::COW,
+            mcv_entity::MobId::SHEEP,
+            mcv_entity::MobId::PIG,
+            mcv_entity::MobId::ZOMBIE,
+            mcv_entity::MobId::SKELETON,
+            mcv_entity::MobId::CREEPER,
+            mcv_entity::MobId::SPIDER,
+        ] {
+            assert!(model_kind(id).is_some(), "{id:?} 应有模型");
+        }
     }
 }

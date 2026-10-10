@@ -2001,7 +2001,8 @@ impl Renderer {
     }
 
     /// 在 world pass 内绘制一批生物。复用 player 管线与采样器，贴图数组
-    /// 为 entity/{chicken,cow,sheep,pig}/... 四种原版素材（pad 到 64x64x5）。
+    /// 为 entity/{chicken,cow,sheep,pig,zombie,skeleton,creeper,spider}/...
+    /// 八种原版素材（pad 到 64x64x9）。
     /// uniform 按 256B 对齐的槽位动态偏移切分，每实例一次 write_buffer +
     /// 一次 draw_indexed。素材缺失时 no-op。
     pub fn draw_mobs(

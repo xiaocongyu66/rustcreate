@@ -1815,6 +1815,8 @@ impl AppState {
             hud: &hud,
             cloud: None,
             player: None,
+            // 菜单/加载画面无 GameRuntime（无 ECS World 可收集）——恒空，
+            // 生物实例只在 in-game 场景装配（见下方 draw 内的 collect）。
             mobs: None,
             overlay: None,
             underwater: false,
@@ -2100,6 +2102,13 @@ impl AppState {
             models = mcv_render::model_matrices(&pose);
         }
         let overlay = runtime.mining_overlay();
+        // 生物实例收集（审计 D P0 接线）：mobs ECS 逻辑早已在固定步运转，
+        // 但场景装配恒喂 None → 渲染端从未画过怪。此处只读 World 拼装
+        // MobInstance，视距裁剪 = 渲染距离（与区块流同界）。
+        let mob_instances = mcv_logic::mob_render::collect_mob_instances_in(
+            &runtime.mobs_app.world,
+            Some((camera.pos, runtime.render_dist as f32 * 16.0)),
+        );
         let scene = mcv_render::Scene {
             camera: &camera,
             time: (runtime.time_ticks % 24_000) as f32 / 20.0,
@@ -2115,7 +2124,7 @@ impl AppState {
             hud: &hud,
             cloud: clouds.map(|c| (c, cloud_settings)),
             player: has_player.then_some((&models, 0)),
-            mobs: None,
+            mobs: Some(&mob_instances[..]),
             overlay,
             // 水下雾：眼位在水块内（Player.isEyeInFluid(WATER)）。
             underwater: runtime.eye_under_water(),

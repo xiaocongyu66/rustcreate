@@ -1,4 +1,5 @@
-//! 生物网格管线：鸡/牛/羊/猪四张原版模型（26.1 `client/model/animal/**`）
+//! 生物网格管线：鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛八张原版模型（26.1
+//! `client/model/animal/**`、`client/model/monster/**`、`HumanoidModel`）
 //! 的部位盒定义 → 顶点数据 + 部位模型矩阵 + 贴图数组加载。
 //!
 //! 常数照反编译 Java 逐字提取（`createBodyLayer`/`createBase*Model`）：
@@ -25,6 +26,31 @@
 //!   躯干/腿走 `QuadrupedModel.createBodyMesh(6, true, false, g)`——躯干
 //!   tex(28,8) box(-5,-10,-7,10,16,8) pivot(0,11,2) xRot=π/2，腿
 //!   box(-2,0,-2,4,6,4) pivot(±3,18,7/−5)，**左**腿 mirror。层定义 64x64。
+//! - 僵尸 `ZOMBIE` 层 = `humanoidBodyLayer`（LayerDefinitions.java:510 =
+//!   `HumanoidModel.createMesh(NONE, 0)`，与 Steve 1:1 同骨架，层定义
+//!   64x64）：六部件头 tex(0,0) box(-4,-8,-4,8,8,8) pivot(0,0,0)、身
+//!   tex(16,16) box(-4,0,-2,8,12,4)、臂 tex(40,16) box(-3,-2,-2,4,12,4)
+//!   pivot(∓5,2,0)（左臂 mirror）、腿 tex(0,16) box(-2,0,-2,4,12,4)
+//!   pivot(±1.9,12,0)。双臂走 `AnimationUtils.animateZombieArms` 的经典
+//!   举臂（站立 armDrop = −π/2.25，攻击态 −π/1.5——本侧恒取站立值，
+//!   且**覆盖**行走摆臂：HumanoidModel.setupAnim 先算摆臂、
+//!   animateZombieArms 再覆写 xRot，原版僵尸走路手臂不摆）。
+//! - 骷髅 `SkeletonModel.createBodyLayer`（= humanoid 骨架 + 细四肢，
+//!   64x32）：头/身同僵尸；臂 tex(40,16) box(-1,-2,-1,2,12,2)
+//!   pivot(∓5,2,0)、腿 tex(0,16) box(-1,0,-1,2,12,2) pivot(±2,12,0)，
+//!   左侧 mirror。行走摆臂摆腿同 HumanoidModel（臂幅/腿幅 = 1.0/1.4）。
+//! - 苦力怕 `CreeperModel.createBodyLayer(NONE)`（64x32）：头 tex(0,0)
+//!   box(-4,-8,-4,8,8,8) pivot(0,6,0)、身 tex(16,16) box(-4,0,-2,8,12,4)
+//!   pivot(0,6,0)、腿 tex(0,16) box(-2,0,-2,4,6,4) pivot(±2,18,±4)。
+//!   四腿交替与四足同款对角同相（setupAnim：RH/LF = cos、LH/RF = cos+π）。
+//! - 蜘蛛 `SpiderModel.createSpiderBodyLayer`（64x32）：头 tex(32,4)
+//!   box(-4,-4,-8,8,8,8) pivot(0,15,−3)、body0 tex(0,0) box(-3,-3,-3,6,6,6)
+//!   pivot(0,15,0)、body1 tex(0,12) box(-5,-4,-6,10,8,12) pivot(0,15,9)；
+//!   八腿 tex(18,0) box(-15,-1,-1,16,2,2)（左腿 mirror 后 box(-1,-1,-1,…)
+//!   ），静态姿态 pivot(±4,15,2/1/0/−1) + yRot(±π/4、±π/8) + zRot(∓π/4、
+//!   ∓0.58119464)，行走 yRot 摆 = −cos(2·apos+off)·0.4·k、zRot 步进 =
+//!   |sin(apos+off)|·0.4·k（右 + 左 −，四对相位 off = 0/π/π/2/3π/2）。
+//!   盒模近似：腿不改用阶梯几何，静态 + 动态转角照抄原版数字。
 //!
 //! 四足行走摆腿（`QuadrupedModel.setupAnim`）：右后/左前 = cos(pos·0.6662)·1.4·k，
 //! 左后/右前反相（对角同相）。本引擎 `phase` 已吸收 0.6662 因子（与
@@ -44,7 +70,8 @@
 //! `local = (-px, -py, +pz) × PX`（x 镜像 + y 翻转，z 原样——这是绕 z 的
 //! 180° 旋转，proper、绕序不变），pivot 世界偏移 = `(-p.x, 24-p.y, +p.z)`
 //! 再乘身体 yaw。MC 部位旋转须经共轭 R_eng = Q·R_mc·Q⁻¹（Q 为上述变换；
-//! 绕 x 的 θ → −θ，绕 z 的 θ 不变号，见 mob_model_matrices 内注释）。
+//! 绕 x 的 θ → −θ，绕 y 的 θ → −θ，绕 z 的 θ 不变号，见
+//! mob_model_matrices 内注释）。
 //! 相应地，经典条带展开的 face-with-eyes 段须从 bz=1 角（玩家）翻到 bz=0
 //! 角（生物，喙/鼻一侧的 −z 面）——[`player_mesh::quadruped_faces`]，
 //! 逐角 s 映射与 26.1 ModelPart.Cube 的顶点级 UV 指派共轭一致。
@@ -54,16 +81,17 @@
 use crate::player_mesh::{PX, PlayerVertex, quadruped_faces};
 use glam::{Mat4, Vec3};
 
-/// 生物种类数（鸡/牛/羊/猪；结构可扩展全部 mob——加条目 + 贴图层即可）。
-pub const MOB_KIND_COUNT: usize = 4;
-/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层）。
+/// 生物种类数（鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛）。
+pub const MOB_KIND_COUNT: usize = 8;
+/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层；蜘蛛 11 也在限内）。
 pub const MAX_MOB_PARTS: usize = 12;
 /// 贴图数组层数（层序见 [`MOB_TEX_FILES`]；chicken/cow/pig 用 temperate 变体）。
-pub const MOB_TEX_LAYERS: usize = 5;
-/// 贴图统一 pad 到 64x64（鸡/羊原生 64x32，上半透明——2D 数组各层必须同尺寸）。
+pub const MOB_TEX_LAYERS: usize = 9;
+/// 贴图统一 pad 到 64x64（鸡/羊/骷髅/苦力怕/蜘蛛原生 64x32，上半透明
+/// ——2D 数组各层必须同尺寸）。
 pub const MOB_TEX_PX: usize = 64;
 /// 每种生物的部位数（下标 = [`MobModelKind`] 序）。
-pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [8, 6, 12, 6];
+pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [8, 6, 12, 6, 6, 6, 6, 11];
 /// 离屏/主控一次最多提交的生物实例数（uniform 槽位）。
 pub const MOB_MAX_INSTANCES: usize = 64;
 
@@ -78,6 +106,10 @@ pub enum MobModelKind {
     Cow = 1,
     Sheep = 2,
     Pig = 3,
+    Zombie = 4,
+    Skeleton = 5,
+    Creeper = 6,
+    Spider = 7,
 }
 
 impl MobModelKind {
@@ -91,6 +123,10 @@ impl MobModelKind {
             1 => Some(MobModelKind::Cow),
             2 => Some(MobModelKind::Sheep),
             3 => Some(MobModelKind::Pig),
+            4 => Some(MobModelKind::Zombie),
+            5 => Some(MobModelKind::Skeleton),
+            6 => Some(MobModelKind::Creeper),
+            7 => Some(MobModelKind::Spider),
             _ => None,
         }
     }
@@ -104,6 +140,10 @@ pub const MOB_TEX_FILES: [&str; MOB_TEX_LAYERS] = [
     "entity/sheep/sheep.png",
     "entity/sheep/sheep_wool.png",
     "entity/pig/pig_temperate.png",
+    "entity/zombie/zombie.png",
+    "entity/skeleton/skeleton.png",
+    "entity/creeper/creeper.png",
+    "entity/spider/spider.png",
 ];
 
 /// 部位动画角色。
@@ -115,6 +155,21 @@ enum PartAnim {
     Head,
     /// 行走腿：xRot = cos(phase + shift)·amount·WALK_GAIN。
     WalkLeg { shift: f32 },
+    /// 人形行走臂（HumanoidModel.setupAnim:223-226）：xRot =
+    /// cos(phase + shift)·amount·(1.0/0.88)——幅值 = 腿 × (1.0/1.4)。
+    WalkArm { shift: f32 },
+    /// 僵尸举臂（AnimationUtils.animateZombieArms:75 `armDrop`）：MC xRot
+    /// 恒为 `drop`（行走摆臂被覆写，原版僵尸走路手臂不摆）。
+    ZombieArm { drop: f32 },
+    /// 蜘蛛腿（SpiderModel.setupAnim:73-96）：静态姿态 y0/z0 + 行走
+    /// yRot 摆 −cos(2·phase+off)·0.4·k、zRot 步进 |sin(phase+off)|·0.4·k，
+    /// `side` = +1（右腿，MC yRot/zRot 增）/-1（左腿，减）。
+    SpiderLeg {
+        side: f32,
+        off: f32,
+        y0: f32,
+        z0: f32,
+    },
     /// 鸡翅：zRot = sign·wing_angle（右 + 左 −，ChickenModel.setupAnim:30-31）。
     Wing { sign: f32 },
 }
@@ -210,7 +265,42 @@ static PIG_SNOUT: MobBox = bx([-2.0, 0.0, -9.0], [4.0, 3.0, 1.0], [16.0, 16.0]);
 static PIG_BODY: MobBox = bx([-5.0, -10.0, -7.0], [10.0, 16.0, 8.0], [28.0, 8.0]);
 static PIG_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 6.0, 4.0], [0.0, 16.0]);
 
-/// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6，与 [`MOB_PART_COUNTS`] 一致；
+// ---- 僵尸（humanoidBodyLayer = HumanoidModel.createMesh(NONE, 0)，64x64） ----
+
+static HUMANOID_HEAD: MobBox = bx([-4.0, -8.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
+static HUMANOID_BODY: MobBox = bx([-4.0, 0.0, -2.0], [8.0, 12.0, 4.0], [16.0, 16.0]);
+// HumanoidModel right_arm addBox(-3,-2,-2,4,12,4)；左臂 mirror 后盒体占位
+// 等价（mirror 只翻 UV），共用同一 MobBox、pivot 取 ±5。
+static ZOMBIE_ARM: MobBox = bx([-3.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]);
+static ZOMBIE_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 12.0, 4.0], [0.0, 16.0]);
+
+// ---- 骷髅（SkeletonModel.createBodyLayer = humanoid 骨架细四肢，64x32） ------
+
+// 骷髅头/身与 humanoid 同盒同 UV（createMesh 复用，createDefaultSkeletonMesh
+// 只替换四肢）。
+static SKELETON_ARM: MobBox = bx([-1.0, -2.0, -1.0], [2.0, 12.0, 2.0], [40.0, 16.0]);
+static SKELETON_LEG: MobBox = bx([-1.0, 0.0, -1.0], [2.0, 12.0, 2.0], [0.0, 16.0]);
+
+// ---- 苦力怕（CreeperModel.createBodyLayer(NONE)，64x32） ---------------------
+
+static CREEPER_HEAD: MobBox = bx([-4.0, -8.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
+static CREEPER_BODY: MobBox = bx([-4.0, 0.0, -2.0], [8.0, 12.0, 4.0], [16.0, 16.0]);
+static CREEPER_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 6.0, 4.0], [0.0, 16.0]);
+
+// ---- 蜘蛛（SpiderModel.createSpiderBodyLayer，64x32） ------------------------
+
+static SPIDER_HEAD: MobBox = bx([-4.0, -4.0, -8.0], [8.0, 8.0, 8.0], [32.0, 4.0]);
+static SPIDER_BODY0: MobBox = bx([-3.0, -3.0, -3.0], [6.0, 6.0, 6.0], [0.0, 0.0]);
+static SPIDER_BODY1: MobBox = bx([-5.0, -4.0, -6.0], [10.0, 8.0, 12.0], [0.0, 12.0]);
+// 右腿 addBox(-15,-1,-1,16,2,2)；左腿 mirror（UV 镜像，盒体占位不同——
+// mirror 不换 min，这里照 Java 两份盒体分别登记）。
+static SPIDER_LEG_R: MobBox = bx([-15.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0.0]);
+static SPIDER_LEG_L: MobBox = mirrored(bx([-1.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0.0]));
+/// 蜘蛛四对腿静态 zRot（SpiderModel:56-63；0.58119464 = 2π·33/360 原版常数）。
+const SPIDER_LEG_Z_MID: f32 = 0.58119464;
+
+/// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6 / 僵尸 6 / 骷髅 6 /
+/// 苦力怕 6 / 蜘蛛 11，与 [`MOB_PART_COUNTS`] 一致；
 /// 各部位 pivot/UV 全部照 Java 数字，来源行见模块头）。
 static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
     // 鸡
@@ -468,6 +558,278 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             boxes: &[mirrored(PIG_LEG)],
         },
     ],
+    // 僵尸（humanoid 六部件；举臂 = animateZombieArms 站立 armDrop=−π/2.25，
+    // MC xRot 负 = 前举 → 本空间取 −drop 正角前摆；走路手臂原版不摆）
+    &[
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::Head,
+            boxes: &[HUMANOID_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::Fixed,
+            boxes: &[HUMANOID_BODY],
+        },
+        PartDef {
+            pivot: [-5.0, 2.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::ZombieArm {
+                drop: -std::f32::consts::PI / 2.25,
+            },
+            boxes: &[ZOMBIE_ARM],
+        },
+        PartDef {
+            pivot: [5.0, 2.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::ZombieArm {
+                drop: -std::f32::consts::PI / 2.25,
+            },
+            boxes: &[mirrored(ZOMBIE_ARM)],
+        },
+        PartDef {
+            pivot: [-1.9, 12.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[ZOMBIE_LEG],
+        },
+        PartDef {
+            pivot: [1.9, 12.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 5,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[mirrored(ZOMBIE_LEG)],
+        },
+    ],
+    // 骷髅（humanoid 骨架细四肢；行走摆臂摆腿同 HumanoidModel.setupAnim）
+    &[
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            anim: PartAnim::Head,
+            boxes: &[HUMANOID_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            anim: PartAnim::Fixed,
+            boxes: &[HUMANOID_BODY],
+        },
+        PartDef {
+            pivot: [-5.0, 2.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            // HumanoidModel.setupAnim:223-226：右臂 = cos(pos·0.6662+π)
+            // （与右腿 shift 0 反相）；左臂 = cos(pos·0.6662)（与左腿反相）。
+            anim: PartAnim::WalkArm {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[SKELETON_ARM],
+        },
+        PartDef {
+            pivot: [5.0, 2.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            anim: PartAnim::WalkArm { shift: 0.0 },
+            boxes: &[mirrored(SKELETON_ARM)],
+        },
+        PartDef {
+            pivot: [-2.0, 12.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[SKELETON_LEG],
+        },
+        PartDef {
+            pivot: [2.0, 12.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 6,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[mirrored(SKELETON_LEG)],
+        },
+    ],
+    // 苦力怕（头/身同 pivot(0,6,0)；四腿对角同相，与四足 QuadrupedModel 同式）
+    &[
+        PartDef {
+            pivot: [0.0, 6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::Head,
+            boxes: &[CREEPER_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::Fixed,
+            boxes: &[CREEPER_BODY],
+        },
+        PartDef {
+            pivot: [-2.0, 18.0, 4.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[CREEPER_LEG],
+        },
+        PartDef {
+            pivot: [2.0, 18.0, 4.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[mirrored(CREEPER_LEG)],
+        },
+        PartDef {
+            pivot: [-2.0, 18.0, -4.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[CREEPER_LEG],
+        },
+        PartDef {
+            pivot: [2.0, 18.0, -4.0],
+            rot_x: 0.0,
+            tex_layer: 7,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[mirrored(CREEPER_LEG)],
+        },
+    ],
+    // 蜘蛛（头 + 双体段 + 八腿；静态 y/z 转角与行走摆动照 SpiderModel 数字）
+    &[
+        PartDef {
+            pivot: [0.0, 15.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::Head,
+            boxes: &[SPIDER_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 15.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::Fixed,
+            boxes: &[SPIDER_BODY0],
+        },
+        PartDef {
+            pivot: [0.0, 15.0, 9.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::Fixed,
+            boxes: &[SPIDER_BODY1],
+        },
+        PartDef {
+            pivot: [-4.0, 15.0, 2.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: 1.0,
+                off: 0.0,
+                y0: std::f32::consts::FRAC_PI_4,
+                z0: -std::f32::consts::FRAC_PI_4,
+            },
+            boxes: &[SPIDER_LEG_R],
+        },
+        PartDef {
+            pivot: [4.0, 15.0, 2.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: -1.0,
+                off: 0.0,
+                y0: -std::f32::consts::FRAC_PI_4,
+                z0: std::f32::consts::FRAC_PI_4,
+            },
+            boxes: &[SPIDER_LEG_L],
+        },
+        PartDef {
+            pivot: [-4.0, 15.0, 1.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: 1.0,
+                off: std::f32::consts::PI,
+                y0: std::f32::consts::FRAC_PI_8,
+                z0: -SPIDER_LEG_Z_MID,
+            },
+            boxes: &[SPIDER_LEG_R],
+        },
+        PartDef {
+            pivot: [4.0, 15.0, 1.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: -1.0,
+                off: std::f32::consts::PI,
+                y0: -std::f32::consts::FRAC_PI_8,
+                z0: SPIDER_LEG_Z_MID,
+            },
+            boxes: &[SPIDER_LEG_L],
+        },
+        PartDef {
+            pivot: [-4.0, 15.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: 1.0,
+                off: std::f32::consts::FRAC_PI_2,
+                y0: -std::f32::consts::FRAC_PI_8,
+                z0: -SPIDER_LEG_Z_MID,
+            },
+            boxes: &[SPIDER_LEG_R],
+        },
+        PartDef {
+            pivot: [4.0, 15.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: -1.0,
+                off: std::f32::consts::FRAC_PI_2,
+                y0: std::f32::consts::FRAC_PI_8,
+                z0: SPIDER_LEG_Z_MID,
+            },
+            boxes: &[SPIDER_LEG_L],
+        },
+        PartDef {
+            pivot: [-4.0, 15.0, -1.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: 1.0,
+                off: 3.0 * std::f32::consts::FRAC_PI_2,
+                y0: -std::f32::consts::FRAC_PI_4,
+                z0: -std::f32::consts::FRAC_PI_4,
+            },
+            boxes: &[SPIDER_LEG_R],
+        },
+        PartDef {
+            pivot: [4.0, 15.0, -1.0],
+            rot_x: 0.0,
+            tex_layer: 8,
+            anim: PartAnim::SpiderLeg {
+                side: -1.0,
+                off: 3.0 * std::f32::consts::FRAC_PI_2,
+                y0: std::f32::consts::FRAC_PI_4,
+                z0: std::f32::consts::FRAC_PI_4,
+            },
+            boxes: &[SPIDER_LEG_L],
+        },
+    ],
 ];
 
 /// 每帧姿态（由游戏侧计算后传入渲染；与 `PlayerPose` 同约定：脚底原点、
@@ -624,31 +986,49 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
     let k = kind.idx();
     let parts = PARTS[k];
     let ry = Mat4::from_axis_angle(Vec3::Y, -pose.yaw);
-    let rx_axis = ry.transform_vector3(Vec3::X);
-    let rz_axis = ry.transform_vector3(Vec3::Z);
     // 腿摆 = cos(phase+shift)·amount·增益（QuadrupedModel.setupAnim 的
     // pos·0.6662 已被 phase 吸收，见模块头）。
     let leg = |shift: f32| (pose.phase + shift).cos() * pose.amount * WALK_GAIN;
+    // 蜘蛛速度因子：MC walkAnimationSpeed（0..1）≈ amount/0.88（与
+    // WALK_GAIN 同一套幅值换算）。
+    let spd = pose.amount / 0.88;
     let mut out = [Mat4::IDENTITY; MAX_MOB_PARTS];
     for (p, def) in parts.iter().enumerate() {
-        let (axis, angle) = match def.anim {
-            // 静态转轴：本空间 = MC 空间经 (x,y,z)→(−x,−y,+z)（绕 z 轴 π 的
-            // 旋转，行列式 +1）。旋转共轭 R_eng = Q·R_mc·Q⁻¹，Q 把 MC +x̂ 映
-            // 到 −x̂ ⇒ 绕 MC +x 的 θ 等于绕本空间 +x 的 −θ。故 Java 的
-            // rot_x=π/2（QuadrupedModel.createBodyMesh 等）在本空间取 −π/2
-            // ——符号错了躯干会整段悬空翻转（牛躯干将到 y 16..26px，正确
-            // 为 12..22px，见 cow_body_lies_horizontal 测试）。
-            PartAnim::Fixed => (rx_axis, -def.rot_x),
+        // 部位旋转的引擎局部三轴角（ax, ay, az）：MC rotationZYX(z,y,x)
+        // 经共轭 Q·R_mc·Q⁻¹（Q: (x,y,z)→(−x,−y,+z)）逐轴映射——绕 MC x 的
+        // θ → 绕本空间 x 的 −θ；绕 MC y 的 θ → −θ（Q 把 MC +ŷ 映到 −ŷ）；
+        // 绕 z 的 θ 不变号；乘序保持 ⇒ 本空间 R_eng = Rz(z)·Ry(y)·Rx(x)。
+        let (ax, ay, az) = match def.anim {
+            // 静态转轴：Java 的 rot_x=π/2（QuadrupedModel.createBodyMesh
+            // 等）在本空间取 −π/2——符号错了躯干会整段悬空翻转（牛躯干
+            // 将到 y 16..26px，正确为 12..22px，见 cow_body_lies_horizontal
+            // 测试）。
+            PartAnim::Fixed => (-def.rot_x, 0.0, 0.0),
             // 头俯仰（正=抬头）；MC 头 xRot 正=低头，符号相反恰好抵消，
             // 故 head_pitch 直传。羊吃草叠加低头（MC 语义正=低头 → 取负）。
-            PartAnim::Head => (rx_axis, pose.head_pitch - pose.head_eat_angle),
+            PartAnim::Head => (pose.head_pitch - pose.head_eat_angle, 0.0, 0.0),
             // 腿摆与玩家管线同约定（+ 角 = 前摆，player_mesh model_matrices
             // rots 表同款）；对角同相 pairing 与 Java 一致，cos 对称下与严格
             // 共轭（−θ）仅差相位原点，视觉等价。
-            PartAnim::WalkLeg { shift } => (rx_axis, leg(shift)),
+            PartAnim::WalkLeg { shift } => (leg(shift), 0.0, 0.0),
+            // 人形臂（HumanoidModel.setupAnim:223-226）：MC 摆幅 1.0·k =
+            // 腿 1.4·k × (1/1.4)，与同侧腿反相（shift 差 π，见 PARTS 表）。
+            PartAnim::WalkArm { shift } => (leg(shift) / 1.4, 0.0, 0.0),
+            // 僵尸举臂（animateZombieArms:75 armDrop，站立 = −π/2.25）：
+            // MC xRot 负 = 前举 → 本空间 −drop 正角。
+            PartAnim::ZombieArm { drop } => (-drop, 0.0, 0.0),
+            // 蜘蛛腿（SpiderModel.setupAnim:73-96）：yRot 摆
+            // = −cos(2·apos+off)·0.4·k（右 + 左 −）、zRot 步进
+            // = |sin(apos+off)|·0.4·k（右 + 左 −），apos=phase、k=spd；
+            // 静态 y0/z0 照 Java。本空间 ay = −y_mc、az = z_mc。
+            PartAnim::SpiderLeg { side, off, y0, z0 } => {
+                let swing = -(2.0 * pose.phase + off).cos() * 0.4 * spd;
+                let step = (pose.phase + off).sin().abs() * 0.4 * spd;
+                (0.0, -(y0 + side * swing), z0 + side * step)
+            }
             // 鸡翅绕局部 z（ChickenModel.setupAnim:30-31：右 + 左 −）。
             // Q 不改变 z 轴 ⇒ 绕 z 的旋转角不变号。
-            PartAnim::Wing { sign } => (rz_axis, sign * pose.wing_angle),
+            PartAnim::Wing { sign } => (0.0, 0.0, sign * pose.wing_angle),
         };
         // 羊吃草头部下沉（SheepModel.setupAnim：head.y += scale·9 像素）。
         let drop = if matches!(def.anim, PartAnim::Head) {
@@ -662,7 +1042,14 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
             def.pivot[2] * PX, // 四足 z 不取反（正面朝 −z，见模块头）
         );
         let world_piv = pose.pos + ry.transform_point3(off);
-        let r = Mat4::from_axis_angle(axis, angle);
+        // 旋转必须绕**引擎局部轴**构造、再被 ry 左乘：out = T·ry·Rz·Ry·Rx。
+        // 旧实现把轴先旋到世界（Rot(ry·x̂, θ)），得 out = T·ry²·R·ry⁻¹——
+        // 部位自转被按 2·yaw 共轭，yaw≠0 时腿摆方向侧翻（被动模型在
+        // Scene.mobs 常空时代从未以 yaw≠0 上屏，故未暴露；接通 mobs 后
+        // 由 mob_gpu 的 yaw 回归测试锁死）。
+        let r = Mat4::from_axis_angle(Vec3::Z, az)
+            * Mat4::from_axis_angle(Vec3::Y, ay)
+            * Mat4::from_axis_angle(Vec3::X, ax);
         out[p] = Mat4::from_translation(world_piv) * ry * r;
     }
     out
@@ -683,7 +1070,7 @@ pub fn update_wing_animation(flap: f32, flap_speed: f32, on_ground: bool) -> (f3
     (f, fs)
 }
 
-/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64x5 RGBA）。
+/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64x9 RGBA）。
 /// 任一文件缺失/解码失败/尺寸不符 → None（上层按缺素材降级不渲染；
 /// 绝不用程序化占位顶替原版贴图）。M8c：读取经 AssetManager（缺文件
 /// 硬错误显式 log，不再静默 `.ok()?` 吞掉）。
@@ -738,9 +1125,11 @@ mod tests {
             assert_eq!(r.len(), boxes * 36, "kind {k} index span");
         }
         // 总盒数：鸡 8 + 牛 10（头 4 含双角 + 躯干 2 含乳房 + 腿 4）
-        // + 羊 12 + 猪 7（头 2 含鼻 + 躯干 1 + 腿 4）= 37
-        assert_eq!(m.verts.len(), 37 * 24);
-        assert_eq!(m.indices.len(), 37 * 36);
+        // + 羊 12 + 猪 7（头 2 含鼻 + 躯干 1 + 腿 4）
+        // + 僵尸 6（humanoid 六部件）+ 骷髅 6 + 苦力怕 6 + 蜘蛛 11
+        // = 66
+        assert_eq!(m.verts.len(), 66 * 24);
+        assert_eq!(m.indices.len(), 66 * 36);
         // kind 切片连续
         let mut prev = 0u32;
         for r in m.slices.iter() {
@@ -923,5 +1312,193 @@ mod tests {
             }
             assert!((v.meta[0] as usize) < MOB_TEX_LAYERS);
         }
+    }
+
+    // ---- 敌对四怪 -----------------------------------------------------------
+
+    /// kind 首部位（头）的顶点区间起点：切点 = 索引切片起点 / 36 盒 × 24。
+    fn head_vert_range(m: &MobMesh, k: usize) -> std::ops::Range<usize> {
+        let base = m.slices[k].start as usize / 36 * 24;
+        base..base + 24
+    }
+
+    /// 断言盒体正脸段（face-with-eyes，UV = [u+d, v+d, u+d+w, v+d+h]）：
+    /// 四角顶点必须落在 −z 面、UV 像素坐标落在给定矩形内。
+    fn assert_face_rect(m: &MobMesh, k: usize, rect: [f32; 4]) {
+        let r = head_vert_range(m, k);
+        for v in &m.verts[r.start + 16..r.start + 20] {
+            assert!(v.pos[2] < 0.0, "face corners must sit at −z");
+            let u = v.uv[0] as f32 / 255.0 * MOB_TEX_PX as f32;
+            let t = v.uv[1] as f32 / 255.0 * MOB_TEX_PX as f32;
+            assert!(
+                u >= rect[0] - 1e-3 && u <= rect[2] + 1e-3,
+                "face u {u} not in {}..{}",
+                rect[0],
+                rect[2]
+            );
+            assert!(
+                t >= rect[1] - 1e-3 && t <= rect[3] + 1e-3,
+                "face t {t} not in {}..{}",
+                rect[1],
+                rect[3]
+            );
+        }
+    }
+
+    #[test]
+    fn hostile_head_face_rects_match_java() {
+        let m = build_mob_mesh();
+        // 僵尸/骷髅/苦力怕头 tex(0,0) 8x8x8 → 正脸段 (8,8)-(16,16)
+        // （HumanoidModel.createMesh:94 / CreeperModel:34）。
+        for k in [4, 5, 6] {
+            assert_face_rect(&m, k, [8.0, 8.0, 16.0, 16.0]);
+        }
+        // 蜘蛛头 tex(32,4) 8x8x8（SpiderModel:47）→ (40,12)-(48,20)。
+        assert_face_rect(&m, 7, [40.0, 12.0, 48.0, 20.0]);
+        // 层号：头顶点 meta.x = 各自贴图层（5..8）。
+        for (k, layer) in [(4usize, 5u32), (5, 6), (6, 7), (7, 8)] {
+            for v in &m.verts[head_vert_range(&m, k)] {
+                assert_eq!(v.meta[0], layer);
+            }
+        }
+    }
+
+    #[test]
+    fn hostile_foot_lines_up_at_y_zero() {
+        // 脚底统一在模型 y=24（与玩家/四足同一根约定）：僵尸腿 pivot y=12
+        // 盒 12px、骷髅同、苦力怕腿 pivot y=18 盒 6px、蜘蛛 body1 底
+        // y=15+4=19……腿部位静止姿态最低点都应触地（y=0）。
+        let m = build_mob_mesh();
+        let pose = MobPose::default();
+        for k in [4usize, 5, 6] {
+            let mm = mob_model_matrices(MobModelKind::from_idx(k as u32).unwrap(), &pose);
+            let base = m.slices[k].start as usize / 36 * 24;
+            let end = base + m.slices[k].len() as usize / 36 * 24;
+            let mut min_y = f32::MAX;
+            for v in &m.verts[base..end] {
+                let w = mm[v.meta[1] as usize].transform_point3(Vec3::from(v.pos));
+                min_y = min_y.min(w.y);
+            }
+            assert!(min_y.abs() < 1e-5, "kind {k} 脚底应触地，min_y {min_y}");
+        }
+    }
+
+    #[test]
+    fn zombie_arms_raised_forward_legs_swing() {
+        let pose = MobPose {
+            phase: 0.0,
+            amount: 0.88,
+            ..Default::default()
+        };
+        let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
+        // 举臂：animateZombieArms 站立 armDrop = −π/2.25 → 本空间 +π/2.25，
+        // 臂尖（局部 (0,−0.75,0)）指向前方 −z 且明显高于垂臂。
+        let arm_tip = mm[2].transform_point3(Vec3::new(0.0, -0.75, 0.0));
+        assert!(arm_tip.z < -0.6, "僵尸臂应前举，tip {arm_tip}");
+        assert!(arm_tip.y > 1.0, "僵尸臂应抬起，tip {arm_tip}");
+        // 行走腿：右腿（部位 4，shift 0）前摆、左腿后摆。
+        let tip = |p: usize| mm[p].transform_point3(Vec3::new(0.0, -0.75, 0.0)).z;
+        assert!(tip(4) < 0.0 && tip(5) > 0.0);
+    }
+
+    #[test]
+    fn skeleton_arms_swing_opposite_legs() {
+        let pose = MobPose {
+            phase: 0.0,
+            amount: 0.88,
+            ..Default::default()
+        };
+        let mm = mob_model_matrices(MobModelKind::Skeleton, &pose);
+        // HumanoidModel.setupAnim：右臂与右腿反相（右臂 shift π、右腿 0）。
+        let z = |p: usize| mm[p].transform_point3(Vec3::new(0.0, -0.75, 0.0)).z;
+        assert!(z(4) * z(2) < 0.0, "右臂应与右腿反相");
+        assert!(z(5) * z(3) < 0.0, "左臂应与左腿反相");
+        // 臂角/腿角 = 1/1.4（pivot z 同为 0，由尖端位移反解摆角核算）。
+        let ang = |zz: f32| (zz.abs() / 0.75).asin();
+        let (arm, leg) = (ang(z(4)), ang(z(2)));
+        assert!((arm * 1.4 - leg).abs() < 1e-4, "arm {arm} leg {leg}");
+    }
+
+    #[test]
+    fn creeper_legs_diagonal_and_body_stack() {
+        let m = build_mob_mesh();
+        let pose = MobPose {
+            phase: 0.0,
+            amount: 0.88,
+            ..Default::default()
+        };
+        let mm = mob_model_matrices(MobModelKind::Creeper, &pose);
+        // 四腿对角同相（CreeperModel.setupAnim:52-55：RH/LF = cos、LH/RF 反相）。
+        let tip = |p: usize| mm[p].transform_point3(Vec3::new(0.0, -0.375, 0.0)).z;
+        assert!(tip(2) < 0.0 && tip(4) > 0.0, "右后前摆 / 右前后摆");
+        assert!(tip(3) > 0.0 && tip(5) < 0.0, "左后后摆 / 左前前摆");
+        // 头顶高度：头 pivot(0,6,0) + 盒顶 8px → 世界 y = (24-6+8)/16 = 1.625。
+        let base = m.slices[6].start as usize / 36 * 24;
+        let mut max_y = f32::MIN;
+        for v in &m.verts[base..base + 24] {
+            let w = mm[0].transform_point3(Vec3::from(v.pos));
+            max_y = max_y.max(w.y);
+        }
+        assert!((max_y - 1.625).abs() < 1e-5, "creeper 头顶 {max_y}");
+    }
+
+    #[test]
+    fn spider_legs_splay_wide_and_swing() {
+        let m = build_mob_mesh();
+        let static_pose = MobPose::default();
+        let mm0 = mob_model_matrices(MobModelKind::Spider, &static_pose);
+        // 静态八腿外张（y0=±π/4 等）：模型横向跨度远超身体半宽 5px。
+        let base = m.slices[7].start as usize / 36 * 24;
+        let end = base + m.slices[7].len() as usize / 36 * 24;
+        let mut max_x = 0.0f32;
+        for v in &m.verts[base..end] {
+            let w = mm0[v.meta[1] as usize].transform_point3(Vec3::from(v.pos));
+            max_x = max_x.max(w.x.abs());
+        }
+        assert!(max_x > 0.8 && max_x < 1.2, "蜘蛛腿展 {max_x}");
+        // 行走摆动改变腿位（yRot 摆 + zRot 步进，右 + 左 −）。
+        let walk = MobPose {
+            phase: 1.1,
+            amount: 0.88,
+            ..Default::default()
+        };
+        let mm1 = mob_model_matrices(MobModelKind::Spider, &walk);
+        let moved = (0..MAX_MOB_PARTS)
+            .filter(|p| {
+                (mm0[*p]
+                    .transform_point3(Vec3::new(0.0, -0.125, 0.0))
+                    .distance(mm1[*p].transform_point3(Vec3::new(0.0, -0.125, 0.0)))
+                    > 1e-4)
+            })
+            .count();
+        // 头/身静止，八腿全动。
+        assert_eq!(moved, 8, "八条腿都应摆动，moved {moved}");
+    }
+
+    #[test]
+    fn leg_swing_stays_in_facing_plane_at_yaw() {
+        // yaw 共轭回归：部位旋转必须绕引擎局部轴构造再被 ry 左乘。旧实现
+        // （轴先旋到世界）会得 T·ry²·R·ry⁻¹，yaw≠0 时腿摆侧翻到行走面之外。
+        let pose = MobPose {
+            pos: Vec3::new(5.0, 64.0, -7.0),
+            yaw: std::f32::consts::FRAC_PI_2, // 面朝 +x（f(yaw)=(1,0,0)）
+            phase: 0.0,
+            amount: 0.88,
+            ..Default::default()
+        };
+        let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
+        // 右腿前摆（shift 0 → 满幅 1.4 rad 前摆）：尖端应沿面朝方向 +x
+        // 位移，横向（z）只允许静态 pivot 偏移（腿 pivot x=1.9px 经
+        // RotY(−π/2) 落到 +z，摆动分量不得混入）。
+        let tip = mm[4].transform_point3(Vec3::new(0.0, -0.75, 0.0));
+        let swing = 0.75 * 1.4f32.sin();
+        assert!(
+            (tip.x - (pose.pos.x + swing)).abs() < 1e-4,
+            "前摆应在 +x，tip {tip}"
+        );
+        assert!(
+            (tip.z - pose.pos.z - 1.9 * PX).abs() < 1e-4,
+            "腿摆不得侧翻出面向平面，tip {tip}"
+        );
     }
 }
