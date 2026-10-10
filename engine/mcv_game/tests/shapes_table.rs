@@ -241,8 +241,9 @@ fn pane_post_and_connection_arms() {
     for mode in [RayTarget::Collide, RayTarget::Pick] {
         let n = push_boxes(BlockId(pane), &w, p, mode, &mut boxes);
         assert_eq!(n, 3, "{mode:?} 柱+双臂");
-        assert!(boxes[1..].iter().any(|b| b.max.x == 1.0 && b.min.x == 0.5));
-        assert!(boxes[1..].iter().any(|b| b.min.x == 0.0 && b.max.x == 0.5));
+        // 切片必须截至 n：MAX_SHAPE_BOXES=5，[1..] 会扫到上轮残留槽位。
+        assert!(boxes[1..n].iter().any(|b| b.max.x == 1.0 && b.min.x == 0.5));
+        assert!(boxes[1..n].iter().any(|b| b.min.x == 0.0 && b.max.x == 0.5));
     }
 }
 
@@ -270,7 +271,10 @@ fn wall_post_low_arms_and_collision_heights() {
     assert_eq!(boxes[0].max.x, 0.75);
     assert_eq!(boxes[0].max.y, 1.5, "碰撞柱抬高防跳");
     // +Z 臂：z 0.3125..1（格边伸入 11px 的镜像端），y 碰撞也抬 1.5。
-    let arm_z = boxes[1..].iter().find(|b| b.max.z == 1.0).expect("+Z 臂盒");
+    let arm_z = boxes[1..n]
+        .iter()
+        .find(|b| b.max.z == 1.0)
+        .expect("+Z 臂盒");
     assert_eq!(arm_z.min.z, 0.3125);
     assert_eq!(arm_z.min.x, 0.3125);
     assert_eq!(arm_z.max.x, 0.6875);
@@ -280,7 +284,7 @@ fn wall_post_low_arms_and_collision_heights() {
     let n = pick_boxes(&w, p, &mut boxes);
     assert_eq!(n, 3);
     assert_eq!(boxes[0].max.y, 1.0);
-    assert!(boxes[1..].iter().all(|b| b.max.y == 0.875));
+    assert!(boxes[1..n].iter().all(|b| b.max.y == 0.875));
 }
 
 fn collision_at(
