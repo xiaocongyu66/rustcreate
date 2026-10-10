@@ -207,10 +207,10 @@ mod tests {
     fn expected_deviation_uses_nonzero_octave_span() {
         let n = NormalNoise::new(7, 0xAB, -8, &[1.0, 1.0, 0.0]);
         let want = 0.166_666_666_666_666_66_f64 / 0.15_f64;
+        let got = n.value_factor;
         assert!(
-            (n.value_factor - want).abs() < 1e-12,
-            "value_factor {} 偏离 span 语义期望 {want}",
-            n.value_factor
+            (got - want).abs() < 1e-12,
+            "value_factor 偏离 span 语义期望 {want}（实得 {got}）"
         );
     }
 }
