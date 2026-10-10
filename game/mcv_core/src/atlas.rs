@@ -124,27 +124,230 @@ pub fn generate_layers(data: &mut [u8]) {
     }
 }
 
-/// CPU box-downsample mip level 1 (16 -> 8 px per side, per layer).
+/// sRGB↔linear 查找表：逐行移植 `ARGB.java:9-28`（LINEAR_CHANNEL_DEPTH=1024；
+/// `computeSrgbToLinear` :22-24 为 double pow、`computeLinearToSrgb` :26-28；
+/// 正表 round(v*1023)，反表 round(v*255)；均值后按整数索引反表，
+/// `linearChannelMean` :47-50）。
+fn mip_tables() -> &'static ([u16; 256], [u8; 1024]) {
+    static T: std::sync::OnceLock<([u16; 256], [u8; 1024])> = std::sync::OnceLock::new();
+    T.get_or_init(|| {
+        let mut s2l = [0u16; 256];
+        for (i, slot) in s2l.iter_mut().enumerate() {
+            let x = i as f32 / 255.0;
+            let lin = if x >= 0.04045 {
+                (((f64::from(x) + 0.055) / 1.055).powf(2.4)) as f32
+            } else {
+                x / 12.92
+            };
+            *slot = (lin * 1023.0 + 0.5) as u16;
+        }
+        let mut l2s = [0u8; 1024];
+        for (i, slot) in l2s.iter_mut().enumerate() {
+            let x = i as f32 / 1023.0;
+            let srgb = if x >= 0.0031308 {
+                ((1.055 * f64::from(x).powf(0.416_666_666_666_666_7) - 0.055) as f32)
+            } else {
+                12.92 * x
+            };
+            *slot = (f32::from(srgb) * 255.0 + 0.5) as u8;
+        }
+        (s2l, l2s)
+    })
+}
+
+/// `ARGB.meanLinear`（:38-45）：RGB 走线性表（和/4 整数除 → 反表索引），
+/// alpha 整数直均。`px4` = 2x2 四像素（顺序无关）。
+fn mean_linear(px4: &[[u8; 4]; 4], s2l: &[u16; 256], l2s: &[u8; 1024]) -> [u8; 4] {
+    let ch = |c: usize| -> u8 {
+        let mean = px4
+            .iter()
+            .map(|p| u32::from(s2l[p[c] as usize]))
+            .sum::<u32>()
+            / 4;
+        l2s[mean as usize]
+    };
+    let alpha = px4.iter().map(|p| u32::from(p[3])).sum::<u32>() / 4;
+    [ch(0), ch(1), ch(2), alpha as u8]
+}
+
+/// `TextureUtil.solidify`（:130-184，CUTOUT mip 前置）：4 邻域 BFS
+/// （DIRECTIONS :27），完全透明像素（alpha==0）取【最近不透明像素的 RGB】、
+/// alpha 保持 0（`ARGB.color(0, nearest)` :177）——消除透明像素残留的黑色
+/// RGB 参与 mip 平均造成的暗晕。不透明像素原样保留。全透明层原版读到
+/// 默认黑（Java int 数组默认 0）；本函数防御性跳过（现存层无此形态，
+/// 品红哨兵/裂纹均含不透明像素）。
+fn solidify(img: &mut [u8], w: usize, h: usize) {
+    let n = w * h;
+    let mut nearest = vec![usize::MAX; n];
+    let mut queue: std::collections::VecDeque<usize> = std::collections::VecDeque::new();
+    for i in 0..n {
+        if img[i * 4 + 3] != 0 {
+            nearest[i] = i;
+            queue.push_back(i);
+        }
+    }
+    // 原版松弛条件 `dist[nb] > dist[cur] + 1` 的 BFS（无权图=曼哈顿最近；
+    // 种子先行入队，nearest 传播即 BFS 层序）。
+    while let Some(i) = queue.pop_front() {
+        let (x, y) = (i % w, i / w);
+        let neighbors = [
+            x.checked_sub(1).map(|v| v + y * w),
+            if x + 1 < w { Some(x + 1 + y * w) } else { None },
+            y.checked_sub(1).map(|v| x + v * w),
+            if y + 1 < h {
+                Some(x + (y + 1) * w)
+            } else {
+                None
+            },
+        ];
+        for nb in neighbors.into_iter().flatten() {
+            if nearest[nb] == usize::MAX {
+                nearest[nb] = nearest[i];
+                queue.push_back(nb);
+            }
+        }
+    }
+    // 写回：仅 alpha==0 像素换 RGB（alpha 仍 0）；来源像素本身不透明、
+    // 永不被改写，故就地写安全。无来源（全透明层，防御）跳过。
+    for i in 0..n {
+        if img[i * 4 + 3] == 0 && nearest[i] != usize::MAX {
+            let s = nearest[i] * 4;
+            let (r, g, b) = (img[s], img[s + 1], img[s + 2]);
+            img[i * 4] = r;
+            img[i * 4 + 1] = g;
+            img[i * 4 + 2] = b;
+        }
+    }
+}
+
+/// `MipmapGenerator.alphaTestCoverage`（:33-53）：像素域 (w-1)x(h-1)，
+/// 每像素 4x4 子采样双线性 alpha > alphaRef 计覆盖。退化尺寸（<2）返回 0
+/// （原版此时除零得 NaN，语义等价「无覆盖可保」；本管线恒 16x16/8x8 不达）。
+fn alpha_test_coverage(img: &[u8], w: usize, h: usize, alpha_ref: f32, alpha_scale: f32) -> f32 {
+    if w < 2 || h < 2 {
+        return 0.0;
+    }
+    let mut coverage = 0f32;
+    for y in 0..h - 1 {
+        for x in 0..w - 1 {
+            let a = |xx: usize, yy: usize| {
+                (f32::from(img[(yy * w + xx) * 4 + 3]) / 255.0 * alpha_scale).clamp(0.0, 1.0)
+            };
+            let (a00, a10) = (a(x, y), a(x + 1, y));
+            let (a01, a11) = (a(x, y + 1), a(x + 1, y + 1));
+            let mut texel = 0f32;
+            for sy in 0..4 {
+                let fy = (sy as f32 + 0.5) / 4.0;
+                for sx in 0..4 {
+                    let fx = (sx as f32 + 0.5) / 4.0;
+                    let v = a00 * (1.0 - fx) * (1.0 - fy)
+                        + a10 * fx * (1.0 - fy)
+                        + a01 * (1.0 - fx) * fy
+                        + a11 * fx * fy;
+                    if v > alpha_ref {
+                        texel += 1.0;
+                    }
+                }
+            }
+            coverage += texel / 16.0;
+        }
+    }
+    coverage / ((w - 1) * (h - 1)) as f32
+}
+
+/// `MipmapGenerator.scaleAlphaToCoverage`（:55-89）：5 次二分 alphaScale
+/// ∈ [0,4] 逼近 mip0 原始 alpha-test 覆盖，随后逐像素
+/// alpha = clamp(a*scale + bias + 0.025, 0, 1) 写回（floor(a*255)，
+/// `ARGB.as8BitChannel` :225-227）。cutout mip 防「平均抬升 alpha →
+/// 远处镂空变实心」。
+fn scale_alpha_to_coverage(
+    img: &mut [u8],
+    w: usize,
+    h: usize,
+    desired: f32,
+    alpha_ref: f32,
+    bias: f32,
+) {
+    let (mut lo, mut hi) = (0.0f32, 4.0f32);
+    let mut scale = 1.0f32;
+    let (mut best_scale, mut best_err) = (1.0f32, f32::MAX);
+    for _ in 0..5 {
+        let cov = alpha_test_coverage(img, w, h, alpha_ref, scale);
+        let err = (cov - desired).abs();
+        if err < best_err {
+            best_err = err;
+            best_scale = scale;
+        }
+        if cov < desired {
+            lo = scale;
+        } else if cov > desired {
+            hi = scale;
+        } else {
+            break;
+        }
+        scale = (lo + hi) * 0.5;
+    }
+    for i in 0..w * h {
+        let o = i * 4 + 3;
+        let a = f32::from(img[o]) / 255.0;
+        let a = (a * best_scale + bias + 0.025).clamp(0.0, 1.0);
+        img[o] = (a * 255.0) as u8;
+    }
+}
+
+/// CPU mip level 1 (16 -> 8 px per side, per layer)——原版 MipmapGenerator
+/// 语义逐行移植（audit #10：旧版 sRGB 域直平均四通道，半透明边缘远处出
+/// 暗/脏晕）。策略 = AUTO（`MipmapGenerator.java:99-101`）：层内含
+/// alpha==0 像素（`NativeImage.computeTransparency` :515-524 的
+/// hasTransparent）→ CUTOUT，否则 MEAN；CUTOUT 先 solidify
+/// （[`solidify`]，:102-105 对 mip0 工作副本），混合走 [`mean_linear`]
+/// （线性域），随后每级 scaleAlphaToCoverage（[`scale_alpha_to_coverage`]，
+/// :139-142，cutoutRef=0.5、alphaCutoffBias=0——block 无 texture mcmeta
+/// 用例）。采样器现仍 Nearest/Nearest（gpu.rs），mip1 像素语义先对原版、
+/// 三线性接线属渲染侧。
 pub fn generate_mip1(mip0: &[u8], mip1: &mut [u8]) {
     assert_eq!(mip0.len(), LAYERS * TILE_PX * TILE_PX * 4);
     assert_eq!(mip1.len(), LAYERS * 8 * 8 * 4);
+    let (s2l, l2s) = mip_tables();
+    const S: usize = TILE_PX / 2;
     for layer in 0..LAYERS {
-        for y in 0..8u32 {
-            for x in 0..8u32 {
-                for c in 0..4 {
-                    let mut sum = 0u32;
-                    for dy in 0..2u32 {
-                        for dx in 0..2u32 {
-                            let sx = x * 2 + dx;
-                            let sy = y * 2 + dy;
-                            let off = layer * TILE_PX * TILE_PX * 4
-                                + ((sy * TILE_PX as u32 + sx) * 4 + c) as usize;
-                            sum += u32::from(mip0[off]);
-                        }
+        let mut work = [0u8; TILE_PX * TILE_PX * 4];
+        work.copy_from_slice(&mip0[layer * TILE_PX * TILE_PX * 4..][..work.len()]);
+        let cutout = work.chunks(4).any(|p| p[3] == 0);
+        // 原始覆盖度只依赖 alpha，solidify 不改 alpha（alpha 保持 0），
+        // 计算时机与原版先后均可（原版先 solidify 再测，:102-116）。
+        let original_coverage = if cutout {
+            alpha_test_coverage(&work, TILE_PX, TILE_PX, 0.5, 1.0)
+        } else {
+            0.0
+        };
+        if cutout {
+            solidify(&mut work, TILE_PX, TILE_PX);
+        }
+        for y in 0..S {
+            for x in 0..S {
+                let mut q = [[0u8; 4]; 4];
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let o = ((2 * y + dy) * TILE_PX + 2 * x + dx) * 4;
+                        q[dy * 2 + dx].copy_from_slice(&work[o..o + 4]);
                     }
-                    mip1[layer * 8 * 8 * 4 + ((y * 8 + x) * 4 + c) as usize] = (sum / 4) as u8;
                 }
+                let m = mean_linear(&q, s2l, l2s);
+                let d = (layer * S * S + y * S + x) * 4;
+                mip1[d..d + 4].copy_from_slice(&m);
             }
+        }
+        if cutout {
+            let off = layer * S * S * 4;
+            scale_alpha_to_coverage(
+                &mut mip1[off..off + S * S * 4],
+                S,
+                S,
+                original_coverage,
+                0.5,
+                0.0,
+            );
         }
     }
 }
@@ -306,11 +509,11 @@ fn parse_frame0_index() -> Vec<(&'static str, u32)> {
     let rest = &MANIFEST_JSON[key..];
     let open = rest
         .find('{')
-        .expect("manifest: animation.frame0_index 缺 {{");
+        .expect("manifest: animation.frame0_index 缺 {");
     let obj = &rest[open..];
     let close = obj
         .find('}')
-        .expect("manifest: animation.frame0_index 缺 }}");
+        .expect("manifest: animation.frame0_index 缺 }");
     // 生成器保证扁平 {name: int} 映射：split('"') 奇数段=键，其后偶数段以
     // ": <整数>" 开头（同 parse_manifest_names 的零 serde 约定）。
     let segs: Vec<&str> = obj[..=close].split('"').collect();
@@ -625,7 +828,8 @@ mod frame_tests {
             let start = anim
                 .find(&format!("\"{name}\": {{"))
                 .unwrap_or_else(|| panic!("animation 缺 {name}"));
-            let end = anim[start..].find("\n   }}").unwrap() + start + 5;
+            // 普通字符串无 `{{}}` 转义：条目收尾就是换行 + 3 空格 + '}'。
+            let end = anim[start..].find("\n   }").unwrap() + start + 4;
             &anim[start..end]
         };
         let ws = snippet("water_still");
