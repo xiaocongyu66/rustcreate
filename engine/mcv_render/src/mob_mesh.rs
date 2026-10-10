@@ -1375,7 +1375,7 @@ mod tests {
         for k in [4usize, 5, 6] {
             let mm = mob_model_matrices(MobModelKind::from_idx(k as u32).unwrap(), &pose);
             let base = m.slices[k].start as usize / 36 * 24;
-            let end = base + m.slices[k].len() as usize / 36 * 24;
+            let end = base + m.slices[k].len() / 36 * 24;
             let mut min_y = f32::MAX;
             for v in &m.verts[base..end] {
                 let w = mm[v.meta[1] as usize].transform_point3(Vec3::from(v.pos));
@@ -1452,7 +1452,7 @@ mod tests {
         let mm0 = mob_model_matrices(MobModelKind::Spider, &static_pose);
         // 静态八腿外张（y0=±π/4 等）：模型横向跨度远超身体半宽 5px。
         let base = m.slices[7].start as usize / 36 * 24;
-        let end = base + m.slices[7].len() as usize / 36 * 24;
+        let end = base + m.slices[7].len() / 36 * 24;
         let mut max_x = 0.0f32;
         for v in &m.verts[base..end] {
             let w = mm0[v.meta[1] as usize].transform_point3(Vec3::from(v.pos));
@@ -1468,10 +1468,10 @@ mod tests {
         let mm1 = mob_model_matrices(MobModelKind::Spider, &walk);
         let moved = (0..MAX_MOB_PARTS)
             .filter(|p| {
-                (mm0[*p]
+                mm0[*p]
                     .transform_point3(Vec3::new(0.0, -0.125, 0.0))
                     .distance(mm1[*p].transform_point3(Vec3::new(0.0, -0.125, 0.0)))
-                    > 1e-4)
+                    > 1e-4
             })
             .count();
         // 头/身静止，八腿全动。
