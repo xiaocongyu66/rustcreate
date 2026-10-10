@@ -53,7 +53,7 @@ impl ChunkHandle {
             stage: AtomicU8::new(Stage::Empty as u8),
             dirty: AtomicU8::new(0),
             voxels: RwLock::new(Box::new([BlockId(0); CHUNK_VOL])),
-            heightmap: RwLock::new(Box::new([WORLD_MIN_Y; 256])),
+            heightmap: RwLock::new(Box::new([WORLD_MIN_Y as i16; 256])),
             light: RwLock::new(Box::new([0; CHUNK_VOL])),
         }
     }

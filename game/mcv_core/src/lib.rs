@@ -36,7 +36,9 @@ pub const SEA_LEVEL: i32 = 63;
 /// 局部坐标（0..16）。入口断言防越界回绕（coords 审计 P2）。
 #[inline]
 pub const fn vidx(x: usize, y: i32, z: usize) -> usize {
-    debug_assert!(x < CHUNK_SX && (WORLD_MIN_Y..WORLD_MAX_Y).contains(&y) && z < CHUNK_SZ);
+    // 稳定版 const fn 里 Range::contains 是 conditionally-const（E0658）
+    // ——等价展开为裸比较。
+    debug_assert!(x < CHUNK_SX && y >= WORLD_MIN_Y && y < WORLD_MAX_Y && z < CHUNK_SZ);
     (((y - WORLD_MIN_Y) as usize) << 8) | (z << 4) | x
 }
 
