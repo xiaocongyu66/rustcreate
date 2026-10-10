@@ -23,6 +23,11 @@ use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
 
+/// 世界竖直下界（体素布局 y 索引 ∈ 0..mcv_core::CHUNK_SY，方块/查询
+/// 均以 0 为底——`Level.getMinY()` 语义，Entity.checkBelowWorld 的
+/// 参照常数）。
+pub const WORLD_MIN_Y: f32 = 0.0;
+
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GameMode {
@@ -503,6 +508,12 @@ pub struct GameRuntime {
     /// destroyDelay 三件套）：生存/极限走 START→CONTINUE→ABORT，创造走按住
     /// 连秒破冷却；仅 `on_tick` 为真的固定步推进（原版每 tick 一次 continue）。
     mine: MineMachine,
+    /// 挥臂动画（26.1 LivingEntity.swinging/swingTime/attackAnim，:212,2149-2158）：
+    /// 攻击按下沿与挖掘中的每个 tick 触发（restart 半程规则 :1995），渲染层
+    /// 经 `swing_progress` 取 0..1 驱动第一人称手臂/手持物摆动。
+    swinging: bool,
+    /// 挥臂计时（tick 制，0..=SWING_TICKS；连续制推进按 dt*20 折算帧间平滑）。
+    swing_time: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -524,6 +535,12 @@ pub struct GameRuntime {
     pub particles: mcv_render::particles::ParticleEngine,
     /// 弓蓄力账本（Some=按住蓄力中的 tick 数；状态机 [`mcv_item::bow`]）。
     bow_hold: Option<u32>,
+    /// 进食账本（Some=按住进食中；状态机 [`mcv_item::food::step_eating`]，
+    /// 启动沿在 interact 的食物分支、松开/换手即取消）。
+    eat_hold: Option<mcv_item::food::Eating>,
+    /// 右键重触发延迟（tick，原版 `Minecraft.rightClickDelay = 4`；完食后
+    /// 按住右键由此节流连吃，空手/非食物不受影响）。
+    eat_cooldown: u32,
     /// 极限模式死亡后置位：app 层负责删档并回主菜单。
     pub hardcore_death: bool,
     /// 渲染距离（区块），设置界面可调。
@@ -573,6 +590,11 @@ pub struct GameRuntime {
     /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
     /// prone 模型接线在 mcv_app（遗留清单，见报告）。
     swimming: bool,
+    /// 玩家剩余燃烧 tick（26.1 Entity.remainingFireTicks，Entity.java:534-544
+    /// 服务端分支：>0 时每 20 tick 1 点 on_fire 伤害并每 tick −1；点燃入口
+    /// lavaIgnite/fireIgnite，:607-640）。创造不死但同样挂燃烧账
+    /// （hurt_player 创造豁免在伤害侧，燃烧账照记——与原版一致）。
+    pub fire_ticks: i32,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -720,6 +742,24 @@ impl MineMachine {
     }
 }
 
+/// 挥臂动画一轮时长（tick，26.1 `SwingAnimation.DEFAULT.duration`，
+/// SwingAnimation.java:12 —— 默认 WHACK 6 tick）。
+const SWING_TICKS: f32 = 6.0;
+/// 挥臂重启半程阈值（26.1 LivingEntity.swing :1995 `swingTime >= duration/2`
+/// 时允许重置——挖掘长按每 tick 都 swing，实际挥臂周期 = 3 tick）。
+const SWING_RESTART_TICKS: f32 = SWING_TICKS * 0.5;
+
+impl GameRuntime {
+    /// 挥臂触发（26.1 LivingEntity.swing :1994-1996 的 restart 半程规则）：
+    /// 攻击按下沿与挖掘中的每 tick 都可调用，半程前重触发无效（不加速）。
+    fn swing(&mut self) {
+        if !self.swinging || self.swing_time >= SWING_RESTART_TICKS {
+            self.swinging = true;
+            self.swing_time = 0.0;
+        }
+    }
+}
+
 /// 60 Hz 固定步 → 20 Hz 原版 tick 累加：返回本步跨过的 tick 数（0 或 1
 /// 为常态），小数留在 `frac`。`dt ≥ 0.2 s` 的 burst（卡顿/后台回归）封顶
 /// 4 tick，防级联。原版逻辑全部按 tick 计时（20 tick/s），任何按 60 Hz
@@ -767,27 +807,12 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
-        // 开局装备:铁剑(旧单格行为)。创造另发 8 格可放方块(开发期
-        // 创造背包未做,给旧调试快捷栏的等价子集;水/基岩不可入栏)。
-        let mut hotbar = mcv_item::Hotbar::empty();
-        hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1);
-        if mode == GameMode::Creative {
-            for (i, item) in [
-                mcv_item::STONE_ITEM,
-                mcv_item::DIRT_ITEM,
-                mcv_item::GRASS_ITEM,
-                mcv_item::SAND_ITEM,
-                mcv_item::COBBLESTONE,
-                mcv_item::PLANKS,
-                mcv_item::LOG,
-                mcv_item::LEAVES_ITEM,
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                hotbar.slots[1 + i] = mcv_item::ItemStack::new(item, 64);
-            }
-        }
+        // 新档背包全模式为空（26.1 Inventory.java:56 items 初始化为
+        // 36×ItemStack.EMPTY，:62-65 构造只挂 player/equipment 引用、从不
+        // 发放物品；生存/创造皆然）。旧实现无条件发铁剑（旧单格行为）+
+        // 创造另发 8 格调试方块（开发期创造背包未做的替代品，分页 UI 已
+        // 实现故理由消失）——均无源码依据且被真机投诉，删除。
+        let hotbar = mcv_item::Hotbar::empty();
         let mut rt = Self {
             seed,
             chunks: HashMap::new(),
@@ -820,6 +845,8 @@ impl GameRuntime {
             attack_ticker: 20.0, // ready
             food_tick_timer: 0,
             mine: MineMachine::default(),
+            swinging: false,
+            swing_time: 0.0,
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -830,6 +857,8 @@ impl GameRuntime {
             effects: mcv_entity::EffectBook::default(),
             particles: mcv_render::particles::ParticleEngine::new(),
             bow_hold: None,
+            eat_hold: None,
+            eat_cooldown: 0,
             hardcore_death: false,
             render_dist: RENDER_DIST,
             sens: 1.0,
@@ -852,6 +881,7 @@ impl GameRuntime {
             air_supply: MAX_AIR_SUPPLY,
             swimming: false,
             was_in_water: false,
+            fire_ticks: 0,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
@@ -901,6 +931,38 @@ impl GameRuntime {
     /// 不建模）；`lastHurtByMobTimestamp`/`lastHurtMobTimestamp` 只用于仇恨
     /// 记录（LivingEntity.java:241-244），不构成本门的一部分——按源码实况实现。
     pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
+        // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
+        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
+        // mob_attack/player_attack.json = 0.1；创造豁免同原版
+        // abilities.invulnerable（Player.causeFoodExhaustion:1561-1567）。
+        self.hurt_ex(amount, from, if from.is_some() { 0.1 } else { 0.0 }, false);
+    }
+
+    /// 火系伤害统一入口（damage_type effects=burning 家族：lava/in_fire/
+    /// on_fire，均 ∈ IS_FIRE 标签）：现役防火效果 → 整段免伤
+    /// （LivingEntity.hurtServer:1163-1165 `source.is(IS_FIRE) &&
+    /// hasEffect(FIRE_RESISTANCE) → return false`）。
+    fn hurt_fire(&mut self, amount: f32, food_exhaustion: f32) {
+        if self.effects.has(mcv_entity::Kind::FireResistance) {
+            return;
+        }
+        self.hurt_ex(amount, None, food_exhaustion, false);
+    }
+
+    /// hurt_player 的参数化内核：`food_exhaustion` = damage_type.json 的
+    /// exhaustion 值（lava/in_fire = 0.1、on_fire/in_wall/out_of_world/starve/
+    /// drown = 0.0）；`bypass_creative` = 伤害类型 ∈ bypasses_invulnerability
+    /// 标签（仅 out_of_world/fell_out_of_world，tags/damage_type/
+    /// bypasses_invulnerability.json：values = [out_of_world, generic_kill]）
+    /// ——创造免疫走 Entity.isInvulnerableToBase:2955-2960 的
+    /// `invulnerable && !BYPASSES_INVULNERABILITY` 门，穿标签的伤害照常结算。
+    fn hurt_ex(
+        &mut self,
+        amount: f32,
+        from: Option<Vec3>,
+        food_exhaustion: f32,
+        bypass_creative: bool,
+    ) {
         // 难度缩放（Player.hurtServer:692-706）：仅 scalesWithDifficulty 伤
         // 害源（DamageSource.java:92-97 = LivingEntity 造成且非玩家 → 本仓
         // mob 近战/箭/爆炸，`from` 有值）参与；和平归 0 直接免伤结算。
@@ -913,7 +975,7 @@ impl GameRuntime {
             return;
         }
         let p = &mut self.player;
-        if p.health <= 0.0 || self.mode == GameMode::Creative {
+        if p.health <= 0.0 || (self.mode == GameMode::Creative && !bypass_creative) {
             return;
         }
         let guard = p.invulnerable > 10;
@@ -936,12 +998,9 @@ impl GameRuntime {
         p.absorption = (p.absorption - absorbed).max(0.0);
         p.health -= dmg;
         // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
-        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
-        // mob_attack/player_attack.json = 0.1，fall/out_of_world.json = 0.0；
-        // 本入口 `from` 有值 ≙ 实体攻击。创造已在上方豁免（对应
-        // Player.causeFoodExhaustion:1561-1567 的 abilities.invulnerable 门）。
-        if from.is_some() {
-            p.exhaustion = (p.exhaustion + 0.1).min(EXHAUSTION_MAX);
+        // causeFoodExhaustion(source.getFoodExhaustion())）。
+        if food_exhaustion > 0.0 {
+            p.exhaustion = (p.exhaustion + food_exhaustion).min(EXHAUSTION_MAX);
         }
         if let Some(src) = from {
             let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
@@ -953,16 +1012,23 @@ impl GameRuntime {
         if p.health <= 0.0 {
             p.health = 0.0;
             self.dead = true;
+            // clearFire（26.1 Player.die:554-555 死亡即熄灭）。
+            self.fire_ticks = 0;
             if self.mode == GameMode::Hardcore {
                 self.hardcore_death = true;
             }
             // 死亡掉落（26.1 Player.die → Inventory.dropAll，keepInventory
-            // 默认 false）：快捷栏逐格生成 ItemDrop（拾取延迟 40 tick =
-            // 2 s，LivingEntity.java:3398），与 mob 死亡掉落同一生成路径，
-            // 再清栏。
+            // 默认 false）：全 36 格（快捷栏 9 + 主背包 27）逐格生成
+            // ItemDrop（拾取延迟 40 tick = 2 s，LivingEntity.java:3398），
+            // 与 mob 死亡掉落同一生成路径，再清栏。旧实现只掉快捷栏 9 格，
+            // main 27 格死亡保留 = 变相 keepInventory。
+            // KNOWN-DIVERGENCE：原版 Player.die 还会掉合成光标手持堆
+            // （AbstractContainerMenu carried）；本工程光标堆存活在 mcv_app
+            // 的 UI 会话层（CraftScreen.cursor，app.rs 持有），Game 状态层
+            // 不可达，暂不掉落。
             let at = p.pos + Vec3::Y * 0.9;
             let mut rng = spawn_rng();
-            for s in &self.hotbar.slots {
+            for s in self.hotbar.slots.iter().chain(self.hotbar.main.iter()) {
                 if !s.is_empty() {
                     mcv_entity::spawn_item_drop(
                         &mut self.mobs_app.world,
@@ -1003,6 +1069,8 @@ impl GameRuntime {
         self.fall_y = None;
         self.air_supply = MAX_AIR_SUPPLY;
         self.swimming = false;
+        // 燃烧不随复活保留（26.1 死亡 clearFire，Player.die:554）。
+        self.fire_ticks = 0;
         // 26.1 重生与首次进入同走加载画面：handleRespawn →
         // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
         // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
@@ -1313,8 +1381,17 @@ impl GameRuntime {
                     self.player.pitch = p.pitch;
                     self.player.flying = p.flying;
                     self.player.sel_slot = p.sel_slot as usize;
-                    // v3 起存档带快捷栏;v1/v2 读为空——保留开局装备,
-                    // 不能把 kit 擦成空栏。物品 id 越界(旧档)整槽跳过。
+                    // v5 生存数值（v1–v4 解码器已给开局默认值）：退出重进/
+                    // 死亡重生不丢饥饿饱和账——不持久化则进食白吃。
+                    self.player.health = p.health;
+                    self.player.hunger = p.hunger;
+                    self.player.saturation = p.saturation;
+                    self.player.exhaustion = p.exhaustion;
+                    self.air_supply = p.air_supply;
+                    self.difficulty = crate::difficulty::Difficulty::by_id(p.difficulty);
+                    // v3 起存档带快捷栏;v1/v2 读为空——新档 assemble 不再
+                    // 发放（空栏即原版态），空存档热栏保持空即可。物品 id
+                    // 越界(旧档)整槽跳过。
                     if !p.hotbar.is_empty() || !p.main.is_empty() {
                         let mut h = mcv_item::Hotbar::empty();
                         let mk = |(item, count, damage): (u16, u8, u16)| {
@@ -1380,6 +1457,14 @@ impl GameRuntime {
                     .iter()
                     .map(|s| (s.item, s.count, s.damage))
                     .collect(),
+                // v5:生存数值（health/hunger/saturation/exhaustion/air/
+                // difficulty）随档——进食成果跨会话成立。
+                health: self.player.health,
+                hunger: self.player.hunger,
+                saturation: self.player.saturation,
+                exhaustion: self.player.exhaustion,
+                air_supply: self.air_supply,
+                difficulty: self.difficulty.id(),
             }),
         };
         let tmp = self.save_dir.join("level.meta.tmp");
@@ -1985,6 +2070,14 @@ impl GameRuntime {
         if fx.place {
             self.interact(true);
         }
+        // 放置键沿（与 jump 同一双向纪律）：按住置真、松开沿置假——进食
+        // 的按住推进依赖 input.placing 持续为真，仅按沿触发会让进食下一拍
+        // 即被取消；触摸启用后镜像，不覆盖桌面鼠标按下态（同 mine 注记）。
+        if self.touch.place_held {
+            self.input.placing = true;
+        } else if fx.place_released {
+            self.input.placing = false;
+        }
         // 摇杆 → 移动方向
         if let Some((dx, dy)) = self.touch.stick_direction() {
             // 摇杆向上推 = 前进
@@ -2091,6 +2184,15 @@ impl GameRuntime {
         // 12.5 tick = 0.625s）。上限 20 tick（最慢武器 attackSpeed 1.0 → 蓄满）。
         if self.on_tick {
             self.attack_ticker = (self.attack_ticker + n as f32).min(20.0);
+        }
+        // 挥臂计时（LivingEntity.aiStep :2149-2158 的连续制等价）：60 Hz 步
+        // 按 dt 折算 tick 平滑推进（渲染帧间不跳变）；满一轮归零停摆。
+        if self.swinging {
+            self.swing_time += dt * 20.0;
+            if self.swing_time >= SWING_TICKS {
+                self.swinging = false;
+                self.swing_time = 0.0;
+            }
         }
         self.step_mining(dt);
 
@@ -2277,8 +2379,18 @@ impl GameRuntime {
                 );
             }
             self.was_in_water = in_water;
+            // 攀附中免摔落账（原版 handleOnClimbable 每拍 resetFallDistance，
+            // LivingEntity.java:2644）——谓词与 physics::step 同源
+            // on_climbable（贴面即达，见 LADDER_PROBE 注）。
+            let on_ladder = !self.player.flying
+                && mcv_game::physics::on_climbable(
+                    &WorldView {
+                        chunks: &self.chunks,
+                    },
+                    &mcv_game::Aabb::from_player(self.player.pos),
+                );
             // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
-            if !self.player.flying && !in_water {
+            if !self.player.flying && !in_water && !on_ladder {
                 if self.player.on_ground {
                     self.fall_y = None;
                 } else {
@@ -2286,7 +2398,7 @@ impl GameRuntime {
                     self.fall_y = Some(self.fall_y.map_or(y, |f| f.max(y)));
                 }
             } else {
-                self.fall_y = None; // 飞行/游泳免疫摔落
+                self.fall_y = None; // 飞行/游泳/攀附免疫摔落
             }
             let step_input = mcv_game::StepInput {
                 wish_dir,
@@ -2382,14 +2494,39 @@ impl GameRuntime {
                 self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
             }
             // 事件式 exhaustion 累加（原版在移动/跳跃事件即时加，非每 tick）：
-            // 冲刺地面水平位移 0.1/m、走路/潜行 0.0/m 且只计水平分量
-            // （ServerPlayer.checkMovementStatistics:1443-1456 +
-            // FoodConstants.java:25-27）；跳跃 = 冲刺跳 0.2 / 普通跳 0.05
-            // （ServerPlayer.jumpFromGround:1532-1540 +
+            // 水中 0.01/m——游泳/眼下水按 3D 距离、水面行进按水平距离
+            // （ServerPlayer.checkMovementStatistics:1422-1439 +
+            // FoodConstants.java:28 EXHAUSTION_SWIM），优先序 isSwimming >
+            // eyeInFluid(WATER) > inWater > onGround 与原版 else-if 链一致
+            // （self.swimming 为上一拍值，姿态位本拍尾才翻转，1 tick 滞后）。
+            // 地面冲刺 0.1/m、走路/潜行 0.0/m 且只计水平分量
+            // （checkMovementStatistics:1443-1456 + FoodConstants.java:25-27，
+            // 旧实现水中零消耗为登记差异，本提交消解）；跳跃 = 冲刺跳 0.2 /
+            // 普通跳 0.05（ServerPlayer.jumpFromGround:1532-1540 +
             // FoodConstants.java:21-22，旧实现恒 0.2 高估普通跳）。
             if self.mode != GameMode::Creative {
+                // 眼位水样（eyeInFluid(WATER) 分支判据，:1428）。
+                let eyes_in_water = {
+                    let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                    let ec = eye.floor().as_ivec3();
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    d.liquid && d.name == "water"
+                };
                 let p = &mut self.player;
-                if p.on_ground {
+                let moved_3d = delta.length();
+                let water_cost = if self.swimming || eyes_in_water {
+                    0.01 * moved_3d
+                } else if in_water {
+                    0.01 * moved_h
+                } else {
+                    0.0
+                };
+                if water_cost > 0.0 {
+                    p.exhaustion = (p.exhaustion + water_cost).min(EXHAUSTION_MAX);
+                } else if p.on_ground {
                     p.exhaustion =
                         (p.exhaustion + move_exhaustion(sprinting, moved_h)).min(EXHAUSTION_MAX);
                 }
@@ -2400,10 +2537,12 @@ impl GameRuntime {
             }
             // FoodData.tick 每 game tick 一次（26.1 FoodData.java:32-72）：
             // exhaustion>4 先扣 1 饱和、饱和耗尽才扣饥饿；回血/饥饿掉血走
-            // tickTimer（和平封顶 10 为本仓既有登记偏差）。
+            // tickTimer（和平封顶 10 为本仓既有登记偏差）。饿死拍命中时由
+            // 调用方走完整 hurt 管线（FoodData.java:64 hurtServer(starve)，
+            // i 帧门/死亡结算/受伤音照常；exhaustion 按 starve.json=0.0）。
             if self.on_tick && self.mode != GameMode::Creative {
                 let p = &mut self.player;
-                food_data_tick(
+                let starve = food_data_tick(
                     &mut p.exhaustion,
                     &mut p.saturation,
                     &mut p.hunger,
@@ -2411,26 +2550,78 @@ impl GameRuntime {
                     &mut self.food_tick_timer,
                     self.difficulty,
                 );
+                if starve {
+                    self.hurt_player(1.0, None);
+                }
             }
             // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
             if self.on_tick {
-                let view = WorldView {
-                    chunks: &self.chunks,
-                };
                 // 眼位流体（原版 isEyeInFluid(**WATER**)，LivingEntity.java:417
                 // 只认水不认岩浆；eye_in_water 是挖掘惩罚用的“任意流体”版，
                 // 语义不同不能复用）。
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let ec = eye.floor().as_ivec3();
-                let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
-                let eyes_water = eye_def.liquid && eye_def.name == "water";
                 let feet_pos = BlockPos::new(
                     self.player.pos.x.floor() as i32,
                     self.player.pos.y.floor() as i32,
                     self.player.pos.z.floor() as i32,
                 );
-                let feet_def = view.block(feet_pos).def();
-                let feet_water = feet_def.liquid && feet_def.name == "water";
+                // 借用隔离：view 的不可变借用只在取数块内存活（旧写法 view
+                // 活满全段，与下方 hurt_*/particles 可变借用冲突 = E0502，
+                // 前任提交从未绿过 CI）。BlockId::def() 返回 &'static
+                // BlockDef，格定义可安全带出借用域。
+                let (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate) = {
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    let eyes_water = eye_def.liquid && eye_def.name == "water";
+                    let feet_def = view.block(feet_pos).def();
+                    let feet_water = feet_def.liquid && feet_def.name == "water";
+                    // ---- 方块接触伤害（26.1 InsideBlockEffectApplier：
+                    // 与实体 AABB 重叠的每格触发 entityInside）----
+                    // 岩浆（LavaFluid.entityInside:119-123）：CLEAR_FREEZE +
+                    // LAVA_IGNITE（Entity.lavaIgnite:607-611 点燃 15s）+
+                    // Entity::lavaHurt:613-624 → lava() 4.0F/tick（i 帧节流成
+                    // 4.0/s）。判据按 AABB 与岩浆格任一重叠近似为「脚部或眼部
+                    // 格是岩浆」（本引擎单点采样脚/眼，1.8 m 身高横跨 ≤3 格，
+                    // 差异登记 KNOWN-DIVERGENCE）。
+                    let in_lava = (feet_def.liquid && feet_def.name == "lava")
+                        || (eye_def.liquid && eye_def.name == "lava");
+                    // 火焰方块（BaseFireBlock.entityInside:131-137）：FIRE_IGNITE
+                    // （fireIgnite:139-155 → igniteForSeconds(8)=160 tick，只增
+                    // 不减）+ in_fire() fireDamage/tick（i 帧节流）。数值：
+                    // FireBlock 构造 1.0F（FireBlock.java Vineflower 反编译失败，
+                    // 按 vanilla 常量；SoulFireBlock.java:22 = 2.0F 实读确认）。
+                    // 判据同岩浆：脚/眼格任一是火（KNOWN-DIVERGENCE 单点采样）。
+                    let fire_dmg = if feet_def.name == "soul_fire" || eye_def.name == "soul_fire" {
+                        Some(2.0)
+                    } else if feet_def.name == "fire" || eye_def.name == "fire" {
+                        Some(1.0)
+                    } else {
+                        None
+                    };
+                    // 窒息（26.1 LivingEntity.baseTick:405-406 isInWall → inWall()
+                    // 1.0F/tick，i 帧门自然节流 ~1/s；Entity.isInWall:2164-2182 =
+                    // 眼位 0.8×width 窄盒（1e-6 高 → 仅眼位所在 y 层）与
+                    // suffocating 方块求交；suffocating 默认判据 =
+                    // blocksMotion && 满碰撞立方（BlockBehaviour.java:1004）→
+                    // 本仓按 solid 全立方近似）。
+                    let eye_suffocate = {
+                        let hw = mcv_game::Player::HALF[0] * 0.8;
+                        let mut hit = false;
+                        for bx in (eye.x - hw).floor() as i32..=(eye.x + hw).floor() as i32 {
+                            for bz in (eye.z - hw).floor() as i32..=(eye.z + hw).floor() as i32 {
+                                let d = view.block(BlockPos::new(bx, ec.y, bz)).def();
+                                hit |= d.solid
+                                    && !d.liquid
+                                    && mcv_core::Shape::from_u8(d.shape) == mcv_core::Shape::Cube;
+                            }
+                        }
+                        hit
+                    };
+                    (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate)
+                };
                 // 姿态位（Pose.SWIMMING 的驱动源，Entity.java:1558-1564 +
                 // Player.java:1410-1416；第三人称 prone 模型接线遗留）。
                 self.swimming = swimming_tick(
@@ -2465,6 +2656,30 @@ impl GameRuntime {
                     // 环境伤害不进难度缩放（DamageSource.java:92-97 判据
                     // = 实体伤害，hurt_player 的 from=None 分支同语义）。
                     self.hurt_player(2.0, None);
+                }
+                if in_lava {
+                    // lavaIgnite：igniteForSeconds(15) = 300 tick（只增不减，
+                    // igniteForTicks:634-640 `remainingFireTicks < n` 门）。
+                    self.fire_ticks = self.fire_ticks.max(15 * 20);
+                    // lavaHurt：lava() 4.0F（Entity.java:613-624，含
+                    // GENERIC_BURN 音，音效接 event 表后再挂）。
+                    self.hurt_fire(4.0, 0.1);
+                }
+                // 燃烧结算（Entity.baseTick:534-544）：remainingFireTicks>0
+                // 且每 20 tick 边界且**不在岩浆**（岩浆侧 lavaHurt 每 tick
+                // 独立结算）→ on_fire() 1.0F；随后每 tick −1。
+                if self.fire_ticks > 0 {
+                    if self.fire_ticks % 20 == 0 && !in_lava {
+                        self.hurt_fire(1.0, 0.0);
+                    }
+                    self.fire_ticks -= 1;
+                }
+                if let Some(dmg) = fire_dmg {
+                    self.fire_ticks = self.fire_ticks.max(8 * 20);
+                    self.hurt_fire(dmg, 0.1);
+                }
+                if eye_suffocate {
+                    self.hurt_ex(1.0, None, 0.0, false);
                 }
             }
             // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
@@ -2550,10 +2765,46 @@ impl GameRuntime {
             }
         }
 
-        // ---- 虚空伤害（y < -10）：无视无敌帧的重击，死亡后传送回出生点上方 ----
-        if self.player.pos.y < -10.0 {
-            self.player.invulnerable = 0;
-            self.hurt_player(40.0, None);
+        // ---- 进食（Consumable 26.1）：按住右键推进、松开/换手取消、
+        // 吃满 eat_ticks 结算（结算体 = finish_eating，20Hz tick 语义）----
+        if self.on_tick && self.eat_cooldown > 0 {
+            self.eat_cooldown -= 1;
+        }
+        // 按住右键的重触发（原版 Minecraft.handleKeybinds：rightClickDelay
+        // 到 0 且 use 键仍按住 → startUseItem；try_begin_eating 内部自带
+        // 工作台拦截与可吃门，非食物空转零成本）。
+        if self.on_tick && self.input.placing && self.eat_cooldown == 0 && self.eat_hold.is_none() {
+            self.try_begin_eating();
+        }
+        {
+            let held = {
+                let s = self.hotbar.selected(self.player.sel_slot);
+                (!s.is_empty()).then_some(s.item)
+            };
+            let food = held.and_then(mcv_item::food::food_properties);
+            let can_eat = food.is_some_and(|f| self.can_eat_now(f));
+            if let Some(done) = mcv_item::food::step_eating(
+                self.input.placing,
+                self.on_tick,
+                held,
+                food,
+                can_eat,
+                &mut self.eat_hold,
+            ) {
+                self.finish_eating(done);
+            }
+        }
+
+        // ---- 虚空（26.1 Entity.checkBelowWorld:579-583 y < getMinY()−64 →
+        // onBelowWorld；LivingEntity.onBelowWorld:2142-2144 → fellOutOfWorld
+        // **4.0F/tick 走正常 hurtServer 管线**（i 帧门节流成 0.5s/跳，不清
+        // 无敌帧）；类型 out_of_world ∈ bypasses_invulnerability
+        // （tags/damage_type/bypasses_invulnerability.json）→ 创造不豁免
+        // （Entity.isInvulnerableToBase:2955-2960 穿标签），照常死。
+        // 旧实现 y<−10 清无敌帧打 40 秒杀且创造无限坠落（软锁），两处均无
+        // 源码依据。minY 取世界常数（体素布局 y ∈ 0..CHUNK_SY）。
+        if self.player.pos.y < WORLD_MIN_Y - 64.0 {
+            self.hurt_ex(4.0, None, 0.0, true);
             if self.dead {
                 self.player.pos = Vec3::new(8.5, 200.0, 8.5);
                 self.player.vel = Vec3::ZERO;
@@ -2840,6 +3091,9 @@ impl GameRuntime {
         if self.phase == GamePhase::Loading {
             return;
         }
+        // 攻击沿必挥臂（26.1 startAttack → Minecraft.java :1669 `this.player
+        // .swing(InteractionHand.MAIN_HAND)`；打实体/挖方块/对空挥统一在这里）。
+        self.swing();
         if self.try_attack() {
             return;
         }
@@ -3152,6 +3406,13 @@ impl GameRuntime {
         if self.phase == GamePhase::Loading {
             return;
         }
+        // 食物右键 = 启动进食（26.1 Item.use → Consumable.startConsuming，
+        // Item.java:189-192）。进食不依赖视线命中（方块 use 优先的拦截——
+        // 本仓唯一可交互方块是工作台——已由 app 层在进入本函数前完成）；
+        // 空手/非食物返回 false，走原放置路径、行为零变化。
+        if place && self.try_begin_eating() {
+            return;
+        }
         let view = WorldView {
             chunks: &self.chunks,
         };
@@ -3178,6 +3439,16 @@ impl GameRuntime {
         // 顶面 255 上再放会写进 y=0——显示≠真实）；原版 build 高度界外
         // 不可放置/破坏。
         if !(0..256).contains(&target.y) {
+            return;
+        }
+        // 目标格可替换门（26.1 `BlockPlaceContext.canPlace`
+        // BlockPlaceContext.java:55-57 → `BlockState.canBeReplaced`
+        // BlockBehaviour.java:270-272/819-829：空气 ∥ Properties.replaceable
+        // ——雪层/植被/火/水岩浆族；判据表实现见 `BlockDef::is_replaceable`）。
+        // 原版 canPlace 失败即整个 useOn 中止——不放方块、不消耗手持
+        // （ItemStack.useOn → place 返回 FAIL 路径 shrink 不到），故本门置于
+        // 体素写与 take_one 之前：实心格点右键 = 无事发生。
+        if !self.block_at(target).def().is_replaceable() {
             return;
         }
         // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
@@ -3249,9 +3520,102 @@ impl GameRuntime {
         }
     }
 
-    /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落（26.1：掉落需要
-    /// 正确工具，`hasCorrectToolForDrops` 门控）+ break 音效。挖掘进度完成
-    /// 与创造秒破共用。
+    // ---- 进食（26.1 Consumable；属性表/状态机见 mcv_item::food）----
+
+    /// 工作台方块 id（app 层同款按注册名查；查不到回退已知值 252）。
+    fn crafting_table(&self) -> u16 {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "crafting_table")
+            .unwrap_or(252) as u16
+    }
+
+    /// `Player.canEat`（Player.java:1581-1582）的本仓并入式：
+    /// invulnerable（创造）|| canAlwaysEat || needsFood（hunger < 20）。
+    fn can_eat_now(&self, food: &mcv_item::food::FoodProperties) -> bool {
+        self.mode == GameMode::Creative
+            || mcv_item::food::can_eat(self.player.hunger, food.can_always_eat)
+    }
+
+    /// 右键 use 入口的食物分支（`Item.use` Item.java:189-192 →
+    /// `Consumable.startConsuming` Consumable.java:64-77）：选中槽是食物且
+    /// 可吃 → 落启动账、返回 true（右键不再走放置）；否则 false 行为不变。
+    /// 按住期间的推进在 fixed_step（每 on_tick +1），松开即取消。
+    fn try_begin_eating(&mut self) -> bool {
+        if self.dead || self.eat_cooldown > 0 {
+            return false;
+        }
+        // 方块 use 优先（26.1 startUseItem 先试 block use）：工作台在档。
+        if self
+            .look_block()
+            .is_some_and(|(_, id)| id == self.crafting_table())
+        {
+            return false;
+        }
+        let selected = self.hotbar.selected(self.player.sel_slot);
+        if selected.is_empty() {
+            return false;
+        }
+        let item = selected.item;
+        let Some(food) = mcv_item::food::food_properties(item) else {
+            return false;
+        };
+        if !self.can_eat_now(food) {
+            return false;
+        }
+        self.eat_hold = Some(mcv_item::food::Eating { item, ticks: 0 });
+        true
+    }
+
+    /// 完食结算（`FoodProperties.onConsume` FoodProperties.java:40-49 +
+    /// `Consumable.onConsume` Consumable.java:78-94）：
+    /// FoodData.eat（nutrition 回饥饿、饱和走公式与溢出钳）→ 效果概率掷 →
+    /// 物品 −1（创造豁免，vanilla hasInfiniteMaterials）→ 右键重触发延迟。
+    fn finish_eating(&mut self, item: u16) {
+        let Some(food) = mcv_item::food::food_properties(item) else {
+            return;
+        };
+        // FoodData.eat(int, float)（FoodData.java:24-26；溢出规则 :19-22）。
+        mcv_item::food::eat(
+            &mut self.player.hunger,
+            &mut self.player.saturation,
+            i32::from(food.nutrition),
+            food.saturation_modifier,
+        );
+        // ApplyStatusEffectsConsumeEffect：概率掷（腐肉 0.8 / 蜘蛛眼 1.0）。
+        // spawn_rng 输出 31 位（game.rs fast_rand 链），归一到 [0,1)。
+        if let Some(eff) = food.effect {
+            let roll = (spawn_rng()() as f32) / 2147483648.0;
+            if mcv_item::food::effect_fires(&eff, roll) {
+                let kind = match eff.kind {
+                    mcv_item::food::FoodEffectKind::Hunger => mcv_entity::Kind::Hunger,
+                    mcv_item::food::FoodEffectKind::Poison => mcv_entity::Kind::Poison,
+                };
+                self.effects
+                    .apply_simple(kind, eff.duration_ticks, eff.amplifier);
+            }
+        }
+        if self.mode != GameMode::Creative {
+            self.hotbar.take_one(self.player.sel_slot);
+        }
+        // 按住右键的连吃节奏 = 原版 rightClickDelay（4 tick）。
+        self.eat_cooldown = mcv_item::food::RIGHT_CLICK_DELAY_TICKS;
+    }
+
+    /// 进食进度 0..=1（HUD 进度条备用通路；进度画面与第一人称 EAT 抖动
+    /// 动画待 HUD/手代理落地后接线，登记 TODO 不做）。
+    pub fn eat_progress(&self) -> Option<f32> {
+        let eating = self.eat_hold.as_ref()?;
+        let total = mcv_item::food::food_properties(eating.item)
+            .map_or(u32::from(mcv_item::food::DEFAULT_EAT_TICKS), |f| {
+                f.consume_ticks()
+            });
+        Some((eating.ticks as f32 / total.max(1) as f32).min(1.0))
+    }
+
+    /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落/耐久/exhaustion
+    /// （26.1 destroyBlock 三段拆门：掉落与记账走 `hasCorrectToolForDrops`，
+    /// 耐久走 `mineBlock` 独立段）+ break 音效。挖掘进度完成与创造秒破共用。
     fn destroy_block(&mut self, target: BlockPos) {
         // y 出界拒绝（同 interact 放置；防 local() 绕回删到同列另一端）。
         if !(0..256).contains(&target.y) {
@@ -3289,14 +3653,15 @@ impl GameRuntime {
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
-            // 每破坏一方块 exhaustion 0.005（Block.playerDestroy，
-            // Block.java:478 causeFoodExhaustion(0.005F)；创造经
-            // abilities.invulnerable 门豁免，Player.java:1561-1567）。
-            self.player.exhaustion = (self.player.exhaustion + EXHAUSTION_MINE).min(EXHAUSTION_MAX);
             let held = self.held_stack();
-            if mcv_item::mining::has_correct_tool(old, held.as_ref())
-                && let Some(drop) = mcv_item::drop_for_block(old)
-            {
+            // 掉落门 hasCorrectToolForDrops（ServerPlayerGameMode.java:295
+            // canDestroy）：门内才走 playerDestroy——exhaustion 0.005 与
+            // 掉落同门记账（Block.java:469-479 causeFoodExhaustion(0.005F)），
+            // 错误工具磨掉方块两者皆无；创造经 abilities.invulnerable 门豁免
+            //（Player.java:1561-1567）。
+            if mcv_item::mining::has_correct_tool(old, held.as_ref()) {
+                self.player.exhaustion =
+                    (self.player.exhaustion + EXHAUSTION_MINE).min(EXHAUSTION_MAX);
                 // 生成点：方块中心 ±0.25 随机三轴、y 再 −0.125（26.1
                 // Block.popResource，Block.java:410-418）；pickup_delay 走
                 // 默认 10 tick（Block.java:436-444，非 0 贴手）。
@@ -3307,14 +3672,39 @@ impl GameRuntime {
                     target.y as f32 + 0.5 + j(&mut rng) - 0.125,
                     target.z as f32 + 0.5 + j(&mut rng),
                 );
-                mcv_entity::spawn_item_drop(
-                    &mut self.mobs_app.world,
-                    c,
-                    drop.item,
-                    drop.count,
-                    mcv_entity::PICKUP_DELAY,
-                    &mut rng,
-                );
+                for drop in mcv_item::drops_for_block(old, &mut rng) {
+                    mcv_entity::spawn_item_drop(
+                        &mut self.mobs_app.world,
+                        c,
+                        drop.item,
+                        drop.count,
+                        mcv_entity::PICKUP_DELAY,
+                        &mut rng,
+                    );
+                }
+            }
+            // 耐久段（ServerPlayerGameMode.java:296 itemStack.mineBlock →
+            // Item.java:257-268）：带 Tool 组件的手持物（镐/斧/锹 1、剑 2）对
+            // destroySpeed != 0 的方块每次成功挖掘扣 1，与掉落门**解耦**——
+            // 木镐挖钻石矿不掉落但照样耗；硬度 0（花草）不扣。耐久耗尽即销毁
+            // （ItemStack.java:466-468 applyDamage → shrink(1)），清槽 +
+            // random.break 同攻击段（:2987-2999）。
+            let cost = mcv_item::mining::mine_durability_cost(old, held.as_ref());
+            if cost > 0 {
+                let broke = self
+                    .hotbar
+                    .selected_mut(self.player.sel_slot)
+                    .hurt(cost, &mut || 0);
+                if broke {
+                    self.hotbar.slots[self.player.sel_slot % 9] = mcv_item::ItemStack::empty();
+                    let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                    self.audio.play_event(
+                        "random.break",
+                        [eye.x, eye.y, eye.z],
+                        [eye.x, eye.y, eye.z],
+                        1.0,
+                    );
+                }
             }
         }
         if let Some(group) = block_group(old.0) {
@@ -3425,6 +3815,11 @@ impl GameRuntime {
                 mcv_game::blockshapes::RayTarget::Pick,
             )
             .map(|(p, _)| p);
+            // 按住连破的每 tick 挥臂（continueAttack 对 destroying 的每 tick
+            // swing；半程重启规则保证周期 3 tick）。
+            if hit.is_some() {
+                self.swing();
+            }
             if let Some(p) = self.mine.creative_tick(hit) {
                 self.destroy_block(p);
             }
@@ -3460,11 +3855,18 @@ impl GameRuntime {
                 pos: p,
                 per_tick: self.mine_per_tick(&view, b),
             });
+        // 挖掘长按挥臂（continueAttack :1628 挖中方块即 swing；半程重启规则
+        // 令挥臂周期 = duration/2 = 3 tick，与原版挖掘节奏一致）。
+        // 碎屑方块 id 先行取出：Idle 分支后续要用，不能让 `view`（&self.chunks
+        // 的不可变借用）横跨下面的 `self.swing()`（E0502）。
+        let debris = target.map(|p| (p, view.block(p).0));
+        if hit.is_some() {
+            self.swing();
+        }
         match self.mine.continue_tick(hit) {
             MineTick::Broken(p) => self.destroy_block(p),
             MineTick::Idle => {
-                if let Some(p) = target {
-                    let b = view.block(p).0;
+                if let Some((p, b)) = debris {
                     self.particles.spawn_hit(
                         [p.x as f64, p.y as f64, p.z as f64],
                         face,
@@ -3488,6 +3890,29 @@ impl GameRuntime {
         let [lx, ly, lz] = p.local();
         let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
         (v & 0xF, v >> 4)
+    }
+
+    /// 第一人称挥臂进度 0..=1（26.1 attackAnim = swingTime/duration，
+    /// LivingEntity.java:2158；静止 = 0）。渲染层取值驱动手持摆动。
+    pub fn swing_progress(&self) -> f32 {
+        if self.swinging {
+            (self.swing_time / SWING_TICKS).min(1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// 第一人称手持物（渲染层数据）：选中槽 Block 物品 = 缩小方块（取
+    /// `BLOCKS[].tiles`）、其余物品 = GUI 精灵图标 quad、空槽 = 只有手臂。
+    pub fn hand_item(&self) -> mcv_render::gpu::HandItem {
+        let s = self.hotbar.selected(self.player.sel_slot);
+        if s.is_empty() {
+            return mcv_render::gpu::HandItem::Empty;
+        }
+        match s.def().kind {
+            mcv_item::ItemKind::Block(bid) => mcv_render::gpu::HandItem::Block(bid.id()),
+            _ => mcv_render::gpu::HandItem::Sprite(s.def().name),
+        }
     }
 
     /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
@@ -3686,6 +4111,56 @@ impl GameRuntime {
                     quads.extend(g.sprite_full("food_full", fx, y_base, 9.0 * s, 9.0 * s, tint));
                 } else if food >= i as f32 * 2.0 + 1.0 {
                     quads.extend(g.sprite_full("food_half", fx, y_base, 9.0 * s, 9.0 * s, tint));
+                }
+            }
+            // 空气泡（26.1 Gui.extractAirBubbles:884-927）：眼下在水或
+            // air<满值（300）才显示；行位 = 心/饥饿行上一行（yLineAir =
+            // yLineBase − 10，:790 vehicleHearts==0 分支）；右缘镜像
+            // x = xRight − (i−1)·8 − 9（:905，i 从 1 起）。三态映射：
+            // 满 = ceil((air−2)·10/300)（:926 getCurrentAirSupplyBubble
+            // offset −2）、爆裂位 = ceil(air·10/300)（offset 0，仅水下且
+            // 满≠爆裂位，:898/:908-911）、空 = 10 − ceil((air+delay)·10/300)，
+            // delay = air≠0 且水下 ? 1 : 0（:921-923）。简化不建模：爆裂帧
+            // 时长 2（AIR_BUBBLE_POPPING_DURATION:129，客户端瞬时态）与空泡
+            // 随机抖动（:912 tickCount%2）、pop 音（playAirBubblePoppedSound
+            // :929——BUBBLE_POP 事件未进音效表）。
+            let under_water = {
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let ec = eye.floor().as_ivec3();
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                d.liquid && d.name == "water"
+            };
+            let air = self.air_supply.clamp(0, MAX_AIR_SUPPLY);
+            if under_water || air < MAX_AIR_SUPPLY {
+                // 桶数换算对齐原版 Mth.ceil((air+offset)*10/max)（Gui.java:926
+                // getCurrentAirSupplyBubble；CI rustc 无 i32::div_ceil，且原版
+                // 本就是浮点 ceil——air+offset ≥ −2·10 = −20，f32 距离内精确）。
+                let bubbles = |offset: i32| {
+                    (((air + offset) * 10) as f32 / MAX_AIR_SUPPLY as f32).ceil() as i32
+                };
+                let full = bubbles(-2);
+                let popping = bubbles(0);
+                let empty = 10 - bubbles(if air != 0 && under_water { 1 } else { 0 });
+                let y_air = y_base - 10.0 * s;
+                for b in 1..=10i32 {
+                    let bx = x_right - (b - 1) as f32 * 8.0 * s - 9.0 * s;
+                    if b <= full {
+                        quads.extend(g.sprite_full("air", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    } else if full != popping && b == popping && under_water {
+                        quads.extend(g.sprite_full(
+                            "air_bursting",
+                            bx,
+                            y_air,
+                            9.0 * s,
+                            9.0 * s,
+                            tint,
+                        ));
+                    } else if b > 10 - empty {
+                        quads.extend(g.sprite_full("air_empty", bx, y_air, 9.0 * s, 9.0 * s, tint));
+                    }
                 }
             }
         } else {
@@ -4784,12 +5259,16 @@ pub fn move_exhaustion(sprinting: bool, horizontal_m: f32) -> f32 {
 /// 1. exhaustion **>4**（FoodData.java:35 严格大于，非 >=4）扣 4，先扣 1 点
 ///    饱和度、饱和见底才扣饥饿；
 /// 2. 回血快线：饱和>0 且 hunger≥20 且受伤，每 10 tick 回 min(饱和,6)/6 HP，
-///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52）；
+///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52；naturalRegen 游
+///    戏规则默认 true，本仓无 gamerules 设施按默认建模）；
 /// 3. 回血慢线：hunger≥18 且受伤，每 80 tick 回 1 HP，代价 exhaustion+6
 ///    （FoodData.java:53-59，FoodConstants.java:20 EXHAUSTION_HEAL=6.0——旧实现
 ///    回血零代价）；
-/// 4. 饥饿掉血：hunger=0 每 80 tick 掉 1（难度封顶为既有登记偏差：一律按
-///    和平封顶 10）。
+/// 4. 饥饿掉血：hunger=0 每 80 tick 一拍，难度封顶门 `health>10 || HARD ||
+///    (health>1 && NORMAL)`（FoodData.java:63）。命中时返回 true，**由调用
+///    方走完整受伤管线**（原版 `player.hurtServer(…starve(), 1.0F)`，
+///    FoodData.java:64；旧实现就地 `health -= 1.0` 绕过 i 帧门/死亡结算，
+///    已消解）。starve.json exhaustion = 0.0。
 pub fn food_data_tick(
     exhaustion: &mut f32,
     saturation: &mut f32,
@@ -4797,7 +5276,7 @@ pub fn food_data_tick(
     health: &mut f32,
     tick_timer: &mut u32,
     difficulty: crate::difficulty::Difficulty,
-) {
+) -> bool {
     if *exhaustion > 4.0 {
         *exhaustion -= 4.0;
         if *saturation > 0.0 {
@@ -4828,14 +5307,14 @@ pub fn food_data_tick(
         if *tick_timer >= 80 {
             // 封顶表（FoodData.java:63 `health > 10 || HARD || (health > 1 && NORMAL)`，
             // 和平/简单只掉到 10）——旧「一律封顶 10」登记偏差已消解。
-            if crate::difficulty::starve_can_hurt(*health, difficulty) {
-                *health -= 1.0;
-            }
+            let starve = crate::difficulty::starve_can_hurt(*health, difficulty);
             *tick_timer = 0;
+            return starve; // 伤害由调用方走 hurt 管线（FoodData.java:64）。
         }
     } else {
         *tick_timer = 0;
     }
+    false
 }
 
 /// 满气（26.1 `Entity.getMaxAirSupply` = **300**，Entity.java:2739-2741；
@@ -5249,6 +5728,119 @@ mod tests {
         }
     }
 
+    // ---- 触摸挖掘端到端（任务板 #93 优先项回归锁）----
+    // 走 app 层同款入口：runtime.touch 点亮 + press_mine → fixed_step 固定步
+    // 内 apply_touch_input 镜像 input.mining 并触发 on_left_press →
+    // step_mining 每 20 Hz tick 续挖 → 硬度到 → 方块破坏。
+
+    /// 往 rt 写一个目标方块（直接写体素；无头测试不建网格，不触 GPU）。
+    fn put_block(rt: &mut GameRuntime, at: BlockPos, id: u16) {
+        let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
+        let [lx, ly, lz] = at.local();
+        handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(id);
+    }
+
+    fn voxel(rt: &GameRuntime, at: BlockPos) -> u16 {
+        let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
+        let [lx, ly, lz] = at.local();
+        handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx].0
+    }
+
+    #[test]
+    fn touch_mine_held_breaks_blocks_end_to_end() {
+        let mut rt = headless_rt("touchmine");
+        fill_neighborhood(&mut rt);
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        // 徒手基准（清掉开局铁剑）：泥土硬度 0.5、不需工具 → 30 档 =
+        // 15 tick（0.75 s）破一块。
+        rt.hotbar.slots[0] = mcv_item::ItemStack::empty();
+        let dirt = mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "dirt")
+            .expect("注册表含 dirt") as u16;
+        // 目标：正前方 2 格、眼高（pitch=0 视线 -Z，y=71.62 落在 y=71 格）。
+        let first = BlockPos::new(8, 71, 6);
+        let second = BlockPos::new(8, 71, 5);
+        put_block(&mut rt, first, dirt);
+        put_block(&mut rt, second, dirt);
+
+        // app 层入口：任意触摸事件点亮（enabled）+ 挖按钮按下沿。
+        rt.touch.enabled = true;
+        rt.touch.press_mine();
+        assert_eq!(
+            rt.phase,
+            GamePhase::Loading,
+            "构造即加载态：挖掘按下沿在转游玩前的步不派发"
+        );
+
+        let mut saw_progress = false;
+        let mut first_broken = false;
+        let mut second_broken = false;
+        for _ in 0..240 {
+            rt.fixed_step(1.0 / 60.0);
+            // 挖掘中（目标锁定 + 挥臂推进）即接线生效。
+            if rt.mine.pos == Some(first) && rt.swing_progress() > 0.0 {
+                saw_progress = true;
+            }
+            if voxel(&rt, first) == 0 {
+                first_broken = true;
+                // 破坏后 5-tick 冷却内不开下一目标（原版 destroyDelay）。
+                if voxel(&rt, second) == 0 {
+                    second_broken = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_progress,
+            "触摸长按必须连进挖掘状态机：目标锁定 + 挥臂进度推进（按下边沿只触发一次 on_left_press，按住续挖走 fixed_step 的 step_mining）"
+        );
+        assert!(first_broken, "硬度累加到阈值后目标方块必须被破坏");
+        assert!(
+            second_broken,
+            "按住不松必须自动开下一目标（continue_tick 的 5-tick 冷却后对新目标 START）"
+        );
+
+        // 松开沿：input.mining 清零、状态机不再被带起。
+        rt.touch.release_mine();
+        rt.fixed_step(1.0 / 60.0);
+        assert!(!rt.input.mining, "松开挖掘按钮必须镜像清 input.mining");
+        assert!(
+            rt.mine.pos.is_none(),
+            "松开后挖掘状态机保持作废（进度不补判）"
+        );
+    }
+
+    /// 攻击按下沿（无目标方块）同样挥臂：挥臂动画接线的第二触发点。
+    #[test]
+    fn attack_press_swing_starts_even_without_block() {
+        let mut rt = headless_rt("swing");
+        fill_neighborhood(&mut rt);
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        rt.touch.enabled = true;
+        rt.touch.press_mine();
+        rt.fixed_step(1.0 / 60.0); // 转游玩步（不派发）
+        assert_eq!(rt.swing_progress(), 0.0, "加载态不派发攻击沿");
+        rt.fixed_step(1.0 / 60.0); // 攻击沿
+        assert!(
+            rt.swing_progress() > 0.0,
+            "对空按下沿必挥臂（26.1 startAttack → player.swing）"
+        );
+        let mid = rt.swing_progress();
+        rt.fixed_step(1.0 / 60.0);
+        assert!(
+            rt.swing_progress() > mid,
+            "挥臂按 tick 制平滑推进（渲染帧间不跳变）"
+        );
+        // 满一轮（6 tick）后停摆归零。
+        for _ in 0..40 {
+            rt.fixed_step(1.0 / 60.0);
+        }
+        assert_eq!(rt.swing_progress(), 0.0, "一轮挥完停摆归零");
+    }
+
     #[test]
     fn loading_state_blocks_input_and_transition_until_ready() {
         let mut rt = headless_rt("gate");
@@ -5419,6 +6011,333 @@ mod tests {
     // 出生投放专项测试见 spawn_tests.rs（本 mod 子模块，标准嵌套路径
     // src/game/tests/，共用无头装配 headless_rt / lit_chunk）。
     mod spawn_tests;
+    // ---- 进食整链（26.1 Consumable；板载 #94）----
+
+    use mcv_item::ItemStack as ItemSt;
+
+    /// 转 Playing 态并把玩家摆在地表（共用 fill_neighborhood 装配）。
+    fn playing_rt(tag: &str) -> GameRuntime {
+        let mut rt = headless_rt(tag);
+        fill_neighborhood(&mut rt);
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.phase, GamePhase::Playing, "前置：邻域齐备已转游玩");
+        rt
+    }
+
+    /// 按住右键吃满 33 tick（启动沿 + 32 tick 推进 + 1 步结算余量）。
+    fn hold_eat(rt: &mut GameRuntime, ticks: usize) {
+        rt.input.placing = true;
+        rt.interact(true);
+        for _ in 0..ticks {
+            rt.fixed_step(1.0 / 20.0);
+        }
+    }
+
+    #[test]
+    fn eat_rotten_flesh_restores_hunger_and_consumes_stack() {
+        let mut rt = playing_rt("eat-bread-chain");
+        // 面包数值面在 mcv_item::food 测试（登记不造）；此处用可得腐肉
+        // 走整链：nutrition 4 → hunger 15 + 4 = 19。
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 15.0;
+        rt.player.saturation = 0.0;
+        hold_eat(&mut rt, 35);
+        assert_eq!(rt.player.hunger, 19.0, "完食回饥饿（FoodData.eat）");
+        // 饱和 = 4×0.1×2 = 0.8（FoodConstants.java:30-32）。
+        assert!((rt.player.saturation - 0.8).abs() < 1e-4);
+        assert_eq!(rt.hotbar.slots[0].count, 2, "生存消耗一格（stack.consume）");
+        assert!(rt.eat_hold.is_none(), "完食清账");
+        assert_eq!(rt.eat_progress(), None);
+    }
+
+    #[test]
+    fn eat_spider_eye_applies_poison_effect() {
+        // 蜘蛛眼 chance 1.0 → 效果可确定性断言（腐肉 0.8 概率面在
+        // mcv_item::food::effect_fires 纯函数测试覆盖）。
+        let mut rt = playing_rt("eat-eye");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::SPIDER_EYE, 1);
+        rt.player.hunger = 10.0;
+        hold_eat(&mut rt, 35);
+        assert_eq!(rt.player.hunger, 12.0, "nutrition 2 回饥饿");
+        assert!(rt.effects.has(mcv_entity::Kind::Poison), "完食挂 poison");
+        // 施加值 100（Consumables.java:62-64）来自 food 表（mcv_item 测试锁
+        // 死）；在账剩余 = 100 − 3：apply 落在第 32 步，第 33–35 步 effects
+        // .tick 各扣 1。
+        assert_eq!(
+            rt.effects.get(mcv_entity::Kind::Poison).map(|a| a.duration),
+            Some(97),
+            "剩余时长按 tick 递减（MobEffectInstance.advance）"
+        );
+        assert!(rt.hotbar.slots[0].is_empty(), "最后一件吃完槽清空");
+    }
+
+    #[test]
+    fn releasing_mid_eat_cancels_and_keeps_stack() {
+        let mut rt = playing_rt("eat-cancel");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 15.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_some(), "按下沿启动进食");
+        assert!(rt.eat_progress().is_some(), "进度通路备用");
+        for _ in 0..10 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        // 松手 = releaseUsing 取消：不吃、不扣、进度不保留。
+        rt.input.placing = false;
+        rt.fixed_step(1.0 / 20.0);
+        assert!(rt.eat_hold.is_none());
+        assert_eq!(rt.player.hunger, 15.0, "取消不结算");
+        assert_eq!(rt.hotbar.slots[0].count, 3, "取消不扣物品");
+        // 重新按住 = 从头吃（重启启动沿，进度归零）。
+        rt.input.placing = true;
+        rt.interact(true);
+        assert_eq!(rt.eat_hold.map(|e| e.ticks), Some(0), "重新起步 tick 0");
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.eat_hold.map(|e| e.ticks), Some(1));
+    }
+
+    #[test]
+    fn full_hunger_refuses_food_and_keeps_stack() {
+        // 满饥饿 nutrition 浪费规则：needsFood 门拒吃（Player.java:1581-1582）。
+        let mut rt = playing_rt("eat-full");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 3);
+        rt.player.hunger = 20.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_none(), "满饥饿拒吃");
+        assert_eq!(rt.hotbar.slots[0].count, 3);
+        // 按住也不经 fixed_step 起吃（auto-repeat 同被门拦）。
+        for _ in 0..10 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.player.hunger, 20.0);
+        assert_eq!(rt.hotbar.slots[0].count, 3);
+    }
+
+    #[test]
+    fn chained_holding_eats_until_cap_twenty() {
+        // 连续按住：连吃节奏 = rightClickDelay 4 tick + 32 tick 进食，
+        // 到 20 上限即被 needsFood 门拦下，剩余腐肉不扣。
+        let mut rt = playing_rt("eat-chain");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 16);
+        rt.player.hunger = 1.0;
+        rt.player.saturation = 0.0;
+        hold_eat(&mut rt, 0);
+        // hunger 1 → 5 次腐肉到 20；每次 32 + 4 = 36 tick，给足 5×37 步。
+        for _ in 0..(5 * 37 + 34) {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.player.hunger, 20.0, "钳 0..20（FoodData.java:20）");
+        assert!(rt.eat_hold.is_none(), "满饥饿连吃中止");
+        // 5 块下肚（1+4×5=20 恰好），第 6 次起不吃 → 剩 11。
+        assert_eq!(rt.hotbar.slots[0].count, 11);
+    }
+
+    #[test]
+    fn creative_eats_without_consuming_stack() {
+        // 创造 invulnerable 免 needsFood 门（vanilla canEat），hasInfinite
+        // 材料不扣（ Consumable.onConsume stack.consume 豁免）。
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (
+            "eat-creative",
+            std::process::id(),
+            std::time::SystemTime::now(),
+        )
+            .hash(&mut h);
+        let dir = std::env::temp_dir().join(format!("mcv-eat-creative-{:x}", h.finish()));
+        let mut rt = GameRuntime::new_headless(20261010, dir, GameMode::Creative);
+        fill_neighborhood(&mut rt);
+        rt.fixed_step(1.0 / 20.0);
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::ROTTEN_FLESH, 5);
+        rt.player.hunger = 20.0;
+        rt.input.placing = true;
+        rt.interact(true);
+        assert!(rt.eat_hold.is_some(), "创造 invulnerable 可吃");
+        for _ in 0..35 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.hotbar.slots[0].count, 5, "创造不扣物品");
+        assert_eq!(rt.player.hunger, 20.0, "满值钳制");
+    }
+
+    #[test]
+    fn survival_stats_survive_save_load_roundtrip() {
+        // v5 存档：hunger/saturation/exhaustion/health/air/difficulty 退出
+        // 重进不失忆——不持久化则进食白吃（板载 #94 硬绑定条）。
+        let mut rt = headless_rt("stats-save");
+        rt.player.health = 13.5;
+        rt.player.hunger = 17.0;
+        rt.player.saturation = 4.25;
+        rt.player.exhaustion = 39.75;
+        let dir = rt.save_dir.clone();
+        rt.save_meta();
+        let mut rt2 = GameRuntime::new_headless(20261010, dir, GameMode::Survival);
+        rt2.load_meta();
+        assert_eq!(rt2.player.health, 13.5);
+        assert_eq!(rt2.player.hunger, 17.0);
+        assert_eq!(rt2.player.saturation, 4.25);
+        assert_eq!(rt2.player.exhaustion, 39.75);
+        assert_eq!(rt2.air_supply(), MAX_AIR_SUPPLY, "未下水满气");
+        assert_eq!(rt2.difficulty, crate::difficulty::Difficulty::Normal);
+    }
+
+    #[test]
+    fn survival_stats_and_difficulty_restore_from_meta() {
+        // 难度与空气也随档：难度掉血曲线、溺水账不因重进重置。
+        let mut rt = headless_rt("stats-hard");
+        rt.difficulty = crate::difficulty::Difficulty::Hard;
+        rt.player.hunger = 6.0;
+        rt.player.health = 9.0;
+        rt.air_supply = 120;
+        let dir = rt.save_dir.clone();
+        rt.save_meta();
+        let mut rt2 = GameRuntime::new_headless(20261010, dir, GameMode::Survival);
+        rt2.load_meta();
+        assert_eq!(rt2.difficulty, crate::difficulty::Difficulty::Hard);
+        assert_eq!(rt2.player.hunger, 6.0);
+        assert_eq!(rt2.player.health, 9.0);
+        assert_eq!(rt2.air_supply(), 120);
+    }
+
+    // ---- 交互波 0：B1 基岩豁免 / B3 放置可替换校验 ----
+
+    /// 旧表 id：基岩（hardness=inf）、水、圆石（手持方块物品 = COBBLESTONE）。
+    const BEDROCK: u16 = 10;
+    const WATER: u16 = 5;
+
+    /// 把脚下方格 (8,69,8) 写成指定方块（lit_chunk 装配的石柱地表）。
+    fn set_under_player(rt: &mut GameRuntime, id: u16) {
+        let h = &rt.chunks[&ChunkPos::new(0, 0)];
+        h.voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(id);
+    }
+
+    /// 俯视脚下：pitch 取鼠标 clamp 下限 −1.55（≈88.8°，camera 约定
+    /// `clamp(-1.55, 1.55)`；−π/2 会被裁回，−1.0 弧度只有 57° 会斜打邻列）。
+    /// 视线近乎垂直：眼 (8.5,71.62,8.5) 下探 1.62 格水平漂移仅 ~0.03，
+    /// 必中 (8,69,8) 顶面。
+    fn look_down(rt: &mut GameRuntime) {
+        rt.player.pitch = -1.55;
+        rt.player.yaw = 0.0;
+    }
+
+    /// B1 基岩豁免（26.1 `strength(-1)` Blocks.java:193-196 →
+    /// getDestroyProgress 恒 0，BlockBehaviour.java:355-359）：生存按住左键
+    /// 20 秒，进度恒 0、基岩纹丝不动；创造按下秒破
+    /// （`abilities.instabuild` 先于硬度判定，ServerPlayerGameMode.java:172-175）。
+    #[test]
+    fn survival_cannot_mine_bedrock_creative_can() {
+        let mut rt = playing_rt("b1-bedrock");
+        // 脚下方格写成基岩（放置链路由 placement_requires_replaceable_target
+        // 覆盖，此处直接落体素，聚焦挖掘侧）。
+        look_down(&mut rt);
+        set_under_player(&mut rt, BEDROCK);
+        // 生存按住挖 400 tick：per=0 无任何进度、方块不掉。长按 CONTINUE
+        // 换目标时状态机会登记 pos——原版同款：continueDestroyBlock 对
+        // getDestroyProgress=0 的方块照样进入 destroy 状态、仅进度恒 0
+        // （ServerPlayerGameMode.java:205-217），故锁进度恒 0 + 方块完好，
+        // 不锁 pos。
+        rt.on_left_press();
+        rt.input.mining = true;
+        for _ in 0..400 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert_eq!(rt.mine.progress, 0.0, "无限硬度不得推进进度");
+        assert_eq!(rt.mine.per_tick, 0.0);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            BlockId(BEDROCK),
+            "生存 400 tick 后基岩仍在"
+        );
+        // 创造按下 = 无视硬度秒破（instabuild 门，无 destroyProgress 参与）。
+        rt.input.mining = false;
+        rt.mode = GameMode::Creative;
+        rt.on_left_press();
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            BlockId(0),
+            "创造必须能破基岩（26.1 实况：instabuild 先于硬度判定）"
+        );
+    }
+
+    /// B3 放置可替换校验（26.1 `BlockPlaceContext.canPlace` :55-57 →
+    /// `canBeReplaced` = 空气 ∥ `Properties.replaceable()`）：目标格实心
+    /// 拒放（不写体素、不扣手持）；空气成功；水（replaceable+liquid）
+    /// 被替换。判据表实现 = `BlockDef::is_replaceable`（名单锁定测试见
+    /// mcv_core::lib 的 is_replaceable_matches_vanilla_property）。
+    #[test]
+    fn placement_requires_replaceable_target() {
+        let mut rt = playing_rt("b3-replace");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
+        // 玩家悬空到 y=72.5（不推进 tick、不落位）：脚部 AABB y∈[72.5,74.3]
+        // 与目标格 [70,71]/[71,72] 全不相交，聚焦可替换门本身；眼
+        // 74.12 → 石柱顶面 70.0 距离 4.12 < 生存 reach 4.5。
+        rt.player.pos = Vec3::new(8.5, 72.5, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        look_down(&mut rt);
+        let v = |rt: &GameRuntime, x: usize, y: usize, z: usize| -> u16 {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(x, y, z)].id()
+        };
+        let set = |rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: u16| {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(x, y, z)] = BlockId(id);
+        };
+        // ① 空气目标：俯视命中 (8,69,8) 石顶 → 目标格 (8,70,8) 空气，
+        //    成功放置并消耗（回归基线）。
+        rt.interact(true);
+        assert_eq!(v(&rt, 8, 70, 8), 9, "空气格应放得下方块");
+        assert_eq!(rt.hotbar.slots[0].count, 1, "成功放置消耗一格");
+        // ② 实心目标：(8,71,8) 手工灌石头，俯视命中圆石 (8,70,8) 顶面 →
+        //    目标格 = 石头实心 → 拒放：不写体素、不扣物品
+        //    （26.1 canPlace=false → useOn 中止）。
+        set(&mut rt, 8, 71, 8, STONE);
+        rt.interact(true);
+        assert_eq!(v(&rt, 8, 71, 8), STONE, "实心格不可替换，不得改写");
+        assert_eq!(v(&rt, 8, 70, 8), 9, "圆石格未被波及");
+        assert_eq!(rt.hotbar.slots[0].count, 1, "拒放不消耗手持（不发放置）");
+        // ③ 水目标：实心石头换成水（replaceable+liquid）→ 同一条射线，
+        //    目标格 = 水格 → 可替换，放置成功替换水并消耗。
+        set(&mut rt, 8, 71, 8, WATER);
+        rt.hotbar.slots[0].count = 2;
+        rt.interact(true);
+        assert_eq!(
+            v(&rt, 8, 71, 8),
+            9,
+            "水可替换：放置替换水（26.1 water .replaceable() Blocks.java:202）"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 1, "替换水成功消耗一格");
+    }
+
+    /// B3 玩家碰撞门回归锁：目标格与玩家 AABB 相交（脚下站立格）时拒放
+    /// 不消耗——旧行为保持，且现在先被可替换门前置拦截亦同结果。
+    #[test]
+    fn placement_into_player_cell_not_consumed() {
+        let mut rt = playing_rt("b3-self");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
+        // 显式落位到石柱顶面 y=70.0（fill_neighborhood 悬在 71.0，单步
+        // fixed_step 不足以跨 tick 落位——悬浮时脚部 AABB 与目标格 [70,71]
+        // 恰好边界相切（`cmax.y > pmin.y` 为 71>71 false），AABB 门反而
+        // 放行；站上后 [70,71.8] ∩ [70,71] 严格相交才是真实占格语义）。
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        // 俯视命中 (8,69,8) 顶面 → 目标格 = (8,70,8) = 玩家脚部所在格。
+        look_down(&mut rt);
+        rt.interact(true);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)],
+            BlockId(0),
+            "玩家占格不可放置"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 2, "拒放不消耗");
+    }
 }
 
 #[cfg(test)]

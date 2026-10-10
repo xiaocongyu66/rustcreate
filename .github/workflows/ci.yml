@@ -82,7 +82,7 @@ jobs:
         run: |
           sudo apt-get install -y libegl1 libgl1-mesa-dri
           cargo test -p mcv_render --features gpu-tests --locked -- \
-            gles_ terrain_sky_and_hud_render grass_surface_contains_pattern_not_flat_tint frustum_cull_does_not_shift_chunk_origins water_pass_renders_uploaded_water_vertices
+            gles_ terrain_sky_and_hud_render grass_surface_contains_pattern_not_flat_tint frustum_cull_does_not_shift_chunk_origins water_pass_renders_uploaded_water_vertices first_person_hand_paints_bottom_right
       - name: Upload screenshot artifact
         if: always()
         uses: actions/upload-artifact@v4

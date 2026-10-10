@@ -5,7 +5,7 @@
 //!   分母 30 = 工具对掉落正确、100 = 不正确（徒手也能磨但慢 3.33 倍）。
 //! - 工具速度只在**种类**匹配方块可挖类型时生效，否则 1.0；
 //!   `hasCorrectToolForDrops` 还要求**层级**达标（石镐挖不动铁矿掉落）。
-//! - 掉落受同一门控约束（错误工具破坏不掉东西，见 drop_for_block）。
+//! - 掉落受同一门控约束（错误工具破坏不掉东西，见 inventory::drops_for_block）。
 //! - 硬度无限（基岩）→ 进度恒 0，永不可破。
 //! - 工具只覆盖已注册方块子集；未知方块按徒手无要求处理
 //!   （TODO(registry):原版 mineable/* 标签全量进表后由数据驱动）。
@@ -52,18 +52,23 @@ pub struct BlockMining {
 }
 
 /// 已注册子集的挖掘表（键 = blocks_gen 注册名；数字对齐原版数值/层级）。
+///
+/// 掉落门（种类 + 层级）与镐系速度走 `mcv_core::tool` 的 26.1 数据表
+/// （requiresCorrectToolForDrops ∩ 注册表 + needs_*_tool tag 分层），
+/// 矿石/深板岩矿石/石头族全量对齐；铲/斧速度族仍在本函数本地维护。
 pub fn block_mining(id: BlockId) -> BlockMining {
     let name = mcv_core::BLOCKS[id.id() as usize].name;
-    // 镐系：石头家族木镐起、煤矿石镐、铁矿深板岩系石镐、钻石铁镐。
-    let pick = |tier: u8| BlockMining {
-        speed_tool: Some(ToolKind::Pickaxe),
-        need: Some((ToolKind::Pickaxe, tier)),
-    };
+    if let Some(req) = mcv_core::tool::requirement(name) {
+        let kind = match req.kind {
+            mcv_core::tool::ToolReq::Pickaxe => ToolKind::Pickaxe,
+            mcv_core::tool::ToolReq::Shovel => ToolKind::Shovel,
+        };
+        return BlockMining {
+            speed_tool: Some(kind),
+            need: Some((kind, req.tier)),
+        };
+    }
     match name {
-        "stone" | "cobble" => pick(1),
-        "coal_ore" => pick(1),
-        "iron_ore" => pick(2),
-        "diamond_ore" => pick(4),
         "log" | "planks" => BlockMining {
             speed_tool: Some(ToolKind::Axe),
             need: None,
@@ -110,6 +115,35 @@ pub fn destroy_speed(block: BlockId, stack: Option<&ItemStack>) -> f32 {
         return f32::from(m.speed);
     }
     1.0
+}
+
+/// 带 Tool 组件物品挖掘一次的耐久消耗（26.1 `Item.mineBlock` 的
+/// `tool.damagePerBlock()`，`Item.java:257-268`）：镐/斧/锹 1
+/// （ToolMaterial.applyToolProperties，ToolMaterial.java:37-63 末参 1）、
+/// 剑 2（applySwordProperties，ToolMaterial.java:79-94 末参 2）；其余物品
+/// 无 Tool 组件 → 0。**与掉落门解耦**：原版耐久不问 correct-for-drops，
+/// 木镐挖不动钻石矿的掉落但照样掉耐久（ServerPlayerGameMode.java:296
+/// `itemStack.mineBlock` 无条件于 canDestroy 之前执行）。
+pub fn mine_damage(kind: ItemKind) -> u16 {
+    match kind {
+        ItemKind::Pickaxe(_) | ItemKind::Axe(_) | ItemKind::Shovel(_) => 1,
+        ItemKind::Sword(_) => 2,
+        _ => 0,
+    }
+}
+
+/// 26.1 `ServerPlayerGameMode.destroyBlock` 耐久段（:296 `itemStack.mineBlock`
+/// → `Item.mineBlock`，`Item.java:262`）的完整判定：目标方块
+/// `destroySpeed != 0`（硬度非 0；花草 0 不扣，基岩 -1 不可破无所谓）且手持
+/// 带 Tool 组件时，返回本次成功挖掘应扣的耐久值；否则 0。创造豁免由调用方
+/// 的模式门处理（26.1 `ItemStack.processDurabilityChange` :454-456
+/// `hasInfiniteMaterials` → 0）。耐久耗尽的销毁走 `ItemStack::hurt`
+/// 返回 true → 调用方清槽（applyDamage → shrink(1)，`ItemStack.java:466-468`）。
+pub fn mine_durability_cost(block: BlockId, stack: Option<&ItemStack>) -> u16 {
+    if mcv_core::BLOCKS[block.id() as usize].hardness == 0.0 {
+        return 0;
+    }
+    stack.map(|s| mine_damage(s.def().kind)).unwrap_or(0)
 }
 
 /// 空中挖掘速度除数（26.1 `Player#getDestroySpeed`：`!onGround()` → `speed /= 5`，

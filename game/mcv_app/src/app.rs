@@ -1821,6 +1821,7 @@ impl AppState {
             overlay: None,
             underwater: false,
             particles: None, // 菜单场景无世界粒子
+            hand: None,      // 菜单场景无第一人称手持
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -2135,6 +2136,15 @@ impl AppState {
             underwater: runtime.eye_under_water(),
             // M8a 主接线：粒子池 + 帧内插值余量（Scene 生命周期借用）。
             particles: Some((&runtime.particles, runtime.tick_frac())),
+            // 第一人称手持：仅游玩态第一人称画（26.1 renderItemInHand 的
+            // isFirstPerson && screen==null 门；加载/死亡/第三人称不画）。
+            hand: (!loading
+                && !runtime.dead
+                && runtime.cam_type == mcv_logic::game::CameraType::FirstPerson)
+                .then_some(mcv_render::HandRender {
+                    item: runtime.hand_item(),
+                    swing: runtime.swing_progress(),
+                }),
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);

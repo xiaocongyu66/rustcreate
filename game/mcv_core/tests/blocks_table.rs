@@ -115,6 +115,60 @@ fn flags_match_mc_26_1() {
     }
 }
 
+/// B2 条件光表：`litBlockEmission(n)`（`state -> lit ? n : 0`，
+/// Blocks.java:5853-5855）是【按 LIT 状态】的条件发光，本引擎无方块状态、
+/// 表行 = **默认放置态**的发光值——即 `registerDefaultState` 里各块自己的
+/// LIT 默认值。因此分两族：
+/// - 默认未点燃（LIT=false）→ 0：炉族 litBlockEmission(13/13/13)
+///   （Blocks.java:1064/4535/4545）、红石矿/深板岩红石矿(9)（:1581）、
+///   红石灯(15)（:2167）、铜灯族（CopperBulbBlock.java:30 默认
+///   LIT=false）、蜡烛蛋糕（:5032）与蜡烛（CandleBlock.java:76 默认
+///   LIT=false，LIGHT_EMISSION `lit ? 3*candles : 0`，:43）。
+/// - 默认点亮（registerDefaultState LIT=true）→ 保留 n：营火(15)
+///   （CampfireBlock.java:84）、灵魂营火(10)、红石火把/墙 torch(7)
+///   （RedstoneTorchBlock.java:40）。这些放置即发光，与 26.1 一致。
+#[test]
+fn conditional_light_matches_default_lit_state() {
+    for n in [
+        "furnace",
+        "blast_furnace",
+        "smoker",
+        "redstone_lamp",
+        "redstone_ore",
+        "deepslate_redstone_ore",
+        "copper_bulb",
+        "waxed_oxidized_copper_bulb",
+        "candle_cake",
+        "candle",
+        "white_candle",
+    ] {
+        assert_eq!(by_name(n).light_emit, 0, "{n} 默认未点燃，光级必须 0");
+    }
+    // 默认放置态即点亮的一族：放置就发光。
+    assert_eq!(by_name("campfire").light_emit, 15, "营火默认 lit=true");
+    assert_eq!(
+        by_name("soul_campfire").light_emit,
+        10,
+        "灵魂营火默认 lit=true"
+    );
+    assert_eq!(
+        by_name("redstone_torch").light_emit,
+        7,
+        "红石火把默认 lit=true"
+    );
+    assert_eq!(
+        by_name("redstone_wall_torch").light_emit,
+        7,
+        "红石墙 torch 同上"
+    );
+    // 反向保护：恒发光（不看 LIT 态）的方块不得被连带清零——
+    // torch 14（Blocks.java:966）、glowstone 15、fire 15、lantern 15。
+    assert_eq!(by_name("torch").light_emit, 14, "torch 恒发光 14 不受影响");
+    assert_eq!(by_name("glowstone").light_emit, 15);
+    assert_eq!(by_name("fire").light_emit, 15);
+    assert_eq!(by_name("lantern").light_emit, 15);
+}
+
 /// BlockId 索引必须与注册表顺序一致（0 = 空气）。
 #[test]
 fn block_id_indices_stable() {

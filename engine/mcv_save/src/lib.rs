@@ -1,5 +1,10 @@
 //! Save format: `level.meta` + region files with RLE-compressed chunk voxels.
 //!
+//! `level.meta` format version history: v3 adds the hotbar, v4 the 27-slot
+//! main inventory, v5 the survival stats (health/hunger/saturation/exhaustion/
+//! air_supply/difficulty, appended before the trailing mode byte). Decoders
+//! accept ≤ their own version and default the missing fields.
+//!
 //! Region file layout (all little-endian):
 //! - header: 512 entries of { u32 byte_offset, u32 byte_len }, offset 0 =
 //!   unused
@@ -129,6 +134,20 @@ pub struct PlayerMeta {
     pub hotbar: Vec<(u16, u8, u16)>,
     /// v4 主背包:(item, count, damage) × ≤27,槽序即下标;v1–v3 读为空。
     pub main: Vec<(u16, u8, u16)>,
+    /// v5 生命值(0..20);v1–v4 读默认 20.0。
+    pub health: f32,
+    /// v5 饥饿值(0..20,FoodData.foodLevel);v1–v4 读默认 20.0。
+    pub hunger: f32,
+    /// v5 饱和度(FoodData.saturationLevel);v1–v4 读默认 5.0(开局值,
+    /// FoodConstants.java:6 START_SATURATION)。
+    pub saturation: f32,
+    /// v5 饥饿消耗(FoodData.exhaustionLevel);v1–v4 读默认 0.0。
+    pub exhaustion: f32,
+    /// v5 空气供给(Entity.airSupply,满值 300);v1–v4 读默认 300。
+    pub air_supply: i32,
+    /// v5 难度 id(Difficulty.java:28-30:0和平/1简单/2普通/3困难);
+    /// v1–v4 读默认 2(普通,与运行时起步一致)。
+    pub difficulty: u8,
 }
 
 /// (item, count, damage) 列表编解码(v3 快捷栏 / v4 主背包共用)。
@@ -167,7 +186,7 @@ impl LevelMeta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&Self::MAGIC);
-        out.extend_from_slice(&4u16.to_le_bytes()); // format version
+        out.extend_from_slice(&5u16.to_le_bytes()); // format version
         out.extend_from_slice(&self.seed.to_le_bytes());
         out.extend_from_slice(&self.day_time.to_le_bytes());
         let name = self.name.as_bytes();
@@ -193,6 +212,14 @@ impl LevelMeta {
                 let mut m = p.main.clone();
                 m.resize(27, (0, 0, 0));
                 encode_stacks(&mut out, &m[..27]);
+                // v5 生存数值(health/hunger/saturation/exhaustion/air/difficulty)
+                // 追加在模式字节之前——mode 仍居末位,旧解码位置约定不变。
+                out.extend_from_slice(&p.health.to_le_bytes());
+                out.extend_from_slice(&p.hunger.to_le_bytes());
+                out.extend_from_slice(&p.saturation.to_le_bytes());
+                out.extend_from_slice(&p.exhaustion.to_le_bytes());
+                out.extend_from_slice(&p.air_supply.to_le_bytes());
+                out.push(p.difficulty);
             }
         }
         out.push(self.mode);
@@ -204,7 +231,7 @@ impl LevelMeta {
             return Err(SaveError::Corrupt("bad magic"));
         }
         let ver = u16::from_le_bytes([data[4], data[5]]);
-        if ver > 4 {
+        if ver > 5 {
             return Err(SaveError::Corrupt("unsupported meta version"));
         }
         let seed = u64::from_le_bytes(data[6..14].try_into().unwrap());
@@ -231,7 +258,7 @@ impl LevelMeta {
                     (f32_at(0), f32_at(4), f32_at(8), f32_at(12), f32_at(16));
                 let (flying, sel_slot) = (data[i + 20] != 0, data[i + 21]);
                 i += 4 * 5 + 2;
-                // v3 快捷栏、v4 主背包;更旧的档读为空。
+                // v3 快捷栏、v4 主背包、v5 生存数值;更旧的档读默认值。
                 let hotbar = if ver >= 3 {
                     decode_stacks(data, &mut i, 9)?
                 } else {
@@ -241,6 +268,27 @@ impl LevelMeta {
                     decode_stacks(data, &mut i, 27)?
                 } else {
                     Vec::new()
+                };
+                // v5:4×f32(health/hunger/saturation/exhaustion) + i32(air)
+                // + u8(difficulty) = 21 字节;v1–v4 读开局默认值。
+                let (health, hunger, saturation, exhaustion, air_supply, difficulty) = if ver >= 5 {
+                    const SURVIVAL_BYTES: usize = 4 * 4 + 4 + 1;
+                    if i + SURVIVAL_BYTES > data.len() {
+                        return Err(SaveError::Corrupt("truncated survival stats"));
+                    }
+                    let f32_at =
+                        |o: usize| f32::from_le_bytes(data[i + o..i + o + 4].try_into().unwrap());
+                    let (health, hunger, saturation, exhaustion) =
+                        (f32_at(0), f32_at(4), f32_at(8), f32_at(12));
+                    let air_supply = i32::from_le_bytes(data[i + 16..i + 20].try_into().unwrap());
+                    let difficulty = data[i + 20];
+                    (
+                        health, hunger, saturation, exhaustion, air_supply, difficulty,
+                    )
+                } else {
+                    // 与 Player::default / FoodData 起步式一致(开局满血满饥饿、
+                    // 饱和 5.0、空气满、难度普通)。
+                    (20.0, 20.0, 5.0, 0.0, 300, 2)
                 };
                 Some(PlayerMeta {
                     x,
@@ -252,6 +300,12 @@ impl LevelMeta {
                     sel_slot,
                     hotbar,
                     main,
+                    health,
+                    hunger,
+                    saturation,
+                    exhaustion,
+                    air_supply,
+                    difficulty,
                 })
             }
             Some(_) => return Err(SaveError::Corrupt("bad player flag")),
@@ -406,4 +460,123 @@ pub fn chunk_region(cx: i32, cz: i32) -> (i32, i32) {
 
 pub fn chunk_local(cx: i32, cz: i32) -> u16 {
     ((cz.rem_euclid(16) as u16) << 4) | (cx.rem_euclid(16) as u16)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v5 往返：写 → 读 → 逐字段相等（含生存数值与快捷栏/主背包）。
+    #[test]
+    fn v5_roundtrip_preserves_every_field() {
+        let meta = LevelMeta {
+            seed: 0xDEAD_BEEF_1234_5678,
+            name: "测试世界".into(),
+            day_time: 123_456,
+            mode: 2,
+            player: Some(PlayerMeta {
+                x: 1.5,
+                y: -3.25,
+                z: 255.75,
+                yaw: 179.5,
+                pitch: -89.25,
+                flying: true,
+                sel_slot: 8,
+                // 编码器按 9/27 槽全量落盘（空槽 (0,0,0) 占位）——用满表
+                // 才能逐槽相等。
+                hotbar: {
+                    let mut v = vec![(0u16, 0u8, 0u16); 9];
+                    v[0] = (7, 1, 3);
+                    v[1] = (36, 12, 0);
+                    v[8] = (5, 2, 1);
+                    v
+                },
+                main: vec![(27, 64, 0); 27],
+                health: 13.5,
+                hunger: 17.0,
+                saturation: 4.25,
+                exhaustion: 39.75,
+                air_supply: 217,
+                difficulty: 3,
+            }),
+        };
+        let bytes = meta.encode();
+        let back = LevelMeta::decode(&bytes).expect("v5 档可读");
+        assert_eq!(back.seed, meta.seed);
+        assert_eq!(back.name, meta.name);
+        assert_eq!(back.day_time, meta.day_time);
+        assert_eq!(back.mode, meta.mode);
+        let p = back.player.expect("player 在档");
+        let q = meta.player.as_ref().unwrap();
+        assert_eq!((p.x, p.y, p.z), (q.x, q.y, q.z));
+        assert_eq!((p.yaw, p.pitch), (q.yaw, q.pitch));
+        assert_eq!((p.flying, p.sel_slot), (q.flying, q.sel_slot));
+        assert_eq!(p.hotbar, q.hotbar);
+        assert_eq!(p.main, q.main);
+        // 生存数值逐字段相等（本任务核心）。
+        assert_eq!((p.health, q.health), (13.5, 13.5));
+        assert_eq!((p.hunger, q.hunger), (17.0, 17.0));
+        assert_eq!((p.saturation, q.saturation), (4.25, 4.25));
+        assert_eq!((p.exhaustion, q.exhaustion), (39.75, 39.75));
+        assert_eq!((p.air_supply, q.air_supply), (217, 217));
+        assert_eq!((p.difficulty, q.difficulty), (3, 3));
+    }
+
+    /// 旧 v4 档（快捷栏 + 主背包，无生存数值）读入：生存六项给默认值，
+    /// 其余字段原样保留——退出重进不因格式升级丢开局状态。
+    #[test]
+    fn v4_file_reads_with_survival_defaults() {
+        // 手工拼一份 v4 字节（与 v4 编码器布局一致：生存数值尚未存在，
+        // mode 居末位）。
+        let mut out = Vec::new();
+        out.extend_from_slice(b"MCV1");
+        out.extend_from_slice(&4u16.to_le_bytes());
+        out.extend_from_slice(&42u64.to_le_bytes());
+        out.extend_from_slice(&777u64.to_le_bytes());
+        let name = b"world";
+        out.push(name.len() as u8);
+        out.extend_from_slice(name);
+        out.push(1); // player flag
+        for v in [8.5f32, 71.0, 8.5, 90.0, 0.0] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.push(0); // flying
+        out.push(3); // sel_slot
+        // 快捷栏 2 槽。
+        out.push(2);
+        for (item, count, damage) in [(7u16, 1u8, 0u16), (36, 5, 2)] {
+            out.extend_from_slice(&item.to_le_bytes());
+            out.push(count);
+            out.extend_from_slice(&damage.to_le_bytes());
+        }
+        // 主背包空（27 槽占位）。
+        out.push(0);
+        out.push(2); // mode（v2 起居末位）
+        let back = LevelMeta::decode(&out).expect("v4 档仍可读");
+        assert_eq!(back.seed, 42);
+        assert_eq!(back.day_time, 777);
+        assert_eq!(back.mode, 2);
+        let p = back.player.expect("player 在档");
+        assert_eq!((p.x, p.y, p.z), (8.5, 71.0, 8.5));
+        assert_eq!(p.sel_slot, 3);
+        assert_eq!(p.hotbar, vec![(7, 1, 0), (36, 5, 2)]);
+        assert!(p.main.is_empty());
+        // v4 无生存数值 → 开局默认（Player::default 等价）。
+        assert_eq!(p.health, 20.0);
+        assert_eq!(p.hunger, 20.0);
+        assert_eq!(p.saturation, 5.0);
+        assert_eq!(p.exhaustion, 0.0);
+        assert_eq!(p.air_supply, 300);
+        assert_eq!(p.difficulty, 2);
+    }
+
+    /// 超前版本拒读（新档喂给旧解码器 → 明确报错，不静默错读）。
+    #[test]
+    fn future_version_rejected() {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"MCV1");
+        out.extend_from_slice(&6u16.to_le_bytes());
+        out.extend_from_slice(&[0u8; 24]);
+        assert!(LevelMeta::decode(&out).is_err());
+    }
 }

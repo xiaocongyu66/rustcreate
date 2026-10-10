@@ -6,6 +6,7 @@ pub mod chunk;
 pub mod pool;
 pub mod shape;
 pub mod tint;
+pub mod tool;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};
@@ -117,6 +118,25 @@ pub struct BlockDef {
     pub hardness: f32,
     /// 形状编号（[`shape::Shape`] 判别值），按注册名派生，见 `shape.rs`。
     pub shape: u8,
+}
+
+impl BlockDef {
+    /// 放置校验用「可替换」判据（26.1 `BlockBehaviour.canBeReplaced`：
+    /// 空气恒可替换 `BlockState.isAir`（BlockPlaceContext.java:55-57
+    /// `canPlace` 的消费端），其余取 `Properties.replaceable()`，
+    /// BlockBehaviour.java:270-272 + 819-829；表属性 `.replaceable()`
+    /// 即置位，BlockBehaviour.java:1268）。
+    ///
+    /// 按本表字段等价实现：`id==air` ∥ `liquid`（水/岩浆注册表均带
+    /// `.replaceable()`）∥ 名字命中 [`REPLACEABLE_NAMES`]（雪层/植被/火/
+    /// 虚空族）。反向 = 实心与装饰方块不可替换：stone/dirt/log/torch/
+    /// 旧表花草（poppy/dandelion 原版不带 `.replaceable()`）等。
+    /// 26.1 还有一道「手持同种方块不可替换」（BlockBehaviour.java:271
+    /// `!itemInHand.is(this.asItem())`），引擎物品-方块同名放置未建模，
+    /// 不在此判据内。
+    pub fn is_replaceable(&self) -> bool {
+        self.name == "air" || self.liquid || name_in_replaceable_list(self.name)
+    }
 }
 
 /// `blocks_gen.inc.rs` 中 GEN_BLOCKS 的元组类型（生成文件不导出别名，补一个）。
@@ -289,6 +309,60 @@ pub static OPACITY: [u8; GEN_BLOCKS.len()] = {
     }
     t
 };
+
+/// 26.1 带 `Properties.replaceable()` 的注册名全集（对照 src-26.1
+/// `Blocks.java` 逐一提取，共 29 项：空气族 air/cave_air/void_air/
+/// structure_void、流体水与岩浆（water Blocks.java:197-205 带
+/// `.replaceable()` 与 `.liquid()`）、雪层 snow、植被/草/藤/根族
+/// （short_grass/fern/tall_grass/large_fern/bush/leaf_litter/
+/// short_dry_grass/tall_dry_grass/seagrass/tall_seagrass/crimson_roots/
+/// warped_roots/nether_sprouts/dead_bush/hanging_roots/vine/glow_lichen）、
+/// 火 fire/soul_fire、resin_clump、bubble_column、光源 light）。
+///
+/// `is_replaceable` 的名字名单段；新增方块带 `.replaceable()` 时同步此处
+/// （锁定测试见 tests::replaceable_names_all_registered）。
+const REPLACEABLE_NAMES: [&str; 29] = [
+    "air",
+    "bubble_column",
+    "bush",
+    "cave_air",
+    "crimson_roots",
+    "dead_bush",
+    "fern",
+    "fire",
+    "glow_lichen",
+    "hanging_roots",
+    "large_fern",
+    "lava",
+    "leaf_litter",
+    "light",
+    "nether_sprouts",
+    "resin_clump",
+    "seagrass",
+    "short_dry_grass",
+    "short_grass",
+    "snow",
+    "soul_fire",
+    "structure_void",
+    "tall_dry_grass",
+    "tall_grass",
+    "tall_seagrass",
+    "vine",
+    "void_air",
+    "warped_roots",
+    "water",
+];
+
+const fn name_in_replaceable_list(name: &str) -> bool {
+    let mut i = 0usize;
+    while i < REPLACEABLE_NAMES.len() {
+        if name_eq(name, REPLACEABLE_NAMES[i]) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
 
 impl BlockId {
     /// 低 12 位真实方块 id（丢弃状态 nibble）。C++ 侧 kBarrier(0xFFFF)
@@ -601,6 +675,87 @@ mod tests {
                     d.name
                 );
             }
+        }
+    }
+
+    /// B3 可替换名单完整性：26.1 `Properties.replaceable()` 全集 29 名
+    /// 必须全部在注册表且互不重复（新增方块/改名时同步名单）。
+    #[test]
+    fn replaceable_names_all_registered() {
+        for n in REPLACEABLE_NAMES {
+            assert!(
+                BLOCKS.iter().any(|b| b.name == n),
+                "可替换名单 {n} 不在注册表"
+            );
+        }
+        let mut sorted = REPLACEABLE_NAMES;
+        sorted.sort_unstable();
+        assert_eq!(
+            sorted.windows(2).filter(|w| w[0] == w[1]).count(),
+            0,
+            "名单有重复项"
+        );
+    }
+
+    /// B3 `is_replaceable` 表驱动断言：可替换（空气/水/岩浆/雪层/植被/火）
+    /// 与不可替换（实心块/旧表花草/火把/雪块）各若干例。26.1 依据：
+    /// `Properties.replaceable()` 名单（见 REPLACEABLE_NAMES 注释）+
+    /// 空气特判（BlockState.isAir → canBeReplaced）。
+    #[test]
+    fn is_replaceable_matches_vanilla_property() {
+        let by_name = |want: &str| -> &BlockDef {
+            BLOCKS
+                .iter()
+                .find(|b| b.name == want)
+                .unwrap_or_else(|| panic!("未注册方块 {want}"))
+        };
+        // 可替换：空气、流体（水 Blocks.java:202 / 岩浆同带 replaceable）、
+        // 雪层、植被/草/藤、火、虚空族。
+        for n in [
+            "air",
+            "cave_air",
+            "void_air",
+            "structure_void",
+            "water",
+            "lava",
+            "snow",
+            "short_grass",
+            "fern",
+            "tall_grass",
+            "large_fern",
+            "seagrass",
+            "vine",
+            "glow_lichen",
+            "crimson_roots",
+            "dead_bush",
+            "fire",
+            "soul_fire",
+            "resin_clump",
+        ] {
+            assert!(
+                by_name(n).is_replaceable(),
+                "{n} 应可替换（26.1 replaceable()/空气）"
+            );
+        }
+        // 不可替换：实心块与装饰方块（旧表花草=poppy/dandelion 原版**不带**
+        // replaceable，与 short_grass 不同；snow_block 是整块雪不是雪层）。
+        for n in [
+            "stone",
+            "dirt",
+            "grass",
+            "sand",
+            "log",
+            "planks",
+            "cobble",
+            "bedrock",
+            "flower_red",
+            "flower_yellow",
+            "torch",
+            "snow_block",
+            "water_cauldron",
+            "oak_fence",
+        ] {
+            assert!(!by_name(n).is_replaceable(), "{n} 不应可替换");
         }
     }
 }
