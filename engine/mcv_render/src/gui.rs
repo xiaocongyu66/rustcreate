@@ -144,16 +144,23 @@ impl SpriteSheet {
     /// 从资源根(`assets/minecraft`)读 `textures/` 下原版精灵。
     /// 核心 HUD 精灵缺一即 None(调用方整体回退程序化绘制);
     /// 物品图标 best-effort:缺文件只 warn 并跳过该条。
+    /// M8c：文件读取收编到 mcv_assets(缺失文件经 AssetError 显式 warn,含
+    /// 完整路径),不再各自静默 `std::fs::read().ok()`。
     pub fn load(dir: &std::path::Path) -> Option<Self> {
+        Self::load_via(&mcv_assets::AssetManager::new(dir))
+    }
+
+    /// 经 AssetManager 读取(统一缓存/缺素材登记),布局装配逻辑不变。
+    pub fn load_via(assets: &mcv_assets::AssetManager) -> Option<Self> {
         let decode = |name: &'static str,
                       file: &str,
                       w: u32,
                       h: u32|
          -> Option<(&'static str, Vec<u8>, u32, u32)> {
-            let path = dir.join("textures").join(file);
-            let bytes = std::fs::read(&path).ok()?;
+            let rel = format!("textures/{file}");
+            let bytes = assets.read_optional(&rel)?;
             let img = image::load_from_memory(&bytes)
-                .map_err(|e| log::warn!("gui: decode {}: {e}", path.display()))
+                .map_err(|e| log::warn!("gui: decode textures/{file}: {e}"))
                 .ok()?;
             let rgba = img.to_rgba8();
             let (sw, sh) = (rgba.width(), rgba.height());
@@ -183,19 +190,19 @@ impl SpriteSheet {
         // 左上 176x166,同原版 blit 源矩形)。
         let panels_before = loaded.len();
         for (name, file, w, h, sx, sy, sw, sh) in PANEL_SPRITES {
-            let path = dir.join("textures").join(file);
-            let Ok(bytes) = std::fs::read(&path) else {
+            let rel = format!("textures/{file}");
+            let Some(bytes) = assets.read_optional(&rel) else {
                 continue;
             };
-            let Ok(img) = image::load_from_memory(&bytes)
-                .map_err(|e| log::warn!("gui: decode {}: {e}", path.display()))
+            let Ok(img) =
+                image::load_from_memory(&bytes).map_err(|e| log::warn!("gui: decode {rel}: {e}"))
             else {
                 continue;
             };
             let rgba = img.to_rgba8();
             let (iw, ih) = (rgba.width(), rgba.height());
             if sx + sw > iw || sy + sh > ih || sw == 0 || sh == 0 {
-                log::warn!("gui: panel crop out of range: {}", path.display());
+                log::warn!("gui: panel crop out of range: {rel}");
                 continue;
             }
             let mut crop = vec![0u8; (sw * sh * 4) as usize];

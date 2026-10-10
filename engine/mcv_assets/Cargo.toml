@@ -1,0 +1,11 @@
+[package]
+name = "mcv_assets"
+description = "统一素材管线(M8c):资源根解析 + 按类别加载 + 缺素材硬错误汇总 + 读缓存去重(纯 IO/解码,无 wgpu)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+mcv_core.workspace = true
+image.workspace = true
+log.workspace = true

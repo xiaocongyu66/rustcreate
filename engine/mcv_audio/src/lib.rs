@@ -106,6 +106,17 @@ impl From<std::io::Error> for AudioError {
     }
 }
 
+/// M8c：素材读取统一走 mcv_assets，其 `AssetError`（含完整路径）折叠进
+/// `Io`——错误文本保持"含完整路径"的硬错误语义。
+impl From<mcv_assets::AssetError> for AudioError {
+    fn from(e: mcv_assets::AssetError) -> Self {
+        AudioError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            e.to_string(),
+        ))
+    }
+}
+
 /// 欧氏距离(3D)。
 pub fn distance3(a: [f32; 3], b: [f32; 3]) -> f32 {
     let dx = a[0] - b[0];
@@ -134,13 +145,19 @@ pub fn distance_attenuation(dist: f32, radius: f32) -> f32 {
 /// 开发期默认素材目录:`assets/minecraft/sounds/`(单一资源根,布局镜像
 /// 原版 jar 的 assets 树;sounds.json 在该目录下,变体按原版 sounds/ 下路径)。
 ///
-/// 解析顺序:环境变量 `MCV_SOUNDS_DIR` → 编译期 workspace 根下该路径
-/// → 运行时相对路径。发布构建(Android)应由主控解包素材后用
-/// [`AudioManager::open`] 传入实际路径。
+/// 解析顺序(M8c 起目录解析收编到 mcv_assets 统一资源根解析):
+/// 环境变量 `MCV_SOUNDS_DIR` → 统一资源根解析(`MCV_ASSETS_DIR` → CWD →
+/// exe 同级)下的 `sounds/` → 编译期 workspace 根下该路径 → 运行时相对路径。
+/// 发布构建(Android)应由主控解包素材后用 [`AudioManager::open`] 传入实际路径。
 pub fn default_sounds_dir() -> PathBuf {
     const REL: &str = "assets/minecraft/sounds";
     if let Ok(dir) = std::env::var("MCV_SOUNDS_DIR") {
         return PathBuf::from(dir);
+    }
+    if let Some(sounds) = mcv_assets::AssetManager::resolve_sounds_root(
+        mcv_assets::AssetManager::resolve_root(None).as_deref(),
+    ) {
+        return sounds;
     }
     let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../")

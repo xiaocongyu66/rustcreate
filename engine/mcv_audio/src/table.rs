@@ -69,8 +69,9 @@ impl SoundTable {
     /// 读取 `sounds_dir/sounds.json` 并展平。IO 失败(文件缺失)或根结构非法
     /// 返回 `Err`;单个事件解析失败只跳过并 `log::warn`。
     pub fn load(sounds_dir: impl AsRef<Path>) -> Result<Self, AudioError> {
+        // M8c:读取走 mcv_assets 统一入口(AssetError 含完整路径)。
         let path = sounds_dir.as_ref().join("sounds.json");
-        let bytes = std::fs::read(&path)?;
+        let bytes = mcv_assets::read_file(&path)?;
         let root: Value = serde_json::from_slice(&bytes)
             .map_err(|e| AudioError::Decode(format!("{:?}: {}", path, e)))?;
         let Some(top) = root.as_object() else {

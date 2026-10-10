@@ -10,6 +10,7 @@ license = "MIT"
 
 [workspace.dependencies]
 mcv_core = { path = "game/mcv_core" }
+mcv_assets = { path = "engine/mcv_assets" }
 mcv_app = { path = "game/mcv_app" }
 mcv_logic = { path = "game/mcv_logic" }
 mcv_ffi = { path = "game/mcv_ffi" }

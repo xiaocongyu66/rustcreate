@@ -884,30 +884,19 @@ impl AppState {
         }
     }
 
-    /// 资源根（`assets/minecraft`，布局镜像原版 jar）。Android 优先 internal
-    /// 数据目录解包出的 assets/minecraft/，否则开发期 workspace 根（CWD），
-    /// 最后退回 <exe 目录>/assets/minecraft/（桌面 bundle 分发形态）。
+    /// 资源根（`assets/minecraft`，布局镜像原版 jar）。M8c：解析收编到
+    /// mcv_assets——`MCV_ASSETS_DIR` env →（Android）internal 解包目录 →
+    /// CWD → exe 同级（桌面 bundle 分发形态）；有效性门 = 目录存在且含
+    /// `textures/`。Android 解包目录由 `android_data` 传入。
     fn assets_dir(&self) -> Option<std::path::PathBuf> {
-        const REL: &str = "assets/minecraft";
         #[cfg(target_os = "android")]
-        if let Some(data) = &self.android_data {
-            let dir = data.join(REL);
-            if dir.is_dir() {
-                return Some(dir);
-            }
+        {
+            mcv_assets::AssetManager::resolve_root(self.android_data.as_deref())
         }
         #[cfg(not(target_os = "android"))]
         {
-            let cwd = std::path::PathBuf::from(REL);
-            if cwd.is_dir() {
-                return Some(cwd);
-            }
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|d| d.join(REL)))
+            mcv_assets::AssetManager::resolve_root(None)
         }
-        #[cfg(target_os = "android")]
-        None
     }
 
     /// 存档根目录（saves/）。
@@ -1402,9 +1391,9 @@ impl ApplicationHandler for AppState {
         };
         match Self::init_gpu(window.clone()) {
             Ok((surface, config, depth, device, queue, max_extent)) => {
-                // 资源根:Android 解包目录优先,桌面开发期 CWD(workspace 根),
-                // bundle 形态 exe 同级(仅当目录存在时生效)
-                let pack = self.assets_dir().filter(|d| d.is_dir());
+                // 资源根（M8c）：mcv_assets 统一解析（env → Android 解包 →
+                // CWD → exe 同级，含 textures/ 才生效）。缺根 = 硬错误显式 log。
+                let pack = self.assets_dir();
                 self.cached_device = Some(device.clone());
                 self.renderer = Some(mcv_render::Renderer::new(
                     device.clone(),
@@ -1414,15 +1403,40 @@ impl ApplicationHandler for AppState {
                 ));
                 self.clouds = Some(mcv_render::Clouds::new(&device, &queue));
                 // 玩家皮肤：原版 entity/player/{wide/steve,slim/alex}.png
-                if let Some(dir) = self.assets_dir() {
-                    let read = |p: &str| std::fs::read(dir.join("textures").join(p)).ok();
-                    if let (Some(s), Some(a)) = (
-                        read("entity/player/wide/steve.png"),
-                        read("entity/player/slim/alex.png"),
-                    ) && let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a)
-                    {
-                        log::warn!("skin load failed: {e}");
+                // （M8c 走 AssetManager；缺皮肤/缺音效索引 = 显式 log，
+                // 不再静默跳过。纹理/字体/GUI 等缺失由 Renderer 内部
+                // AssetManager 构造尾部一次性汇总上报。）
+                match &pack {
+                    Some(dir) => {
+                        let assets = mcv_assets::AssetManager::new(dir.clone());
+                        let steve = assets.read_optional("textures/entity/player/wide/steve.png");
+                        let alex = assets.read_optional("textures/entity/player/slim/alex.png");
+                        if let (Some(s), Some(a)) = (steve, alex) {
+                            if let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a) {
+                                log::warn!("skin load failed: {e}");
+                            }
+                        } else {
+                            log::error!(
+                                "玩家皮肤缺失（{dir:?}/textures/entity/player/\
+                                 {{wide/steve,slim/alex}}.png）——玩家皮肤不上屏"
+                            );
+                        }
+                        // 音效索引状态一次性上报（缺 sounds.json → 播放侧
+                        // no-op 降级，但错误必须可见；开发树拉取见 fetch-sounds.sh）。
+                        if !assets
+                            .sounds_dir()
+                            .is_some_and(|d| d.join(mcv_assets::SOUNDS_INDEX).is_file())
+                        {
+                            log::error!(
+                                "原版音效缺失（sounds 根或 sounds.json 不在）——\
+                                 音效静默降级（不影响画面）"
+                            );
+                        }
                     }
+                    None => log::error!(
+                        "资源根未解析（assets/minecraft 未找到，MCV_ASSETS_DIR 未设）\
+                         ——贴图/字体/GUI 全部按素材红线降级"
+                    ),
                 }
                 // 设置与键位：从 options.txt / keybindings.txt 读入（缺失 → 默认）
                 self.load_persisted();

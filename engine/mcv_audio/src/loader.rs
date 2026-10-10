@@ -42,7 +42,9 @@ impl SoundLoader {
     pub fn new(sounds_dir: impl AsRef<Path>) -> Self {
         let dir = sounds_dir.as_ref();
         let table = SoundTable::load(dir).unwrap_or_else(|e| {
-            log::warn!("mcv_audio: 音效表不可用,音效静默降级: {e}");
+            // 缺音效索引 = 硬错误(显式 log,错误含完整路径);播放侧降级为
+            // 静默 no-op 是运行期策略,不改变"错误必须可见"的红线。
+            log::error!("mcv_audio: 音效表不可用,音效静默降级: {e}");
             SoundTable::default()
         });
         Self {
@@ -151,7 +153,9 @@ impl SoundLoader {
         }
         let path = self.sounds_dir.join(format!("{key}.ogg"));
         let loaded = (|| -> Result<SoundData, AudioError> {
-            let bytes = std::fs::read(&path).map_err(AudioError::from)?;
+            // M8c:统一读取入口(错误含完整路径);缺 ogg 的 no-op/去重语义不变
+            // ——运行期懒加载属实时域边界,LRU/节流仍在 mcv_audio 本侧。
+            let bytes = mcv_assets::read_file(&path)?;
             decode_to_stereo(bytes)
         })();
         let data = match loaded {

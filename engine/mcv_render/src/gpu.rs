@@ -555,6 +555,12 @@ impl Renderer {
         let max_chunks: u32 = 1024;
         let max_hud_quads: u32 = 4096;
 
+        // ---- AssetManager（M8c 资源管线统一）--------------------------------
+        // 全部素材 IO 经 mcv_assets（缓存去重 + 缺素材硬错误登记，错误含
+        // 完整路径）；构造尾部的 summary_report 一次性汇总上报缺失清单，
+        // 显示层降级仍按素材红线（missing 标记/透明占位，绝无程序化伪造）。
+        let assets_mgr = assets_dir.map(mcv_assets::AssetManager::new);
+
         // ---- terrain texture arrays ------------------------------------
         // 真实官方贴图 827 层 + missing 哨兵 + 裂纹 10 层 = atlas::LAYERS。
         // 设备 max_texture_array_layers < LAYERS（GLES 规范下限 256）时按
@@ -578,7 +584,12 @@ impl Renderer {
             n_layers < atlas::LAYERS,
             n_layers > atlas::CRACK_BASE,
         );
-        let payload = atlas::generate_payload_with_pack(assets_dir);
+        // 图集源贴图 → 838 层 payload：rebuild() 语义入口（AssetManager 接管，
+        // 源文件缺失清单可经 atlas::missing_source_files / atlas_missing 查询）。
+        let payload = match &assets_mgr {
+            Some(am) => am.rebuild_atlas_payload(),
+            None => atlas::generate_payload(),
+        };
         let mip0_layer_bytes = atlas::TILE_PX * atlas::TILE_PX * 4;
         let mip1_layer_bytes = (atlas::TILE_PX / 2) * (atlas::TILE_PX / 2) * 4;
         assert_eq!(
@@ -677,8 +688,8 @@ impl Renderer {
         //   同款 256x256 查表图）。缺失 → log::error + 关闭染色（草地按
         //   原版灰度贴图原样显示，不伪造颜色）。
         let load_colormap = |file: &str| -> Option<Vec<u8>> {
-            let dir = assets_dir?;
-            let bytes = std::fs::read(dir.join("textures/colormap").join(file)).ok()?;
+            let am = assets_mgr.as_ref()?;
+            let bytes = am.colormap(file).ok()?;
             mcv_core::tint::decode_colormap(&bytes)
         };
         let (tint_grass, tint_foliage) =
@@ -702,7 +713,7 @@ impl Renderer {
         // 素材 environment/celestial/{sun.png, moon/<phase>.png}。素材缺失
         // → 素材红线（2026-10）：删除程序化天体圆盘回退，上传全透明纹理、
         // log::error，天空保持无天体——绝不画假太阳/假月亮。
-        let celestial_payload = assets_dir.and_then(celestial::load_payload);
+        let celestial_payload = assets_mgr.as_ref().and_then(celestial::load_payload_via);
         if celestial_payload.is_none() {
             log::error!(
                 "天体贴图缺失：textures/environment/celestial/{{sun.png,moon/*.png}}\
@@ -813,7 +824,7 @@ impl Renderer {
         // ---- GUI 精灵表(资源根 textures/ 下原版精灵)-------------------
         // 缺素材时建 1x1 占位纹理，gui 字段为 None → 上层按素材红线显示
         // 加载失败提示（无程序化面板回退）。
-        let gui = assets_dir.and_then(SpriteSheet::load);
+        let gui = assets_mgr.as_ref().and_then(SpriteSheet::load_via);
         let (gui_rgba, gui_w, gui_h) = match &gui {
             Some(s) => (s.rgba.clone(), s.w, s.h),
             None => (vec![0u8; 4], 1, 1),
@@ -1735,7 +1746,9 @@ impl Renderer {
         });
         // 原版 mob 贴图（entity/{chicken,cow,sheep,pig}/...）：素材缺失时
         // mobs_loaded=false 短路不画，绝不程序化伪造。
-        let mob_payload = crate::mob_mesh::load_mob_payload(assets_dir);
+        let mob_payload = assets_mgr
+            .as_ref()
+            .and_then(crate::mob_mesh::load_mob_payload_via);
         let mobs_loaded = mob_payload.is_some();
         let mob_tex_data = mob_payload.unwrap_or_else(|| {
             vec![
@@ -1803,6 +1816,11 @@ impl Renderer {
             ],
         });
 
+        // 一次性汇总上报缺素材（硬错误诊断；显示层已按素材红线降级）。
+        if let Some(am) = &assets_mgr {
+            am.summary_report();
+        }
+
         Self {
             device,
             queue,
@@ -1853,6 +1871,18 @@ impl Renderer {
     /// 加载失败提示（无程序化回退）。
     pub fn gui(&self) -> Option<&SpriteSheet> {
         self.gui.as_ref()
+    }
+
+    /// （M8c）图集热替换薄接口——**留桩，已注明**：
+    /// `rebuild()` 语义的 CPU 半边已由
+    /// [`mcv_assets::AssetManager::rebuild_atlas_payload`] 提供（源贴图 →
+    /// 838 层 payload，GLES 拆分仍走 [`atlas::split_layer_counts`] +
+    /// [`atlas::remap_layer`]）；本函数转发之并返回新 payload，供调用方
+    /// 在资源包变更后取新数据。**GPU 侧纹理换绑未接**：terrain 纹理数组
+    /// 与 frame_bind 绑定布局一起重建属渲染线程重构范围（在排队），故当前
+    /// 取到新 payload 后仍需整体重建 Renderer 才会生效。
+    pub fn rebuild_atlas_payload(assets: &mcv_assets::AssetManager) -> Vec<u8> {
+        assets.rebuild_atlas_payload()
     }
 
     /// 上传 steve/alex 皮肤为 64x64x2 texture_2d_array(layer 0=steve,

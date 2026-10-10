@@ -99,9 +99,9 @@ pub fn load_atlas(dir: Option<&std::path::Path>) -> Result<(Vec<u8>, [u8; 256]),
     let dir = dir.ok_or_else(|| {
         "font: 资源根未提供,textures/font/ascii.png 无法加载(无程序化字体回退)".to_string()
     })?;
+    // M8c：读取走 mcv_assets 统一入口（AssetError 自带完整路径）。
     let path = dir.join("textures").join("font/ascii.png");
-    let bytes = std::fs::read(&path)
-        .map_err(|e| format!("font: ascii.png 读取失败 {}: {e}", path.display()))?;
+    let bytes = mcv_assets::read_file(&path).map_err(|e| e.to_string())?;
     let img = image::load_from_memory(&bytes)
         .map_err(|e| format!("font: ascii.png 解码失败 {}: {e}", path.display()))?;
     let rgba = img.to_rgba8();

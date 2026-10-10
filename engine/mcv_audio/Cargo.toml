@@ -16,3 +16,5 @@ log = { workspace = true }
 serde_json = { workspace = true }
 # 游戏线程 → 音频回调线程的无锁命令环。
 mcv_sync = { workspace = true }
+# M8c 资源管线统一:音效目录解析与文件读取收编到 mcv_assets(纯 IO,无 wgpu)。
+mcv_assets = { workspace = true }

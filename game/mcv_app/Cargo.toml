@@ -17,6 +17,7 @@ winit.workspace = true
 # 壳层只装配：窗口/surface（winit+wgpu）、渲染器、运行时（mcv_logic）、
 # 存档目录与音频装配。世界/物理细节一律经 mcv_logic，不直连子系统。
 mcv_core.workspace = true
+mcv_assets.workspace = true
 mcv_item.workspace = true
 mcv_logic.workspace = true
 mcv_platform.workspace = true

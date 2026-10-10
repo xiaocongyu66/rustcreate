@@ -1388,6 +1388,7 @@ dependencies = [
  "env_logger",
  "glam",
  "log",
+ "mcv_assets",
  "mcv_audio",
  "mcv_core",
  "mcv_game",
@@ -1403,10 +1404,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "mcv_assets"
+version = "0.1.0"
+dependencies = [
+ "image",
+ "log",
+ "mcv_core",
+]
+
+[[package]]
 name = "mcv_audio"
 version = "0.1.0"
 dependencies = [
  "log",
+ "mcv_assets",
  "mcv_sync",
  "serde_json",
  "symphonia",
@@ -1525,6 +1536,7 @@ dependencies = [
  "glam",
  "image",
  "log",
+ "mcv_assets",
  "mcv_core",
  "pollster",
  "wgpu",

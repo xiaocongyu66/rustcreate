@@ -685,13 +685,26 @@ pub fn update_wing_animation(flap: f32, flap_speed: f32, on_ground: bool) -> (f3
 
 /// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64x5 RGBA）。
 /// 任一文件缺失/解码失败/尺寸不符 → None（上层按缺素材降级不渲染；
-/// 绝不用程序化占位顶替原版贴图）。
+/// 绝不用程序化占位顶替原版贴图）。M8c：读取经 AssetManager（缺文件
+/// 硬错误显式 log，不再静默 `.ok()?` 吞掉）。
 pub fn load_mob_payload(assets_dir: Option<&std::path::Path>) -> Option<Vec<u8>> {
     let dir = assets_dir?;
+    load_mob_payload_via(&mcv_assets::AssetManager::new(dir))
+}
+
+/// 经 AssetManager 加载（统一缓存/缺素材登记；Renderer 构造路径用）。
+pub fn load_mob_payload_via(assets: &mcv_assets::AssetManager) -> Option<Vec<u8>> {
     let mut out = vec![0u8; MOB_TEX_LAYERS * MOB_TEX_PX * MOB_TEX_PX * 4];
     for (layer, file) in MOB_TEX_FILES.iter().enumerate() {
-        let bytes = std::fs::read(dir.join("textures").join(file)).ok()?;
-        let img = image::load_from_memory(&bytes).ok()?.to_rgba8();
+        let Ok(bytes) = assets.read(&format!("textures/{file}")) else {
+            log::error!("mob 贴图缺失: textures/{file}（相对资源根）——生物不渲染（无程序化占位）");
+            return None;
+        };
+        let Ok(img) = image::load_from_memory(&bytes) else {
+            log::error!("mob 贴图解码失败: textures/{file}——生物不渲染");
+            return None;
+        };
+        let img = img.to_rgba8();
         let (w, h) = (img.width() as usize, img.height() as usize);
         // 原版尺寸门：鸡/羊 64x32、牛/猪 64x64（LayerDefinition.create 的
         // (w,h) 参数）。pad 到 64x64 后 v 坐标不变（v=像素/64 归一化）。

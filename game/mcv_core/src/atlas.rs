@@ -10,7 +10,7 @@
 //! `textures/block/destroy_stage_0..9.png`，缺失即为 missing 标记。
 
 use crate::tiles;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const TILE_PX: usize = 16;
 /// manifest 层数 = 827 张真实方块贴图（层 0..826，字典序）+ 1 层 missing
@@ -161,10 +161,20 @@ pub fn generate_payload_with_pack(assets_dir: Option<&Path>) -> Vec<u8> {
         Some(dir) => {
             let n = load_real_tiles(dir, &mut mip0);
             if n < REAL_TILE_COUNT as u32 {
+                // 硬错误（一次性汇总）：列出示例缺失路径供诊断，完整清单
+                // 用 missing_source_files 查询（AssetManager 侧汇总上报）。
+                let miss = missing_source_files(dir);
+                let sample: Vec<String> = miss
+                    .iter()
+                    .take(10)
+                    .map(|p| p.display().to_string())
+                    .collect();
                 log::error!(
-                    "atlas: {n}/{} real tiles from {}——缺失层将显示原版 missing 标记（无程序化回退）",
+                    "atlas: {n}/{} real tiles from {}——缺失层将显示原版 missing 标记（无程序化回退）; 缺失示例: {}{}",
                     REAL_TILE_COUNT,
-                    dir.display()
+                    dir.display(),
+                    sample.join(", "),
+                    if miss.len() > 10 { ", …" } else { "" }
                 );
             } else {
                 log::info!(
@@ -317,6 +327,33 @@ pub fn load_crack_stages(dir: &Path, layers: &mut [u8]) -> u32 {
         }
     }
     count
+}
+
+/// 图集源贴图缺失清单（M8c 硬错误汇总入口）：真实层 0..826 的
+/// `textures/block/<name>.png` + 裂纹 10 档 `destroy_stage_0..9.png`
+/// 中所有不存在的**完整路径**（排序）。哨兵层无文件，不计缺失。
+/// AssetManager 用它做一次性汇总上报；本模块自身的读盘循环与
+/// [`generate_payload_with_pack`] 是图集这条线的既定读取路径（历史
+/// 遗留的合法例外——它只读原版单张贴图拼层，不产生程序化像素）。
+pub fn missing_source_files(dir: &Path) -> Vec<PathBuf> {
+    let blocks = dir.join(BLOCKS_SUBDIR);
+    let mut miss = Vec::new();
+    for (idx, name) in tile_file_names().iter().enumerate() {
+        if idx == SENTINEL_LAYER {
+            continue;
+        }
+        let p = blocks.join(format!("{name}.png"));
+        if !p.is_file() {
+            miss.push(p);
+        }
+    }
+    for s in 0..CRACK_LAYERS {
+        let p = blocks.join(format!("destroy_stage_{s}.png"));
+        if !p.is_file() {
+            miss.push(p);
+        }
+    }
+    miss
 }
 
 /// 标准 MC 资源包树（贴图名 1.13+ 起即 manifest 原名，无需翻译表）。

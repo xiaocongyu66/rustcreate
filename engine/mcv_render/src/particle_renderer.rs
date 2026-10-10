@@ -50,12 +50,16 @@ impl ParticleRenderer {
         let layers = sprites::PARTICLE_LAYERS as usize;
         let mut payload = vec![0u8; layers * PARTICLE_PX * PARTICLE_PX * 4];
         for layer in 0..layers as u32 {
+            // M8c：读取走 mcv_assets 统一入口（可选素材；缺失回退占位帧，
+            // 原 image::open 静默读盘收编）。
             let img = assets_dir
                 .and_then(|root| {
                     let p = root
                         .join("textures/particle")
                         .join(particle_file_name(layer));
-                    image::open(&p).ok()
+                    mcv_assets::read_file(&p)
+                        .ok()
+                        .and_then(|b| image::load_from_memory(&b).ok())
                 })
                 .map(|img| img.to_rgba8())
                 .map(|rgba| {
