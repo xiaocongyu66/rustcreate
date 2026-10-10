@@ -2090,7 +2090,7 @@ impl GameRuntime {
         *handle.voxels.write().unwrap() = load_voxels(&ids);
         // v3 起 heightmap 随记录落盘（原版做法：Heightmap.java:138
         // getRawData 直存 NBT，读盘不重算）；直接采纳盘上值。
-        *handle.heightmap.write().unwrap() = Box::new(hm);
+        **handle.heightmap.write().unwrap() = hm;
         handle.advance_to(Stage::TerrainReady);
         true
     }

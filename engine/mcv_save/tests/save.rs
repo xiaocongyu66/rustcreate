@@ -194,7 +194,7 @@ fn region_rejects_old_version() {
     for stale in [1u8, 2u8, CHUNK_VERSION + 1] {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
-            .open(&off)
+            .open(off)
             .expect("reopen");
         file.seek(SeekFrom::Start(512 * 8 + 2))
             .expect("seek ver byte");

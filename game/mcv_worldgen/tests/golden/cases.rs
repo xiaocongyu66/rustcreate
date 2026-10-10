@@ -39,3 +39,12 @@ pub fn voxels_le(voxels: &[u16]) -> Vec<u8> {
     }
     out
 }
+
+/// heightmap 256×i16（绝对 y）的 LE 字节流——与全量落盘同口径。
+pub fn heightmap_le(hm: &[i16]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(hm.len() * 2);
+    for v in hm {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out
+}

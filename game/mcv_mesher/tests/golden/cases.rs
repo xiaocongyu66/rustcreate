@@ -100,7 +100,7 @@ pub fn scene_plains() -> Chunk {
                 } else {
                     stone
                 };
-                put(&mut c.0, x, y as i32, z, id);
+                put(&mut c.0, x, y, z, id);
             }
             if (x + z) % 5 == 0 {
                 put(&mut c.0, x, h as i32, z, flower);
@@ -135,14 +135,14 @@ pub fn scene_cave() -> Chunk {
     for x in 0..16 {
         for z in 0..16 {
             for y in 0..14 {
-                put(&mut c.0, x, y as i32, z, stone);
+                put(&mut c.0, x, y, z, stone);
             }
         }
     }
     for x in 4..12 {
         for z in 4..12 {
             for y in 5..11 {
-                put(&mut c.0, x, y as i32, z, 0);
+                put(&mut c.0, x, y, z, 0);
             }
         }
     }
@@ -167,7 +167,7 @@ pub fn scene_water() -> Chunk {
         for z in 2..10 {
             let top = if (x + z) % 4 == 0 { 10 } else { 9 };
             for y in 8..top {
-                put(&mut c.0, x, y as i32, z, water);
+                put(&mut c.0, x, y, z, water);
             }
         }
     }
