@@ -233,6 +233,43 @@ fn player_death_scatters_hotbar_as_drops() {
     assert_eq!(drops.len(), 2, "非空格逐格掉落: {drops:?}");
 }
 
+/// 玩家死亡（生存）：主背包 27 格同样逐格掉落——原版 Player.die →
+/// Inventory.dropAll 掉全 36 格；只掉快捷栏则 main 格死亡保留 = 变相
+/// keepInventory。
+#[test]
+fn player_death_scatters_main_inventory_as_drops() {
+    let dir = tmp_world("death-main");
+    let mut rt = GameRuntime::new_headless(20261010, dir, GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    rt.hotbar.main[10] = mcv_item::ItemStack::new(mcv_item::COBBLESTONE, 12);
+    rt.hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::COBBLESTONE, 3);
+    rt.player.pos = Vec3::new(8.0, 70.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+
+    rt.hurt_player(100.0, None);
+    assert!(rt.dead, "致命伤置死亡态");
+    assert!(
+        rt.hotbar.main.iter().all(|s| s.is_empty()),
+        "死亡清空主背包"
+    );
+    let drops: Vec<(u16, u8, u8)> = rt
+        .mobs_app
+        .world
+        .read::<mcv_entity::ItemDrop>()
+        .iter()
+        .map(|(_, d)| (d.item, d.count, d.pickup_delay))
+        .collect();
+    assert!(
+        drops.contains(&(mcv_item::COBBLESTONE, 12, mcv_entity::DEATH_PICKUP_DELAY)),
+        "main 格圆石 12 个带 40 tick 延迟在掉落清单里: {drops:?}"
+    );
+    assert!(
+        drops.contains(&(mcv_item::COBBLESTONE, 3, mcv_entity::DEATH_PICKUP_DELAY)),
+        "快捷栏格圆石 3 个也在掉落清单里: {drops:?}"
+    );
+    assert_eq!(drops.len(), 2, "hotbar+main 逐格掉落: {drops:?}");
+}
+
 /// 到达距离常数：生存 4.4 成 / 4.6 败，创造 4.6 成（4.5/5.0）。
 /// 观测量 = mining_overlay 的准星 DDA —— 与 interact/start_mining 共用
 /// 同一 `block_interaction_reach`（mcv_game::raycast::REACH + 创造 0.5）。

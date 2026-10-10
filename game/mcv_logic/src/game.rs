@@ -999,12 +999,17 @@ impl GameRuntime {
                 self.hardcore_death = true;
             }
             // 死亡掉落（26.1 Player.die → Inventory.dropAll，keepInventory
-            // 默认 false）：快捷栏逐格生成 ItemDrop（拾取延迟 40 tick =
-            // 2 s，LivingEntity.java:3398），与 mob 死亡掉落同一生成路径，
-            // 再清栏。
+            // 默认 false）：全 36 格（快捷栏 9 + 主背包 27）逐格生成
+            // ItemDrop（拾取延迟 40 tick = 2 s，LivingEntity.java:3398），
+            // 与 mob 死亡掉落同一生成路径，再清栏。旧实现只掉快捷栏 9 格，
+            // main 27 格死亡保留 = 变相 keepInventory。
+            // KNOWN-DIVERGENCE：原版 Player.die 还会掉合成光标手持堆
+            // （AbstractContainerMenu carried）；本工程光标堆存活在 mcv_app
+            // 的 UI 会话层（CraftScreen.cursor，app.rs 持有），Game 状态层
+            // 不可达，暂不掉落。
             let at = p.pos + Vec3::Y * 0.9;
             let mut rng = spawn_rng();
-            for s in &self.hotbar.slots {
+            for s in self.hotbar.slots.iter().chain(self.hotbar.main.iter()) {
                 if !s.is_empty() {
                     mcv_entity::spawn_item_drop(
                         &mut self.mobs_app.world,
