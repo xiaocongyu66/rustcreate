@@ -2463,23 +2463,72 @@ impl GameRuntime {
             }
             // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
             if self.on_tick {
-                let view = WorldView {
-                    chunks: &self.chunks,
-                };
                 // 眼位流体（原版 isEyeInFluid(**WATER**)，LivingEntity.java:417
                 // 只认水不认岩浆；eye_in_water 是挖掘惩罚用的“任意流体”版，
                 // 语义不同不能复用）。
                 let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
                 let ec = eye.floor().as_ivec3();
-                let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
-                let eyes_water = eye_def.liquid && eye_def.name == "water";
                 let feet_pos = BlockPos::new(
                     self.player.pos.x.floor() as i32,
                     self.player.pos.y.floor() as i32,
                     self.player.pos.z.floor() as i32,
                 );
-                let feet_def = view.block(feet_pos).def();
-                let feet_water = feet_def.liquid && feet_def.name == "water";
+                // 借用隔离：view 的不可变借用只在取数块内存活（旧写法 view
+                // 活满全段，与下方 hurt_*/particles 可变借用冲突 = E0502，
+                // 前任提交从未绿过 CI）。BlockId::def() 返回 &'static
+                // BlockDef，格定义可安全带出借用域。
+                let (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate) = {
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    let eyes_water = eye_def.liquid && eye_def.name == "water";
+                    let feet_def = view.block(feet_pos).def();
+                    let feet_water = feet_def.liquid && feet_def.name == "water";
+                    // ---- 方块接触伤害（26.1 InsideBlockEffectApplier：
+                    // 与实体 AABB 重叠的每格触发 entityInside）----
+                    // 岩浆（LavaFluid.entityInside:119-123）：CLEAR_FREEZE +
+                    // LAVA_IGNITE（Entity.lavaIgnite:607-611 点燃 15s）+
+                    // Entity::lavaHurt:613-624 → lava() 4.0F/tick（i 帧节流成
+                    // 4.0/s）。判据按 AABB 与岩浆格任一重叠近似为「脚部或眼部
+                    // 格是岩浆」（本引擎单点采样脚/眼，1.8 m 身高横跨 ≤3 格，
+                    // 差异登记 KNOWN-DIVERGENCE）。
+                    let in_lava = (feet_def.liquid && feet_def.name == "lava")
+                        || (eye_def.liquid && eye_def.name == "lava");
+                    // 火焰方块（BaseFireBlock.entityInside:131-137）：FIRE_IGNITE
+                    // （fireIgnite:139-155 → igniteForSeconds(8)=160 tick，只增
+                    // 不减）+ in_fire() fireDamage/tick（i 帧节流）。数值：
+                    // FireBlock 构造 1.0F（FireBlock.java Vineflower 反编译失败，
+                    // 按 vanilla 常量；SoulFireBlock.java:22 = 2.0F 实读确认）。
+                    // 判据同岩浆：脚/眼格任一是火（KNOWN-DIVERGENCE 单点采样）。
+                    let fire_dmg = if feet_def.name == "soul_fire" || eye_def.name == "soul_fire" {
+                        Some(2.0)
+                    } else if feet_def.name == "fire" || eye_def.name == "fire" {
+                        Some(1.0)
+                    } else {
+                        None
+                    };
+                    // 窒息（26.1 LivingEntity.baseTick:405-406 isInWall → inWall()
+                    // 1.0F/tick，i 帧门自然节流 ~1/s；Entity.isInWall:2164-2182 =
+                    // 眼位 0.8×width 窄盒（1e-6 高 → 仅眼位所在 y 层）与
+                    // suffocating 方块求交；suffocating 默认判据 =
+                    // blocksMotion && 满碰撞立方（BlockBehaviour.java:1004）→
+                    // 本仓按 solid 全立方近似）。
+                    let eye_suffocate = {
+                        let hw = mcv_game::Player::HALF[0] * 0.8;
+                        let mut hit = false;
+                        for bx in (eye.x - hw).floor() as i32..=(eye.x + hw).floor() as i32 {
+                            for bz in (eye.z - hw).floor() as i32..=(eye.z + hw).floor() as i32 {
+                                let d = view.block(BlockPos::new(bx, ec.y, bz)).def();
+                                hit |= d.solid
+                                    && !d.liquid
+                                    && mcv_core::Shape::from_u8(d.shape) == mcv_core::Shape::Cube;
+                            }
+                        }
+                        hit
+                    };
+                    (eyes_water, feet_water, in_lava, fire_dmg, eye_suffocate)
+                };
                 // 姿态位（Pose.SWIMMING 的驱动源，Entity.java:1558-1564 +
                 // Player.java:1410-1416；第三人称 prone 模型接线遗留）。
                 self.swimming = swimming_tick(
@@ -2515,16 +2564,6 @@ impl GameRuntime {
                     // = 实体伤害，hurt_player 的 from=None 分支同语义）。
                     self.hurt_player(2.0, None);
                 }
-                // ---- 方块接触伤害（26.1 InsideBlockEffectApplier：
-                // 与实体 AABB 重叠的每格触发 entityInside）----
-                // 岩浆（LavaFluid.entityInside:119-123）：CLEAR_FREEZE +
-                // LAVA_IGNITE（Entity.lavaIgnite:607-611 点燃 15s）+
-                // Entity::lavaHurt:613-624 → lava() 4.0F/tick（i 帧节流成
-                // 4.0/s）。判据按 AABB 与岩浆格任一重叠近似为「脚部或眼部
-                // 格是岩浆」（本引擎单点采样脚/眼，1.8 m 身高横跨 ≤3 格，
-                // 差异登记 KNOWN-DIVERGENCE）。
-                let in_lava = (feet_def.liquid && feet_def.name == "lava")
-                    || (eye_def.liquid && eye_def.name == "lava");
                 if in_lava {
                     // lavaIgnite：igniteForSeconds(15) = 300 tick（只增不减，
                     // igniteForTicks:634-640 `remainingFireTicks < n` 门）。
@@ -2542,44 +2581,10 @@ impl GameRuntime {
                     }
                     self.fire_ticks -= 1;
                 }
-                // 火焰方块（BaseFireBlock.entityInside:131-137）：FIRE_IGNITE
-                // （fireIgnite:139-155 → igniteForSeconds(8)=160 tick，只增
-                // 不减）+ in_fire() fireDamage/tick（i 帧节流）。数值：
-                // FireBlock 构造 1.0F（FireBlock.java Vineflower 反编译失败，
-                // 按 vanilla 常量；SoulFireBlock.java:22 = 2.0F 实读确认）。
-                // 判据同岩浆：脚/眼格任一是火（KNOWN-DIVERGENCE 单点采样）。
-                let in_fire = feet_def.name == "fire"
-                    || feet_def.name == "soul_fire"
-                    || eye_def.name == "fire"
-                    || eye_def.name == "soul_fire";
-                if in_fire {
+                if let Some(dmg) = fire_dmg {
                     self.fire_ticks = self.fire_ticks.max(8 * 20);
-                    let dmg = if feet_def.name == "soul_fire" || eye_def.name == "soul_fire" {
-                        2.0
-                    } else {
-                        1.0
-                    };
                     self.hurt_fire(dmg, 0.1);
                 }
-                // 窒息（26.1 LivingEntity.baseTick:405-406 isInWall → inWall()
-                // 1.0F/tick，i 帧门自然节流 ~1/s；Entity.isInWall:2164-2182 =
-                // 眼位 0.8×width 窄盒（1e-6 高 → 仅眼位所在 y 层）与
-                // suffocating 方块求交；suffocating 默认判据 =
-                // blocksMotion && 满碰撞立方（BlockBehaviour.java:1004）→
-                // 本仓按 solid 全立方近似）。
-                let eye_suffocate = {
-                    let hw = mcv_game::Player::HALF[0] * 0.8;
-                    let mut hit = false;
-                    for bx in (eye.x - hw).floor() as i32..=(eye.x + hw).floor() as i32 {
-                        for bz in (eye.z - hw).floor() as i32..=(eye.z + hw).floor() as i32 {
-                            let d = view.block(BlockPos::new(bx, ec.y, bz)).def();
-                            hit |= d.solid
-                                && !d.liquid
-                                && mcv_core::Shape::from_u8(d.shape) == mcv_core::Shape::Cube;
-                        }
-                    }
-                    hit
-                };
                 if eye_suffocate {
                     self.hurt_ex(1.0, None, 0.0, false);
                 }
