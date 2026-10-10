@@ -352,7 +352,8 @@ mod tests {
             item: ROTTEN_FLESH,
             ticks: 0,
         });
-        let (mut hunger, mut saturation) = (10.0_f32, 0.0_f32);
+        // FoodData 对照组：状态机不落结算，末尾逐值断言账未动。
+        let (hunger, saturation) = (10.0_f32, 0.0_f32);
         // 推进 11 tick。
         for _ in 0..11 {
             assert!(
