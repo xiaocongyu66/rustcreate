@@ -105,21 +105,20 @@ fn take_one_consumes_and_clears() {
 #[test]
 fn block_drops_follow_261_semantics() {
     use mcv_core::BlockId;
+    let mut zero = || 0u32;
     // 石头→圆石(26.1 dropResources)。
-    let d = mcv_item::drop_for_block(BlockId(1)).expect("stone 必须掉圆石");
-    assert_eq!((d.item, d.count), (COBBLESTONE, 1));
+    let d = mcv_item::drops_for_block(BlockId(1), &mut zero);
+    assert_eq!(d.len(), 1);
+    assert_eq!((d[0].item, d[0].count), (COBBLESTONE, 1));
     // 已注册方块各归其位。
-    assert_eq!(
-        mcv_item::drop_for_block(BlockId(8)).map(|d| d.item),
-        Some(PLANKS)
-    );
+    let planks = mcv_item::drops_for_block(BlockId(8), &mut zero);
+    assert_eq!(planks[0].item, PLANKS);
     // 圆石块注册名是 "cobble"(blocks_gen),必须能掉。
-    assert_eq!(
-        mcv_item::drop_for_block(BlockId(9)).map(|d| d.item),
-        Some(COBBLESTONE)
-    );
-    // 无对应物品的方块不掉落(宁缺勿错)。
-    assert!(mcv_item::drop_for_block(BlockId(2)).is_none());
+    let cobble = mcv_item::drops_for_block(BlockId(9), &mut zero);
+    assert_eq!(cobble[0].item, COBBLESTONE);
+    // 泥土掉自身(26.1 dirt.json;全族表见 tests/drops.rs)。
+    let dirt = mcv_item::drops_for_block(BlockId(2), &mut zero);
+    assert_eq!(dirt[0].item, mcv_item::DIRT_ITEM);
 }
 
 #[test]

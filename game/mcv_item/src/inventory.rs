@@ -3,7 +3,7 @@
 
 use mcv_core::BlockId;
 
-use crate::{COAL, COBBLESTONE, DIAMOND_ITEM, ItemKind, ItemStack, LOG, PLANKS};
+use crate::{ItemKind, ItemStack};
 
 /// 快捷栏格数(vanilla Inventory.hotbarSize)。
 pub const HOTBAR_SLOTS: usize = 9;
@@ -185,21 +185,146 @@ impl Hotbar {
     }
 }
 
-/// 方块破坏掉落(26.1 `BlockBehaviour.dropResources` 语义的已注册子集):
-/// 石头掉圆石、煤矿掉煤炭、钻石矿掉钻石;无对应物品的方块不掉落
-/// (TODO(registry):圆石/泥土/沙等方块与粗铁物品进注册表后补全)。
-pub fn drop_for_block(id: BlockId) -> Option<ItemStack> {
+/// 一条掉落规则(26.1 `data/minecraft/loot_table/blocks/*.json` 的已注册
+/// 子集;silk touch / 时运附魔未实现,只取无附魔基数语义)。
+struct DropRow {
+    /// 适用方块(blocks_gen 注册名;旧表别名如 "cobble" 在此对齐原版名)。
+    blocks: &'static [&'static str],
+    /// 掉落物品注册名(ITEMS.name;运行时经 item_by_name 解析,缺失跳过)。
+    item: &'static str,
+    /// 数量区间 [min, max](26.1 set_count / ore_drops 基数)。
+    min: u8,
+    max: u8,
+    /// 触发概率(千分比):1000 = 必掉(survives_explosion 池)。
+    permille: u16,
+    /// 26.1 alternatives 语义:主项未触发时改掉 fallback(砂砾=燧石 10%
+    /// 否则砂砾,gravel.json)。
+    fallback: Option<(&'static str, u8, u8)>,
+}
+
+const fn row(
+    blocks: &'static [&'static str],
+    item: &'static str,
+    min: u8,
+    max: u8,
+    permille: u16,
+) -> DropRow {
+    DropRow {
+        blocks,
+        item,
+        min,
+        max,
+        permille,
+        fallback: None,
+    }
+}
+
+/// 26.1 blocks loot 表 → 本引擎物品注册表的已注册子集。
+/// 抽查对账(/root/mc-ref/src-26.1/data/minecraft/loot_table/blocks/):
+/// stone.json→cobblestone、deepslate.json→cobbled_deepslate、
+/// grass_block.json→dirt、gravel.json→flint 10%、farmland.json→dirt、
+/// iron_ore.json→raw_iron、copper_ore.json→raw_copper 2-5、
+/// redstone_ore.json→redstone 4-5、lapis_ore.json→lapis 4-9、
+/// oak_leaves.json→树苗 5%/苹果 0.5%/木棍 2%×1-2 三独立池。
+static DROP_TABLE: &[DropRow] = &[
+    // 石头族(silk 掉自身分支未实现)。
+    row(&["stone", "cobble"], "cobblestone", 1, 1, 1000),
+    row(&["deepslate"], "cobbled_deepslate", 1, 1, 1000),
+    // 泥土族(grass_block 雪态 snow_grass 同表掉 dirt;耕地掉 dirt)。
+    row(&["dirt"], "dirt", 1, 1, 1000),
+    row(&["grass", "snow_grass", "farmland"], "dirt", 1, 1, 1000),
+    row(&["sand"], "sand", 1, 1, 1000),
+    // 砂砾:燧石 10%(table_bonus 无时运基数 0.1),否则掉自身。
+    DropRow {
+        blocks: &["gravel"],
+        item: "flint",
+        min: 1,
+        max: 1,
+        permille: 100,
+        fallback: Some(("gravel", 1, 1)),
+    },
+    // 矿石族(必掉、基数计数;时运 ore_drops 公式未实现)。
+    row(&["coal_ore", "deepslate_coal_ore"], "coal", 1, 1, 1000),
+    row(&["iron_ore", "deepslate_iron_ore"], "raw_iron", 1, 1, 1000),
+    row(
+        &["copper_ore", "deepslate_copper_ore"],
+        "raw_copper",
+        2,
+        5,
+        1000,
+    ),
+    row(&["gold_ore", "deepslate_gold_ore"], "raw_gold", 1, 1, 1000),
+    row(
+        &["redstone_ore", "deepslate_redstone_ore"],
+        "redstone",
+        4,
+        5,
+        1000,
+    ),
+    row(&["lapis_ore", "deepslate_lapis_ore"], "lapis", 4, 9, 1000),
+    row(
+        &["diamond_ore", "deepslate_diamond_ore"],
+        "diamond",
+        1,
+        1,
+        1000,
+    ),
+    row(
+        &["emerald_ore", "deepslate_emerald_ore"],
+        "emerald",
+        1,
+        1,
+        1000,
+    ),
+    // 木与木板(既有)。
+    row(&["log"], "log", 1, 1, 1000),
+    row(&["planks"], "planks", 1, 1, 1000),
+    // 树叶族:树苗/苹果/木棍三独立池(oak_leaves.json;注册表无 oak_leaves,
+    // 旧表 "leaves" 即橡树叶位)。苹果只橡树 0.5%o;树苗橡/桦/云杉/金合欢/
+    // 深板橡 5%o、丛林 2.5%o(各 *_leaves.json table_bonus 基数)。
+    row(&["leaves"], "oak_sapling", 1, 1, 50),
+    row(&["leaves"], "apple", 1, 1, 5),
+    row(&["leaves"], "stick", 1, 2, 20),
+    row(&["birch_leaves"], "birch_sapling", 1, 1, 50),
+    row(&["spruce_leaves"], "spruce_sapling", 1, 1, 50),
+    row(&["acacia_leaves"], "acacia_sapling", 1, 1, 50),
+    row(&["dark_oak_leaves"], "dark_oak_sapling", 1, 1, 50),
+    row(&["jungle_leaves"], "jungle_sapling", 1, 1, 25),
+];
+
+/// 明确"silk touch 才有掉落"的方块(glass.json:池条件只放行 silk)。
+/// 本引擎无 silk → 恒不掉;单列出来是给"误加进 DROP_TABLE"设一道测试闸。
+/// TODO(registry):16 色染色玻璃/玻璃板同语义,进全表数据化时补全。
+pub const NO_DROP: &[&str] = &["glass", "glass_pane"];
+
+/// 方块破坏掉落(26.1 `Block.playerDestroy` → `dropResources` 语义,表驱动)。
+///
+/// 调用方必须先过 `hasCorrectToolForDrops` 门(`mining::has_correct_tool`,
+/// ServerPlayerGameMode.java:295-299:canDestroy 为假时不走 playerDestroy)。
+/// 概率池与数量区间用调用方 `rng` 掷点;无规则方块返回空表(未注册 =
+/// 宁缺勿错,玻璃族 = `NO_DROP` 明确不掉)。树叶族多池可同 tick 多掉。
+pub fn drops_for_block(id: BlockId, rng: &mut impl FnMut() -> u32) -> Vec<ItemStack> {
     let name = mcv_core::BLOCKS[id.id() as usize].name;
-    let item = match name {
-        // 方块表 id 9 的注册名是 "cobble"(blocks_gen),非原版 cobblestone。
-        "stone" | "cobble" => COBBLESTONE,
-        "planks" => PLANKS,
-        "log" => LOG,
-        "coal_ore" => COAL,
-        "diamond_ore" => DIAMOND_ITEM,
-        // 26.1 原版掉粗铁(raw_iron),物品表尚无粗铁——宁缺勿错。
-        _ => return None,
-    };
-    // 掉落量恒 1(26.1 dropResource 默认;时运等附魔未实现)。
-    Some(ItemStack::new(item, 1))
+    let mut out = Vec::new();
+    for row in DROP_TABLE.iter().filter(|r| r.blocks.contains(&name)) {
+        // 必掉池不消耗 rng(确定性路径与掉落点抖动序列解耦)。
+        let hit = row.permille >= 1000 || ((rng() % 1000) as u16) < row.permille;
+        let (item, min, max) = match (hit, row.fallback) {
+            (true, _) => (row.item, row.min, row.max),
+            (false, Some(fb)) => fb,
+            (false, None) => continue,
+        };
+        let Some(item_id) = crate::item_by_name(item) else {
+            continue;
+        };
+        let count = if max > min {
+            min + (rng() % u32::from(max - min + 1)) as u8
+        } else {
+            min
+        };
+        if count > 0 {
+            out.push(ItemStack::new(item_id, count));
+        }
+    }
+    out
 }

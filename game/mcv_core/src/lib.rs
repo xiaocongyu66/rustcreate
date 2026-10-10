@@ -6,6 +6,7 @@ pub mod chunk;
 pub mod pool;
 pub mod shape;
 pub mod tint;
+pub mod tool;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, Stage};

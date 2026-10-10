@@ -8,7 +8,7 @@ pub mod enchant;
 pub mod inventory;
 pub mod mining;
 
-pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, drop_for_block};
+pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, drops_for_block};
 pub use mining::ToolKind;
 
 use mcv_core::BlockId;
@@ -113,7 +113,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 43] = [
+pub static ITEMS: [ItemDef; 58] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -210,6 +210,34 @@ pub static ITEMS: [ItemDef; 43] = [
     // 弓（26.1 Items.java BOW：耐久 384、attackSpeed 无近战面板；追加在
     // 尾部保持旧 id 序列化稳定，同上注释）。
     def!("bow", ItemKind::Bow, 0.0, 0.0, 384, 0),
+    // ---- 掉落经济闭环（任务板 #90）：矿石产物与杂项。26.1 loot 表语义
+    //（data/minecraft/loot_table/blocks/*_ore.json 等）缺这些物品就只能
+    // "宁缺勿错"不掉了；追加在尾部保持旧 id 序列化稳定。Material = 64 堆、
+    // 无耐久、无 GUI 精灵（HUD 走 sprite_full 缺省回退，同怪物掉落杂物）。
+    def!("raw_iron", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("raw_gold", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("raw_copper", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("redstone", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("emerald", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("flint", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("apple", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("oak_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("birch_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("spruce_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("jungle_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("acacia_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("dark_oak_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 方块物品（mine->item; place->block 双向路径）：砂砾（gravel.json
+    // 未触发燧石分支时掉自身）与深板岩圆石（deepslate.json）。
+    def!("gravel", ItemKind::Block(BlockId(431)), 0.0, 0.0, 0, 0),
+    def!(
+        "cobbled_deepslate",
+        ItemKind::Block(BlockId(219)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
@@ -234,6 +262,22 @@ pub const DIRT_ITEM: u16 = 32;
 pub const GRASS_ITEM: u16 = 33;
 pub const SAND_ITEM: u16 = 34;
 pub const LEAVES_ITEM: u16 = 35;
+// 掉落经济（任务板 #90）：矿石产物/杂项，id 与 ITEMS 追加序一致（43 起）。
+pub const RAW_IRON: u16 = 43;
+pub const RAW_GOLD: u16 = 44;
+pub const RAW_COPPER: u16 = 45;
+pub const REDSTONE: u16 = 46;
+pub const EMERALD: u16 = 47;
+pub const FLINT: u16 = 48;
+pub const APPLE: u16 = 49;
+pub const OAK_SAPLING: u16 = 50;
+pub const BIRCH_SAPLING: u16 = 51;
+pub const SPRUCE_SAPLING: u16 = 52;
+pub const JUNGLE_SAPLING: u16 = 53;
+pub const ACACIA_SAPLING: u16 = 54;
+pub const DARK_OAK_SAPLING: u16 = 55;
+pub const GRAVEL_ITEM: u16 = 56;
+pub const COBBLED_DEEPSLATE: u16 = 57;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;

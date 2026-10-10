@@ -283,3 +283,23 @@ fn correct_tool_requirement_table() {
     assert!(close(p_stone, 1.0 / (1.5 * 100.0)));
     assert!(close(p_dirt, 1.0 / (0.5 * 30.0)));
 }
+
+/// 7. 掉落门数据表（任务板 #90）：requires_correct_tool 从"id 1/9 硬编码"
+///    迁到 mcv_core::tool 的 26.1 数据表——矿石/深板岩矿石族全量进门，
+///    玻璃/泥土/砂砾等不需工具族维持放行。
+#[test]
+fn requires_correct_tool_follows_261_data_table() {
+    let t = |id| requires_correct_tool(bid(id));
+    // 石头/圆石（旧两 id）：行为不变。
+    assert!(t(STONE) && t(COBBLE));
+    // 矿石族：任意镐/石镐级/铁镐级全进门，徒手 = 错工具（不掉落 + 100 档）。
+    for id in [
+        217, 484, 241, 513, 425, 877, 361, 376, 347, 352, 348, 353, 351, 354, 349, 350,
+    ] {
+        assert!(t(id), "矿石 id {id} 必须需工具");
+    }
+    // 不需工具族：泥土/沙/砂砾/玻璃/木/叶。
+    for id in [2, 4, 431, 419, 6, 7] {
+        assert!(!t(id), "id {id} 不应需工具");
+    }
+}

@@ -24,11 +24,6 @@
 
 use mcv_core::{BlockId, BlockPos};
 
-/// 与 `mcv_core::BLOCKS` 注册顺序一致的方块 id。
-/// 待 mcv_core 导出命名 id 常量后迁移（另一代理正在校准 BLOCKS）。
-const STONE: u16 = 1;
-const COBBLE: u16 = 9;
-
 /// MC tick 长度（秒）：挖掘进度按 tick 制定义，连续帧按 `dt / MC_TICK` 折算。
 pub const MC_TICK: f32 = 1.0 / 20.0;
 
@@ -95,20 +90,21 @@ impl Default for HeldTool {
 /// 现直接读 `mcv_core::BLOCKS[].hardness`（该字段已由 BLOCKS 校准代理按
 /// 26.1 Blocks.java 对齐：stone 1.5、cobble 2.0、log/planks 2.0、dirt 0.5、
 /// bedrock 用 INFINITY 表示 MC 的 -1）。保留本函数作为 mcv_game 内的
-/// 稳定入口；MC 的 `requiresCorrectToolForDrops` 语义字段若将来进 BLOCKS，
-/// 一并迁移 [`requires_correct_tool`]。
+/// 稳定入口。
 pub fn hardness(id: BlockId) -> f32 {
     id.def().hardness
 }
 
 /// 该方块是否"需要正确工具才可掉落"（MC `requiresCorrectToolForDrops`）。
 ///
-/// 千块表（GEN_BLOCKS）未携带该语义字段（只有 hardness），故仍按基线 14
-/// 方块硬覆盖：石头/圆石需镐，其余（泥土/沙/草/木/木板/叶/花）不需工具。
-/// id ≥ 14 一律按"不需工具"（30 档，偏快）。**待 BlockDef 增加
-/// requires_tool 字段（生成器需从 tool tier 判定提取）后迁移为查表。**
+/// 走 `mcv_core::tool` 的 26.1 数据表（Blocks.java 的
+/// requiresCorrectToolForDrops 属性 ∩ 注册表 + needs_stone/iron/diamond_tool
+/// tag 分层，含 ofLegacyCopy 继承与旧表别名 cobble）：矿石/深板岩矿石族
+/// 全量按层级判定，石头/深板岩/混凝土/陶瓦等族按任意镐判定；泥土/沙/
+/// 砂砾/木/叶/玻璃等不需工具。旧实现的"id ≥ 14 一律不需工具（30 档偏快
+/// 偏掉）"漏洞由此闭合；全表进 ci/gen-blocks.py 生成器留给后续。
 pub fn requires_correct_tool(id: BlockId) -> bool {
-    matches!(id.0, STONE | COBBLE)
+    mcv_core::tool::requirement_by_id(id).is_some()
 }
 
 /// MC `Player#hasCorrectToolForDrops(state)`：方块不需工具 → 恒真；
