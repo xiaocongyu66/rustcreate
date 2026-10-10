@@ -309,13 +309,15 @@ mod tests {
     #[test]
     fn nearest_semantics_hits_exact_climate() {
         let table = biome_point_table();
+        // 对准点表注册的 ocean 元组（temp2/veg2、weird 切片 ±0.5）——
+        // 查询落在注册点上 fitness=0 必中 Ocean（Climate.java findValue 语义）。
         let ocean = TargetPoint {
             temperature: T_MID[2].min,
             humidity: H_MID[2].min,
             continentalness: OCEAN_C.min,
             erosion: MID.min,
             depth: 0,
-            weirdness: MID.min,
+            weirdness: WEIRD_NEG.min,
         };
         assert_eq!(pick_biome(&table, &ocean), Biome::Ocean);
         let desert = TargetPoint {

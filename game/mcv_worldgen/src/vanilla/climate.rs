@@ -154,7 +154,14 @@ mod tests {
             }
             let folded = crate::vanilla::peaks_and_valleys(a.ridges);
             assert!((a.ridges_folded - folded).abs() < 1e-12);
-            assert!(a.ridges_folded.abs() <= 1.0 + 1e-9, "折叠值域 {a:?}");
+            // RIDGES 即 shiftedNoise2d 原始噪声（NoiseRouterData.java:96-98），
+            // 无 squeezed/mapped 折叠：p(r)=−3(|‖r‖−2/3|−1/3) 在 |r|≤1 段上界
+            // +1（r=±2/3 处），|r|>1 段随原始噪声无界延伸——以通道哨兵
+            // |ridges|≤4.0（振幅和 1+2+1）推导折叠值域 [−9, 1]。
+            assert!(
+                a.ridges_folded <= 1.0 + 1e-9 && a.ridges_folded >= -9.0 - 1e-9,
+                "折叠值域 {a:?}"
+            );
         }
     }
 
