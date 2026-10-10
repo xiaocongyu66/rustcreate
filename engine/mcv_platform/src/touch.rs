@@ -179,6 +179,20 @@ impl TouchState {
         }
     }
 
+    /// 程序化按下挖掘键：等价 TouchPhase::Started 落在挖按钮上（mine_held
+    /// 置真）。供无头测试/输入回放驱动——app 层对 runtime.touch.on_event 的
+    /// 事件翻译只落在这两个布尔字段上，headless 侧驱动同字段即等价复现
+    /// 「触摸 → fixed_step 内 apply_touch_input → 挖掘状态机」全链。
+    pub fn press_mine(&mut self) {
+        self.mine_held = true;
+    }
+
+    /// 程序化松开挖掘键：等价 TouchPhase::Ended 落在挖按钮上（mine_held
+    /// 置假）。与 [`Self::press_mine`] 配对。
+    pub fn release_mine(&mut self) {
+        self.mine_held = false;
+    }
+
     /// 摇杆偏移换算成移动方向（供运行时合成 wish_dir）。
     pub fn stick_direction(&self) -> Option<(f32, f32)> {
         let (dx, dy) = self.stick_vec;
@@ -208,5 +222,77 @@ impl TouchState {
         } else {
             ((len - DEADZONE) / (STICK_R - DEADZONE)).min(1.0)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use winit::dpi::PhysicalPosition;
+    use winit::event::{DeviceId, Force, WindowEvent};
+
+    /// 合成 winit 触摸事件（真机 app 层把 WindowEvent::Touch 原样转发给
+    /// TouchState::on_event；测试喂同一事件形态即覆盖同一翻译路径）。
+    fn touch_event(phase: TouchPhase, x: f64, y: f64) -> WindowEvent {
+        WindowEvent::Touch(winit::event::Touch {
+            device_id: DeviceId::dummy(),
+            phase,
+            location: PhysicalPosition::new(x, y),
+            force: Some(Force::Normalized(1.0)),
+            id: 7,
+        })
+    }
+
+    /// 真机「不能挖掘」链路第 1 段回归锁：挖按钮物理坐标命中 → mine_held
+    /// 沿置真/假。按钮中心与 build_hud 绘制共用同一 center 常数，坐标空间
+    /// 均为物理像素（winit Touch.location = PhysicalPosition，app 层喂的
+    /// surface config 尺寸同为物理像素，无 DPI 错位）。
+    #[test]
+    fn mine_button_touch_sets_mine_held() {
+        let (w, h) = (1080.0, 2340.0); // 典型手机物理分辨率
+        let (mx, my) = TouchState::mine_center(w, h);
+        let mut ts = TouchState::default();
+        assert!(!ts.mine_held);
+        ts.on_event(
+            &touch_event(TouchPhase::Started, mx as f64, my as f64),
+            w,
+            h,
+        );
+        assert!(ts.mine_held, "挖按钮按下沿必须置 mine_held");
+        assert!(ts.enabled, "任意触摸事件先点亮触控 HUD");
+        // 手指未抬起的 Moved 不得误清（真机长按挖掘时手指抖动）。
+        ts.on_event(
+            &touch_event(TouchPhase::Moved, mx as f64, my as f64 + 3.0),
+            w,
+            h,
+        );
+        assert!(ts.mine_held, "挖按钮长按中的微移不得松开挖掘");
+        ts.on_event(&touch_event(TouchPhase::Ended, mx as f64, my as f64), w, h);
+        assert!(!ts.mine_held, "挖按钮松开沿必须清 mine_held");
+    }
+
+    /// 程序化 press_mine/release_mine 与 winit 事件路径产出同一状态
+    /// （headless 端到端测试据此前提驱动 runtime.touch 字段）。
+    #[test]
+    fn programmatic_mine_drivers_mirror_touch_events() {
+        let (w, h) = (800.0, 600.0);
+        let (mx, my) = TouchState::mine_center(w, h);
+        let mut event = TouchState::default();
+        event.on_event(
+            &touch_event(TouchPhase::Started, mx as f64, my as f64),
+            w,
+            h,
+        );
+        let mut direct = TouchState {
+            enabled: true,
+            ..Default::default()
+        };
+        direct.press_mine();
+        assert_eq!(event.mine_held, direct.mine_held);
+        assert_eq!(event.enabled, direct.enabled);
+        event.on_event(&touch_event(TouchPhase::Ended, mx as f64, my as f64), w, h);
+        direct.release_mine();
+        assert!(!direct.mine_held);
+        assert!(!event.mine_held);
     }
 }

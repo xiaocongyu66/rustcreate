@@ -503,6 +503,12 @@ pub struct GameRuntime {
     /// destroyDelay 三件套）：生存/极限走 START→CONTINUE→ABORT，创造走按住
     /// 连秒破冷却；仅 `on_tick` 为真的固定步推进（原版每 tick 一次 continue）。
     mine: MineMachine,
+    /// 挥臂动画（26.1 LivingEntity.swinging/swingTime/attackAnim，:212,2149-2158）：
+    /// 攻击按下沿与挖掘中的每个 tick 触发（restart 半程规则 :1995），渲染层
+    /// 经 `swing_progress` 取 0..1 驱动第一人称手臂/手持物摆动。
+    swinging: bool,
+    /// 挥臂计时（tick 制，0..=SWING_TICKS；连续制推进按 dt*20 折算帧间平滑）。
+    swing_time: f32,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -726,6 +732,24 @@ impl MineMachine {
     }
 }
 
+/// 挥臂动画一轮时长（tick，26.1 `SwingAnimation.DEFAULT.duration`，
+/// SwingAnimation.java:12 —— 默认 WHACK 6 tick）。
+const SWING_TICKS: f32 = 6.0;
+/// 挥臂重启半程阈值（26.1 LivingEntity.swing :1995 `swingTime >= duration/2`
+/// 时允许重置——挖掘长按每 tick 都 swing，实际挥臂周期 = 3 tick）。
+const SWING_RESTART_TICKS: f32 = SWING_TICKS * 0.5;
+
+impl GameRuntime {
+    /// 挥臂触发（26.1 LivingEntity.swing :1994-1996 的 restart 半程规则）：
+    /// 攻击按下沿与挖掘中的每 tick 都可调用，半程前重触发无效（不加速）。
+    fn swing(&mut self) {
+        if !self.swinging || self.swing_time >= SWING_RESTART_TICKS {
+            self.swinging = true;
+            self.swing_time = 0.0;
+        }
+    }
+}
+
 /// 60 Hz 固定步 → 20 Hz 原版 tick 累加：返回本步跨过的 tick 数（0 或 1
 /// 为常态），小数留在 `frac`。`dt ≥ 0.2 s` 的 burst（卡顿/后台回归）封顶
 /// 4 tick，防级联。原版逻辑全部按 tick 计时（20 tick/s），任何按 60 Hz
@@ -811,6 +835,8 @@ impl GameRuntime {
             attack_ticker: 20.0, // ready
             food_tick_timer: 0,
             mine: MineMachine::default(),
+            swinging: false,
+            swing_time: 0.0,
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -2110,6 +2136,15 @@ impl GameRuntime {
         if self.on_tick {
             self.attack_ticker = (self.attack_ticker + n as f32).min(20.0);
         }
+        // 挥臂计时（LivingEntity.aiStep :2149-2158 的连续制等价）：60 Hz 步
+        // 按 dt 折算 tick 平滑推进（渲染帧间不跳变）；满一轮归零停摆。
+        if self.swinging {
+            self.swing_time += dt * 20.0;
+            if self.swing_time >= SWING_TICKS {
+                self.swinging = false;
+                self.swing_time = 0.0;
+            }
+        }
         self.step_mining(dt);
 
         // ---- natural spawning (budgeted every 20 ticks) ----
@@ -2888,6 +2923,9 @@ impl GameRuntime {
         if self.phase == GamePhase::Loading {
             return;
         }
+        // 攻击沿必挥臂（26.1 startAttack → Minecraft.java :1669 `this.player
+        // .swing(InteractionHand.MAIN_HAND)`；打实体/挖方块/对空挥统一在这里）。
+        self.swing();
         if self.try_attack() {
             return;
         }
@@ -3599,6 +3637,11 @@ impl GameRuntime {
                 mcv_game::blockshapes::RayTarget::Pick,
             )
             .map(|(p, _)| p);
+            // 按住连破的每 tick 挥臂（continueAttack 对 destroying 的每 tick
+            // swing；半程重启规则保证周期 3 tick）。
+            if hit.is_some() {
+                self.swing();
+            }
             if let Some(p) = self.mine.creative_tick(hit) {
                 self.destroy_block(p);
             }
@@ -3634,11 +3677,18 @@ impl GameRuntime {
                 pos: p,
                 per_tick: self.mine_per_tick(&view, b),
             });
+        // 挖掘长按挥臂（continueAttack :1628 挖中方块即 swing；半程重启规则
+        // 令挥臂周期 = duration/2 = 3 tick，与原版挖掘节奏一致）。
+        // 碎屑方块 id 先行取出：Idle 分支后续要用，不能让 `view`（&self.chunks
+        // 的不可变借用）横跨下面的 `self.swing()`（E0502）。
+        let debris = target.map(|p| (p, view.block(p).0));
+        if hit.is_some() {
+            self.swing();
+        }
         match self.mine.continue_tick(hit) {
             MineTick::Broken(p) => self.destroy_block(p),
             MineTick::Idle => {
-                if let Some(p) = target {
-                    let b = view.block(p).0;
+                if let Some((p, b)) = debris {
                     self.particles.spawn_hit(
                         [p.x as f64, p.y as f64, p.z as f64],
                         face,
@@ -3662,6 +3712,29 @@ impl GameRuntime {
         let [lx, ly, lz] = p.local();
         let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
         (v & 0xF, v >> 4)
+    }
+
+    /// 第一人称挥臂进度 0..=1（26.1 attackAnim = swingTime/duration，
+    /// LivingEntity.java:2158；静止 = 0）。渲染层取值驱动手持摆动。
+    pub fn swing_progress(&self) -> f32 {
+        if self.swinging {
+            (self.swing_time / SWING_TICKS).min(1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// 第一人称手持物（渲染层数据）：选中槽 Block 物品 = 缩小方块（取
+    /// `BLOCKS[].tiles`）、其余物品 = GUI 精灵图标 quad、空槽 = 只有手臂。
+    pub fn hand_item(&self) -> mcv_render::gpu::HandItem {
+        let s = self.hotbar.selected(self.player.sel_slot);
+        if s.is_empty() {
+            return mcv_render::gpu::HandItem::Empty;
+        }
+        match s.def().kind {
+            mcv_item::ItemKind::Block(bid) => mcv_render::gpu::HandItem::Block(bid.id()),
+            _ => mcv_render::gpu::HandItem::Sprite(s.def().name),
+        }
     }
 
     /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
@@ -5421,6 +5494,119 @@ mod tests {
                 rt.chunks[&pos].advance_to(Stage::Uploaded);
             }
         }
+    }
+
+    // ---- 触摸挖掘端到端（任务板 #93 优先项回归锁）----
+    // 走 app 层同款入口：runtime.touch 点亮 + press_mine → fixed_step 固定步
+    // 内 apply_touch_input 镜像 input.mining 并触发 on_left_press →
+    // step_mining 每 20 Hz tick 续挖 → 硬度到 → 方块破坏。
+
+    /// 往 rt 写一个目标方块（直接写体素；无头测试不建网格，不触 GPU）。
+    fn put_block(rt: &mut GameRuntime, at: BlockPos, id: u16) {
+        let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
+        let [lx, ly, lz] = at.local();
+        handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(id);
+    }
+
+    fn voxel(rt: &GameRuntime, at: BlockPos) -> u16 {
+        let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
+        let [lx, ly, lz] = at.local();
+        handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx].0
+    }
+
+    #[test]
+    fn touch_mine_held_breaks_blocks_end_to_end() {
+        let mut rt = headless_rt("touchmine");
+        fill_neighborhood(&mut rt);
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        // 徒手基准（清掉开局铁剑）：泥土硬度 0.5、不需工具 → 30 档 =
+        // 15 tick（0.75 s）破一块。
+        rt.hotbar.slots[0] = mcv_item::ItemStack::empty();
+        let dirt = mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "dirt")
+            .expect("注册表含 dirt") as u16;
+        // 目标：正前方 2 格、眼高（pitch=0 视线 -Z，y=71.62 落在 y=71 格）。
+        let first = BlockPos::new(8, 71, 6);
+        let second = BlockPos::new(8, 71, 5);
+        put_block(&mut rt, first, dirt);
+        put_block(&mut rt, second, dirt);
+
+        // app 层入口：任意触摸事件点亮（enabled）+ 挖按钮按下沿。
+        rt.touch.enabled = true;
+        rt.touch.press_mine();
+        assert_eq!(
+            rt.phase,
+            GamePhase::Loading,
+            "构造即加载态：挖掘按下沿在转游玩前的步不派发"
+        );
+
+        let mut saw_progress = false;
+        let mut first_broken = false;
+        let mut second_broken = false;
+        for _ in 0..240 {
+            rt.fixed_step(1.0 / 60.0);
+            // 挖掘中（目标锁定 + 挥臂推进）即接线生效。
+            if rt.mine.pos == Some(first) && rt.swing_progress() > 0.0 {
+                saw_progress = true;
+            }
+            if voxel(&rt, first) == 0 {
+                first_broken = true;
+                // 破坏后 5-tick 冷却内不开下一目标（原版 destroyDelay）。
+                if voxel(&rt, second) == 0 {
+                    second_broken = true;
+                    break;
+                }
+            }
+        }
+        assert!(
+            saw_progress,
+            "触摸长按必须连进挖掘状态机：目标锁定 + 挥臂进度推进（按下边沿只触发一次 on_left_press，按住续挖走 fixed_step 的 step_mining）"
+        );
+        assert!(first_broken, "硬度累加到阈值后目标方块必须被破坏");
+        assert!(
+            second_broken,
+            "按住不松必须自动开下一目标（continue_tick 的 5-tick 冷却后对新目标 START）"
+        );
+
+        // 松开沿：input.mining 清零、状态机不再被带起。
+        rt.touch.release_mine();
+        rt.fixed_step(1.0 / 60.0);
+        assert!(!rt.input.mining, "松开挖掘按钮必须镜像清 input.mining");
+        assert!(
+            rt.mine.pos.is_none(),
+            "松开后挖掘状态机保持作废（进度不补判）"
+        );
+    }
+
+    /// 攻击按下沿（无目标方块）同样挥臂：挥臂动画接线的第二触发点。
+    #[test]
+    fn attack_press_swing_starts_even_without_block() {
+        let mut rt = headless_rt("swing");
+        fill_neighborhood(&mut rt);
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        rt.touch.enabled = true;
+        rt.touch.press_mine();
+        rt.fixed_step(1.0 / 60.0); // 转游玩步（不派发）
+        assert_eq!(rt.swing_progress(), 0.0, "加载态不派发攻击沿");
+        rt.fixed_step(1.0 / 60.0); // 攻击沿
+        assert!(
+            rt.swing_progress() > 0.0,
+            "对空按下沿必挥臂（26.1 startAttack → player.swing）"
+        );
+        let mid = rt.swing_progress();
+        rt.fixed_step(1.0 / 60.0);
+        assert!(
+            rt.swing_progress() > mid,
+            "挥臂按 tick 制平滑推进（渲染帧间不跳变）"
+        );
+        // 满一轮（6 tick）后停摆归零。
+        for _ in 0..40 {
+            rt.fixed_step(1.0 / 60.0);
+        }
+        assert_eq!(rt.swing_progress(), 0.0, "一轮挥完停摆归零");
     }
 
     #[test]

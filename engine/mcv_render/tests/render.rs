@@ -119,6 +119,7 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         overlay: None,
         underwater: false,
         particles: None,
+        hand: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -192,6 +193,7 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         overlay: None,
         underwater: false,
         particles: None,
+        hand: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -359,7 +361,8 @@ fn terrain_sky_and_hud_render() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -459,7 +462,8 @@ fn terrain_multi_array_grass_render() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -524,7 +528,8 @@ fn mining_crack_and_outline_darken_target() {
             mobs: None,
             overlay,
             underwater: false,
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+            hand: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -720,7 +725,8 @@ fn water_pass_renders_uploaded_water_vertices() {
             mobs: None,
             overlay: None,
             underwater: false,
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+            hand: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -890,7 +896,8 @@ fn gles_fallback_world_frame_smoke() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -960,7 +967,8 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             mobs: None,
             overlay: None,
             underwater: false,
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+            hand: None,
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1050,7 +1058,8 @@ fn cjk_text_stays_within_line_box() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1131,7 +1140,8 @@ fn celestial_sun_texture_paints_core() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1200,7 +1210,8 @@ fn missing_assets_never_paint_fake_pixels() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1283,7 +1294,8 @@ fn missing_assets_never_paint_fake_pixels() {
         mobs: None,
         overlay: None,
         underwater: false,
-        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+        hand: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1397,7 +1409,8 @@ fn four_mobs_paint_with_vanilla_textures() {
             mobs,
             overlay: None,
             underwater: false,
-            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
+            hand: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1495,4 +1508,217 @@ fn four_mobs_paint_with_vanilla_textures() {
     );
     let (d2, bb2) = a_diff_pixels(&base2, &with2);
     assert_eq!(d2, 0, "缺素材路径画出了假生物像素 {d2}（bbox {bb2:?}）");
+}
+
+/// 第一人称手持渲染离屏像素断言（任务板 #93）：
+/// (a) 空手帧 vs 无手持帧 diff > 阈值——手臂像素确实上屏（真机投诉「没有手臂」回归锁）；
+/// (b) 持方块帧 vs 空手帧 diff > 阈值——手持方块像素上屏；
+/// (c) 各帧 diff 的包围盒都落在屏幕右下区域——位置/缩放对标原版观感；
+/// (d) 挥臂半程帧 vs 静止帧 diff > 阈值——swing 快照确实被渲染消费（挖掘/攻击挥臂上屏）；
+/// (e) 手持物品图标帧 vs 空手帧 diff > 阈值——icon quad 三件接线（uniform 喂帧/
+///     quad 索引/视→世界角点换算）缺一即静默只画手臂；
+/// (f) 覆盖建缓冲到全部 pass 的 validation 无错误。
+#[test]
+fn first_person_hand_paints_bottom_right() {
+    let (device, queue, mut renderer) = setup_with_assets(Some(&workspace_assets()));
+    // 第一人称手臂复用玩家皮肤贴图（entity/player/wide/steve.png）。
+    let assets = mcv_assets::AssetManager::new(workspace_assets());
+    let steve = assets
+        .read_optional("textures/entity/player/wide/steve.png")
+        .expect("steve.png missing");
+    let alex = assets
+        .read_optional("textures/entity/player/slim/alex.png")
+        .expect("alex.png missing");
+    renderer.load_skins(&steve, &alex).expect("skins upload");
+
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    // 平视空场景（无区块）：世界 pass 只画天空，任何新增像素都来自手持 pass。
+    let camera = Camera {
+        pos: Vec3::new(0.0, 64.0, 0.0),
+        yaw: 0.0,
+        pitch: 0.0,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+
+    fn frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut mcv_render::Renderer,
+        target: &OffscreenTarget,
+        camera: &Camera,
+        hand: Option<mcv_render::HandRender>,
+    ) -> Vec<u8> {
+        let (sun, day) = mcv_render::sun_state(6000); // noon
+        let hud: Vec<HudQuad> = Vec::new();
+        let scene = Scene {
+            camera,
+            time: 0.0,
+            day_factor: day,
+            fog_tint: [1.0, 1.0, 1.0],
+            fog_density_mult: 1.0,
+            sun_dir: sun,
+            moon_phase: 0,
+            width: 320.0,
+            height: 240.0,
+            chunks: &[],
+            hud: &hud,
+            cloud: None,
+            player: None,
+            mobs: None,
+            overlay: None,
+            underwater: false,
+            particles: None,
+            hand,
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        target.read_pixels(device)
+    }
+
+    let none = frame(&device, &queue, &mut renderer, &target, &camera, None);
+    let empty = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Empty,
+            swing: 0.0,
+        }),
+    );
+    let block = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Block(1), // BLOCKS[1] = stone
+            swing: 0.0,
+        }),
+    );
+
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        for (name, px) in [
+            ("hand-none.png", &none),
+            ("hand-empty.png", &empty),
+            ("hand-block.png", &block),
+        ] {
+            let png = mcv_render::offscreen::encode_png(extent.width, extent.height, px);
+            let _ = std::fs::write(std::path::Path::new(&dir).join(name), png);
+        }
+    }
+
+    // 带 w 的像素 diff（阈值取通道和 30）：返回包围盒供区域断言。
+    let diff_bbox = |a: &[u8], b: &[u8], w: u32| -> (usize, Option<(u32, u32, u32, u32)>) {
+        let mut n = 0usize;
+        let mut bb: Option<(u32, u32, u32, u32)> = None;
+        for (i, (p, q)) in a.chunks(4).zip(b.chunks(4)).enumerate() {
+            let dp: i32 = p[..3].iter().map(|&v| v as i32).sum();
+            let dq: i32 = q[..3].iter().map(|&v| v as i32).sum();
+            if (dp - dq).abs() > 30 {
+                n += 1;
+                let (x, y) = ((i as u32) % w, (i as u32) / w);
+                bb = Some(match bb {
+                    Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                    None => (x, y, x, y),
+                });
+            }
+        }
+        (n, bb)
+    };
+
+    // (a) 手臂像素上屏：空手帧必须与空场景不同。
+    let (arm_diff, arm_bb) = diff_bbox(&none, &empty, extent.width);
+    assert!(
+        arm_diff > 100,
+        "空手帧缺少手臂像素：diff={arm_diff}（bbox {arm_bb:?}）——第一人称手臂管线被静默跳过？"
+    );
+    // (b) 手持方块像素上屏：持方块帧与空手帧必须显著不同。
+    let (blk_diff, blk_bb) = diff_bbox(&empty, &block, extent.width);
+    assert!(
+        blk_diff > 100,
+        "持方块帧缺少手持方块像素：diff={blk_diff}（bbox {blk_bb:?}）"
+    );
+    // (c) 原版观感：手臂与手持物的像素都在右下象限。
+    let in_bottom_right = |bb: Option<(u32, u32, u32, u32)>| {
+        let (x0, y0, ..) = bb.expect("diff>0 必有包围盒");
+        x0 >= extent.width / 2 && y0 >= extent.height / 2
+    };
+    assert!(
+        in_bottom_right(arm_bb),
+        "手臂像素越出右下象限（bbox {arm_bb:?}）——摆放常数回归"
+    );
+    assert!(
+        in_bottom_right(blk_bb),
+        "手持方块像素越出右下象限（bbox {blk_bb:?}）——摆放常数回归"
+    );
+
+    // (d) 挥臂消费链上屏：swing 快照必须驱动画面变化（game 层
+    // swing_progress → Scene.hand.swing → 臂/手持物矩阵的端到端）。
+    // 挖掘中每 tick 重触发的劈砍若只停留在快照字段，本断言 diff=0 即红。
+    let swung = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Block(1),
+            swing: 0.5, // 半程 = 劈砍角最大（sin(√0.5·π)）
+        }),
+    );
+    let (swing_diff, swing_bb) = diff_bbox(&block, &swung, extent.width);
+    assert!(
+        swing_diff > 100,
+        "挥臂半程帧与静止帧 diff={swing_diff}（bbox {swing_bb:?}）——swing_progress 快照未被渲染消费"
+    );
+    // 挥臂运动域 = 下半屏且仍覆盖右半屏（原版劈砍朝准星摆、过中线属正常，
+    // 不能按静止姿态的右下象限硬卡——CI 实测 bbox x0≈150 合理）。
+    let (sx0, sy0, sx1, _) = swing_bb.expect("diff>100 必有包围盒");
+    assert!(
+        sy0 >= extent.height / 2 && sx1 >= extent.width / 2 && sx0 >= extent.width / 4,
+        "挥臂运动域越界（bbox {swing_bb:?}）——挥臂锚点/旋转常数回归"
+    );
+
+    // (e) 手持物品图标（sprite 路径）：icon quad 的 uniform 喂帧 + quad 索引
+    // + 视→世界角点换算三件接线缺一即只有手臂（diff=0 红）。
+    let sprite = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Sprite("diamond"),
+            swing: 0.0,
+        }),
+    );
+    let (icon_diff, icon_bb) = diff_bbox(&empty, &sprite, extent.width);
+    assert!(
+        icon_diff > 100,
+        "手持物品图标帧缺少图标像素：diff={icon_diff}（bbox {icon_bb:?}）——hand_icon uniform/索引/世界换算接线回归"
+    );
+    assert!(
+        in_bottom_right(icon_bb),
+        "手持图标像素越出右下象限（bbox {icon_bb:?}）——图标锚点常数回归"
+    );
+
+    let scope_err = pollster::block_on(guard.pop());
+    assert!(
+        scope_err.is_none(),
+        "手持 pass 产生 validation error: {scope_err:?}——臂/立方体缓冲接线回归"
+    );
 }
