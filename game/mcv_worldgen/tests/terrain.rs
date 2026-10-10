@@ -11,7 +11,7 @@ use mcv_core::{BlockId, CHUNK_VOL, ChunkPos};
 use mcv_worldgen::{TerrainBackend, TerrainOutput, generate_terrain_with};
 
 /// 与旧 `generate_terrain(seed, pos)` 同形，但显式选 legacy 后端（见文件头）。
-fn gen(seed: u64, cx: i32, cz: i32) -> Result<TerrainOutput, i32> {
+fn gen_legacy(seed: u64, cx: i32, cz: i32) -> Result<TerrainOutput, i32> {
     generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
 }
 
@@ -38,22 +38,22 @@ fn voxels_of(t: &mcv_worldgen::TerrainOutput) -> &[u16] {
 
 #[test]
 fn deterministic_same_seed() {
-    let a = gen(42, ChunkPos::new(3, -7)).expect("gen");
-    let b = gen(42, ChunkPos::new(3, -7)).expect("gen");
+    let a = gen_legacy(42, ChunkPos::new(3, -7)).expect("gen");
+    let b = gen_legacy(42, ChunkPos::new(3, -7)).expect("gen");
     assert_eq!(voxels_of(&a), voxels_of(&b));
     assert_eq!(a.heightmap, b.heightmap);
 }
 
 #[test]
 fn different_seed_differs() {
-    let a = gen(1, ChunkPos::new(0, 0)).expect("gen");
-    let b = gen(2, ChunkPos::new(0, 0)).expect("gen");
+    let a = gen_legacy(1, ChunkPos::new(0, 0)).expect("gen");
+    let b = gen_legacy(2, ChunkPos::new(0, 0)).expect("gen");
     assert_ne!(voxels_of(&a), voxels_of(&b));
 }
 
 #[test]
 fn heightmap_matches_topmost_blocking() {
-    let t = gen(42, ChunkPos::new(0, 0)).expect("gen");
+    let t = gen_legacy(42, ChunkPos::new(0, 0)).expect("gen");
     let vox = voxels_of(&t);
     for z in 0..16usize {
         for x in 0..16usize {
@@ -80,7 +80,7 @@ fn bedrock_floor_and_sea_water() {
     let mut saw_water = false;
     for cx in -6..=6 {
         for cz in -6..=6 {
-            let t = gen(7, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             assert_eq!(vox[vidx(0, 0, 0)], BEDROCK);
             assert_eq!(vox[vidx(15, 0, 15)], BEDROCK);
@@ -102,7 +102,7 @@ fn cave_rate_in_band() {
     let mut cave = 0usize;
     for cx in -2..=2 {
         for cz in -2..=2 {
-            let t = gen(99, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(99, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
@@ -153,7 +153,7 @@ fn height_distribution_spans_band() {
     let mut max = 0usize;
     for cx in -8..=8 {
         for cz in -8..=8 {
-            let t = gen(3, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(3, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
@@ -182,7 +182,7 @@ fn surface_dominated_by_grass_and_stone() {
     for seed in [3u64, 7, 11] {
         for cx in -3..=3 {
             for cz in -3..=3 {
-                let t = gen(seed, ChunkPos::new(cx, cz)).expect("gen");
+                let t = gen_legacy(seed, ChunkPos::new(cx, cz)).expect("gen");
                 let vox = voxels_of(&t);
                 for z in 0..16usize {
                     for x in 0..16usize {
@@ -222,7 +222,7 @@ fn trees_and_grass_present() {
     let mut leaves = 0;
     for cx in -6..=6 {
         for cz in -6..=6 {
-            let t = gen(5, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(5, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             grass += vox.iter().filter(|&&b| b == GRASS).count();
             logs += vox.iter().filter(|&&b| b == LOG).count();
@@ -241,7 +241,7 @@ fn forest_density_shapes_tree_count() {
     let mut logs = 0;
     for cx in -10..=10 {
         for cz in -10..=10 {
-            let t = gen(11, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(11, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             logs += vox.iter().filter(|&&b| b == LOG).count();
         }
@@ -258,7 +258,7 @@ fn beach_sand_below_sea_level() {
     let mut found = false;
     'outer: for cx in -8..=8 {
         for cz in -8..=8 {
-            let t = gen(7, ChunkPos::new(cx, cz)).expect("gen");
+            let t = gen_legacy(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
