@@ -245,14 +245,49 @@ pub fn tile_file_names() -> &'static [&'static str] {
     v.as_slice()
 }
 
-/// Nearest-neighbour resample of an RGBA image to TILE_PX x TILE_PX.
-fn resample_to_tile(src: &[u8], sw: u32, sh: u32, dst: &mut [u8]) {
-    for y in 0..TILE_PX as u32 {
-        for x in 0..TILE_PX as u32 {
-            let sx = (u64::from(x) * u64::from(sw) / u64::from(TILE_PX as u32)) as u32;
-            let sy = (u64::from(y) * u64::from(sh) / u64::from(TILE_PX as u32)) as u32;
+/// 原版 [`AnimationMetadataSection.calculateFrameSize`]（:25-38）缺省分支：
+/// 无显式 width/height 时帧 = min 边正方形。全库 block/ 54 张动画 mcmeta
+/// 无一例显式 width/height（gen-blocks.py 转写时可验证），故运行期不读
+/// mcmeta，直接取 min(w,h)。
+///
+/// 帧号 → 帧位：行主序（`SpriteContents.AnimatedTexture.getFrameX/Y`
+/// :272-278，x = idx % rowSize、y = idx / rowSize，rowSize = 图宽 ÷ 帧宽）。
+/// 帧取出后适配 16x16 层：
+/// - 帧恰为 16x16（全部 52 张经典竖条）→ 逐像素精确复制（修复 audit #2：
+///   旧实现整图重采样把 16xN 条带跨帧逐行混采，water_still 与帧 0 差
+///   194/256 像素——tests 锁定）；
+/// - 帧 > 16（32x32 shelf 族，audit #7）→ 取帧左上 16x16 裁切而非整图压扁；
+/// - 帧 < 16（现存数据无）→ 最近邻放大兜底。
+fn extract_frame_to_tile(src: &[u8], sw: u32, sh: u32, frame_index: u32, dst: &mut [u8]) {
+    let fw = sw.min(sh);
+    let fh = fw;
+    let row = (sw / fw).max(1);
+    let mut fx = (frame_index % row) * fw;
+    let mut fy = (frame_index / row) * fh;
+    if fx + fw > sw || fy + fh > sh {
+        // 越界帧号回退帧 0（原版在 createAnimatedTexture 阶段已过滤非法
+        // index，SpriteContents.java:137-146；此处仅防御）。
+        fx = 0;
+        fy = 0;
+    }
+    for dy in 0..TILE_PX as u32 {
+        for dx in 0..TILE_PX as u32 {
+            // 帧 ≥ TILE_PX：裁左上（dx/dy 直接落在帧内左上 16x16）；
+            // 帧 < TILE_PX：帧内最近邻放大。
+            let sx = fx
+                + if fw >= TILE_PX as u32 {
+                    dx
+                } else {
+                    dx * fw / TILE_PX as u32
+                };
+            let sy = fy
+                + if fh >= TILE_PX as u32 {
+                    dy
+                } else {
+                    dy * fh / TILE_PX as u32
+                };
             for c in 0..4 {
-                let d = ((y * TILE_PX as u32 + x) * 4 + c) as usize;
+                let d = ((dy * TILE_PX as u32 + dx) * 4 + c) as usize;
                 let s = ((sy * sw + sx) * 4 + c) as usize;
                 dst[d] = src[s];
             }
@@ -260,8 +295,65 @@ fn resample_to_tile(src: &[u8], sw: u32, sh: u32, dst: &mut [u8]) {
     }
 }
 
-/// 解码 PNG → 16x16 RGBA → 写入 mip0 的指定层。失败返回 false（保留现有内容）。
-fn decode_into_layer(bytes: &[u8], src_path: &Path, layer: usize, layers: &mut [u8]) -> bool {
+/// 动画贴图「初始上传帧」帧号（原版 = 帧列表首项 `frames[0].index`，缺省
+/// 帧序 → 0；`SpriteContents.createAnimatedTexture` :113-163 + 首帧上传
+/// 语义）。数据源 = manifest `animation.frame0_index`（gen-blocks.py 从
+/// mcmeta 转写；全库 block/ 内非零项仅 fire_0/soul_fire_0 = 16）。
+fn parse_frame0_index() -> Vec<(&'static str, u32)> {
+    let Some(key) = MANIFEST_JSON.find("\"frame0_index\"") else {
+        return Vec::new();
+    };
+    let rest = &MANIFEST_JSON[key..];
+    let open = rest
+        .find('{')
+        .expect("manifest: animation.frame0_index 缺 {{");
+    let obj = &rest[open..];
+    let close = obj
+        .find('}')
+        .expect("manifest: animation.frame0_index 缺 }}");
+    // 生成器保证扁平 {name: int} 映射：split('"') 奇数段=键，其后偶数段以
+    // ": <整数>" 开头（同 parse_manifest_names 的零 serde 约定）。
+    let segs: Vec<&str> = obj[..=close].split('"').collect();
+    let mut v = Vec::new();
+    let mut i = 1;
+    while i + 1 < segs.len() {
+        let val = segs[i + 1]
+            .trim_start()
+            .strip_prefix(':')
+            .unwrap_or("")
+            .trim_start();
+        let num: u32 = val
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse()
+            .unwrap_or(0);
+        v.push((segs[i], num));
+        i += 2;
+    }
+    v
+}
+
+/// 贴图名 → 初始帧号（未列出的贴图 = 0）。
+fn frame0_index(name: &str) -> u32 {
+    static MAP: std::sync::OnceLock<Vec<(&'static str, u32)>> = std::sync::OnceLock::new();
+    MAP.get_or_init(parse_frame0_index)
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map_or(0, |(_, i)| *i)
+}
+
+/// 解码 PNG → 按原版帧语义取初始帧 → 16x16 RGBA → 写入 mip0 的指定层。
+/// `frame_index` 见 [`frame0_index`]（非动画贴图恒 0；此时 min 边裁帧与
+/// 原版无 mcmeta 时的 `FrameSize` 语义一致——竖条取顶帧、32x32 取左上）。
+/// 失败返回 false（保留现有内容 = missing 标记）。
+fn decode_into_layer(
+    bytes: &[u8],
+    src_path: &Path,
+    layer: usize,
+    layers: &mut [u8],
+    frame_index: u32,
+) -> bool {
     let Ok(img) = image::load_from_memory(bytes) else {
         log::warn!("atlas: failed to decode {}", src_path.display());
         return false;
@@ -272,7 +364,7 @@ fn decode_into_layer(bytes: &[u8], src_path: &Path, layer: usize, layers: &mut [
         return false;
     }
     let mut tile = [0u8; TILE_PX * TILE_PX * 4];
-    resample_to_tile(rgba.as_raw(), w, h, &mut tile);
+    extract_frame_to_tile(rgba.as_raw(), w, h, frame_index, &mut tile);
     let off = layer * TILE_PX * TILE_PX * 4;
     layers[off..off + tile.len()].copy_from_slice(&tile);
     true
@@ -298,7 +390,7 @@ pub fn load_real_tiles(dir: &Path, layers: &mut [u8]) -> u32 {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        if decode_into_layer(&bytes, &path, idx, layers) {
+        if decode_into_layer(&bytes, &path, idx, layers, frame0_index(name)) {
             count += 1;
         }
     }
@@ -322,7 +414,7 @@ pub fn load_crack_stages(dir: &Path, layers: &mut [u8]) -> u32 {
         let Ok(bytes) = std::fs::read(&path) else {
             continue;
         };
-        if decode_into_layer(&bytes, &path, CRACK_BASE + s, layers) {
+        if decode_into_layer(&bytes, &path, CRACK_BASE + s, layers, 0) {
             count += 1;
         }
     }
@@ -407,7 +499,7 @@ pub fn load_pack_over(dir: &std::path::Path, mip0: &mut [u8]) -> u32 {
         let Some(idx) = names.iter().position(|f| *f == name) else {
             continue;
         };
-        if decode_into_layer(&bytes, &src_path, idx, mip0) {
+        if decode_into_layer(&bytes, &src_path, idx, mip0, frame0_index(name)) {
             count += 1;
         }
     }
@@ -422,3 +514,159 @@ const _: () = {
     assert!((tiles::STONE as usize) < MANIFEST_LAYERS);
     assert!((tiles::FLOWER_YELLOW as usize) < MANIFEST_LAYERS);
 };
+
+#[cfg(test)]
+mod frame_tests {
+    use super::*;
+
+    fn assets_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/minecraft")
+    }
+
+    fn read_block(name: &str) -> image::RgbaImage {
+        let p = assets_dir().join(format!("textures/block/{name}.png"));
+        image::load_from_memory(&std::fs::read(&p).unwrap())
+            .unwrap()
+            .to_rgba8()
+    }
+
+    fn diff_px(a: &[u8], b: &[u8]) -> usize {
+        (0..TILE_PX * TILE_PX)
+            .filter(|i| a[i * 4..i * 4 + 4] != b[i * 4..i * 4 + 4])
+            .count()
+    }
+
+    /// 修复前的旧算法：整图最近邻重采样（保留作对照回归，锁定 audit #2
+    /// 的「跨帧逐行混采 194/256 像素」量化值）。
+    fn old_resample(src: &[u8], sw: u32, sh: u32, dst: &mut [u8]) {
+        for y in 0..TILE_PX as u32 {
+            for x in 0..TILE_PX as u32 {
+                let sx = (u64::from(x) * u64::from(sw) / TILE_PX as u64) as u32;
+                let sy = (u64::from(y) * u64::from(sh) / TILE_PX as u64) as u32;
+                for c in 0..4 {
+                    let d = ((y * TILE_PX as u32 + x) * 4 + c) as usize;
+                    let s = ((sy * sw + sx) * 4 + c) as usize;
+                    dst[d] = src[s];
+                }
+            }
+        }
+    }
+
+    /// audit #2 主断言：water_still（16x512）帧 0 = 源图顶 16 行逐像素；
+    /// 旧整图重采样与帧 0 差 194/256（PIL 实证对照）。
+    #[test]
+    fn water_still_frame0_exact_vs_old_mosaic() {
+        let img = read_block("water_still");
+        assert_eq!((img.width(), img.height()), (16, 512));
+        let mut frame0 = [0u8; TILE_PX * TILE_PX * 4];
+        extract_frame_to_tile(img.as_raw(), img.width(), img.height(), 0, &mut frame0);
+        assert_eq!(diff_px(&frame0, &img.as_raw()[..frame0.len()]), 0);
+        let mut old = [0u8; TILE_PX * TILE_PX * 4];
+        old_resample(img.as_raw(), img.width(), img.height(), &mut old);
+        assert_eq!(diff_px(&frame0, &old), 194);
+    }
+
+    /// 显式帧序（fire_0.mcmeta frames 首项 =16）：初始帧 = 帧 16（原版
+    /// SpriteContents 初始上传帧），非帧 0；行主序帧位 y=16*16 行。
+    #[test]
+    fn fire0_uses_explicit_first_frame_index() {
+        assert_eq!(frame0_index("fire_0"), 16);
+        assert_eq!(frame0_index("soul_fire_0"), 16);
+        assert_eq!(frame0_index("water_still"), 0);
+        let img = read_block("fire_0");
+        assert_eq!((img.width(), img.height()), (16, 512));
+        let mut tile = [0u8; TILE_PX * TILE_PX * 4];
+        extract_frame_to_tile(img.as_raw(), img.width(), img.height(), 16, &mut tile);
+        let raw = img.as_raw();
+        let off = 16 * 16 * 16 * 4; // 帧 16 起始字节（rowSize=1，帧高 16）
+        assert_eq!(diff_px(&tile, &raw[off..off + tile.len()]), 0);
+        assert_ne!(diff_px(&tile, &raw[..tile.len()]), 0);
+    }
+
+    /// audit #7：32x32 sprite（shelf 族 12 张 + dried_ghast_hydration_0_
+    /// tentacles 共 13 张真实层）取左上 16x16 裁切，而非整图最近邻压扁。
+    #[test]
+    fn shelf_32x32_crops_top_left_not_squash() {
+        let img = read_block("oak_shelf");
+        assert_eq!((img.width(), img.height()), (32, 32));
+        let mut tile = [0u8; TILE_PX * TILE_PX * 4];
+        extract_frame_to_tile(img.as_raw(), img.width(), img.height(), 0, &mut tile);
+        let raw = img.as_raw();
+        for y in 0..TILE_PX {
+            for x in 0..TILE_PX {
+                let d = (y * TILE_PX + x) * 4;
+                let s = (y * 32 + x) * 4;
+                assert_eq!(&tile[d..d + 4], &raw[s..s + 4], "oak_shelf ({x},{y})");
+            }
+        }
+    }
+
+    /// manifest animation 节语义锁表（对照 assets 内 mcmeta 原件逐项核）：
+    /// water_still frametime=2 无 frames（缺省帧序 0..31）、lava_still 显式
+    /// 帧序 38 项、magma interpolate+frametime 8、fire_0 帧序首项 16、
+    /// command_block 族 interpolate+frametime 10；动画条目总数 34。
+    #[test]
+    fn manifest_animation_table() {
+        assert_eq!(
+            parse_frame0_index(),
+            vec![("fire_0", 16u32), ("soul_fire_0", 16u32)],
+            "frame0_index 只应含显式 frames 且首帧号 ≠ 0 的条目"
+        );
+        let anim = &MANIFEST_JSON[MANIFEST_JSON.find("\"animation\"").unwrap()..];
+        // 条目数：tiles 对象内 3 空格缩进的键行（gen-blocks.py
+        // json.dumps(indent=1) 的输出形态）。
+        let tiles = &anim[anim.find("\"tiles\": {").unwrap()..];
+        assert_eq!(
+            tiles.match_indices("\n   \"").count(),
+            34,
+            "manifest 内动画贴图应为 34 张"
+        );
+        let snippet = |name: &str| -> &'static str {
+            let start = anim
+                .find(&format!("\"{name}\": {{"))
+                .unwrap_or_else(|| panic!("animation 缺 {name}"));
+            let end = anim[start..].find("\n   }}").unwrap() + start + 5;
+            &anim[start..end]
+        };
+        let ws = snippet("water_still");
+        assert!(
+            ws.contains("\"frametime\": 2") && !ws.contains("\"frames\""),
+            "{ws}"
+        );
+        // frames 数组元素缩进 = 5 空格（json.dumps(indent=1)：tiles 条目
+        // 3 空格、条目键 4 空格、数组元素 5 空格）。
+        let ls = snippet("lava_still");
+        assert!(
+            ls.contains("\"frametime\": 2")
+                && ls.contains("\"frames\"")
+                && ls.contains("\n     0,")
+                && !ls.contains("interpolate"),
+            "{ls}"
+        );
+        assert_eq!(
+            ls.matches("\n     ").count(),
+            38,
+            "lava_still 显式帧序应 38 项（回环 0..18..1）"
+        );
+        let mg = snippet("magma");
+        assert!(
+            mg.contains("\"frametime\": 8")
+                && mg.contains("\"interpolate\": true")
+                && mg.contains("\n     0,")
+                && mg.contains("\n     2"),
+            "{mg}"
+        );
+        let f0 = snippet("fire_0");
+        assert!(
+            f0.contains("\"frames\"") && f0.contains("\"frames\": [\n     16,"),
+            "{f0}"
+        );
+        let cb = snippet("command_block_back");
+        assert!(
+            cb.contains("\"frametime\": 10")
+                && cb.contains("\"interpolate\": true")
+                && !cb.contains("\"frames\""),
+            "{cb}"
+        );
+    }
+}

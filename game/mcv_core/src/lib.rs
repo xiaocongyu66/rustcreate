@@ -90,7 +90,10 @@ pub mod tiles {
     pub const DIRT: u16 = 274;
     pub const STONE: u16 = 707;
     pub const SAND: u16 = 645;
-    pub const WATER: u16 = 789; // water_still（动画未实现，取静水帧）
+    // water_still 初始帧（帧 0）——#125 起 atlas.rs 按原版帧语义精确裁取
+    // （旧注释「取静水帧」在混采时代失实，现为真）；逐帧播放属渲染侧二期，
+    // 帧序/frametime/interpolate 数据在 tiles_manifest.json animation 节。
+    pub const WATER: u16 = 789;
     pub const LOG_SIDE: u16 = 490; // oak_log
     pub const LOG_TOP: u16 = 491; // oak_log_top
     pub const LEAVES: u16 = 489; // oak_leaves
