@@ -373,7 +373,8 @@ static DROP_TABLE: &[DropRow] = &[
 ///   —— pool 条件 `match_tool silk_touch min 1`;
 /// - ice / packed_ice / blue_ice:ice.json 同构(无 silk 零掉)。
 /// 16 色 = white/orange/magenta/light_blue/yellow/lime/pink/gray/light_gray/
-/// cyan/purple/blue/brown/green/red/black(注册表 *_stained_glass[_pane] 32 名)。
+///     cyan/purple/blue/brown/green/red/black(注册表 *_stained_glass[_pane]
+///     共 32 名)。
 pub const NO_DROP: &[&str] = &[
     "glass",
     "glass_pane",
