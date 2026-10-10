@@ -2568,7 +2568,8 @@ impl Renderer {
                 for (c, p) in face.iter().enumerate() {
                     // 单位立方体角 → 立方局部（−0.5..0.5）×缩放 → 旋转 →
                     // 视空间中心 → 世界。
-                    let local = (glam::Vec3::from(*p) - glam::Vec3::splat(0.5)) * BLOCK_SCALE;
+                    let local =
+                        (glam::Vec3::from(*p) - glam::Vec3::splat(0.5)) * crate::hand::BLOCK_SCALE;
                     let view = (rot * local.extend(1.0)).truncate() + center;
                     let world = eye + basis.transform_point3(view);
                     verts.push(CrackVertex {
@@ -2668,8 +2669,11 @@ impl Renderer {
                     .write_buffer(&self.hand_terrain_ibuf, 0, bytemuck::cast_slice(&idx));
                 // origin 动态槽复用 overlay pad（世界 pass 已提交，覆写安全）。
                 let off = self.max_chunks * 256;
-                self.queue
-                    .write_buffer(&self.origins_buf, off, bytemuck::cast_slice(&[0.0f32; 4]));
+                self.queue.write_buffer(
+                    &self.origins_buf,
+                    off as wgpu::BufferAddress,
+                    bytemuck::cast_slice(&[0.0f32; 4]),
+                );
                 pass.set_pipeline(&self.terrain_pipeline);
                 pass.set_bind_group(0, &self.frame_bind, &[off]);
                 pass.set_vertex_buffer(0, self.hand_terrain_vbuf.slice(..));

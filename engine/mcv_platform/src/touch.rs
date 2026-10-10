@@ -283,8 +283,10 @@ mod tests {
             w,
             h,
         );
-        let mut direct = TouchState::default();
-        direct.enabled = true;
+        let mut direct = TouchState {
+            enabled: true,
+            ..Default::default()
+        };
         direct.press_mine();
         assert_eq!(event.mine_held, direct.mine_held);
         assert_eq!(event.enabled, direct.enabled);
