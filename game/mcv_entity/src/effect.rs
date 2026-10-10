@@ -365,7 +365,7 @@ pub struct TickTarget<'a> {
     pub max_health: f32,
     pub absorb: &'a mut f32,
     /// 玩家侧食物三元组（mob 无 FoodData，传 None）。
-    pub food: Option<&'a mut FoodMut>,
+    pub food: Option<&'a mut FoodMut<'a>>,
     /// 伤害出队：结算需走完整 hurt 管线（无敌帧/吸收/难度），不可就地扣。
     pub harms: &'a mut Vec<Harm>,
 }
@@ -576,7 +576,7 @@ pub fn blend_step(factor: f32, remaining: i32, blend_in: i32, blend_out: i32, ad
     if dur == 0 {
         return target;
     }
-    let max_delta = 1.0 / f32::from(dur);
+    let max_delta = 1.0 / dur as f32;
     factor + (target - factor).clamp(-max_delta, max_delta)
 }
 
@@ -621,6 +621,10 @@ impl Active {
 
     /// 替换语义（MobEffectInstance.update:132-175）。
     fn update(&mut self, incoming: Active) -> bool {
+        // 可见性三元组提前拷出：强/弱分支可能整体转移 incoming（隐藏链）。
+        let in_ambient = incoming.ambient;
+        let in_visible = incoming.visible;
+        let in_icon = incoming.show_icon;
         let mut changed = false;
         if incoming.amplifier > self.amplifier {
             // 更强即接管；若新时长更短，旧实例整体下潜为隐藏链头（:139-146）。
@@ -648,16 +652,16 @@ impl Active {
             }
         }
         // 非 ambient 来袭解除 ambient（:159-162）；可见性/图标跟随（:164-172）。
-        if (!incoming.ambient && self.ambient) || changed {
-            self.ambient = incoming.ambient;
+        if (!in_ambient && self.ambient) || changed {
+            self.ambient = in_ambient;
             changed = true;
         }
-        if incoming.visible != self.visible {
-            self.visible = incoming.visible;
+        if in_visible != self.visible {
+            self.visible = in_visible;
             changed = true;
         }
-        if incoming.show_icon != self.show_icon {
-            self.show_icon = incoming.show_icon;
+        if in_icon != self.show_icon {
+            self.show_icon = in_icon;
             changed = true;
         }
         changed
@@ -786,7 +790,7 @@ impl EffectBook {
         health: &mut f32,
         max_health: f32,
         absorb: &mut f32,
-        food: Option<&mut FoodMut>,
+        mut food: Option<&mut FoodMut>,
     ) -> Vec<Harm> {
         let mut harms = Vec::new();
         let mut i = 0;
