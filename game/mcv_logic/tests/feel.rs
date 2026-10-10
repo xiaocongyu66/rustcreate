@@ -462,8 +462,10 @@ fn walk_up_half_slab_without_jumping() {
     }
     let chunks = walk_world(h);
     let view = WorldView { chunks: &chunks };
-    let mut p = Player::default();
-    p.pos = Vec3::new(3.0, 10.0, 8.0);
+    let mut p = Player {
+        pos: Vec3::new(3.0, 10.0, 8.0),
+        ..Default::default()
+    };
     let input = StepInput {
         wish_dir: Vec3::X,
         sprint: true,
@@ -501,8 +503,10 @@ fn full_block_still_blocks_walking() {
     }
     let chunks = walk_world(h);
     let view = WorldView { chunks: &chunks };
-    let mut p = Player::default();
-    p.pos = Vec3::new(3.0, 10.0, 8.0);
+    let mut p = Player {
+        pos: Vec3::new(3.0, 10.0, 8.0),
+        ..Default::default()
+    };
     let input = StepInput {
         wish_dir: Vec3::X,
         sprint: true,
@@ -523,8 +527,10 @@ fn sneak_edge_guard_blocks_falling() {
     let mk = |sneak: bool| {
         let chunks = walk_world(floor_chunk(8));
         let view = WorldView { chunks: &chunks };
-        let mut p = Player::default();
-        p.pos = Vec3::new(5.0, 10.0, 8.0);
+        let mut p = Player {
+            pos: Vec3::new(5.0, 10.0, 8.0),
+            ..Default::default()
+        };
         let input = StepInput {
             wish_dir: Vec3::X,
             sneak,
