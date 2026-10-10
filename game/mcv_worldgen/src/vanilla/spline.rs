@@ -88,13 +88,14 @@ impl Builder {
         self
     }
 
+    /// 收尾求值（借用收尾：与 `&mut self -> &mut Self` 的链式插入同用）。
     #[must_use]
-    pub fn build(self) -> Spline {
+    pub fn build(&self) -> Spline {
         Spline::Multipoint {
             coord: self.coord,
-            locations: self.locations,
-            values: self.values,
-            derivatives: self.derivatives,
+            locations: self.locations.clone(),
+            values: self.values.clone(),
+            derivatives: self.derivatives.clone(),
         }
     }
 }
