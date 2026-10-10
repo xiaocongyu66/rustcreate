@@ -47,11 +47,21 @@ pub const QC_CLONE: u8 = 2; // 克隆（仅创造）
 pub struct StackRef {
     pub kind: u32,
     pub count: u32,
+    /// 随栈整堆移动的不透明元数据（游戏层放耐久/附魔等附加属性的表索引，
+    /// 0 = 无）。引擎不解释内容，只保证「整堆移动不丢、整堆取走随行」；
+    /// 拆分产物不带 meta——带 meta 的栈按约定 max_stack=1（损伤/附魔物品，
+    /// 原版 components 物品皆不可堆叠），不参与分半/拆分/合并，令牌不会
+    /// 被错误复制（cap=1 使 safeInsert/PICKUP_ALL/拖拽的余量恒为 0）。
+    pub meta: u32,
 }
 
 impl StackRef {
     pub fn new(kind: u32, count: u32) -> Self {
-        Self { kind, count }
+        Self {
+            kind,
+            count,
+            meta: 0,
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -172,8 +182,11 @@ pub struct ContainerScreen {
     pub infinite_materials: bool,
     max_stack: fn(u32) -> u32,
     /// quickMove 路由（= 各 Menu 的 quickMoveStack 重载）：分组 →
-    /// (目标区间, 是否倒序)。
-    router: Box<dyn Fn(u16) -> (usize, usize, bool)>,
+    /// 候选目标区间段表 [(start, end, backwards)]。原版是嵌套
+    /// 「上一段 moveItemStackTo 失败才试下一段」链（CraftingMenu.java:118-127
+    /// 网格→主↔热栏两段、InventoryMenu.java:114-136 装备→主↔热栏），
+    /// 本实现逐段尝试、首个改变即停——各段区间互斥时语义等价。
+    router: Box<dyn Fn(u16) -> Vec<(usize, usize, bool)>>,
     // ---- 屏幕侧交互状态（AbstractContainerScreen.java:49-67 对应）----
     /// isQuickCrafting（拖拽进行中）。
     is_quickcrafting: bool,
@@ -198,7 +211,7 @@ impl ContainerScreen {
         panel: Rect,
         slots: Vec<SlotDef>,
         max_stack: fn(u32) -> u32,
-        router: Box<dyn Fn(u16) -> (usize, usize, bool)>,
+        router: Box<dyn Fn(u16) -> Vec<(usize, usize, bool)>>,
     ) -> Self {
         let items = vec![StackRef::default(); slots.len()];
         Self {
@@ -301,6 +314,7 @@ impl ContainerScreen {
         Some(StackRef {
             kind: self.carried.kind,
             count: new_count,
+            meta: self.carried.meta,
         })
     }
 
@@ -308,13 +322,18 @@ impl ContainerScreen {
 
     /// 按下（mouseClicked :312-386）。
     pub fn mouse_down(&mut self, x: f32, y: f32, button: u8, shift: bool, double_click: bool) {
-        if button > 1 {
-            // 中键 CLONE / 侧键热栏对调未建模（差异表）
-            return;
-        }
+        // 记账先于按钮分派：ACS:319-320 对一切按钮（含中/侧键
+        // checkHotbarMouseClicked 路径）都更新 doubleclick/skipNextRelease，
+        // :384 无条件 lastClickSlot = slot（审计 #27：早退不记账会让
+        // 中/侧键连点污染双击基准）。
         let slot = self.hovered_at(x, y);
         self.doubleclick = self.last_click_slot == slot && double_click;
         self.skip_next_release = false;
+        if button > 1 {
+            // 中键 CLONE / 侧键热栏对调未建模（差异表）
+            self.last_click_slot = slot;
+            return;
+        }
         let outside = self.clicked_outside(x, y);
         let slot_id = match slot {
             Some(i) => i as i32,
@@ -497,9 +516,11 @@ impl ContainerScreen {
                 let i = slot_index as usize;
                 let item = self.items[i].clone();
                 if !item.is_empty() {
+                    // copyWithCount 复制 components（ACM:512）→ 令牌随行
                     self.carried = StackRef {
                         kind: item.kind,
                         count: self.slot_cap(item.kind),
+                        meta: item.meta,
                     };
                 }
             }
@@ -525,11 +546,17 @@ impl ContainerScreen {
                     self.drops.push(self.carried.clone());
                     self.carried = StackRef::default();
                 } else {
+                    // split(1)：带 meta 栈 max_stack=1 恒整堆，拆分产物
+                    // 令牌随 1 件走出，余量清零时令牌一并归零。
                     let one = StackRef {
                         kind: self.carried.kind,
                         count: 1,
+                        meta: self.carried.meta,
                     };
                     self.carried.count -= 1;
+                    if self.carried.count == 0 {
+                        self.carried.meta = 0;
+                    }
                     self.drops.push(one);
                 }
             }
@@ -615,11 +642,14 @@ impl ContainerScreen {
                 let t = k as usize;
                 let target = self.items[t].clone();
                 // canItemQuickReplace(target, carried, true)：非空同类即可；
-                // pass 0 跳过满载槽（:549）
+                // pass 0 跳过满载槽——判据是**物品**上限
+                // itemStack.getMaxStackSize()（ACM:549），非容器槽上限
+                // （审计 #10：container_max < item_max 的菜单里用槽上限会
+                // 让第一趟误收物品级满堆）。
                 if !target.is_empty()
                     && target.kind == self.carried.kind
                     && self.may_pickup(t)
-                    && (pass != 0 || target.count != self.slot_cap(target.kind))
+                    && (pass != 0 || target.count != self.item_max(target.kind))
                 {
                     let room = item_max - self.carried.count;
                     let removed = self.try_remove(t, room);
@@ -697,6 +727,7 @@ impl ContainerScreen {
                         self.items[i] = StackRef {
                             kind: source.kind,
                             count: new_count,
+                            meta: source.meta,
                         };
                     }
                 }
@@ -753,12 +784,17 @@ impl ContainerScreen {
             return StackRef::default();
         }
         let n = amount.min(item.count);
-        let kind = item.kind;
+        let (kind, meta) = (item.kind, item.meta);
         item.count -= n;
         if item.count == 0 {
             item.kind = 0;
+            item.meta = 0;
         }
-        StackRef { kind, count: n }
+        StackRef {
+            kind,
+            count: n,
+            meta,
+        }
     }
 
     /// Slot.safeInsert（Slot.java:125-149）对 carried 的变体。
@@ -777,9 +813,12 @@ impl ContainerScreen {
             return;
         }
         if self.items[i].is_empty() {
+            // 整堆入空槽：令牌随行；合入部分堆的必是无令牌栈
+            // （带 meta 栈 max_stack=1，同物满槽 transfer=0 走不到这里）。
             self.items[i] = StackRef {
                 kind: self.carried.kind,
                 count: transfer,
+                meta: self.carried.meta,
             };
         } else {
             self.items[i].count += transfer;
@@ -848,6 +887,7 @@ impl ContainerScreen {
                     self.items[dest] = StackRef {
                         kind: stack.kind,
                         count: n,
+                        meta: stack.meta,
                     };
                     stack.count -= n;
                     changed = true;
@@ -870,9 +910,17 @@ impl ContainerScreen {
         if self.items[from].is_empty() {
             return StackRef::default();
         }
-        let (start, end, backwards) = (self.router)(self.slots[from].group);
+        let stages = (self.router)(self.slots[from].group);
         let mut stack = self.items[from].clone();
-        let moved = self.move_item_stack_to(&mut stack, start, end, backwards, from);
+        // 逐段尝试（原版嵌套 else-if：上一段 moveItemStackTo 无改变才试
+        // 下一段，CM:118-127 / IM:114-136）；段间区间互斥，首个改变即停。
+        let mut moved = false;
+        for &(start, end, backwards) in &stages {
+            moved = self.move_item_stack_to(&mut stack, start, end, backwards, from);
+            if moved {
+                break;
+            }
+        }
         if moved {
             self.items[from] = stack;
         }
@@ -941,8 +989,8 @@ mod tests {
             slots,
             |_: u32| 64,
             Box::new(|g| match g {
-                0 => (4, 12, false), // 容器 → 背包
-                _ => (0, 3, false),  // 背包 → 容器（不含结果槽）
+                0 => vec![(4, 12, false)], // 容器 → 背包
+                _ => vec![(0, 3, false)],  // 背包 → 容器（不含结果槽）
             }),
         )
     }
@@ -1240,5 +1288,220 @@ mod tests {
         let (x, y, c) = cs.carried_draw(100.0, 50.0);
         assert_eq!((x, y), (92.0, 42.0)); // -8,-8
         assert_eq!(*c, item(1, 5));
+    }
+
+    // ---- 波 #126：接线修复波带回的行为补齐 ----
+
+    #[test]
+    fn same_kind_full_slot_left_click_noop() {
+        // ACM:452-454：同类满槽左键 = safeInsert(cap=0) 原地无操作，
+        // 绝不交换（审计 #36 的 A 组形态：不许把满堆“钓”进光标）。
+        let mut cs = screen();
+        cs.set_items(vec![item(1, 64), StackRef::default(), StackRef::default()]);
+        cs.carried = item(1, 10);
+        cs.do_click(0, 0, Input::Pickup);
+        assert_eq!(cs.items[0], item(1, 64));
+        assert_eq!(cs.carried, item(1, 10));
+        // 右键同理（放 1 也放不进满槽）。
+        cs.do_click(0, 1, Input::Pickup);
+        assert_eq!(cs.items[0], item(1, 64));
+        assert_eq!(cs.carried, item(1, 10));
+    }
+
+    #[test]
+    fn result_slot_fills_carried_regardless_of_button() {
+        // ACM:459-465：结果槽（mayPlace=false）+ 光标同物 = tryRemove(
+        // 结果数, 光标余量) 一次补满，右键不分半（审计 #40 的 A 组形态）。
+        for button in [0u8, 1u8] {
+            let mut cs = screen();
+            cs.set_items(vec![
+                StackRef::default(),
+                StackRef::default(),
+                StackRef::default(),
+                item(1, 30),
+            ]);
+            cs.carried = item(1, 40);
+            cs.do_click(3, button, Input::Pickup);
+            assert_eq!(cs.carried, item(1, 64), "button {button} 也须补满");
+            assert_eq!(cs.items[3], item(1, 6));
+        }
+    }
+
+    #[test]
+    fn pickup_all_skips_item_max_full_stack_first_pass() {
+        // ACM:549：第一趟“满堆”判据 = 物品上限（非容器槽上限，审计 #10）。
+        // container_max=32 < item_max=64：满 64 的槽第一趟必须跳过，
+        // 先从部分堆凑满光标。
+        let mut cs = screen();
+        cs.container_max = 32;
+        cs.set_items(vec![
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            item(1, 64), // 物品级满堆（但超本容器槽上限，防御数据）
+            item(1, 10), // 部分堆
+        ]);
+        cs.carried = item(1, 60);
+        // 双击收拢：门槛槽 = 空槽 6（第二行 2 号位）
+        cs.do_click(6, 0, Input::PickupAll);
+        assert_eq!(cs.carried, item(1, 64));
+        assert_eq!(cs.items[4], item(1, 64), "第一趟不许碰物品级满堆");
+        assert_eq!(cs.items[5], item(1, 6), "从部分堆收 4");
+    }
+
+    #[test]
+    fn middle_click_updates_click_baseline() {
+        // ACS:319/384：中键按下不派发交互，但要更新 lastClickSlot/
+        // doubleclick 基准（审计 #27）——否则随后双击同槽会误判双击。
+        let mut cs = screen();
+        cs.set_items(vec![item(1, 5), StackRef::default(), StackRef::default()]);
+        // 1) 左键收槽 0 → carried 5，基准 = 槽 0
+        cs.mouse_down(0.0, 0.0, 0, false, false);
+        cs.mouse_up(0.0, 0.0, 0, false);
+        assert_eq!(cs.carried, item(1, 5));
+        // 2) 中键点槽 2：不改变 carried/槽位，但基准移到槽 2
+        cs.mouse_down(36.0, 0.0, 2, false, false);
+        assert_eq!(cs.carried, item(1, 5));
+        // 3) 左键“双击”槽 0：基准在槽 2 → 非双击 → 走普通松手放回。
+        //    （旧行为：中键被整体吞掉，基准停在槽 0 → 误入 PICKUP_ALL，
+        //    空槽 0 收不到任何同类 → 物品滞留在光标。）
+        cs.mouse_down(0.0, 0.0, 0, false, true);
+        cs.mouse_up(0.0, 0.0, 0, false);
+        assert_eq!(cs.items[0], item(1, 5), "非双击 → 正常放回");
+        assert!(cs.carried.is_empty());
+    }
+
+    #[test]
+    fn drag_charitable_odd_split_floors() {
+        // type0 均分 = floor(count/N)（ACM:734-741），奇数余量留光标。
+        let mut cs = screen();
+        cs.set_items(vec![item(1, 31), StackRef::default(), StackRef::default()]);
+        cs.mouse_down(0.0, 0.0, 0, false, false);
+        cs.mouse_up(0.0, 0.0, 0, false); // 收起 31
+        cs.mouse_down(0.0, 0.0, 0, false, false); // 起拖
+        cs.mouse_drag(18.0, 0.0, 0);
+        cs.mouse_drag(36.0, 0.0, 0);
+        cs.mouse_up(36.0, 0.0, 0, false);
+        assert_eq!(cs.items[1], item(1, 15), "floor(31/2)=15");
+        assert_eq!(cs.items[2], item(1, 15));
+        assert_eq!(cs.carried, item(1, 1), "奇数余量留光标");
+    }
+
+    #[test]
+    fn shift_quick_move_tries_stages_in_order() {
+        // CraftingMenu 式两段路由（CM:118-127）：背包 → 先网格段，
+        // 网格段无进展才试另一段（主↔热栏）。
+        let mut slots = vec![SlotDef::result(0.0, 0.0, 0)];
+        for i in 0..3 {
+            slots.push(SlotDef::new(i as f32 * 18.0, 0.0, 1)); // 网格 1..4
+        }
+        for i in 0..3 {
+            slots.push(SlotDef::new(i as f32 * 18.0, 18.0, 2)); // 主背包 4..7
+        }
+        for i in 0..3 {
+            slots.push(SlotDef::new(i as f32 * 18.0, 36.0, 3)); // 热栏 7..10
+        }
+        let mk = || {
+            ContainerScreen::new(
+                Rect::new(-4.0, -4.0, 200.0, 80.0),
+                slots.clone(),
+                |_: u32| 64,
+                Box::new(|g| match g {
+                    0 => vec![(4, 10, true)],
+                    1 => vec![(4, 10, false)],
+                    2 => vec![(1, 4, false), (7, 10, false)],
+                    _ => vec![(1, 4, false), (4, 7, false)],
+                }),
+            )
+        };
+        // 热栏 30 → 第一段网格空 → 进网格（不进第二段）
+        let mut cs = mk();
+        cs.set_items(vec![
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            item(1, 30),
+        ]);
+        cs.do_click(7, 0, Input::QuickMove);
+        assert_eq!(cs.items[1], item(1, 30), "第一段（网格）优先");
+        assert!(cs.items[7].is_empty());
+        // 网格满（异类 64×3）→ 第一段失败 → 第二段主背包
+        let mut cs2 = mk();
+        cs2.set_items(vec![
+            StackRef::default(),
+            item(2, 64),
+            item(2, 64),
+            item(2, 64),
+            StackRef::default(),
+            StackRef::default(),
+            StackRef::default(),
+            item(1, 5),
+        ]);
+        cs2.do_click(7, 0, Input::QuickMove);
+        assert_eq!(cs2.items[4], item(1, 5), "第一段无进展 → 第二段兜底");
+        assert!(cs2.items[7].is_empty());
+    }
+
+    #[test]
+    fn meta_token_survives_slot_moves() {
+        // StackRef.meta = 游戏层耐久/附魔令牌的搬运契约：整堆收/放/快移/
+        // 丢弃随行，空槽令牌归零。
+        let mut cs = screen();
+        cs.items[0] = StackRef {
+            kind: 7,
+            count: 1,
+            meta: 3,
+        };
+        cs.do_click(0, 0, Input::Pickup); // try_remove 随行
+        assert_eq!(
+            cs.carried,
+            StackRef {
+                kind: 7,
+                count: 1,
+                meta: 3
+            }
+        );
+        assert_eq!(cs.items[0], StackRef::default(), "槽空令牌归零");
+        cs.do_click(1, 0, Input::Pickup); // safe_insert 随行
+        assert_eq!(
+            cs.items[1],
+            StackRef {
+                kind: 7,
+                count: 1,
+                meta: 3
+            }
+        );
+        // shift 快移（背包→容器）走 moveItemStackTo pass2 也随行
+        cs.items[1] = StackRef::default();
+        cs.items[4] = StackRef {
+            kind: 7,
+            count: 1,
+            meta: 3,
+        };
+        cs.do_click(4, 0, Input::QuickMove);
+        assert_eq!(
+            cs.items[0],
+            StackRef {
+                kind: 7,
+                count: 1,
+                meta: 3
+            }
+        );
+        // 丢弃键整堆丢出随行
+        cs.key_throw(0, true);
+        let drops = cs.take_drops();
+        assert_eq!(
+            drops,
+            vec![StackRef {
+                kind: 7,
+                count: 1,
+                meta: 3
+            }]
+        );
     }
 }
