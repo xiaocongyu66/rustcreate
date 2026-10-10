@@ -255,3 +255,28 @@ fn zombie_walk_anim_changes_drawn_pixels() {
     let changed = diff_pixels(&a, &b);
     assert!(changed > 30, "摆腿应改变画面，changed={changed}");
 }
+
+#[test]
+fn zombie_walk_anim_changes_pixels_at_nonzero_yaw() {
+    // yaw≠0 回归（验收发现：此前全部实例 yaw=0，旧矩阵缺陷
+    // T·ry²·Rx·ry⁻¹ 的腿摆侧翻在 yaw=0 下不可见）。侧向/背向两档
+    // 各跑 静止 vs 满幅摆腿——WalkLeg 通路必须在任意朝向下生效；
+    // 矩阵代数锁见 mob_mesh.rs 的刚性协变测试。
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let pos = Vec3::new(8.0, 100.0, 9.0);
+    for yaw in [std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+        let still = [instance(MobModelKind::Zombie, pos, yaw, 0.0, 0.0)];
+        let walking = [instance(MobModelKind::Zombie, pos, yaw, 0.9, 0.88)];
+        let a = render(&device, &queue, &mut renderer, &target, &chunk, &still);
+        let b = render(&device, &queue, &mut renderer, &target, &chunk, &walking);
+        let changed = diff_pixels(&a, &b);
+        assert!(changed > 30, "yaw {yaw} 摆腿应改变画面，changed={changed}");
+    }
+}

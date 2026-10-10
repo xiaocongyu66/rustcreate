@@ -269,9 +269,13 @@ static PIG_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 6.0, 4.0], [0.0, 16.0]);
 
 static HUMANOID_HEAD: MobBox = bx([-4.0, -8.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
 static HUMANOID_BODY: MobBox = bx([-4.0, 0.0, -2.0], [8.0, 12.0, 4.0], [16.0, 16.0]);
-// HumanoidModel right_arm addBox(-3,-2,-2,4,12,4)；左臂 mirror 后盒体占位
-// 等价（mirror 只翻 UV），共用同一 MobBox、pivot 取 ±5。
+// HumanoidModel right_arm addBox(-3,-2,-2,4,12,4)（:101）；左臂
+// mirror().addBox(-1,-2,-2,4,12,4)（:105）——mirror 只翻 UV，盒坐标
+// 本身就比右臂内收 2px 再靠 pivot +5 外推，两臂不对称，不能共用右臂盒
+// （共用会让左臂世界 x∈[2,6] 压进躯干 [−4,4]，原版是 [4,8]）。
 static ZOMBIE_ARM: MobBox = bx([-3.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]);
+static ZOMBIE_ARM_LEFT: MobBox =
+    mirrored(bx([-1.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]));
 static ZOMBIE_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 12.0, 4.0], [0.0, 16.0]);
 
 // ---- 骷髅（SkeletonModel.createBodyLayer = humanoid 骨架细四肢，64x32） ------
@@ -591,7 +595,7 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             anim: PartAnim::ZombieArm {
                 drop: -std::f32::consts::PI / 2.25,
             },
-            boxes: &[mirrored(ZOMBIE_ARM)],
+            boxes: &[ZOMBIE_ARM_LEFT],
         },
         PartDef {
             pivot: [-1.9, 12.0, 0.0],
@@ -1136,6 +1140,81 @@ mod tests {
             assert_eq!(r.start, prev);
             prev = r.end;
         }
+    }
+
+    #[test]
+    fn part_matrices_rigidly_covary_with_yaw() {
+        // 矩阵合成回归锁（旧缺陷 T·ry²·Rx·ry⁻¹ 在 yaw≠0 把腿摆侧翻）：
+        // 标准式 out = T(world_piv)·ry·Rz·Ry·Rx 下部位旋转必须满足刚性
+        // 协变 matrix3(yaw) = Ry(−yaw)·matrix3(0)，即部位自转与朝向解耦、
+        // 整体像刚体绕 y 轴旋转。旧共轭式不满足（自转被 2·yaw 共轭）。
+        let m3 = |m: &Mat4| {
+            glam::Mat3::from_cols(m.x_axis.truncate(), m.y_axis.truncate(), m.z_axis.truncate())
+        };
+        let mk = |yaw: f32| {
+            mob_model_matrices(
+                MobModelKind::Zombie,
+                &MobPose {
+                    yaw,
+                    phase: 0.9,
+                    amount: 0.88,
+                    ..Default::default()
+                },
+            )
+        };
+        let base = mk(0.0);
+        for yaw in [std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
+            let ry3 = m3(&Mat4::from_axis_angle(Vec3::Y, -yaw));
+            let rot = mk(yaw);
+            for (p, (b, r)) in base.iter().zip(rot.iter()).enumerate() {
+                let want = ry3 * m3(b);
+                let got = m3(r);
+                for (i, row) in want.to_cols_array_2d().iter().enumerate() {
+                    for (j, w) in row.iter().enumerate() {
+                        assert!(
+                            (w - got.to_cols_array_2d()[i][j]).abs() < 1e-4,
+                            "yaw {yaw} part {p} col {i} row {j}: {w} vs {}",
+                            got.to_cols_array_2d()[i][j]
+                        );
+                    }
+                }
+            }
+            // 物理兜底：最大摆幅下腿尖仍垂在髋下（竖直分量不消失 = 不横躺）。
+            let hip = rot[4].transform_point3(Vec3::ZERO);
+            let tip = rot[4].transform_point3(Vec3::new(0.0, -0.75, 0.0));
+            assert!(
+                tip.y < hip.y - 0.1 && tip.y > hip.y - 0.76,
+                "yaw {yaw} leg tip {tip} hip {hip}"
+            );
+        }
+    }
+
+    #[test]
+    fn zombie_left_arm_is_independent_asymmetric_box() {
+        // 26.1 HumanoidModel.java:101 right_arm addBox(-3,-2,-2,…)、
+        // :105 left_arm mirror().addBox(-1,-2,-2,…)——mirror 只翻 UV，
+        // 盒坐标不对称。共用右臂盒会让左臂世界 x∈[2,6]px 压进躯干。
+        assert_eq!(ZOMBIE_ARM.min[0], -3.0);
+        assert_eq!(ZOMBIE_ARM_LEFT.min[0], -1.0);
+        let m = build_mob_mesh();
+        let pose = MobPose::default();
+        let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
+        let r = m.slices[MobModelKind::Zombie as usize];
+        // 部位序：头0 身1 右臂2 左臂3，各 24 顶点。
+        let x_span = |part: usize| {
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for v in &m.verts[r.start as usize + part * 24..r.start as usize + (part + 1) * 24] {
+                let w = mm[part].transform_point3(Vec3::from(v.pos));
+                lo = lo.min(w.x);
+                hi = hi.max(w.x);
+            }
+            (lo, hi)
+        };
+        let (rlo, rhi) = x_span(2);
+        let (llo, lhi) = x_span(3);
+        // 世界米制：右臂 [−8,−4]px、左臂 [4,8]px，对 y 轴镜像对称。
+        assert!((rlo - -0.5).abs() < 1e-5 && (rhi - -0.25).abs() < 1e-5, "{rlo} {rhi}");
+        assert!((llo - 0.25).abs() < 1e-5 && (lhi - 0.5).abs() < 1e-5, "{llo} {lhi}");
     }
 
     #[test]
