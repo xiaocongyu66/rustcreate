@@ -165,6 +165,150 @@ fn snow_family_drops_snowballs() {
     );
 }
 
+/// 4c. 族级补全 1-3：石头变体自掉、泥土变体、red_sand/clay/moss/mud
+///    （granite/diorite/andesite/tuff/coarse_dirt/podzol/mycelium/dirt_path/
+///    red_sand/clay/moss_block/mud.json，均无附魔基数）。
+#[test]
+fn stone_dirt_surface_families() {
+    let table: &[(&str, &[(&str, u8)])] = &[
+        // 族 1 石头变体自掉。
+        ("granite", &[("granite", 1)]),
+        ("diorite", &[("diorite", 1)]),
+        ("andesite", &[("andesite", 1)]),
+        ("tuff", &[("tuff", 1)]),
+        // 族 2 泥土变体：coarse 自掉；podzol/mycelium/dirt_path → dirt。
+        ("coarse_dirt", &[("coarse_dirt", 1)]),
+        ("podzol", &[("dirt", 1)]),
+        ("mycelium", &[("dirt", 1)]),
+        ("dirt_path", &[("dirt", 1)]),
+        // 族 3 地表：red_sand 自掉；clay → clay_ball×4；moss/mud 自掉。
+        ("red_sand", &[("red_sand", 1)]),
+        ("clay", &[("clay_ball", 4)]),
+        ("moss_block", &[("moss_block", 1)]),
+        ("mud", &[("mud", 1)]),
+    ];
+    for (block, want) in table {
+        assert_eq!(
+            names(&drops_for_block(bid(block), &mut rng(0))),
+            *want,
+            "{block} 族 1-3 掉落不符"
+        );
+    }
+}
+
+/// 4d. 族 4 非橡 log 族自掉（birch/spruce/jungle/acacia/dark_oak_log.json，
+///    单池 rolls 1，同 oak_log）。
+#[test]
+fn non_oak_log_family_self_drops() {
+    for log in [
+        "birch_log",
+        "spruce_log",
+        "jungle_log",
+        "acacia_log",
+        "dark_oak_log",
+    ] {
+        assert_eq!(
+            names(&drops_for_block(bid(log), &mut rng(0))),
+            [(log, 1)],
+            "{log} 应自掉"
+        );
+    }
+}
+
+/// 4e. 族 5 光源/植物产物：glowstone_dust 2-4、prismarine_crystals 2-3、
+///    cobweb→string、melon_slice 3-7、pumpkin 自掉、bookshelf→book×3。
+#[test]
+fn light_plant_product_family() {
+    // (方块, 物品, 下界, 上界, 上界掷点)——掷点取 v %（max−min+1）= 宽−1
+    // 的定值（u32::MAX 对宽 3/5 整除余 0，不能用）。
+    let cases: &[(&str, &str, u8, u8, u32)] = &[
+        ("glowstone", "glowstone_dust", 2, 4, 5), // glowstone.json uniform 2..4
+        ("sea_lantern", "prismarine_crystals", 2, 3, 1), // sea_lantern.json 2..3
+        ("melon", "melon_slice", 3, 7, 4),        // melon.json uniform 3..7
+    ];
+    for (block, item, lo, hi, roll) in cases {
+        assert_eq!(
+            names(&drops_for_block(bid(block), &mut rng(0))),
+            [(*item, *lo)],
+            "{block} 下界 {lo}"
+        );
+        assert_eq!(
+            names(&drops_for_block(bid(block), &mut rng(*roll))),
+            [(*item, *hi)],
+            "{block} 上界 {hi}"
+        );
+    }
+    assert_eq!(
+        names(&drops_for_block(bid("cobweb"), &mut rng(0))),
+        [("string", 1)]
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("pumpkin"), &mut rng(0))),
+        [("pumpkin", 1)]
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("bookshelf"), &mut rng(0))),
+        [("book", 3)],
+        "bookshelf.json set_count 3"
+    );
+}
+
+/// 4f. 族 7 下界：六块自掉 + gold_nugget 2-6 + quartz 1 + ancient_debris 自掉
+///    （netherrack/soul_sand/soul_soil/obsidian/magma_block/basalt/
+///    ancient_debris.json 自掉；nether_gold_ore.json uniform 2..6；
+///    nether_quartz_ore.json ore_drops 基数 1）。
+#[test]
+fn nether_family_drops() {
+    for block in [
+        "netherrack",
+        "soul_sand",
+        "soul_soil",
+        "obsidian",
+        "magma_block",
+        "basalt",
+    ] {
+        assert_eq!(
+            names(&drops_for_block(bid(block), &mut rng(0))),
+            [(block, 1)],
+            "{block} 应自掉"
+        );
+    }
+    assert_eq!(
+        names(&drops_for_block(bid("nether_gold_ore"), &mut rng(0))),
+        [("gold_nugget", 2)]
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("nether_gold_ore"), &mut rng(9))),
+        [("gold_nugget", 6)],
+        "2 + 9 % 5 = 6"
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("nether_quartz_ore"), &mut rng(0))),
+        [("quartz", 1)]
+    );
+    assert_eq!(
+        names(&drops_for_block(bid("ancient_debris"), &mut rng(0))),
+        [("ancient_debris", 1)]
+    );
+}
+
+/// 4g. NO_DROP 扩名单：ice 族 + 16 色玻璃（36 名）全部在注册表且在名单内
+///    （注册校验在 glass_family_drops_nothing 循环中同批执行）。
+#[test]
+fn no_drop_list_covers_ice_and_16_glass() {
+    let list = mcv_item::inventory::NO_DROP;
+    for name in ["ice", "packed_ice", "blue_ice"] {
+        assert!(list.contains(&name), "{name} 应在 NO_DROP");
+    }
+    let stained = list.iter().filter(|n| n.ends_with("stained_glass")).count();
+    let stained_pane = list
+        .iter()
+        .filter(|n| n.ends_with("stained_glass_pane"))
+        .count();
+    assert_eq!(stained, 16, "16 色染色玻璃");
+    assert_eq!(stained_pane, 16, "16 色染色玻璃板");
+}
+
 /// 5. 掉落门裁决用例：**徒手挖铁矿无掉落、石镐挖铁矿掉 raw_iron**。
 ///    26.1 裁决：destroyBlock 的 playerDestroy（掉落）被
 ///    hasCorrectToolForDrops 前置门控（ServerPlayerGameMode.java:295-299）；

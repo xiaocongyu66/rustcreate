@@ -114,7 +114,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 61] = [
+pub static ITEMS: [ItemDef; 90] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -248,6 +248,65 @@ pub static ITEMS: [ItemDef; 61] = [
     // 金/下界具无修料）。追加在尾部保持旧 id 序列化稳定。
     def!("gold_ingot", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("netherite_ingot", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // ---- 掉落表族级补全（族 1-7）：26.1 loot_table/blocks/*.json 的自掉/
+    // 转化产物物品。全部追加在尾部保持旧 id 序列化稳定；方块物品 BlockId
+    // 用 blocks_gen 注册 id（mine→item、place→block 双向，同 "dirt"/"sand"
+    // 先例）。未注册方块不在此列（宁缺勿错）。
+    // 族 1 石头变体（granite/diorite/andesite/tuff.json：自掉）。
+    def!("granite", ItemKind::Block(BlockId(427)), 0.0, 0.0, 0, 0),
+    def!("diorite", ItemKind::Block(BlockId(362)), 0.0, 0.0, 0, 0),
+    def!("andesite", ItemKind::Block(BlockId(37)), 0.0, 0.0, 0, 0),
+    def!("tuff", ItemKind::Block(BlockId(1020)), 0.0, 0.0, 0, 0),
+    // 族 2 泥土变体（coarse_dirt.json 自掉；podzol/mycelium.json 无 silk
+    // 掉 dirt，自身物品供注册/拾取路径）。
+    def!("coarse_dirt", ItemKind::Block(BlockId(218)), 0.0, 0.0, 0, 0),
+    def!("podzol", ItemKind::Block(BlockId(741)), 0.0, 0.0, 0, 0),
+    def!("mycelium", ItemKind::Block(BlockId(626)), 0.0, 0.0, 0, 0),
+    // 族 3 地表（red_sand.json 自掉；clay.json 无 silk 掉 clay_ball×4）。
+    def!("red_sand", ItemKind::Block(BlockId(863)), 0.0, 0.0, 0, 0),
+    def!("clay_ball", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 族 3/5（moss_block/mud/pumpkin.json 自掉；melon.json 掉 melon_slice
+    // 3-7；glowstone.json 掉 glowstone_dust 2-4；sea_lantern.json 掉
+    // prismarine_crystals 2-3）。
+    def!("moss_block", ItemKind::Block(BlockId(608)), 0.0, 0.0, 0, 0),
+    def!("mud", ItemKind::Block(BlockId(619)), 0.0, 0.0, 0, 0),
+    def!("pumpkin", ItemKind::Block(BlockId(820)), 0.0, 0.0, 0, 0),
+    def!("melon_slice", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("glowstone_dust", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("prismarine_crystals", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 族 4 非橡 log 族（birch/spruce/jungle/acacia/dark_oak_log.json 自掉；
+    // 树叶族五行早已注册，log 补齐族内对称）。
+    def!("birch_log", ItemKind::Block(BlockId(83)), 0.0, 0.0, 0, 0),
+    def!("spruce_log", ItemKind::Block(BlockId(948)), 0.0, 0.0, 0, 0),
+    def!("jungle_log", ItemKind::Block(BlockId(496)), 0.0, 0.0, 0, 0),
+    def!("acacia_log", ItemKind::Block(BlockId(20)), 0.0, 0.0, 0, 0),
+    def!(
+        "dark_oak_log",
+        ItemKind::Block(BlockId(304)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 族 7 下界（netherrack/soul_sand/soul_soil/obsidian/magma_block/
+    // basalt/ancient_debris.json 自掉；nether_gold_ore.json 无 silk 掉
+    // gold_nugget 2-6；nether_quartz_ore.json 掉 quartz×ore_drops 基数 1）。
+    def!("netherrack", ItemKind::Block(BlockId(639)), 0.0, 0.0, 0, 0),
+    def!("soul_sand", ItemKind::Block(BlockId(935)), 0.0, 0.0, 0, 0),
+    def!("soul_soil", ItemKind::Block(BlockId(936)), 0.0, 0.0, 0, 0),
+    def!("obsidian", ItemKind::Block(BlockId(657)), 0.0, 0.0, 0, 0),
+    def!("magma_block", ItemKind::Block(BlockId(585)), 0.0, 0.0, 0, 0),
+    def!("basalt", ItemKind::Block(BlockId(69)), 0.0, 0.0, 0, 0),
+    def!(
+        "ancient_debris",
+        ItemKind::Block(BlockId(36)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("gold_nugget", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("quartz", ItemKind::Material, 0.0, 0.0, 0, 0),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
@@ -293,9 +352,40 @@ pub const GRAVEL_ITEM: u16 = 56;
 pub const COBBLED_DEEPSLATE: u16 = 57;
 /// 弓（ITEMS 下标 42：`durability(384)` → 不可堆叠，见 inventory::max_stack）。
 pub const BOW: u16 = 42;
-/// 金/下界锭（58/59）：金/下界具铁砧修料（*_tool_materials tags）。
-pub const GOLD_INGOT: u16 = 58;
-pub const NETHERITE_INGOT: u16 = 59;
+/// 金/下界锭（59/60）：金/下界具铁砧修料（*_tool_materials tags）。
+pub const GOLD_INGOT: u16 = 59;
+pub const NETHERITE_INGOT: u16 = 60;
+// 掉落族补全物品（61-89，与 ITEMS 追加序一致，测试
+// item_family_const_order_lock 锁死；loot 语义见 inventory::DROP_TABLE）。
+pub const GRANITE: u16 = 61;
+pub const DIORITE: u16 = 62;
+pub const ANDESITE: u16 = 63;
+pub const TUFF: u16 = 64;
+pub const COARSE_DIRT: u16 = 65;
+pub const PODZOL: u16 = 66;
+pub const MYCELIUM: u16 = 67;
+pub const RED_SAND: u16 = 68;
+pub const CLAY_BALL: u16 = 69;
+pub const MOSS_BLOCK: u16 = 70;
+pub const MUD: u16 = 71;
+pub const PUMPKIN: u16 = 72;
+pub const MELON_SLICE: u16 = 73;
+pub const GLOWSTONE_DUST: u16 = 74;
+pub const PRISMARINE_CRYSTALS: u16 = 75;
+pub const BIRCH_LOG: u16 = 76;
+pub const SPRUCE_LOG: u16 = 77;
+pub const JUNGLE_LOG: u16 = 78;
+pub const ACACIA_LOG: u16 = 79;
+pub const DARK_OAK_LOG: u16 = 80;
+pub const NETHERRACK: u16 = 81;
+pub const SOUL_SAND: u16 = 82;
+pub const SOUL_SOIL: u16 = 83;
+pub const OBSIDIAN: u16 = 84;
+pub const MAGMA_BLOCK: u16 = 85;
+pub const BASALT: u16 = 86;
+pub const ANCIENT_DEBRIS: u16 = 87;
+pub const GOLD_NUGGET: u16 = 88;
+pub const QUARTZ: u16 = 89;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;

@@ -193,6 +193,8 @@ struct DropRow {
     /// 适用方块(blocks_gen 注册名;旧表别名如 "cobble" 在此对齐原版名)。
     blocks: &'static [&'static str],
     /// 掉落物品注册名(ITEMS.name;运行时经 item_by_name 解析,缺失跳过)。
+    /// 特殊值 `"self"` = 掉方块自身(granite.json 等自掉表:物品名 = 方块名,
+    /// 见 `drops_for_block` 的解析;未注册物品照旧「宁缺勿错」跳过)。
     item: &'static str,
     /// 数量区间 [min, max](26.1 set_count / ore_drops 基数)。
     min: u8,
@@ -307,12 +309,110 @@ static DROP_TABLE: &[DropRow] = &[
     // (silk 分支掉自身;本引擎无 silk 附魔,恒走非 silk 侧)。
     row(&["snow"], "snowball", 1, 1, 1000),
     row(&["snow_block"], "snowball", 4, 4, 1000),
+    // ---- 族级补全 8 组（本轮逐条开 26.1 loot_table/blocks/*.json 核对；
+    // silk 分支未实现的方块按非 silk 侧落地，同既有 stone/clay 先例）。
+    // 族 1 石头变体自掉：granite/diorite/andesite/tuff.json =
+    // 单池 item <自身> rolls 1 + survives_explosion。
+    row(&["granite"], "granite", 1, 1, 1000),
+    row(&["diorite"], "diorite", 1, 1, 1000),
+    row(&["andesite"], "andesite", 1, 1, 1000),
+    row(&["tuff"], "tuff", 1, 1, 1000),
+    // 族 2 泥土变体：coarse_dirt.json 自掉；podzol/mycelium.json 无 silk
+    // alternatives 掉 dirt；dirt_path.json 直接掉 dirt。
+    row(&["coarse_dirt"], "coarse_dirt", 1, 1, 1000),
+    row(&["podzol"], "dirt", 1, 1, 1000),
+    row(&["mycelium"], "dirt", 1, 1, 1000),
+    row(&["dirt_path"], "dirt", 1, 1, 1000),
+    // 族 3 地表变体：red_sand.json 自掉；clay.json 无 silk set_count 4；
+    // moss_block/mud.json 自掉。
+    row(&["red_sand"], "red_sand", 1, 1, 1000),
+    row(&["clay"], "clay_ball", 4, 4, 1000),
+    row(&["moss_block"], "moss_block", 1, 1, 1000),
+    row(&["mud"], "mud", 1, 1, 1000),
+    // 族 4 非橡 log 族自掉（各自 *.json 单池，同 oak_log）。
+    row(&["birch_log"], "birch_log", 1, 1, 1000),
+    row(&["spruce_log"], "spruce_log", 1, 1, 1000),
+    row(&["jungle_log"], "jungle_log", 1, 1, 1000),
+    row(&["acacia_log"], "acacia_log", 1, 1, 1000),
+    row(&["dark_oak_log"], "dark_oak_log", 1, 1, 1000),
+    // 族 5 光源/植物产物：glowstone.json dust 2-4(uniform，fortune 加算
+    // 未实现)；sea_lantern.json prismarine_crystals 2-3；cobweb.json 无
+    // shears/silk → string（剪刀引擎未注册，恒 string 侧）；melon.json
+    // melon_slice 3-7；pumpkin.json 自掉；bookshelf.json book×3(set_count)。
+    row(&["glowstone"], "glowstone_dust", 2, 4, 1000),
+    row(&["sea_lantern"], "prismarine_crystals", 2, 3, 1000),
+    row(&["cobweb"], "string", 1, 1, 1000),
+    row(&["melon"], "melon_slice", 3, 7, 1000),
+    row(&["pumpkin"], "pumpkin", 1, 1, 1000),
+    row(&["bookshelf"], "book", 3, 3, 1000),
+    // 族 7 下界：六块自掉（magma_block.json 名为 magma_block）；
+    // nether_gold_ore.json gold_nugget 2-6；nether_quartz_ore.json quartz
+    // ore_drops 基数 1；ancient_debris.json 自掉。
+    row(
+        &[
+            "netherrack",
+            "soul_sand",
+            "soul_soil",
+            "obsidian",
+            "magma_block",
+            "basalt",
+        ],
+        "self",
+        1,
+        1,
+        1000,
+    ),
+    row(&["nether_gold_ore"], "gold_nugget", 2, 6, 1000),
+    row(&["nether_quartz_ore"], "quartz", 1, 1, 1000),
+    row(&["ancient_debris"], "ancient_debris", 1, 1, 1000),
 ];
 
-/// 明确"silk touch 才有掉落"的方块(glass.json:池条件只放行 silk)。
-/// 本引擎无 silk → 恒不掉;单列出来是给"误加进 DROP_TABLE"设一道测试闸。
-/// TODO(registry):16 色染色玻璃/玻璃板同语义,进全表数据化时补全。
-pub const NO_DROP: &[&str] = &["glass", "glass_pane"];
+/// 明确"silk touch 才有掉落"的方块(池条件只放行 silk → 本引擎无 silk 恒
+/// 不掉;单列出来是给"误加进 DROP_TABLE"设一道测试闸)。26.1 json 实证:
+/// - glass / *_stained_glass(_pane):glass.json、red_stained_glass.json 等
+///   —— pool 条件 `match_tool silk_touch min 1`;
+/// - ice / packed_ice / blue_ice:ice.json 同构(无 silk 零掉)。
+/// 16 色 = white/orange/magenta/light_blue/yellow/lime/pink/gray/light_gray/
+/// cyan/purple/blue/brown/green/red/black(注册表 *_stained_glass[_pane] 32 名)。
+pub const NO_DROP: &[&str] = &[
+    "glass",
+    "glass_pane",
+    "ice",
+    "packed_ice",
+    "blue_ice",
+    "white_stained_glass",
+    "white_stained_glass_pane",
+    "orange_stained_glass",
+    "orange_stained_glass_pane",
+    "magenta_stained_glass",
+    "magenta_stained_glass_pane",
+    "light_blue_stained_glass",
+    "light_blue_stained_glass_pane",
+    "yellow_stained_glass",
+    "yellow_stained_glass_pane",
+    "lime_stained_glass",
+    "lime_stained_glass_pane",
+    "pink_stained_glass",
+    "pink_stained_glass_pane",
+    "gray_stained_glass",
+    "gray_stained_glass_pane",
+    "light_gray_stained_glass",
+    "light_gray_stained_glass_pane",
+    "cyan_stained_glass",
+    "cyan_stained_glass_pane",
+    "purple_stained_glass",
+    "purple_stained_glass_pane",
+    "blue_stained_glass",
+    "blue_stained_glass_pane",
+    "brown_stained_glass",
+    "brown_stained_glass_pane",
+    "green_stained_glass",
+    "green_stained_glass_pane",
+    "red_stained_glass",
+    "red_stained_glass_pane",
+    "black_stained_glass",
+    "black_stained_glass_pane",
+];
 
 /// 方块破坏掉落(26.1 `Block.playerDestroy` → `dropResources` 语义,表驱动)。
 ///
@@ -331,6 +431,8 @@ pub fn drops_for_block(id: BlockId, rng: &mut impl FnMut() -> u32) -> Vec<ItemSt
             (false, Some(fb)) => fb,
             (false, None) => continue,
         };
+        // "self" = 自掉表:掉方块自身(物品名 = 方块注册名)。
+        let item = if item == "self" { name } else { item };
         let Some(item_id) = crate::item_by_name(item) else {
             continue;
         };

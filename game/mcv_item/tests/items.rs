@@ -3,8 +3,8 @@
 use mcv_item::crafting::EMPTY_SLOT;
 use mcv_item::{
     DIAMOND_ITEM, DIAMOND_PICKAXE_INDEX, IRON_INGOT, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX,
-    ItemStack, PLANKS, STICK, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX, anvil,
-    crafting, enchant,
+    ItemStack, PLANKS, STICK, STONE_PICKAXE_INDEX, STONE_SWORD_INDEX, WOODEN_PICKAXE_INDEX,
+    WOODEN_SWORD_INDEX, anvil, crafting, enchant,
 };
 
 fn lcg(seed: u64) -> impl FnMut() -> u32 {
@@ -376,4 +376,57 @@ fn diamond_item_usable() {
         mcv_item::ITEMS[STONE_SWORD_INDEX as usize].name,
         "stone_sword"
     );
+}
+
+/// ITEMS 追加序 = id 序列化契约：新增常量与数组顺序一致性锁（族补全 29 件）。
+#[test]
+fn item_family_const_order_lock() {
+    let expect: &[(u16, &str)] = &[
+        (mcv_item::GOLD_INGOT, "gold_ingot"),
+        (mcv_item::NETHERITE_INGOT, "netherite_ingot"),
+        (mcv_item::GRANITE, "granite"),
+        (mcv_item::DIORITE, "diorite"),
+        (mcv_item::ANDESITE, "andesite"),
+        (mcv_item::TUFF, "tuff"),
+        (mcv_item::COARSE_DIRT, "coarse_dirt"),
+        (mcv_item::PODZOL, "podzol"),
+        (mcv_item::MYCELIUM, "mycelium"),
+        (mcv_item::RED_SAND, "red_sand"),
+        (mcv_item::CLAY_BALL, "clay_ball"),
+        (mcv_item::MOSS_BLOCK, "moss_block"),
+        (mcv_item::MUD, "mud"),
+        (mcv_item::PUMPKIN, "pumpkin"),
+        (mcv_item::MELON_SLICE, "melon_slice"),
+        (mcv_item::GLOWSTONE_DUST, "glowstone_dust"),
+        (mcv_item::PRISMARINE_CRYSTALS, "prismarine_crystals"),
+        (mcv_item::BIRCH_LOG, "birch_log"),
+        (mcv_item::SPRUCE_LOG, "spruce_log"),
+        (mcv_item::JUNGLE_LOG, "jungle_log"),
+        (mcv_item::ACACIA_LOG, "acacia_log"),
+        (mcv_item::DARK_OAK_LOG, "dark_oak_log"),
+        (mcv_item::NETHERRACK, "netherrack"),
+        (mcv_item::SOUL_SAND, "soul_sand"),
+        (mcv_item::SOUL_SOIL, "soul_soil"),
+        (mcv_item::OBSIDIAN, "obsidian"),
+        (mcv_item::MAGMA_BLOCK, "magma_block"),
+        (mcv_item::BASALT, "basalt"),
+        (mcv_item::ANCIENT_DEBRIS, "ancient_debris"),
+        (mcv_item::GOLD_NUGGET, "gold_nugget"),
+        (mcv_item::QUARTZ, "quartz"),
+    ];
+    for (id, name) in expect {
+        assert_eq!(mcv_item::ITEMS[*id as usize].name, *name, "id {id} 错位");
+        assert_eq!(mcv_item::item_by_name(name), Some(*id), "{name} 反查");
+    }
+    // 方块物品 BlockId 指向同名方块（place→mine 回路自洽）。
+    for (id, name) in expect {
+        let def = &mcv_item::ITEMS[*id as usize];
+        if let mcv_item::ItemKind::Block(b) = def.kind {
+            assert_eq!(
+                mcv_core::BLOCKS[b.id() as usize].name,
+                *name,
+                "{name} BlockId 错位"
+            );
+        }
+    }
 }
