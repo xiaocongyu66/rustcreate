@@ -335,6 +335,19 @@ def has_alpha(tex):
 CONST_RE = re.compile(r"public static final \w+ ([A-Z0-9_]+) = ")
 PROPS_START_RE = re.compile(r"Properties\.of\w*\(|wallVariant\(")
 
+# litBlockEmission 家族中【默认放置态即点亮】的成员（registerDefaultState
+# LIT=true）：营火 CampfireBlock.java:84（soul 同块类，光级 10）、红石火把
+# RedstoneTorchBlock.java:40（wall 变体经 wallVariant 复制同属性，
+# Blocks.java:1597）。数值 = 各自 litBlockEmission(n)（Blocks.java:4624/
+# 4636/1592）。其余成员默认 lit=false（炉族 :1064/4535/4545、红石矿 :1581、
+# 红石灯 :2167、铜灯 CopperBulbBlock.java:30、蜡烛蛋糕 :5032）按 0。
+DEFAULT_LIT_LIGHT = {
+    "CAMPFIRE": 15,
+    "SOUL_CAMPFIRE": 10,
+    "REDSTONE_TORCH": 7,
+    "REDSTONE_WALL_TORCH": 7,
+}
+
 # WeatheringCopperBlocks.create("copper_bars", …) 一次注册 8 个铜风化变体
 # （基础 + exposed/weathered/oxidized + waxed 前缀），属性共享同一 lambda。
 COPPER_PREFIXES = (
@@ -372,11 +385,19 @@ def parse_java_blocks():
         if stm:
             strength = float(stm.group(1))
         light = None
+        # 表行约定 =【默认放置态】（defaultBlockState）的发光。
+        # litBlockEmission(n) 是【按 LIT 状态】的条件发光（Blocks.java:5853-5855
+        # `lit ? n : 0`），正则不再匹配——家族中默认 lit=false 的成员
+        # （炉/高炉/烟熏炉、红石矿/红石灯、铜灯族、蜡烛蛋糕族）自然落 0
+        # （曾误按恒发光提取，把 furnace 记成 13；26.1 未点燃炉光级 0）；
+        # 默认 lit=true 的成员（营火族、红石火把族）放置即点亮，查
+        # DEFAULT_LIT_LIGHT 保留光级。
         lm = (re.search(r"lightLevel\(\s*\w+ -> (\d+)\s*\)", props)
-              or re.search(r"litBlockEmission\((\d+)\)", props)
               or re.search(r"lightLevel\((\d+)\)", props))
         if lm:
             light = int(lm.group(1))
+        elif const in DEFAULT_LIT_LIGHT:
+            light = DEFAULT_LIT_LIGHT[const]
         e = {
             "const": const, "base_const": base,
             "strength": strength, "light": light,
@@ -398,12 +419,14 @@ def parse_java_blocks():
         if "candleProperties(" in body:
             e["strength"] = 0.1
             e["no_occlusion"] = True
-            # 烛发光仅限【没有显式 lightLevel】的方块：body 窗口会延伸到下一个
-            # 常量之前的私有辅助方法（candleProperties() 定义夹在 FIREFLY_BUSH
-            # 与后继常量之间），曾把 firefly_bush 的 lightLevel→2
-            # （Blocks.java:5846）误覆盖成 3。
+            # 蜡烛发光：CandleBlock.LIGHT_EMISSION = lit ? 3*candles : 0
+            # （CandleBlock.java:43），默认放置态 lit=false（:76）→ 放置即
+            # 熄灭不发光，点亮是后续玩家行为、引擎无方块状态不建模。
+            # （body 窗口会延伸到下一个常量之前的私有辅助方法——candleProperties()
+            # 定义夹在 FIREFLY_BUSH 与后继常量之间，故仅限无显式 lightLevel
+            # 的方块，避免把 firefly_bush 的恒发光 2 误覆盖。）
             if e["light"] is None:
-                e["light"] = 3  # CandleBlock.LIGHT_EMISSION = 3 * candles
+                e["light"] = 0
         if "flowerPotProperties(" in body:
             e["instabreak"] = True
             e["no_occlusion"] = True

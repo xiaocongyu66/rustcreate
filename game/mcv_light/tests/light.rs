@@ -760,12 +760,14 @@ fn golden_emit_table_torch_family_matches_26_1() {
         (
             "redstone_torch",
             7,
-            "Blocks.java:1589-1593 litBlockEmission(7)",
+            "Blocks.java:1589-1593 litBlockEmission(7) 按 LIT 态条件发光\
+             （Blocks.java:5853-5855），但默认放置态 LIT=true\
+             （RedstoneTorchBlock.java:40 registerDefaultState）→ 7",
         ),
         (
             "redstone_wall_torch",
             7,
-            "Blocks.java:1594-1597 litBlockEmission(7)",
+            "Blocks.java:1594-1597 wallVariant 复制同属性，默认点亮同上 → 7",
         ),
         ("glowstone", 15, "Blocks.java:1736-1744 lightLevel(15)"),
         ("sea_lantern", 15, "Blocks.java:2619-2627 lightLevel(15)"),

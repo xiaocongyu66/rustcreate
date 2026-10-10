@@ -3441,6 +3441,16 @@ impl GameRuntime {
         if !(0..256).contains(&target.y) {
             return;
         }
+        // 目标格可替换门（26.1 `BlockPlaceContext.canPlace`
+        // BlockPlaceContext.java:55-57 → `BlockState.canBeReplaced`
+        // BlockBehaviour.java:270-272/819-829：空气 ∥ Properties.replaceable
+        // ——雪层/植被/火/水岩浆族；判据表实现见 `BlockDef::is_replaceable`）。
+        // 原版 canPlace 失败即整个 useOn 中止——不放方块、不消耗手持
+        // （ItemStack.useOn → place 返回 FAIL 路径 shrink 不到），故本门置于
+        // 体素写与 take_one 之前：实心格点右键 = 无事发生。
+        if !self.block_at(target).def().is_replaceable() {
+            return;
+        }
         // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
         // （26.1 交互仅方块实现，其余走未实现的 useItem）。
         let place_id = {
@@ -6195,6 +6205,123 @@ mod tests {
         assert_eq!(rt2.player.hunger, 6.0);
         assert_eq!(rt2.player.health, 9.0);
         assert_eq!(rt2.air_supply(), 120);
+    }
+
+    // ---- 交互波 0：B1 基岩豁免 / B3 放置可替换校验 ----
+
+    /// 旧表 id：基岩（hardness=inf）、水、圆石（手持方块物品 = COBBLESTONE）。
+    const BEDROCK: u16 = 10;
+    const WATER: u16 = 5;
+
+    /// 把脚下方格 (8,69,8) 写成指定方块（lit_chunk 装配的石柱地表）。
+    fn set_under_player(rt: &mut GameRuntime, id: u16) {
+        let h = &rt.chunks[&ChunkPos::new(0, 0)];
+        h.voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(id);
+    }
+
+    /// 俯视脚下（pitch=−1 朝下，eye≈72.62 垂直射线必中 (8,69,8) 顶面）。
+    fn look_down(rt: &mut GameRuntime) {
+        rt.player.pitch = -1.0;
+        rt.player.yaw = 0.0;
+    }
+
+    /// B1 基岩豁免（26.1 `strength(-1)` Blocks.java:193-196 →
+    /// getDestroyProgress 恒 0，BlockBehaviour.java:355-359）：生存按住左键
+    /// 20 秒，挖掘状态机不得起头、基岩纹丝不动；创造按下秒破
+    /// （`abilities.instabuild` 先于硬度判定，ServerPlayerGameMode.java:172-175）。
+    #[test]
+    fn survival_cannot_mine_bedrock_creative_can() {
+        let mut rt = playing_rt("b1-bedrock");
+        // 脚下方格写成基岩（放置链路由 placement_requires_replaceable_target
+        // 覆盖，此处直接落体素，聚焦挖掘侧）。
+        look_down(&mut rt);
+        set_under_player(&mut rt, BEDROCK);
+        // 生存按住挖 400 tick：per=0 起不了手，方块不掉。
+        rt.on_left_press();
+        rt.input.mining = true;
+        for _ in 0..400 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        assert!(rt.mine.pos.is_none(), "不可破坏方块不得进入挖掘状态");
+        assert_eq!(rt.mine.progress, 0.0);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            BlockId(BEDROCK),
+            "生存 400 tick 后基岩仍在"
+        );
+        // 创造按下 = 无视硬度秒破（instabuild 门，无 destroyProgress 参与）。
+        rt.input.mining = false;
+        rt.mode = GameMode::Creative;
+        rt.on_left_press();
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            BlockId(0),
+            "创造必须能破基岩（26.1 实况：instabuild 先于硬度判定）"
+        );
+    }
+
+    /// B3 放置可替换校验（26.1 `BlockPlaceContext.canPlace` :55-57 →
+    /// `canBeReplaced` = 空气 ∥ `Properties.replaceable()`）：目标格实心
+    /// 拒放（不写体素、不扣手持）；空气成功；水（replaceable+liquid）
+    /// 被替换。判据表实现 = `BlockDef::is_replaceable`（名单锁定测试见
+    /// mcv_core::lib 的 is_replaceable_matches_vanilla_property）。
+    #[test]
+    fn placement_requires_replaceable_target() {
+        let mut rt = playing_rt("b3-replace");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
+        look_down(&mut rt);
+        // ① 空气目标：脚底格 (8,70,8) 成功放置并消耗（回归基线）。
+        rt.interact(true);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
+            9,
+            "空气格应放得下方块"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 1, "成功放置消耗一格");
+        // ② 实心目标：俯视脚底基岩，目标格 = (8,70,8) 现是圆石实心 →
+        //    拒放：不写体素、不扣物品（26.1 canPlace=false → useOn 中止）。
+        set_under_player(&mut rt, BEDROCK);
+        rt.interact(true);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
+            9,
+            "实心格不可替换，不得改写"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 1, "拒放不消耗手持（不发放置）");
+        // ③ 水目标：拆掉圆石，(8,70,8) 灌入水。水射线不可拾取（Pick 判据
+        //    solid=false），射线穿透打到 (8,69,8) 石顶 → 目标格 = 水格 →
+        //    可替换，放置成功替换水并消耗。
+        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 70, 8)] = BlockId(0);
+        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(STONE);
+        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 70, 8)] = BlockId(WATER);
+        rt.hotbar.slots[0].count = 2;
+        rt.interact(true);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
+            9,
+            "水可替换：放置替换水（26.1 water .replaceable() Blocks.java:202）"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 1, "替换水成功消耗一格");
+    }
+
+    /// B3 玩家碰撞门回归锁：目标格与玩家 AABB 相交（脚下站立格）时拒放
+    /// 不消耗——旧行为保持，且现在先被可替换门前置拦截亦同结果。
+    #[test]
+    fn placement_into_player_cell_not_consumed() {
+        let mut rt = playing_rt("b3-self");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
+        // 平视打不到脚下格：直接构造命中——俯视时命中 (8,69,8) 顶面，
+        // 目标格 = (8,70,8) = 玩家脚部所在格。
+        look_down(&mut rt);
+        rt.interact(true);
+        assert_eq!(
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)],
+            BlockId(0),
+            "玩家占格不可放置"
+        );
+        assert_eq!(rt.hotbar.slots[0].count, 2, "拒放不消耗");
     }
 }
 
