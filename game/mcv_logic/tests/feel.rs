@@ -395,3 +395,139 @@ fn swimming_state_machine_matches_update_swimming() {
     assert!(!swimming_tick(false, true, true, true, true, true));
     assert!(!swimming_tick(true, true, true, true, true, true));
 }
+
+/// 测试用：按注册名查方块 id（与 engine tests/physics.rs::id_of 同款）。
+fn id_of(name: &str) -> u16 {
+    (0..mcv_core::BLOCKS.len() as u16)
+        .find(|i| mcv_core::BLOCKS[*i as usize].name == name)
+        .unwrap()
+}
+
+/// 单区块世界（x/z 0..15）：`floor_max_x` 列以内铺 y≤9 石头地表。
+fn floor_chunk(floor_max_x: i32) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
+    {
+        let mut v = h.voxels.write().unwrap();
+        for x in 0..floor_max_x {
+            for z in 0..16 {
+                for y in 0..=9usize {
+                    v[(y << 8) | (z << 4) | x as usize] = BlockId(1);
+                }
+            }
+        }
+    }
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+fn walk_world(h: Arc<ChunkHandle>) -> HashMap<ChunkPos, Arc<ChunkHandle>> {
+    let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    chunks.insert(ChunkPos::new(0, 0), h);
+    chunks
+}
+
+#[test]
+fn step_height_is_vanilla_06() {
+    // Attributes.java:85-86 STEP_HEIGHT 默认 0.6（派单「我们 0.5」为误，
+    // 本仓此前无步高机制——见 consts.rs 注释）。
+    assert_eq!(mcv_game::consts::STEP_HEIGHT, 0.6);
+}
+
+#[test]
+fn walk_up_half_slab_without_jumping() {
+    // 自动上台阶（Entity.collide:1089-1106）：候选 = 脚底上方 ≤0.6 的
+    // 碰撞面。下半砖 0.5 ≤ 0.6 → 平地走路（不按跳）应登上。
+    let h = floor_chunk(16);
+    {
+        let slab = id_of("oak_slab");
+        let mut v = h.voxels.write().unwrap();
+        for z in 0..16usize {
+            v[(10 << 8) | (z << 4) | 5] = BlockId(slab); // state 0 = 下半砖
+        }
+    }
+    let chunks = walk_world(h);
+    let view = WorldView { chunks: &chunks };
+    let mut p = Player::default();
+    p.pos = Vec3::new(3.0, 10.0, 8.0);
+    let input = StepInput {
+        wish_dir: Vec3::X,
+        sprint: true,
+        ..Default::default()
+    };
+    // 单列半砖走过去还会走下来，所以验「600 步内存在踏上砖面的一瞬」
+    // （原版行为：踏上 → 走过 → 走下）。
+    let mut climbed = false;
+    for _ in 0..600 {
+        step(&view, &mut p, &input);
+        if p.pos.y > 10.45 && p.on_ground {
+            climbed = true;
+            break;
+        }
+    }
+    assert!(climbed, "600 步内应不跳登上半砖（STEP_HEIGHT 0.6 ≥ 0.5）");
+    assert!(
+        p.pos.y > 10.45 && p.pos.y < 10.6,
+        "半砖顶 10.5，got {}",
+        p.pos.y
+    );
+    assert!(p.pos.x > 4.6, "登临点在半砖列前缘，got {}", p.pos.x);
+}
+
+#[test]
+fn full_block_still_blocks_walking() {
+    // 1.0 > STEP_HEIGHT 0.6 → 无候选高度，走路撞墙不登（对比跳上一格台阶
+    // 既有测试 physics_calib::jump_onto_one_block）。
+    let h = floor_chunk(16);
+    {
+        let mut v = h.voxels.write().unwrap();
+        for z in 0..16usize {
+            v[(10 << 8) | (z << 4) | 5] = BlockId(1); // 整块石头
+        }
+    }
+    let chunks = walk_world(h);
+    let view = WorldView { chunks: &chunks };
+    let mut p = Player::default();
+    p.pos = Vec3::new(3.0, 10.0, 8.0);
+    let input = StepInput {
+        wish_dir: Vec3::X,
+        sprint: true,
+        ..Default::default()
+    };
+    for _ in 0..600 {
+        step(&view, &mut p, &input);
+    }
+    assert!(p.pos.y < 10.05, "不登整块，got {}", p.pos.y);
+    assert!(p.pos.x < 4.8, "停在墙前，got {}", p.pos.x);
+}
+
+#[test]
+fn sneak_edge_guard_blocks_falling() {
+    // 潜行防跌落（Player.maybeBackOffFromEdge，Player.java:880-933）：
+    // 地表止于 x=8（体素 0..=7），潜行走向边缘停在沿口、不坠；对照组
+    // 不潜行则走出边缘下落。
+    let mk = |sneak: bool| {
+        let chunks = walk_world(floor_chunk(8));
+        let view = WorldView { chunks: &chunks };
+        let mut p = Player::default();
+        p.pos = Vec3::new(5.0, 10.0, 8.0);
+        let input = StepInput {
+            wish_dir: Vec3::X,
+            sneak,
+            sprint: true,
+            ..Default::default()
+        };
+        for _ in 0..600 {
+            step(&view, &mut p, &input);
+        }
+        (p.pos.x, p.pos.y)
+    };
+    let (xs, ys) = mk(true);
+    assert!(ys > 9.9, "潜行不掉下去，got y={ys}");
+    assert!(xs > 7.0, "应走到近沿口，got x={xs}");
+    // AABB 后缘不能完全离开支撑面（canFallAtLeast 盒内缩 1e-7）：
+    // 中心 ≤ 8.3 − ε（半宽 0.3）。
+    assert!(xs < 8.35, "停在沿口内，got x={xs}");
+    let (xn, yn) = mk(false);
+    assert!(yn < 9.5, "不潜行走出边缘应下坠，got y={yn}");
+    assert!(xn > xs, "对照组走得更远");
+}

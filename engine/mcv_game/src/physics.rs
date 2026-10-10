@@ -245,6 +245,152 @@ fn headroom_clear(world: &dyn VoxelAccess, pos: Vec3, rise: f32) -> bool {
     true
 }
 
+/// 潜行边缘判定：把 `aabb`（含水平位移后的脚底盒）压平为脚底平面、
+/// 沿 -Y 扩 `max_down`（原版 canFallAtLeast 的探测盒，Player.java:935-946
+/// `AABB(minX+1e-7+dx, minY-maxDown-1e-7, ..., maxX-1e-7+dx, minY, ...)`），
+/// 范围内**无任何碰撞形状 = 可以跌落** 返回 true。
+fn can_fall_at(world: &dyn VoxelAccess, aabb: &Aabb, dx: f32, dz: f32, max_down: f32) -> bool {
+    let eps = 1e-7f32;
+    let probe = Aabb {
+        min: Vec3::new(
+            aabb.min.x + eps + dx,
+            aabb.min.y - max_down - eps,
+            aabb.min.z + eps + dz,
+        ),
+        max: Vec3::new(aabb.max.x - eps + dx, aabb.min.y, aabb.max.z - eps + dz),
+    };
+    let mut boxes = [blockshapes::EMPTY_AABB; blockshapes::MAX_SHAPE_BOXES];
+    for bx in probe.min.x.floor() as i32..=probe.max.x.floor() as i32 {
+        for by in probe.min.y.floor() as i32..=probe.max.y.floor() as i32 {
+            for bz in probe.min.z.floor() as i32..=probe.max.z.floor() as i32 {
+                if !probe.intersects_voxel(bx, by, bz) {
+                    continue;
+                }
+                let n = blockshapes::collision_boxes(world, BlockPos::new(bx, by, bz), &mut boxes);
+                for b in &boxes[..n] {
+                    if probe.overlaps(b) {
+                        return false; // 有支撑，掉不下去
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// 潜行防跌落（26.1 `Player.maybeBackOffFromEdge`，Player.java:880-933，
+/// 在 `Entity.move` 碰撞前对 delta 生效，Entity.java:737）：X、Z 各自
+/// 0.05 步长回缩到「不再悬空」，双轴合走再回缩一轮。原版步长 0.05 块
+/// /tick（Player.java:889-891），本函数在 60 Hz 步内对当步子位移
+/// （≤0.1 块）同规则处理——循环至多一两轮，语义等价。
+fn edge_back_off(
+    world: &dyn VoxelAccess,
+    aabb: &Aabb,
+    mut dx: f32,
+    mut dz: f32,
+    max_down: f32,
+) -> (f32, f32) {
+    const STEP: f32 = 0.05; // Player.java:889
+    while dx != 0.0 && can_fall_at(world, aabb, dx, 0.0, max_down) {
+        if dx.abs() <= STEP {
+            dx = 0.0;
+            break;
+        }
+        dx -= dx.signum() * STEP;
+    }
+    while dz != 0.0 && can_fall_at(world, aabb, 0.0, dz, max_down) {
+        if dz.abs() <= STEP {
+            dz = 0.0;
+            break;
+        }
+        dz -= dz.signum() * STEP;
+    }
+    while dx != 0.0 && dz != 0.0 && can_fall_at(world, aabb, dx, dz, max_down) {
+        if dx.abs() <= STEP {
+            dx = 0.0;
+        } else {
+            dx -= dx.signum() * STEP;
+        }
+        if dz.abs() <= STEP {
+            dz = 0.0;
+        } else {
+            dz -= dz.signum() * STEP;
+        }
+    }
+    (dx, dz)
+}
+
+/// 自动上台阶重试（26.1 `Entity.collide`，Entity.java:1080-1106 +
+/// `collectCandidateStepUpHeights` :1111-1136）：水平被挡且站地时，取
+/// 移动方向扩展、上抬 [`consts::STEP_HEIGHT`] 范围内的碰撞盒顶面为候选
+/// 高度，升序逐个「抬 h 后重走完整位移（Y 先，水平序同主路径）」，
+/// 第一个比本次实际水平位移更远的候选即采纳（原版 :1101 的
+/// horizontalDistanceSqr 比较）。返回 (落位盒, 水平速度)。
+/// 半砖 0.5 可登上，整块 1.0 > 0.6 无候选、维持撞墙。
+fn try_step_up(
+    world: &dyn VoxelAccess,
+    grounded: &Aabb,
+    moved: &Aabb,
+    dx: f32,
+    dz: f32,
+    vx0: f32,
+    vz0: f32,
+) -> Option<(Aabb, f32, f32)> {
+    let max_up = consts::STEP_HEIGHT;
+    // 候选收集（Entity.java:1090-1136：stepUpAABB = grounded 沿移动方向
+    // 扩 dx/dz、上抬 maxUpStep；候选 = 碰撞盒顶面 − 脚底，(0, maxUp]）。
+    let mut boxes = [blockshapes::EMPTY_AABB; blockshapes::MAX_SHAPE_BOXES];
+    let mut cand: Vec<f32> = Vec::new();
+    let ex0 = grounded.min.x.min(grounded.min.x + dx);
+    let ex1 = grounded.max.x.max(grounded.max.x + dx);
+    let ez0 = grounded.min.z.min(grounded.min.z + dz);
+    let ez1 = grounded.max.z.max(grounded.max.z + dz);
+    for bx in ex0.floor() as i32..=ex1.floor() as i32 {
+        for by in grounded.min.y.floor() as i32..=(grounded.max.y + max_up).floor() as i32 {
+            for bz in ez0.floor() as i32..=ez1.floor() as i32 {
+                let n = blockshapes::collision_boxes(world, BlockPos::new(bx, by, bz), &mut boxes);
+                for b in &boxes[..n] {
+                    let rel = b.max.y - grounded.min.y;
+                    if rel > 1e-3 && rel <= max_up && !cand.contains(&rel) {
+                        cand.push(rel);
+                    }
+                }
+            }
+        }
+    }
+    if cand.is_empty() {
+        return None;
+    }
+    cand.sort_by(f32::total_cmp); // FloatArrays.unstableSort（:1134 升序）
+    // 本次实际水平位移（movementStep.horizontalDistance，比较基准 :1101）。
+    let gx = (moved.min.x + moved.max.x - grounded.min.x - grounded.max.x) * 0.5;
+    let gz = (moved.min.z + moved.max.z - grounded.min.z - grounded.max.z) * 0.5;
+    let base = gx * gx + gz * gz;
+    for &h in &cand {
+        let mut tb = *grounded;
+        let mut tpos = tb.feet_center();
+        let mut tvel = Vec3::new(vx0, 0.0, vz0);
+        // 重试向量 (dx, h, dz)：Y 恒最先（collideWithShapes，
+        // Entity.java:1168-1183），水平序同主路径。抬升加 SKIN 余量：
+        // 浮点舍入若把盒底落到台阶面下方 1ulp，会被严格重叠判挡住重试
+        // （原版无此问题：Y 碰撞不留间隙，minY 精确等于顶面）。
+        move_box(world, &mut tpos, &mut tvel, &mut tb, Axis::Y, h + SKIN);
+        if dx.abs() < dz.abs() {
+            move_box(world, &mut tpos, &mut tvel, &mut tb, Axis::Z, dz);
+            move_box(world, &mut tpos, &mut tvel, &mut tb, Axis::X, dx);
+        } else {
+            move_box(world, &mut tpos, &mut tvel, &mut tb, Axis::X, dx);
+            move_box(world, &mut tpos, &mut tvel, &mut tb, Axis::Z, dz);
+        }
+        let rx = (tb.min.x + tb.max.x - grounded.min.x - grounded.max.x) * 0.5;
+        let rz = (tb.min.z + tb.max.z - grounded.min.z - grounded.max.z) * 0.5;
+        if rx * rx + rz * rz > base + 1e-12 {
+            return Some((tb, tvel.x, tvel.z));
+        }
+    }
+    None
+}
+
 pub fn move_axis(
     world: &dyn VoxelAccess,
     player: &mut Player,
@@ -395,14 +541,31 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
     let hit_y = move_axis(world, player, &mut aabb, Axis::Y, player.vel.y * dt);
     // -Y 命中且此前在下落 → 站在地面；否则离地。
     player.on_ground = falling && hit_y;
+    // 当步子位移。原版 `Entity.move` 先过 maybeBackOffFromEdge 再拿回缩后
+    // 的 delta 去碰撞（Entity.java:737），轴序也按回缩后的分量取——这里
+    // 同序：先潜行边缘回缩，再按回缩值定轴序。
+    let mut dx = player.vel.x * dt;
+    let mut dz = player.vel.z * dt;
+    // 潜行防跌落（Player.maybeBackOffFromEdge，Player.java:880-933）：
+    // 原版门 = 不飞行 + delta.y ≤ 0 + isStayingOnGroundSurface()
+    // (=isShiftKeyDown，Player.java:299-301) + isAboveGround(maxDownStep)
+    // （:931-933）。本仓用本步 Y 位移后的 on_ground 近似 isAboveGround
+    // （原版在坠落下落的最后 <0.6 m 段内同样生效，差异 <0.03 s，登记）。
+    if input.sneak && !player.flying && player.vel.y <= 0.0 && player.on_ground {
+        let (sx, sz) = edge_back_off(world, &aabb, dx, dz, consts::STEP_HEIGHT);
+        dx = sx;
+        dz = sz;
+    }
+    let grounded = aabb; // Y 落定后的盒（原版 groundedAABB，Entity.java:1089）
+    let (vx0, vz0) = (player.vel.x, player.vel.z);
     let hit_x;
     let hit_z;
-    if player.vel.x.abs() < player.vel.z.abs() {
-        hit_z = move_axis(world, player, &mut aabb, Axis::Z, player.vel.z * dt);
-        hit_x = move_axis(world, player, &mut aabb, Axis::X, player.vel.x * dt);
+    if dx.abs() < dz.abs() {
+        hit_z = move_axis(world, player, &mut aabb, Axis::Z, dz);
+        hit_x = move_axis(world, player, &mut aabb, Axis::X, dx);
     } else {
-        hit_x = move_axis(world, player, &mut aabb, Axis::X, player.vel.x * dt);
-        hit_z = move_axis(world, player, &mut aabb, Axis::Z, player.vel.z * dt);
+        hit_x = move_axis(world, player, &mut aabb, Axis::X, dx);
+        hit_z = move_axis(world, player, &mut aabb, Axis::Z, dz);
     }
     let horizontal_collision = hit_x || hit_z;
     player.pos = Vec3::new(
@@ -410,6 +573,22 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
         aabb.min.y,
         (aabb.min.z + aabb.max.z) * 0.5,
     );
+
+    // ---- 自动上台阶（Entity.collide，Entity.java:1080-1106）----
+    // 条件：maxUpStep > 0 &&（本步落地或站地）&& 水平碰撞。原版上台阶
+    // 只裁位置不动 deltaMovement（水平速度保留）；重试盒若二次撞墙，
+    // move_box 已把对应分量清零，直接采纳其结果。
+    if horizontal_collision
+        && (player.on_ground || (falling && hit_y))
+        && let Some((tb, tvx, tvz)) = try_step_up(world, &grounded, &aabb, dx, dz, vx0, vz0)
+    {
+        player.pos = tb.feet_center();
+        player.vel.x = tvx;
+        player.vel.z = tvz;
+        // 抬上台阶面即视为站地（原版靠下一 tick Y 位移复核，这里同帧
+        // 置位让跳跃/步进节奏不断档）。
+        player.on_ground = true;
+    }
 
     // --- 速度积分 ---
     // 原版 moveRelative/getInputVector 只在输入模长 >1 时归一化
