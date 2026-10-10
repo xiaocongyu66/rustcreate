@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
-use winit::event::{ElementState, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::{Window, WindowId};
@@ -84,6 +84,9 @@ const SPLASHES: [&str; 10] = [
 /// GUI 整数缩放(统一走 mcv_render::gui_scale)。
 use mcv_render::gui_scale;
 
+/// 快捷栏槽数（26.1 `Inventory.getSelectionSize()` = 9）。
+const HOTBAR_SIZE: usize = 9;
+
 const SETTINGS_MIN_DIST: i32 = 4;
 const SETTINGS_MAX_DIST: i32 = 16;
 
@@ -146,6 +149,9 @@ struct AppState {
     focus_lost_at: Option<std::time::Instant>,
     /// C-2（波#127-3）：Android 挂起前的主增益（后台静音，回前台恢复）。
     gain_before_suspend: Option<f32>,
+    /// D-6（波#127-5）：滚轮换槽累计器（原版 `ScrollWheelHandler` 移植，
+    /// 见 [`mcv_platform::keybind::ScrollWheelSelection`]）。
+    scroll_hotbar: mcv_platform::keybind::ScrollWheelSelection,
     /// I-21（波#127-4）：桌面右键按住态（周期发火的 held 输入之一）。
     right_use_held: bool,
     /// I-21：触摸放置键上一帧按住态（检测按下沿置 rightClickDelay）。
@@ -2326,6 +2332,35 @@ impl ApplicationHandler for AppState {
                         }
                     }
                     _ => {}
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                // D-6（波#127-5）：滚轮换快捷栏（26.1 MouseHandler.java:202-221
+                // → ScrollWheelHandler）。原版只有 screen==null 走换槽分支
+                // （:204-206 有屏时滚轮归屏幕）→ 本仓门 InGame；旁观/飞行
+                // 调速分支无对应机制不实现（I-35）。
+                if self.screen != Screen::InGame {
+                    return;
+                }
+                let Some(runtime) = self.runtime.as_mut() else {
+                    return;
+                };
+                if runtime.phase == mcv_logic::game::GamePhase::Loading || runtime.dead {
+                    return;
+                }
+                // 原版 mouseWheelSensitivity 默认 1.0（Options.java:445-451
+                // logMouse(0)=10^0）→ 一格换一槽；行滚动按原版离散语义取
+                // 整格值，像素滚动（触控板）按 100px/格折算（winit 不定义
+                // 离散格宽，自设换算，登记注记）。
+                let (dx, dy) = match delta {
+                    MouseScrollDelta::LineDelta(x, y) => (x as f64, y as f64),
+                    MouseScrollDelta::PixelDelta(p) => (p.x / 100.0, p.y / 100.0),
+                };
+                if let Some(slot) =
+                    self.scroll_hotbar
+                        .select(dx, dy, runtime.player.sel_slot, HOTBAR_SIZE)
+                {
+                    runtime.player.sel_slot = slot;
                 }
             }
             WindowEvent::RedrawRequested => {
