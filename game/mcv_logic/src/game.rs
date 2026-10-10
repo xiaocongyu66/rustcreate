@@ -23,10 +23,10 @@ use mcv_render::{Camera, HudQuad, text};
 
 pub const RENDER_DIST: i32 = 8;
 
-/// 世界竖直下界（体素布局 y 索引 ∈ 0..mcv_core::CHUNK_SY，方块/查询
-/// 均以 0 为底——`Level.getMinY()` 语义，Entity.checkBelowWorld 的
-/// 参照常数）。
-pub const WORLD_MIN_Y: f32 = 0.0;
+/// 世界竖直下界（f32 视图；唯一定义源是 [`mcv_core::WORLD_MIN_Y`]，
+/// `Level.getMinY()` 语义，Entity.checkBelowWorld 的参照常数——v6：−64，
+/// 本处仅 re-export 给物理/虚空伤害等 f32 域消费）。
+pub const WORLD_MIN_Y: f32 = mcv_core::WORLD_MIN_Y as f32;
 
 /// 游戏模式（存档 meta.mode 字段值对应）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -81,17 +81,18 @@ impl RustMesher {
 impl ChunkMesher for RustMesher {
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
         // Copy the 9 neighbourhoods out (locks taken one at a time).
-        let mut voxels = vec![0u16; 9 * 65536];
-        let mut lights = vec![0xF0; 9 * 65536]; // sky=15 until light wires in
+        let vol = mcv_core::CHUNK_VOL;
+        let mut voxels = vec![0u16; 9 * vol];
+        let mut lights = vec![0xF0; 9 * vol]; // sky=15 until light wires in
         for (i, h) in handles.iter().enumerate() {
-            voxels[i * 65536..(i + 1) * 65536]
+            voxels[i * vol..(i + 1) * vol]
                 .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
-            lights[i * 65536..(i + 1) * 65536].copy_from_slice(&h.light.read().unwrap()[..]);
+            lights[i * vol..(i + 1) * vol].copy_from_slice(&h.light.read().unwrap()[..]);
         }
         let slots: [Option<mcv_mesher::Slot>; 9] = std::array::from_fn(|i| {
             Some(mcv_mesher::Slot {
-                voxels: &voxels[i * 65536..(i + 1) * 65536],
-                light: &lights[i * 65536..(i + 1) * 65536],
+                voxels: &voxels[i * vol..(i + 1) * vol],
+                light: &lights[i * vol..(i + 1) * vol],
             })
         });
         let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
@@ -124,10 +125,10 @@ impl VoxelAccess for WorldView<'_> {
     /// 区外查询（mob 远景射线、缺块粒子等）得空气=原版该区不 tick 的
     /// 等价近似（ServerLevel.java:419），不再是假石头。
     fn block(&self, p: BlockPos) -> BlockId {
-        // y 出界 = 虚空空气（coords 审计 P2：`local()` 的 rem_euclid(256)
-        // 会把 y≥256 / y<0 绕回同列另一端 → 显示≠真实的幽灵方块/隐形
-        // 地板；原版越界一律 VOID_AIR，Level.java:361-363）。
-        if p.y < 0 || p.y >= 256 {
+        // y 出界 = 虚空空气（coords 审计 P2：界外索引会绕回同列另一端 →
+        // 显示≠真实的幽灵方块/隐形地板；原版越界一律 VOID_AIR，
+        // Level.java:361-363）。v6：界门换绝对 [WORLD_MIN_Y, WORLD_MAX_Y)。
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
             return BlockId(0);
         }
         let Some(chunk) = self.chunks.get(&p.chunk()) else {
@@ -136,22 +137,22 @@ impl VoxelAccess for WorldView<'_> {
         if chunk.stage() == Stage::Empty {
             return BlockId(0); // terrain not committed yet — same treatment
         }
-        let [lx, ly, lz] = p.local();
-        chunk.voxels.read().unwrap()[ly << 8 | lz << 4 | lx]
+        let [lx, _, lz] = p.local();
+        chunk.voxels.read().unwrap()[mcv_core::vidx(lx, p.y, lz)]
     }
 
     /// 真实光照（原「恒 15」M4 死桩已清）：返回 sky/block 较亮者的
     /// 0..15 亮度，与 [`Self::chunk_loaded`] 无关——缺块给满亮天空，
     /// 对齐 Particle.java:184-187 hasChunkAt=false → 0xF 天光语义。
     fn light(&self, p: BlockPos) -> u8 {
-        if p.y < 0 || p.y >= 256 {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
             return 15; // 虚空：满亮（同下缺块分支）
         }
         let c = p.chunk();
         match self.chunks.get(&c) {
             Some(chunk) if chunk.stage() != Stage::Empty => {
-                let [lx, ly, lz] = p.local();
-                let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+                let [lx, _, lz] = p.local();
+                let v = chunk.light.read().unwrap()[mcv_core::vidx(lx, p.y, lz)];
                 (v & 0xF).max(v >> 4)
             }
             _ => 15,
@@ -182,13 +183,13 @@ impl mcv_render::particles::ParticleWorld for ParticleRt<'_> {
 
     fn light_at(&self, x: i32, y: i32, z: i32) -> (u8, u8) {
         let p = BlockPos::new(x, y, z);
-        if p.y < 0 || p.y >= 256 {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&y) {
             return (15, 15); // 虚空满亮（y 出界不绕回，coords P2）
         }
         match self.chunks.get(&p.chunk()) {
             Some(c) if c.stage() != Stage::Empty => {
-                let [lx, ly, lz] = p.local();
-                let v = c.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+                let [lx, _, lz] = p.local();
+                let v = c.light.read().unwrap()[mcv_core::vidx(lx, y, lz)];
                 (v & 0xF, v >> 4)
             }
             _ => (15, 15),
@@ -265,7 +266,7 @@ fn relight_block_edit(
     if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
         return;
     }
-    let [lx, ly, lz] = target.local();
+    let [lx, _, lz] = target.local();
     let mut seeds = Vec::new();
     let mask = {
         let vg = handle.voxels.read().unwrap();
@@ -277,8 +278,9 @@ fn relight_block_edit(
             light: &mut lg[..],
             heightmap: &hg[..],
         };
+        // v6：update_block 的 y 为绝对世界 y（x/z 为区块内局部）。
         mcv_light::update_block(
-            &mut view, lx as u32, ly as u32, lz as u32, old_id, new_id, &mut seeds,
+            &mut view, lx as u32, target.y, lz as u32, old_id, new_id, &mut seeds,
         )
     };
     // BorderSeed 是格级差分记录；跨区块协议以整条边快照
@@ -1527,7 +1529,8 @@ impl GameRuntime {
         };
         let voxels = handle.voxels.read().unwrap();
         let ids = bytemuck::cast_slice(voxels.as_slice());
-        if let Err(e) = region.save_chunk(local, ids) {
+        let hm = handle.heightmap.read().unwrap();
+        if let Err(e) = region.save_chunk(local, ids, &hm) {
             log::error!("chunk save failed {pos:?}: {e}");
             return false;
         }
@@ -2018,15 +2021,18 @@ impl GameRuntime {
             Ok(r) => r,
             Err(_) => return false,
         };
-        let mut ids = vec![0u16; 65536];
+        let mut ids = vec![0u16; mcv_core::CHUNK_VOL];
+        let mut hm = [mcv_core::WORLD_MIN_Y; 256];
         if region
-            .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut ids)
+            .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut ids, &mut hm)
             .is_err()
         {
-            return false;
+            return false; // 缺记录/版本不符（v1/v2）→ 回退生成器
         }
         *handle.voxels.write().unwrap() = load_voxels(&ids);
-        *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
+        // v3 起 heightmap 随记录落盘（原版做法：Heightmap.java:138
+        // getRawData 直存 NBT，读盘不重算）；直接采纳盘上值。
+        *handle.heightmap.write().unwrap() = Box::new(hm);
         handle.advance_to(Stage::TerrainReady);
         true
     }
@@ -3341,12 +3347,15 @@ impl GameRuntime {
                 continue; // 原版 hasChunk 门（getPrecipitationAt :283-285）
             }
             let mut top = self.surface_at(x, z);
-            if top <= 0 {
-                continue; // 原版 heightmapPos.getY() > minY 门（:238）
+            if top <= mcv_core::WORLD_MIN_Y {
+                continue; // 原版 heightmapPos.getY() > minY 门（:238；v6：
+                          // 全空列哨兵 = WORLD_MIN_Y，绝对域下即拒）
             }
             // heightmap 不计流体（recompute_heightmap 基线）→ 上溯流体面
             // （原版 particleY = max(blockTop, fluidTop)，:252-254）。
-            while top < 255 && self.block_at(BlockPos::new(x, top, z)).def().liquid {
+            while top < mcv_core::WORLD_MAX_Y - 1
+                && self.block_at(BlockPos::new(x, top, z)).def().liquid
+            {
                 top += 1;
             }
             if top > cam.y + 10 || top < cam.y - 10 {
@@ -3430,10 +3439,9 @@ impl GameRuntime {
             return;
         }
         let target = BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2]);
-        // y 出界拒绝（coords 审计 P2：`local()` 按 rem_euclid(256) 折回，
-        // 顶面 255 上再放会写进 y=0——显示≠真实）；原版 build 高度界外
-        // 不可放置/破坏。
-        if !(0..256).contains(&target.y) {
+        // y 出界拒绝（coords 审计 P2：界外索引绕回同列另一端——显示≠
+        // 真实）；原版 build 高度界外不可放置/破坏。v6：界门走绝对域。
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&target.y) {
             return;
         }
         // 目标格可替换门（26.1 `BlockPlaceContext.canPlace`
@@ -3473,8 +3481,8 @@ impl GameRuntime {
             return;
         }
         if let Some(handle) = self.chunks.get(&target.chunk()) {
-            let [lx, ly, lz] = target.local();
-            let idx = ly << 8 | lz << 4 | lx;
+            let [lx, _, lz] = target.local();
+            let idx = mcv_core::vidx(lx, target.y, lz);
             let old_id = handle.voxels.read().unwrap()[idx];
             // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
             // 网格与碰撞按 mcv_core::BlockId::state 读取。
@@ -3612,15 +3620,15 @@ impl GameRuntime {
     /// （26.1 destroyBlock 三段拆门：掉落与记账走 `hasCorrectToolForDrops`，
     /// 耐久走 `mineBlock` 独立段）+ break 音效。挖掘进度完成与创造秒破共用。
     fn destroy_block(&mut self, target: BlockPos) {
-        // y 出界拒绝（同 interact 放置；防 local() 绕回删到同列另一端）。
-        if !(0..256).contains(&target.y) {
+        // y 出界拒绝（同 interact 放置；防界外索引绕回删到同列另一端）。
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&target.y) {
             return;
         }
         let Some(handle) = self.chunks.get(&target.chunk()) else {
             return;
         };
-        let [lx, ly, lz] = target.local();
-        let idx = ly << 8 | lz << 4 | lx;
+        let [lx, _, lz] = target.local();
+        let idx = mcv_core::vidx(lx, target.y, lz);
         let old = handle.voxels.read().unwrap()[idx];
         if old.0 == 0 {
             return;
@@ -3882,8 +3890,11 @@ impl GameRuntime {
         if chunk.stage() == Stage::Empty {
             return (0, 0);
         }
-        let [lx, ly, lz] = p.local();
-        let v = chunk.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
+            return (0, 0); // 界外按缺格保守全黑（缺块分支同值）
+        }
+        let [lx, _, lz] = p.local();
+        let v = chunk.light.read().unwrap()[mcv_core::vidx(lx, p.y, lz)];
         (v & 0xF, v >> 4)
     }
 
@@ -4437,8 +4448,11 @@ fn chunk_light(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, p: BlockPos) -> (u8
     let Some(h) = chunks.get(&p.chunk()) else {
         return (0, 0);
     };
-    let [lx, ly, lz] = p.local();
-    let b = h.light.read().unwrap()[ly << 8 | lz << 4 | lx];
+    if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
+        return (0, 0); // 界外全黑（未点亮列保守值同分支）
+    }
+    let [lx, _, lz] = p.local();
+    let b = h.light.read().unwrap()[mcv_core::vidx(lx, p.y, lz)];
     (b >> 4, b & 0xF)
 }
 
@@ -4987,17 +5001,17 @@ fn player_aabb(pos: &Vec3) -> (Vec3, Vec3) {
 /// 与原版对照：流体不计（OCEAN_FLOOR 语义，lib.rs recompute 注释），
 /// 花/火把/玻璃等 damp0 不计——原版逐格向下扫的 isFaceFull(:170) 由
 /// 下面的地面形状判定 + 脚头空间判定共同承载。
-fn spawn_column_feet_y(voxels: &[BlockId], hm: &[u8], lx: usize, lz: usize) -> Option<i32> {
+fn spawn_column_feet_y(voxels: &[BlockId], hm: &[i16], lx: usize, lz: usize) -> Option<i32> {
     let gy = i32::from(hm[(lz << 4) | lx]) - 1;
-    // gy<0：hm=0（仅 y=255 顶环绕可致，recompute 的 u8 上界遗留）；gy>253：
-    // gy+2 头位越出世界顶。两者皆无脚头空间可言。全空列走不到这里——
-    // recompute 对空列回落 hm=1、地面判定（下方）已经拒绝。
-    if !(0..=253).contains(&gy) {
+    // gy<WORLD_MIN_Y：全空列（heightmap 空列哨兵 = WORLD_MIN_Y，gy=-65，
+    // 地面判定同拒）；gy>WORLD_MAX_Y−3：gy+2 头位越出世界顶。两者皆无
+    // 脚头空间可言（v6：heightmap i16 绝对 y，无 u8 环绕）。
+    if !(mcv_core::WORLD_MIN_Y..=(mcv_core::WORLD_MAX_Y - 3)).contains(&gy) {
         return None;
     }
     // 掩状态 nibble（半砖/楼梯朝向），按基础方块查表。
     let def = |y: i32| -> Option<&'static mcv_core::BlockDef> {
-        mcv_core::BLOCKS.get(voxels[(y as usize) << 8 | lz << 4 | lx].id() as usize)
+        mcv_core::BLOCKS.get(voxels[mcv_core::vidx(lx, y, lz)].id() as usize)
     };
     // 地面须满顶面实体（isFaceFull(shape, UP)，:170）：台阶/楼梯/十字
     // 作地面会令玩家盒悬空或嵌盒，弃列。
@@ -5011,7 +5025,7 @@ fn spawn_column_feet_y(voxels: &[BlockId], hm: &[u8], lx: usize, lz: usize) -> O
     // 首个实体即可停——海底洞穴顶板这类「水上有盖」列同样被拒（原版
     // 向下扫遇流体即 break，:166）。
     let mut y = gy + 1;
-    while y <= 255 {
+    while y < mcv_core::WORLD_MAX_Y {
         match def(y) {
             Some(d) if d.liquid => return None,
             Some(d) if d.solid => break,
@@ -5079,19 +5093,19 @@ fn find_spawn_slot(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, radius: i32) ->
 /// （生成数据不存在）回落世界底 1。仅作全窗无合法列的兜底：全海洋窗口
 /// 落在水面之上（掉落游泳），不再埋入沙底。
 fn fixup_spawn_feet_y(voxels: &[BlockId], lx: usize, lz: usize) -> i32 {
-    for y in (0..256usize).rev() {
+    for y in (mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).rev() {
         if mcv_core::BLOCKS
-            .get(voxels[y << 8 | lz << 4 | lx].id() as usize)
+            .get(voxels[mcv_core::vidx(lx, y, lz)].id() as usize)
             .is_some_and(|d| d.solid || d.liquid)
         {
-            return y as i32 + 1;
+            return y + 1;
         }
     }
-    1
+    mcv_core::WORLD_MIN_Y + 1 // 空列回落世界底+1（旧 `1` 的绝对 y 对应位）
 }
 
-fn load_voxels(ids: &[u16]) -> Box<[BlockId; 65536]> {
-    debug_assert_eq!(ids.len(), 65536);
+fn load_voxels(ids: &[u16]) -> Box<[BlockId; mcv_core::CHUNK_VOL]> {
+    debug_assert_eq!(ids.len(), mcv_core::CHUNK_VOL);
     bytemuck::cast_slice::<u16, BlockId>(ids)
         .to_vec()
         .into_boxed_slice()
@@ -5578,8 +5592,9 @@ mod tests {
     /// 千块表 id 1009 = "torch"（26.1 发光 14；damp=0，见 mcv_core::OPACITY）。
     const TORCH: u16 = 1009;
 
+    // v6：绝对 y 域，索引公式统一走 mcv_core::vidx（旧 y<<8|z<<4|x）。
     fn lidx(x: usize, y: usize, z: usize) -> usize {
-        y << 8 | z << 4 | x
+        mcv_core::vidx(x, y as i32, z)
     }
 
     /// 无头拼装一个已完成本地布光的区块（镜像主循环 init 阶段的效果；
@@ -5626,8 +5641,8 @@ mod tests {
     /// 断言的是收敛终态，这里就地排空队列（同一收敛，仅时序折叠）。
     fn edit(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, at: BlockPos, old: u16, new: u16) {
         let h = &chunks[&at.chunk()];
-        let [lx, ly, lz] = at.local();
-        h.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(new);
+        let [lx, _, lz] = at.local();
+        h.voxels.write().unwrap()[mcv_core::vidx(lx, at.y, lz)] = BlockId(new);
         let mut queue = Vec::new();
         relight_block_edit(chunks, at, old, new, &mut queue);
         sync_light_edges(chunks, &mut queue);
@@ -5731,14 +5746,14 @@ mod tests {
     /// 往 rt 写一个目标方块（直接写体素；无头测试不建网格，不触 GPU）。
     fn put_block(rt: &mut GameRuntime, at: BlockPos, id: u16) {
         let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
-        let [lx, ly, lz] = at.local();
-        handle.voxels.write().unwrap()[ly << 8 | lz << 4 | lx] = BlockId(id);
+        let [lx, _, lz] = at.local();
+        handle.voxels.write().unwrap()[mcv_core::vidx(lx, at.y, lz)] = BlockId(id);
     }
 
     fn voxel(rt: &GameRuntime, at: BlockPos) -> u16 {
         let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
-        let [lx, ly, lz] = at.local();
-        handle.voxels.read().unwrap()[ly << 8 | lz << 4 | lx].0
+        let [lx, _, lz] = at.local();
+        handle.voxels.read().unwrap()[mcv_core::vidx(lx, at.y, lz)].0
     }
 
     #[test]
