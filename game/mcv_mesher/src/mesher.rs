@@ -11,7 +11,7 @@
 
 use std::sync::OnceLock;
 
-use mcv_core::shape::Shape;
+use mcv_core::{BlockDef, shape::Shape};
 
 /// 顶点步长（渲染 ABI；mesher.cpp:115 static_assert 24）。
 pub const VERTEX_STRIDE: usize = 24;
