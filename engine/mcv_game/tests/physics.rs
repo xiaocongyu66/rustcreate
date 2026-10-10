@@ -474,7 +474,9 @@ fn embedded_player_ejects_nearest_face_not_through_block() {
     let mut p = ground_player(1.2, 1.0, 0.5);
     p.vel = Vec3::new(4.0, 0.0, 0.0);
     let mut aabb = Aabb::from_player(p.pos);
-    assert!(move_axis(&world2, &mut p, &mut aabb, Axis::X, 0.3));
+    // 中心 x=1.2（盒 x∈[0.9,1.5]）推进 0.6：子步 0.5 后 max.x=2.0 贴面
+    // （严格重叠不含），再 0.1 才真重叠 → 钳位面 x=2.0。
+    assert!(move_axis(&world2, &mut p, &mut aabb, Axis::X, 0.6));
     assert!(
         aabb.max.x <= 2.0,
         "逼近路径应钳在墙面 x=2.0，实得 max.x = {}",
