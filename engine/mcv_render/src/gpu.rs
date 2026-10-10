@@ -2113,20 +2113,23 @@ impl Renderer {
             .write_buffer(&self.sky_buf, 0, bytemuck::cast_slice(&sky_u));
 
         // frustum cull + slot assignment
+        // 不变式：origins buffer 按 visible 序**连续打包**（slot=枚举序号），
+        // 所有 draw 循环必须以 enumerate 序号取 origin。曾因存 scene.chunks
+        // 原始索引而剔除任一区块后其后全部区块画错位置（真机「动一下山没了」）。
         let frustum = Frustum::from_view_proj(&vp);
-        let mut visible: Vec<(u32, &RenderChunk)> = Vec::with_capacity(64);
+        let mut visible: Vec<&RenderChunk> = Vec::with_capacity(64);
         for (i, rc) in scene.chunks.iter().enumerate() {
             if (i as u32) >= self.max_chunks {
                 break;
             }
             let (min, max) = rc.aabb;
             if frustum.intersects_aabb(min, max) {
-                visible.push((i as u32, rc));
+                visible.push(rc);
             }
         }
         if !visible.is_empty() {
             let mut origins = Vec::with_capacity(visible.len() * 64);
-            for (_, rc) in &visible {
+            for rc in &visible {
                 origins.extend_from_slice(&[rc.origin[0], rc.origin[1], rc.origin[2], 0.0]);
                 origins.extend_from_slice(&[0.0f32; 60]); // pad slot to 256 B
             }
@@ -2187,8 +2190,8 @@ impl Renderer {
 
             // opaque
             pass.set_pipeline(&self.terrain_pipeline);
-            for (slot, rc) in &visible {
-                let off = *slot * 256;
+            for (slot, rc) in visible.iter().enumerate() {
+                let off = slot as u32 * 256;
                 pass.set_bind_group(0, &self.frame_bind, &[off]);
                 pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
                 pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);
@@ -2267,10 +2270,11 @@ impl Renderer {
             pass.set_pipeline(&self.water_pipeline);
             let mut water: Vec<(f32, u32, &RenderChunk)> = visible
                 .iter()
+                .enumerate()
                 .filter(|(_, rc)| rc.water_index_buf.is_some() && !rc.water_range.is_empty())
                 .map(|(slot, rc)| {
                     let c = Vec3::from(rc.origin) + Vec3::new(8.0, 0.0, 8.0);
-                    (c.distance_squared(eye), *slot, *rc)
+                    (c.distance_squared(eye), slot as u32, *rc)
                 })
                 .collect();
             water.sort_by(|a, b| b.0.total_cmp(&a.0));

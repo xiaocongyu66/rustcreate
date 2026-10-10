@@ -61,8 +61,76 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
     }
 }
 
+fn ground_chunk_at(device: &wgpu::Device, origin: [f32; 3]) -> RenderChunk {
+    let mut rc = ground_chunk(device);
+    rc.origin = origin;
+    rc.aabb = (
+        Vec3::new(origin[0], 99.9, origin[2]),
+        Vec3::new(origin[0] + 16.0, 100.1, origin[2] + 16.0),
+    );
+    rc
+}
+
 fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
     setup_with_assets(Some(&workspace_assets()))
+}
+
+/// 真机症状守护（2026-10-10「动一下山没了」）：origins buffer 按可见列表
+/// 连续打包写入，而 draw 曾按 scene.chunks 原始索引取 origin——剔除任一区块
+/// 后其后所有区块画错位置。可见区块 origin 非零：错位会读零值空槽，整块
+/// 地形被画到视锥外，绿色占比崩塌。
+#[test]
+fn frustum_cull_does_not_shift_chunk_origins() {
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let culled = ground_chunk_at(&device, [600.0, 0.0, 600.0]);
+    let visible = ground_chunk_at(&device, [64.0, 0.0, 0.0]);
+
+    let camera = Camera {
+        pos: Vec3::new(72.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = vec![];
+    let (sun, day) = mcv_render::sun_state(6000); // noon
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: &[culled, visible],
+        hud: &hud,
+        cloud: None,
+        player: None,
+        mobs: None,
+        overlay: None,
+        underwater: false,
+        particles: None,
+    };
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut encoder);
+    queue.submit([encoder.finish()]);
+    let rgba = target.read_pixels(&device);
+    let (green_share, _) = sample_stats(&rgba, extent.width, extent.height);
+    assert!(
+        green_share > 0.25,
+        "chunk behind a culled chunk must render at its own origin (slot misalignment regression), got {green_share}"
+    );
 }
 
 /// 喂仓库内原版素材的 setup（正常部署路径）：裂纹层吃真实 destroy_stage、
