@@ -100,7 +100,7 @@ fn check_one(seed: u64, cx: i32, cz: i32, want_vox: u64, want_hm: u64) {
         got_vox, want_vox,
         "seed {seed} chunk ({cx},{cz}): voxel 黄金哈希漂移"
     );
-    let got_hm = fnv1a(&heightmap_le(&rust.heightmap));
+    let got_hm = fnv1a(&heightmap_le(&rust.heightmap[..]));
     assert_eq!(
         got_hm, want_hm,
         "seed {seed} chunk ({cx},{cz}): heightmap 黄金哈希漂移"
@@ -143,7 +143,7 @@ fn terrain_golden_hash_4_seeds_x_25_chunks() {
                         )
                         .expect("legacy 路径生成失败");
                         let vox = fnv1a(&voxels_le(rust.voxels.as_u16_slice()));
-                        let hm = fnv1a(&heightmap_le(&rust.heightmap));
+                        let hm = fnv1a(&heightmap_le(&rust.heightmap[..]));
                         out.push_str(&format!("{seed:016x} {cx} {cz} {vox:016x} {hm:016x}\n"));
                     }
                 }
@@ -189,7 +189,7 @@ fn terrain_golden_full_dumps_byte_identical() {
         let rust = generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
             .expect("legacy 路径生成失败");
         let mut want = voxels_le(rust.voxels.as_u16_slice());
-        want.extend_from_slice(&heightmap_le(&rust.heightmap));
+        want.extend_from_slice(&heightmap_le(&rust.heightmap[..]));
         if update_mode() {
             let path = format!(
                 "{}/terrain/terrain_s{seed:016x}_c{cx}_{cz}.bin",
