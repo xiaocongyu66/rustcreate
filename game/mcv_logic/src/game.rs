@@ -2470,17 +2470,17 @@ impl GameRuntime {
             let harms = if self.on_tick {
                 let game_ticks = self.game_ticks.min(i32::MAX as u64) as i32;
                 let max_hp = 20.0 + self.effects.bundle().max_health_add as f32;
-                let mut fm = mcv_entity::effect::FoodMut {
-                    hunger: &mut self.player.hunger,
-                    saturation: &mut self.player.saturation,
-                    exhaustion: &mut self.player.exhaustion,
-                };
                 self.effects.tick(
                     game_ticks,
                     &mut self.player.health,
                     max_hp,
                     &mut self.player.absorption,
-                    Some(&mut fm),
+                    // FoodData 三元组裸引用（FoodData.java:19-22 的唯一触碰面）。
+                    Some((
+                        &mut self.player.hunger,
+                        &mut self.player.saturation,
+                        &mut self.player.exhaustion,
+                    )),
                 )
             } else {
                 Vec::new()

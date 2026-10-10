@@ -359,16 +359,19 @@ fn fires_on_interval(base: i32, amplifier: u8, tick_count: i32) -> bool {
     interval <= 0 || tick_count % interval == 0
 }
 
+/// 玩家食物面（FoodData 三字段引用的裸元组：hunger/saturation/exhaustion。
+/// 不包结构体——&mut 包裹的类型对其内部寿命不变（invariant），裸元组逐
+/// 引用协变，调用方的独立借用区才能各自收缩。mob 无 FoodData，传 None）。
+pub type FoodRefs<'a> = (&'a mut f32, &'a mut f32, &'a mut f32);
+
 /// 周期动作的结算界面（本仓自有：纯引用切片，不引入目标对象抽象）。
-/// 两个寿命分开：`'a` = 血/盾引用，`'f` = 食物/伤害队列引用——`FoodMut`
-/// 内部引用在 `&mut` 下不变（invariant），与血引用绑死会让调用方的
-/// 独立借用区无法各自收缩。
+/// 两个寿命分开：`'a` = 血/盾引用，`'f` = 食物/伤害队列引用。
 pub struct TickTarget<'a, 'f> {
     pub health: &'a mut f32,
     pub max_health: f32,
     pub absorb: &'a mut f32,
     /// 玩家侧食物三元组（mob 无 FoodData，传 None）。
-    pub food: Option<&'f mut FoodMut<'f>>,
+    pub food: Option<FoodRefs<'f>>,
     /// 伤害出队：结算需走完整 hurt 管线（无敌帧/吸收/难度），不可就地扣。
     pub harms: &'f mut Vec<Harm>,
 }
@@ -378,13 +381,6 @@ pub struct TickTarget<'a, 'f> {
 pub struct Harm {
     pub amount: f32,
     pub wither: bool,
-}
-
-/// 玩家食物面（FoodData 三字段，MobEffect 只经由 add/addExhaustion 触碰）。
-pub struct FoodMut<'a> {
-    pub hunger: &'a mut f32,
-    pub saturation: &'a mut f32,
-    pub exhaustion: &'a mut f32,
 }
 
 /// 周期动作本体（MobEffect.applyEffectTick MobEffect.java:81-83 默认恒 true；
@@ -419,8 +415,8 @@ pub fn apply_tick(kind: Kind, amplifier: u8, t: &mut TickTarget) -> bool {
         }
         // HungerMobEffect.java:13-19：每 tick exhaustion 0.005×(amp+1)。
         Kind::Hunger => {
-            if let Some(f) = t.food.as_deref_mut() {
-                add_exhaustion(f, 0.005 * (f32::from(amplifier) + 1.0));
+            if let Some((_, _, ex)) = t.food.as_mut() {
+                **ex = (**ex + 0.005 * (f32::from(amplifier) + 1.0)).min(40.0);
             }
             true
         }
@@ -437,9 +433,10 @@ pub fn apply_tick(kind: Kind, amplifier: u8, t: &mut TickTarget) -> bool {
         }
         // SaturationMobEffect.java:13-19：FoodData.eat(amp+1, 1.0)。
         Kind::Saturation => {
-            if let Some(f) = t.food.as_deref_mut() {
+            if let Some((hunger, saturation, _)) = t.food.as_mut() {
                 feed(
-                    f,
+                    hunger,
+                    saturation,
                     i32::from(amplifier) + 1,
                     2.0 * (f32::from(amplifier) + 1.0),
                 );
@@ -489,14 +486,9 @@ pub fn apply_instant(kind: Kind, amplifier: u8, scale: f64, t: &mut TickTarget) 
 }
 
 /// FoodData.add（FoodData.java:19-22）：food 钳 0..20、saturation 钳 0..food。
-fn feed(f: &mut FoodMut, food: i32, saturation: f32) {
-    *f.hunger = (*f.hunger + food as f32).clamp(0.0, 20.0);
-    *f.saturation = (*f.saturation + saturation).clamp(0.0, *f.hunger);
-}
-
-/// FoodData.addExhaustion（FoodData.java:100-102）：上限 40。
-fn add_exhaustion(f: &mut FoodMut, amount: f32) {
-    *f.exhaustion = (*f.exhaustion + amount).min(40.0);
+fn feed(hunger: &mut f32, saturation: &mut f32, food: i32, saturation_add: f32) {
+    *hunger = (*hunger + food as f32).clamp(0.0, 20.0);
+    *saturation = (*saturation + saturation_add).clamp(0.0, *hunger);
 }
 
 /// 死亡爆发（MobEffect.onMobRemoved，RemovalReason.KILLED 才生效）。
@@ -704,7 +696,7 @@ impl Active {
         health: &'a mut f32,
         max_health: f32,
         absorb: &'a mut f32,
-        food: Option<&'f mut FoodMut<'f>>,
+        food: Option<FoodRefs<'f>>,
         harms: &'f mut Vec<Harm>,
     ) -> bool {
         if !self.has_remaining() {
@@ -792,19 +784,17 @@ impl EffectBook {
         health: &mut f32,
         max_health: f32,
         absorb: &mut f32,
-        mut food: Option<&mut FoodMut>,
+        mut food: Option<FoodRefs<'_>>,
     ) -> Vec<Harm> {
         let mut harms = Vec::new();
         let mut i = 0;
         while i < self.active.len() {
-            let keep = self.active[i].advance(
-                world_tick,
-                health,
-                max_health,
-                absorb,
-                food.as_deref_mut(),
-                &mut harms,
-            );
+            // 逐效果替换借：三元组内各引用独立协变，按迭代期重借不占长寿命。
+            let food_re = food.as_mut().map(|(hunger, saturation, exhaustion)| {
+                (&mut **hunger, &mut **saturation, &mut **exhaustion)
+            });
+            let keep =
+                self.active[i].advance(world_tick, health, max_health, absorb, food_re, &mut harms);
             if keep {
                 i += 1;
             } else {
@@ -910,7 +900,7 @@ mod tests {
     fn target<'a, 'f>(
         health: &'a mut f32,
         absorb: &'a mut f32,
-        food: Option<&'f mut FoodMut<'f>>,
+        food: Option<FoodRefs<'f>>,
         harms: &'f mut Vec<Harm>,
     ) -> TickTarget<'a, 'f> {
         TickTarget {
@@ -1228,15 +1218,11 @@ mod tests {
         let (mut food, mut sat, mut ex) = (19.0f32, 0.0f32, 0.0f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let mut fm = FoodMut {
-                hunger: &mut food,
-                saturation: &mut sat,
-                exhaustion: &mut ex,
-            };
+            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Saturation,
                 0,
-                &mut target(&mut hp, &mut ab, Some(&mut fm), &mut harms),
+                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
             );
         }
         assert!((food - 20.0).abs() < 1e-6);
@@ -1245,15 +1231,11 @@ mod tests {
         let (mut food, mut sat, mut ex) = (17.0f32, 1.0f32, 0.0f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let mut fm = FoodMut {
-                hunger: &mut food,
-                saturation: &mut sat,
-                exhaustion: &mut ex,
-            };
+            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Saturation,
                 3,
-                &mut target(&mut hp, &mut ab, Some(&mut fm), &mut harms),
+                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
             );
         }
         assert!((food - 20.0).abs() < 1e-6, "17+4 → 20");
@@ -1262,20 +1244,16 @@ mod tests {
         let (mut food, mut sat, mut ex) = (20.0f32, 5.0f32, 0.0f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let mut fm = FoodMut {
-                hunger: &mut food,
-                saturation: &mut sat,
-                exhaustion: &mut ex,
-            };
+            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Hunger,
                 0,
-                &mut target(&mut hp, &mut ab, Some(&mut fm), &mut harms),
+                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
             );
             apply_tick(
                 Kind::Hunger,
                 2,
-                &mut target(&mut hp, &mut ab, Some(&mut fm), &mut harms),
+                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
             );
         }
         assert!((ex - 0.02).abs() < 1e-9, "0.005 + 0.015");
@@ -1283,15 +1261,11 @@ mod tests {
         let (mut food, mut sat, mut ex) = (20.0f32, 5.0f32, 39.9999f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let mut fm = FoodMut {
-                hunger: &mut food,
-                saturation: &mut sat,
-                exhaustion: &mut ex,
-            };
+            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Hunger,
                 0,
-                &mut target(&mut hp, &mut ab, Some(&mut fm), &mut harms),
+                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
             );
         }
         assert!((ex - 40.0).abs() < 1e-6);
@@ -1325,15 +1299,15 @@ mod tests {
         assert!((ab - 12.0).abs() < 1e-6);
         // 盾耗尽 → applyEffectTick 返回 false → 账本移除（:12-14）。
         let mut ab = 0.0f32;
-        let (mut hp, mut food): (f32, Option<&mut FoodMut>) = (20.0, None);
-        let harms = book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+        let (mut hp, mut ab) = (20.0f32, 0.0f32);
+        let harms = book.tick(0, &mut hp, 20.0, &mut ab, None);
         assert!(harms.is_empty());
         assert!(!book.has(Kind::Absorption), "吸收 0 → 效果终止");
         // 盾>0 → 存续。
         book.apply_simple(Kind::Absorption, 100, 0);
         let mut ab = 4.0f32;
-        let (mut hp, mut food): (f32, Option<&mut FoodMut>) = (20.0, None);
-        let _ = book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+        let (mut hp, mut ab) = (20.0f32, 0.0f32);
+        let _ = book.tick(0, &mut hp, 20.0, &mut ab, None);
         assert!(book.has(Kind::Absorption));
     }
 
@@ -1344,12 +1318,11 @@ mod tests {
         book.apply_simple(Kind::Speed, 5, 0);
         book.apply_simple(Kind::Regeneration, INFINITE, 1);
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food: Option<&mut FoodMut> = None;
         // 5 tick：速度到期消失；再生无限存续；期间回血 5 点
         //（50>>1=25 间隔内 phase 1..5 不触发，10+5=15 无再生增量——先验证时长）。
         for t in 0..5 {
             assert!(book.has(Kind::Speed), "tick {t}");
-            let _ = book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+            let _ = book.tick(0, &mut hp, 20.0, &mut ab, None);
         }
         assert!(!book.has(Kind::Speed));
         assert!(book.has(Kind::Regeneration));
@@ -1359,16 +1332,9 @@ mod tests {
         assert_eq!(active.duration, INFINITE);
         // 世界 tick 49→50 跨过 50>>1=25 的相位（50/25=2 触发点）。
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food: Option<&mut FoodMut> = None;
-        assert!(
-            book.tick(48, &mut hp, 20.0, &mut ab, food.as_deref_mut())
-                .is_empty()
-        );
-        assert!(
-            book.tick(49, &mut hp, 20.0, &mut ab, food.as_deref_mut())
-                .is_empty()
-        );
-        book.tick(50, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+        assert!(book.tick(48, &mut hp, 20.0, &mut ab, None).is_empty());
+        assert!(book.tick(49, &mut hp, 20.0, &mut ab, None).is_empty());
+        book.tick(50, &mut hp, 20.0, &mut ab, None);
         // 相位 = 世界 tick：50 % 25 == 0 → 回血 1。
         assert!((hp - 11.0).abs() < 1e-6, "tick50 回血 1");
         book.clear();
@@ -1392,10 +1358,9 @@ mod tests {
         book.apply_simple(Kind::Regeneration, 10, 0);
         assert!(book.apply_simple(Kind::Regeneration, 5, 1));
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food: Option<&mut FoodMut> = None;
         // 前 5 tick amp1（50>>1=25 间隔不触发）；隐藏链同步递减 10→5。
         for _ in 0..5 {
-            book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+            book.tick(0, &mut hp, 20.0, &mut ab, None);
         }
         assert!(
             !book.has(Kind::Regeneration) || book.get(Kind::Regeneration).unwrap().amplifier == 0,
@@ -1414,9 +1379,8 @@ mod tests {
         assert_eq!((a.amplifier, a.duration), (2, 10));
         // 10 tick 后弱效果接续 20 tick。
         let (mut hp, mut ab) = (20.0f32, 0.0f32);
-        let mut food: Option<&mut FoodMut> = None;
         for _ in 0..10 {
-            book.tick(0, &mut hp, 20.0, &mut ab, food.as_deref_mut());
+            book.tick(0, &mut hp, 20.0, &mut ab, None);
         }
         let a = book.get(Kind::Speed).unwrap();
         assert_eq!((a.amplifier, a.duration), (1, 20), "降级回退弱效果余量");
@@ -1557,12 +1521,13 @@ mod tests {
         let mut book = EffectBook::default();
         book.apply_simple(Kind::Poison, 20, 2);
         book.apply_simple(Kind::Regeneration, 20, 2);
+        book.apply_simple(Kind::Hunger, 20, 0);
+        let (mut fh, mut fs, mut fe) = (20.0f32, 5.0f32, 0.0f32);
         let (mut hp, mut ab) = (10.0f32, 0.0f32);
-        let mut food: Option<&mut FoodMut> = None;
         let mut total_harm = 0.0f32;
         let mut heals = 0;
         for w in 0..20 {
-            for h in book.tick(w, &mut hp, 20.0, &mut ab, food.as_deref_mut()) {
+            for h in book.tick(w, &mut hp, 20.0, &mut ab, Some((&mut fh, &mut fs, &mut fe))) {
                 total_harm += h.amount;
             }
             // 再生相位：剩余 20,19,…,1 → 12、(50>>2=12) 12%12==0 → w 使剩余=12 即 w=8。
@@ -1575,6 +1540,7 @@ mod tests {
         }
         // 毒相位：25>>2=6 → 剩余 18,12,6 命中 → 3 次伤害。
         assert!((total_harm - 3.0).abs() < 1e-6, "毒 II 20t 掉 3 HP");
+        assert!((fe - 0.1).abs() < 1e-9, "饥饿效果每 tick 0.005×20");
         assert_eq!(heals, 1, "再生 II 单次回血");
         assert!(book.is_empty(), "20t 双双到期");
     }
