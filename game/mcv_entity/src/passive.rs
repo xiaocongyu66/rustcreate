@@ -386,6 +386,9 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             in_water: false,
             sneak: false,
             sprint: false,
+            // 视线仅冲刺跳（sprint 门）与冲刺游泳（in_water 门）读取
+            // （physics.rs:456/516），被动生物两门恒关 → 无副作用。
+            look_dir: Vec3::ZERO,
             gravity_scale: 1.0,
         };
         let mut eng = body.body();
