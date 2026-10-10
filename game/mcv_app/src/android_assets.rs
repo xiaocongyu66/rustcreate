@@ -32,7 +32,8 @@ pub fn extract_assets(app: &AndroidApp, data: &Path) {
     // 指出的静默降级洞）。
     let mut n = 0usize;
     let mut failed: Vec<&str> = Vec::new();
-    for line in String::from_utf8_lossy(&manifest).lines() {
+    let manifest_txt = String::from_utf8_lossy(&manifest);
+    for line in manifest_txt.lines() {
         let name = line.trim();
         if name.is_empty() || !ALLOW_PREFIXES.iter().any(|p| name.starts_with(p)) {
             continue;
