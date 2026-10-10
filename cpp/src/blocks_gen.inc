@@ -35,7 +35,7 @@
     {false, false, true, {4, 4, 4, 4, 4, 4}, 0},  // acacia_sign
     {false, false, true, {4, 4, 4, 4, 4, 4}, 4},  // acacia_slab
     {false, false, true, {4, 4, 4, 4, 4, 4}, 5},  // acacia_stairs
-    {false, false, true, {7, 7, 7, 7, 7, 7}, 7},  // acacia_trapdoor
+    {false, false, true, {7, 7, 7, 7, 7, 7}, 0},  // acacia_trapdoor
     {false, false, true, {713, 713, 713, 713, 713, 713}, 0},  // acacia_wall_hanging_sign
     {false, false, true, {4, 4, 4, 4, 4, 4}, 0},  // acacia_wall_sign
     {true, false, true, {2, 2, 2, 2, 2, 2}, 0},  // acacia_wood
@@ -47,7 +47,7 @@
     {true, false, true, {14, 14, 14, 14, 14, 14}, 0},  // andesite
     {false, false, true, {14, 14, 14, 14, 14, 14}, 4},  // andesite_slab
     {false, false, true, {14, 14, 14, 14, 14, 14}, 5},  // andesite_stairs
-    {false, false, true, {14, 14, 14, 14, 14, 14}, 9},  // andesite_wall
+    {false, false, true, {14, 14, 14, 14, 14, 14}, 0},  // andesite_wall
     {false, false, true, {15, 15, 16, 15, 15, 15}, 0},  // anvil
     {false, false, true, {466, 466, 17, 17, 17, 17}, 0},  // attached_melon_stem
     {false, false, true, {585, 585, 18, 18, 18, 18}, 0},  // attached_pumpkin_stem
@@ -71,7 +71,7 @@
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_sign
     {false, false, true, {29, 29, 29, 29, 29, 29}, 4},  // bamboo_slab
     {false, false, true, {29, 29, 29, 29, 29, 29}, 5},  // bamboo_stairs
-    {false, false, true, {34, 34, 34, 34, 34, 34}, 7},  // bamboo_trapdoor
+    {false, false, true, {34, 34, 34, 34, 34, 34}, 0},  // bamboo_trapdoor
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_hanging_sign
     {false, false, true, {29, 29, 29, 29, 29, 29}, 0},  // bamboo_wall_sign
     {true, false, true, {36, 36, 37, 35, 36, 36}, 0},  // barrel
@@ -98,7 +98,7 @@
     {false, false, true, {57, 57, 57, 57, 57, 57}, 0},  // birch_sign
     {false, false, true, {57, 57, 57, 57, 57, 57}, 4},  // birch_slab
     {false, false, true, {57, 57, 57, 57, 57, 57}, 5},  // birch_stairs
-    {false, false, true, {60, 60, 60, 60, 60, 60}, 7},  // birch_trapdoor
+    {false, false, true, {60, 60, 60, 60, 60, 60}, 0},  // birch_trapdoor
     {false, false, true, {717, 717, 717, 717, 717, 717}, 0},  // birch_wall_hanging_sign
     {false, false, true, {57, 57, 57, 57, 57, 57}, 0},  // birch_wall_sign
     {true, false, true, {55, 55, 55, 55, 55, 55}, 0},  // birch_wood
@@ -106,26 +106,26 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // black_bed
     {false, false, true, {61, 61, 61, 61, 61, 61}, 0},  // black_candle
     {false, false, true, {61, 61, 61, 61, 61, 61}, 0},  // black_candle_cake
-    {false, false, true, {69, 69, 69, 69, 69, 69}, 6},  // black_carpet
+    {false, false, true, {69, 69, 69, 69, 69, 69}, 0},  // black_carpet
     {true, false, true, {62, 62, 62, 62, 62, 62}, 0},  // black_concrete
     {true, false, true, {63, 63, 63, 63, 63, 63}, 0},  // black_concrete_powder
     {true, false, true, {64, 64, 64, 64, 64, 64}, 0},  // black_glazed_terracotta
     {false, false, true, {65, 65, 65, 65, 65, 65}, 0},  // black_shulker_box
     {false, false, true, {66, 66, 66, 66, 66, 66}, 0},  // black_stained_glass
-    {false, false, true, {67, 67, 67, 67, 67, 67}, 8},  // black_stained_glass_pane
+    {false, false, true, {67, 67, 67, 67, 67, 67}, 0},  // black_stained_glass_pane
     {true, false, true, {68, 68, 68, 68, 68, 68}, 0},  // black_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // black_wall_banner
     {true, false, true, {69, 69, 69, 69, 69, 69}, 0},  // black_wool
     {true, false, true, {70, 70, 71, 71, 70, 70}, 0},  // blackstone
     {false, false, true, {70, 70, 71, 71, 70, 70}, 4},  // blackstone_slab
     {false, false, true, {70, 70, 71, 71, 70, 70}, 5},  // blackstone_stairs
-    {false, false, true, {70, 70, 70, 70, 70, 70}, 9},  // blackstone_wall
+    {false, false, true, {70, 70, 70, 70, 70, 70}, 0},  // blackstone_wall
     {true, false, true, {73, 73, 74, 74, 73, 72}, 0},  // blast_furnace
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // blue_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // blue_bed
     {false, false, true, {75, 75, 75, 75, 75, 75}, 0},  // blue_candle
     {false, false, true, {75, 75, 75, 75, 75, 75}, 0},  // blue_candle_cake
-    {false, false, true, {85, 85, 85, 85, 85, 85}, 6},  // blue_carpet
+    {false, false, true, {85, 85, 85, 85, 85, 85}, 0},  // blue_carpet
     {true, false, true, {76, 76, 76, 76, 76, 76}, 0},  // blue_concrete
     {true, false, true, {77, 77, 77, 77, 77, 77}, 0},  // blue_concrete_powder
     {true, false, true, {78, 78, 78, 78, 78, 78}, 0},  // blue_glazed_terracotta
@@ -133,7 +133,7 @@
     {false, false, true, {80, 80, 80, 80, 80, 80}, 1},  // blue_orchid
     {false, false, true, {81, 81, 81, 81, 81, 81}, 0},  // blue_shulker_box
     {false, false, true, {82, 82, 82, 82, 82, 82}, 0},  // blue_stained_glass
-    {false, false, true, {83, 83, 83, 83, 83, 83}, 8},  // blue_stained_glass_pane
+    {false, false, true, {83, 83, 83, 83, 83, 83}, 0},  // blue_stained_glass_pane
     {true, false, true, {84, 84, 84, 84, 84, 84}, 0},  // blue_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // blue_wall_banner
     {true, false, true, {85, 85, 85, 85, 85, 85}, 0},  // blue_wool
@@ -146,13 +146,13 @@
     {false, false, true, {92, 92, 92, 92, 92, 92}, 0},  // brewing_stand
     {false, false, true, {93, 93, 93, 93, 93, 93}, 4},  // brick_slab
     {false, false, true, {93, 93, 93, 93, 93, 93}, 5},  // brick_stairs
-    {false, false, true, {93, 93, 93, 93, 93, 93}, 9},  // brick_wall
+    {false, false, true, {93, 93, 93, 93, 93, 93}, 0},  // brick_wall
     {true, false, true, {93, 93, 93, 93, 93, 93}, 0},  // bricks
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // brown_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // brown_bed
     {false, false, true, {94, 94, 94, 94, 94, 94}, 0},  // brown_candle
     {false, false, true, {94, 94, 94, 94, 94, 94}, 0},  // brown_candle_cake
-    {false, false, true, {104, 104, 104, 104, 104, 104}, 6},  // brown_carpet
+    {false, false, true, {104, 104, 104, 104, 104, 104}, 0},  // brown_carpet
     {true, false, true, {95, 95, 95, 95, 95, 95}, 0},  // brown_concrete
     {true, false, true, {96, 96, 96, 96, 96, 96}, 0},  // brown_concrete_powder
     {true, false, true, {97, 97, 97, 97, 97, 97}, 0},  // brown_glazed_terracotta
@@ -160,7 +160,7 @@
     {false, false, true, {99, 99, 99, 99, 99, 99}, 0},  // brown_mushroom_block
     {false, false, true, {100, 100, 100, 100, 100, 100}, 0},  // brown_shulker_box
     {false, false, true, {101, 101, 101, 101, 101, 101}, 0},  // brown_stained_glass
-    {false, false, true, {102, 102, 102, 102, 102, 102}, 8},  // brown_stained_glass_pane
+    {false, false, true, {102, 102, 102, 102, 102, 102}, 0},  // brown_stained_glass_pane
     {true, false, true, {103, 103, 103, 103, 103, 103}, 0},  // brown_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // brown_wall_banner
     {true, false, true, {104, 104, 104, 104, 104, 104}, 0},  // brown_wool
@@ -201,7 +201,7 @@
     {false, false, true, {140, 140, 140, 140, 140, 140}, 0},  // cherry_sign
     {false, false, true, {140, 140, 140, 140, 140, 140}, 4},  // cherry_slab
     {false, false, true, {140, 140, 140, 140, 140, 140}, 5},  // cherry_stairs
-    {false, false, true, {143, 143, 143, 143, 143, 143}, 7},  // cherry_trapdoor
+    {false, false, true, {143, 143, 143, 143, 143, 143}, 0},  // cherry_trapdoor
     {false, false, true, {719, 719, 719, 719, 719, 719}, 0},  // cherry_wall_hanging_sign
     {false, false, true, {140, 140, 140, 140, 140, 140}, 0},  // cherry_wall_sign
     {true, false, true, {138, 138, 138, 138, 138, 138}, 0},  // cherry_wood
@@ -229,10 +229,10 @@
     {true, false, true, {167, 167, 167, 167, 167, 167}, 0},  // cobbled_deepslate
     {false, false, true, {167, 167, 167, 167, 167, 167}, 4},  // cobbled_deepslate_slab
     {false, false, true, {167, 167, 167, 167, 167, 167}, 5},  // cobbled_deepslate_stairs
-    {false, false, true, {167, 167, 167, 167, 167, 167}, 9},  // cobbled_deepslate_wall
+    {false, false, true, {167, 167, 167, 167, 167, 167}, 0},  // cobbled_deepslate_wall
     {false, false, true, {168, 168, 168, 168, 168, 168}, 4},  // cobblestone_slab
     {false, false, true, {168, 168, 168, 168, 168, 168}, 5},  // cobblestone_stairs
-    {false, false, true, {168, 168, 168, 168, 168, 168}, 9},  // cobblestone_wall
+    {false, false, true, {168, 168, 168, 168, 168, 168}, 0},  // cobblestone_wall
     {false, false, true, {169, 169, 169, 169, 169, 169}, 0},  // cobweb
     {false, false, true, {170, 170, 170, 170, 170, 170}, 0},  // cocoa
     {true, false, true, {173, 173, 173, 173, 171, 172}, 0},  // command_block
@@ -250,7 +250,7 @@
     {false, false, true, {184, 184, 184, 184, 184, 184}, 0},  // copper_lantern
     {true, false, true, {185, 185, 185, 185, 185, 185}, 0},  // copper_ore
     {false, false, true, {186, 186, 186, 186, 186, 186}, 2},  // copper_torch
-    {false, false, true, {187, 187, 187, 187, 187, 187}, 7},  // copper_trapdoor
+    {false, false, true, {187, 187, 187, 187, 187, 187}, 0},  // copper_trapdoor
     {false, false, true, {186, 186, 186, 186, 186, 186}, 0},  // copper_wall_torch
     {false, false, true, {188, 188, 188, 188, 188, 188}, 1},  // cornflower
     {true, false, true, {189, 189, 189, 189, 189, 189}, 0},  // cracked_deepslate_bricks
@@ -279,7 +279,7 @@
     {false, false, true, {209, 209, 209, 209, 209, 209}, 4},  // crimson_slab
     {false, false, true, {209, 209, 209, 209, 209, 209}, 5},  // crimson_stairs
     {true, false, true, {213, 213, 214, 214, 213, 213}, 0},  // crimson_stem
-    {false, false, true, {215, 215, 215, 215, 215, 215}, 7},  // crimson_trapdoor
+    {false, false, true, {215, 215, 215, 215, 215, 215}, 0},  // crimson_trapdoor
     {false, false, true, {721, 721, 721, 721, 721, 721}, 0},  // crimson_wall_hanging_sign
     {false, false, true, {209, 209, 209, 209, 209, 209}, 0},  // crimson_wall_sign
     {true, false, true, {216, 216, 216, 216, 216, 216}, 0},  // crying_obsidian
@@ -294,13 +294,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // cyan_bed
     {false, false, true, {220, 220, 220, 220, 220, 220}, 0},  // cyan_candle
     {false, false, true, {220, 220, 220, 220, 220, 220}, 0},  // cyan_candle_cake
-    {false, false, true, {228, 228, 228, 228, 228, 228}, 6},  // cyan_carpet
+    {false, false, true, {228, 228, 228, 228, 228, 228}, 0},  // cyan_carpet
     {true, false, true, {221, 221, 221, 221, 221, 221}, 0},  // cyan_concrete
     {true, false, true, {222, 222, 222, 222, 222, 222}, 0},  // cyan_concrete_powder
     {true, false, true, {223, 223, 223, 223, 223, 223}, 0},  // cyan_glazed_terracotta
     {false, false, true, {224, 224, 224, 224, 224, 224}, 0},  // cyan_shulker_box
     {false, false, true, {225, 225, 225, 225, 225, 225}, 0},  // cyan_stained_glass
-    {false, false, true, {226, 226, 226, 226, 226, 226}, 8},  // cyan_stained_glass_pane
+    {false, false, true, {226, 226, 226, 226, 226, 226}, 0},  // cyan_stained_glass_pane
     {true, false, true, {227, 227, 227, 227, 227, 227}, 0},  // cyan_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // cyan_wall_banner
     {true, false, true, {228, 228, 228, 228, 228, 228}, 0},  // cyan_wool
@@ -319,7 +319,7 @@
     {false, false, true, {235, 235, 235, 235, 235, 235}, 0},  // dark_oak_sign
     {false, false, true, {235, 235, 235, 235, 235, 235}, 4},  // dark_oak_slab
     {false, false, true, {235, 235, 235, 235, 235, 235}, 5},  // dark_oak_stairs
-    {false, false, true, {238, 238, 238, 238, 238, 238}, 7},  // dark_oak_trapdoor
+    {false, false, true, {238, 238, 238, 238, 238, 238}, 0},  // dark_oak_trapdoor
     {false, false, true, {723, 723, 723, 723, 723, 723}, 0},  // dark_oak_wall_hanging_sign
     {false, false, true, {235, 235, 235, 235, 235, 235}, 0},  // dark_oak_wall_sign
     {true, false, true, {233, 233, 233, 233, 233, 233}, 0},  // dark_oak_wood
@@ -352,7 +352,7 @@
     {true, false, true, {258, 258, 269, 269, 258, 258}, 0},  // deepslate
     {false, false, true, {259, 259, 259, 259, 259, 259}, 4},  // deepslate_brick_slab
     {false, false, true, {259, 259, 259, 259, 259, 259}, 5},  // deepslate_brick_stairs
-    {false, false, true, {259, 259, 259, 259, 259, 259}, 9},  // deepslate_brick_wall
+    {false, false, true, {259, 259, 259, 259, 259, 259}, 0},  // deepslate_brick_wall
     {true, false, true, {259, 259, 259, 259, 259, 259}, 0},  // deepslate_bricks
     {true, false, true, {260, 260, 260, 260, 260, 260}, 0},  // deepslate_coal_ore
     {true, false, true, {261, 261, 261, 261, 261, 261}, 0},  // deepslate_copper_ore
@@ -364,7 +364,7 @@
     {true, false, true, {267, 267, 267, 267, 267, 267}, 0},  // deepslate_redstone_ore
     {false, false, true, {268, 268, 268, 268, 268, 268}, 4},  // deepslate_tile_slab
     {false, false, true, {268, 268, 268, 268, 268, 268}, 5},  // deepslate_tile_stairs
-    {false, false, true, {268, 268, 268, 268, 268, 268}, 9},  // deepslate_tile_wall
+    {false, false, true, {268, 268, 268, 268, 268, 268}, 0},  // deepslate_tile_wall
     {true, false, true, {268, 268, 268, 268, 268, 268}, 0},  // deepslate_tiles
     {false, false, true, {270, 270, 270, 270, 270, 270}, 0},  // detector_rail
     {true, false, true, {271, 271, 271, 271, 271, 271}, 0},  // diamond_block
@@ -372,7 +372,7 @@
     {true, false, true, {273, 273, 273, 273, 273, 273}, 0},  // diorite
     {false, false, true, {273, 273, 273, 273, 273, 273}, 4},  // diorite_slab
     {false, false, true, {273, 273, 273, 273, 273, 273}, 5},  // diorite_stairs
-    {false, false, true, {273, 273, 273, 273, 273, 273}, 9},  // diorite_wall
+    {false, false, true, {273, 273, 273, 273, 273, 273}, 0},  // diorite_wall
     {false, false, true, {275, 275, 276, 274, 275, 275}, 0},  // dirt_path
     {true, false, true, {323, 323, 277, 323, 323, 323}, 0},  // dispenser
     {false, false, true, {278, 278, 278, 278, 278, 278}, 0},  // dragon_egg
@@ -392,7 +392,7 @@
     {true, false, true, {293, 293, 293, 293, 293, 293}, 0},  // end_stone
     {false, false, true, {294, 294, 294, 294, 294, 294}, 4},  // end_stone_brick_slab
     {false, false, true, {294, 294, 294, 294, 294, 294}, 5},  // end_stone_brick_stairs
-    {false, false, true, {294, 294, 294, 294, 294, 294}, 9},  // end_stone_brick_wall
+    {false, false, true, {294, 294, 294, 294, 294, 294}, 0},  // end_stone_brick_wall
     {true, false, true, {294, 294, 294, 294, 294, 294}, 0},  // end_stone_bricks
     {false, false, true, {500, 500, 500, 500, 500, 500}, 0},  // ender_chest
     {true, false, true, {295, 295, 295, 295, 295, 295}, 0},  // exposed_chiseled_copper
@@ -405,7 +405,7 @@
     {false, false, true, {296, 296, 296, 296, 296, 296}, 0},  // exposed_copper_golem_statue
     {false, false, true, {301, 301, 301, 301, 301, 301}, 0},  // exposed_copper_grate
     {false, false, true, {302, 302, 302, 302, 302, 302}, 0},  // exposed_copper_lantern
-    {false, false, true, {303, 303, 303, 303, 303, 303}, 7},  // exposed_copper_trapdoor
+    {false, false, true, {303, 303, 303, 303, 303, 303}, 0},  // exposed_copper_trapdoor
     {true, false, true, {304, 304, 304, 304, 304, 304}, 0},  // exposed_cut_copper
     {false, false, true, {304, 304, 304, 304, 304, 304}, 4},  // exposed_cut_copper_slab
     {false, false, true, {304, 304, 304, 304, 304, 304}, 5},  // exposed_cut_copper_stairs
@@ -427,7 +427,7 @@
     {true, false, true, {322, 322, 323, 323, 322, 321}, 0},  // furnace
     {true, false, true, {324, 324, 324, 324, 324, 324}, 0},  // gilded_blackstone
     {false, false, true, {325, 325, 325, 325, 325, 325}, 0},  // glass
-    {false, false, true, {326, 326, 326, 326, 326, 326}, 8},  // glass_pane
+    {false, false, true, {326, 326, 326, 326, 326, 326}, 0},  // glass_pane
     {false, false, true, {57, 57, 57, 57, 57, 57}, 0},  // glow_item_frame
     {false, false, true, {327, 327, 327, 327, 327, 327}, 0},  // glow_lichen
     {true, false, true, {328, 328, 328, 328, 328, 328}, 0},  // glowstone
@@ -437,19 +437,19 @@
     {true, false, true, {332, 332, 332, 332, 332, 332}, 0},  // granite
     {false, false, true, {332, 332, 332, 332, 332, 332}, 4},  // granite_slab
     {false, false, true, {332, 332, 332, 332, 332, 332}, 5},  // granite_stairs
-    {false, false, true, {332, 332, 332, 332, 332, 332}, 9},  // granite_wall
+    {false, false, true, {332, 332, 332, 332, 332, 332}, 0},  // granite_wall
     {true, false, true, {337, 337, 337, 337, 337, 337}, 0},  // gravel
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // gray_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // gray_bed
     {false, false, true, {338, 338, 338, 338, 338, 338}, 0},  // gray_candle
     {false, false, true, {338, 338, 338, 338, 338, 338}, 0},  // gray_candle_cake
-    {false, false, true, {346, 346, 346, 346, 346, 346}, 6},  // gray_carpet
+    {false, false, true, {346, 346, 346, 346, 346, 346}, 0},  // gray_carpet
     {true, false, true, {339, 339, 339, 339, 339, 339}, 0},  // gray_concrete
     {true, false, true, {340, 340, 340, 340, 340, 340}, 0},  // gray_concrete_powder
     {true, false, true, {341, 341, 341, 341, 341, 341}, 0},  // gray_glazed_terracotta
     {false, false, true, {342, 342, 342, 342, 342, 342}, 0},  // gray_shulker_box
     {false, false, true, {343, 343, 343, 343, 343, 343}, 0},  // gray_stained_glass
-    {false, false, true, {344, 344, 344, 344, 344, 344}, 8},  // gray_stained_glass_pane
+    {false, false, true, {344, 344, 344, 344, 344, 344}, 0},  // gray_stained_glass_pane
     {true, false, true, {345, 345, 345, 345, 345, 345}, 0},  // gray_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // gray_wall_banner
     {true, false, true, {346, 346, 346, 346, 346, 346}, 0},  // gray_wool
@@ -457,13 +457,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // green_bed
     {false, false, true, {347, 347, 347, 347, 347, 347}, 0},  // green_candle
     {false, false, true, {347, 347, 347, 347, 347, 347}, 0},  // green_candle_cake
-    {false, false, true, {355, 355, 355, 355, 355, 355}, 6},  // green_carpet
+    {false, false, true, {355, 355, 355, 355, 355, 355}, 0},  // green_carpet
     {true, false, true, {348, 348, 348, 348, 348, 348}, 0},  // green_concrete
     {true, false, true, {349, 349, 349, 349, 349, 349}, 0},  // green_concrete_powder
     {true, false, true, {350, 350, 350, 350, 350, 350}, 0},  // green_glazed_terracotta
     {false, false, true, {351, 351, 351, 351, 351, 351}, 0},  // green_shulker_box
     {false, false, true, {352, 352, 352, 352, 352, 352}, 0},  // green_stained_glass
-    {false, false, true, {353, 353, 353, 353, 353, 353}, 8},  // green_stained_glass_pane
+    {false, false, true, {353, 353, 353, 353, 353, 353}, 0},  // green_stained_glass_pane
     {true, false, true, {354, 354, 354, 354, 354, 354}, 0},  // green_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // green_wall_banner
     {true, false, true, {355, 355, 355, 355, 355, 355}, 0},  // green_wool
@@ -492,7 +492,7 @@
     {false, false, true, {375, 375, 375, 375, 375, 375}, 0},  // iron_chain
     {false, false, true, {376, 376, 376, 376, 376, 376}, 0},  // iron_door
     {true, false, true, {377, 377, 377, 377, 377, 377}, 0},  // iron_ore
-    {false, false, true, {378, 378, 378, 378, 378, 378}, 7},  // iron_trapdoor
+    {false, false, true, {378, 378, 378, 378, 378, 378}, 0},  // iron_trapdoor
     {false, false, true, {57, 57, 57, 57, 57, 57}, 0},  // item_frame
     {true, false, true, {584, 584, 586, 586, 584, 379}, 0},  // jack_o_lantern
     {true, false, true, {382, 382, 381, 382, 380, 383}, 0},  // jigsaw
@@ -511,7 +511,7 @@
     {false, false, true, {390, 390, 390, 390, 390, 390}, 0},  // jungle_sign
     {false, false, true, {390, 390, 390, 390, 390, 390}, 4},  // jungle_slab
     {false, false, true, {390, 390, 390, 390, 390, 390}, 5},  // jungle_stairs
-    {false, false, true, {393, 393, 393, 393, 393, 393}, 7},  // jungle_trapdoor
+    {false, false, true, {393, 393, 393, 393, 393, 393}, 0},  // jungle_trapdoor
     {false, false, true, {725, 725, 725, 725, 725, 725}, 0},  // jungle_wall_hanging_sign
     {false, false, true, {390, 390, 390, 390, 390, 390}, 0},  // jungle_wall_sign
     {true, false, true, {388, 388, 388, 388, 388, 388}, 0},  // jungle_wood
@@ -533,13 +533,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_bed
     {false, false, true, {407, 407, 407, 407, 407, 407}, 0},  // light_blue_candle
     {false, false, true, {407, 407, 407, 407, 407, 407}, 0},  // light_blue_candle_cake
-    {false, false, true, {415, 415, 415, 415, 415, 415}, 6},  // light_blue_carpet
+    {false, false, true, {415, 415, 415, 415, 415, 415}, 0},  // light_blue_carpet
     {true, false, true, {408, 408, 408, 408, 408, 408}, 0},  // light_blue_concrete
     {true, false, true, {409, 409, 409, 409, 409, 409}, 0},  // light_blue_concrete_powder
     {true, false, true, {410, 410, 410, 410, 410, 410}, 0},  // light_blue_glazed_terracotta
     {false, false, true, {411, 411, 411, 411, 411, 411}, 0},  // light_blue_shulker_box
     {false, false, true, {412, 412, 412, 412, 412, 412}, 0},  // light_blue_stained_glass
-    {false, false, true, {413, 413, 413, 413, 413, 413}, 8},  // light_blue_stained_glass_pane
+    {false, false, true, {413, 413, 413, 413, 413, 413}, 0},  // light_blue_stained_glass_pane
     {true, false, true, {414, 414, 414, 414, 414, 414}, 0},  // light_blue_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_blue_wall_banner
     {true, false, true, {415, 415, 415, 415, 415, 415}, 0},  // light_blue_wool
@@ -547,13 +547,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_gray_bed
     {false, false, true, {416, 416, 416, 416, 416, 416}, 0},  // light_gray_candle
     {false, false, true, {416, 416, 416, 416, 416, 416}, 0},  // light_gray_candle_cake
-    {false, false, true, {424, 424, 424, 424, 424, 424}, 6},  // light_gray_carpet
+    {false, false, true, {424, 424, 424, 424, 424, 424}, 0},  // light_gray_carpet
     {true, false, true, {417, 417, 417, 417, 417, 417}, 0},  // light_gray_concrete
     {true, false, true, {418, 418, 418, 418, 418, 418}, 0},  // light_gray_concrete_powder
     {true, false, true, {419, 419, 419, 419, 419, 419}, 0},  // light_gray_glazed_terracotta
     {false, false, true, {420, 420, 420, 420, 420, 420}, 0},  // light_gray_shulker_box
     {false, false, true, {421, 421, 421, 421, 421, 421}, 0},  // light_gray_stained_glass
-    {false, false, true, {422, 422, 422, 422, 422, 422}, 8},  // light_gray_stained_glass_pane
+    {false, false, true, {422, 422, 422, 422, 422, 422}, 0},  // light_gray_stained_glass_pane
     {true, false, true, {423, 423, 423, 423, 423, 423}, 0},  // light_gray_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // light_gray_wall_banner
     {true, false, true, {424, 424, 424, 424, 424, 424}, 0},  // light_gray_wool
@@ -566,13 +566,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // lime_bed
     {false, false, true, {429, 429, 429, 429, 429, 429}, 0},  // lime_candle
     {false, false, true, {429, 429, 429, 429, 429, 429}, 0},  // lime_candle_cake
-    {false, false, true, {437, 437, 437, 437, 437, 437}, 6},  // lime_carpet
+    {false, false, true, {437, 437, 437, 437, 437, 437}, 0},  // lime_carpet
     {true, false, true, {430, 430, 430, 430, 430, 430}, 0},  // lime_concrete
     {true, false, true, {431, 431, 431, 431, 431, 431}, 0},  // lime_concrete_powder
     {true, false, true, {432, 432, 432, 432, 432, 432}, 0},  // lime_glazed_terracotta
     {false, false, true, {433, 433, 433, 433, 433, 433}, 0},  // lime_shulker_box
     {false, false, true, {434, 434, 434, 434, 434, 434}, 0},  // lime_stained_glass
-    {false, false, true, {435, 435, 435, 435, 435, 435}, 8},  // lime_stained_glass_pane
+    {false, false, true, {435, 435, 435, 435, 435, 435}, 0},  // lime_stained_glass_pane
     {true, false, true, {436, 436, 436, 436, 436, 436}, 0},  // lime_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // lime_wall_banner
     {true, false, true, {437, 437, 437, 437, 437, 437}, 0},  // lime_wool
@@ -582,13 +582,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // magenta_bed
     {false, false, true, {444, 444, 444, 444, 444, 444}, 0},  // magenta_candle
     {false, false, true, {444, 444, 444, 444, 444, 444}, 0},  // magenta_candle_cake
-    {false, false, true, {452, 452, 452, 452, 452, 452}, 6},  // magenta_carpet
+    {false, false, true, {452, 452, 452, 452, 452, 452}, 0},  // magenta_carpet
     {true, false, true, {445, 445, 445, 445, 445, 445}, 0},  // magenta_concrete
     {true, false, true, {446, 446, 446, 446, 446, 446}, 0},  // magenta_concrete_powder
     {true, false, true, {447, 447, 447, 447, 447, 447}, 0},  // magenta_glazed_terracotta
     {false, false, true, {448, 448, 448, 448, 448, 448}, 0},  // magenta_shulker_box
     {false, false, true, {449, 449, 449, 449, 449, 449}, 0},  // magenta_stained_glass
-    {false, false, true, {450, 450, 450, 450, 450, 450}, 8},  // magenta_stained_glass_pane
+    {false, false, true, {450, 450, 450, 450, 450, 450}, 0},  // magenta_stained_glass_pane
     {true, false, true, {451, 451, 451, 451, 451, 451}, 0},  // magenta_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // magenta_wall_banner
     {true, false, true, {452, 452, 452, 452, 452, 452}, 0},  // magenta_wool
@@ -608,7 +608,7 @@
     {false, false, true, {458, 458, 458, 458, 458, 458}, 0},  // mangrove_sign
     {false, false, true, {458, 458, 458, 458, 458, 458}, 4},  // mangrove_slab
     {false, false, true, {458, 458, 458, 458, 458, 458}, 5},  // mangrove_stairs
-    {false, false, true, {463, 463, 463, 463, 463, 463}, 7},  // mangrove_trapdoor
+    {false, false, true, {463, 463, 463, 463, 463, 463}, 0},  // mangrove_trapdoor
     {false, false, true, {727, 727, 727, 727, 727, 727}, 0},  // mangrove_wall_hanging_sign
     {false, false, true, {458, 458, 458, 458, 458, 458}, 0},  // mangrove_wall_sign
     {true, false, true, {456, 456, 456, 456, 456, 456}, 0},  // mangrove_wood
@@ -616,20 +616,20 @@
     {true, false, true, {465, 465, 467, 467, 465, 465}, 0},  // melon
     {false, false, true, {466, 466, 466, 466, 466, 466}, 0},  // melon_stem
     {true, false, true, {468, 468, 468, 468, 468, 468}, 0},  // moss_block
-    {false, false, true, {468, 468, 468, 468, 468, 468}, 6},  // moss_carpet
+    {false, false, true, {468, 468, 468, 468, 468, 468}, 0},  // moss_carpet
     {true, false, true, {469, 469, 469, 469, 469, 469}, 0},  // mossy_cobblestone
     {false, false, true, {469, 469, 469, 469, 469, 469}, 4},  // mossy_cobblestone_slab
     {false, false, true, {469, 469, 469, 469, 469, 469}, 5},  // mossy_cobblestone_stairs
-    {false, false, true, {469, 469, 469, 469, 469, 469}, 9},  // mossy_cobblestone_wall
+    {false, false, true, {469, 469, 469, 469, 469, 469}, 0},  // mossy_cobblestone_wall
     {false, false, true, {470, 470, 470, 470, 470, 470}, 4},  // mossy_stone_brick_slab
     {false, false, true, {470, 470, 470, 470, 470, 470}, 5},  // mossy_stone_brick_stairs
-    {false, false, true, {470, 470, 470, 470, 470, 470}, 9},  // mossy_stone_brick_wall
+    {false, false, true, {470, 470, 470, 470, 470, 470}, 0},  // mossy_stone_brick_wall
     {true, false, true, {470, 470, 470, 470, 470, 470}, 0},  // mossy_stone_bricks
     {false, false, true, {555, 555, 555, 555, 555, 555}, 0},  // moving_piston
     {true, false, true, {471, 471, 471, 471, 471, 471}, 0},  // mud
     {false, false, true, {472, 472, 472, 472, 472, 472}, 4},  // mud_brick_slab
     {false, false, true, {472, 472, 472, 472, 472, 472}, 5},  // mud_brick_stairs
-    {false, false, true, {472, 472, 472, 472, 472, 472}, 9},  // mud_brick_wall
+    {false, false, true, {472, 472, 472, 472, 472, 472}, 0},  // mud_brick_wall
     {true, false, true, {472, 472, 472, 472, 472, 472}, 0},  // mud_bricks
     {true, false, true, {473, 473, 474, 474, 473, 473}, 0},  // muddy_mangrove_roots
     {false, false, true, {475, 475, 475, 475, 475, 475}, 0},  // mushroom_stem
@@ -637,7 +637,7 @@
     {false, false, true, {478, 478, 478, 478, 478, 478}, 3},  // nether_brick_fence
     {false, false, true, {478, 478, 478, 478, 478, 478}, 4},  // nether_brick_slab
     {false, false, true, {478, 478, 478, 478, 478, 478}, 5},  // nether_brick_stairs
-    {false, false, true, {478, 478, 478, 478, 478, 478}, 9},  // nether_brick_wall
+    {false, false, true, {478, 478, 478, 478, 478, 478}, 0},  // nether_brick_wall
     {true, false, true, {478, 478, 478, 478, 478, 478}, 0},  // nether_bricks
     {true, false, true, {479, 479, 479, 479, 479, 479}, 0},  // nether_gold_ore
     {false, false, true, {480, 480, 480, 480, 480, 480}, 0},  // nether_portal
@@ -659,7 +659,7 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // oak_sign
     {false, false, true, {492, 492, 492, 492, 492, 492}, 4},  // oak_slab
     {false, false, true, {492, 492, 492, 492, 492, 492}, 5},  // oak_stairs
-    {false, false, true, {495, 495, 495, 495, 495, 495}, 7},  // oak_trapdoor
+    {false, false, true, {495, 495, 495, 495, 495, 495}, 0},  // oak_trapdoor
     {false, false, true, {729, 729, 729, 729, 729, 729}, 0},  // oak_wall_hanging_sign
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // oak_wall_sign
     {true, false, true, {490, 490, 490, 490, 490, 490}, 0},  // oak_wood
@@ -671,13 +671,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // orange_bed
     {false, false, true, {504, 504, 504, 504, 504, 504}, 0},  // orange_candle
     {false, false, true, {504, 504, 504, 504, 504, 504}, 0},  // orange_candle_cake
-    {false, false, true, {513, 513, 513, 513, 513, 513}, 6},  // orange_carpet
+    {false, false, true, {513, 513, 513, 513, 513, 513}, 0},  // orange_carpet
     {true, false, true, {505, 505, 505, 505, 505, 505}, 0},  // orange_concrete
     {true, false, true, {506, 506, 506, 506, 506, 506}, 0},  // orange_concrete_powder
     {true, false, true, {507, 507, 507, 507, 507, 507}, 0},  // orange_glazed_terracotta
     {false, false, true, {508, 508, 508, 508, 508, 508}, 0},  // orange_shulker_box
     {false, false, true, {509, 509, 509, 509, 509, 509}, 0},  // orange_stained_glass
-    {false, false, true, {510, 510, 510, 510, 510, 510}, 8},  // orange_stained_glass_pane
+    {false, false, true, {510, 510, 510, 510, 510, 510}, 0},  // orange_stained_glass_pane
     {true, false, true, {511, 511, 511, 511, 511, 511}, 0},  // orange_terracotta
     {false, false, true, {512, 512, 512, 512, 512, 512}, 0},  // orange_tulip
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // orange_wall_banner
@@ -693,7 +693,7 @@
     {false, false, true, {516, 516, 516, 516, 516, 516}, 0},  // oxidized_copper_golem_statue
     {false, false, true, {521, 521, 521, 521, 521, 521}, 0},  // oxidized_copper_grate
     {false, false, true, {522, 522, 522, 522, 522, 522}, 0},  // oxidized_copper_lantern
-    {false, false, true, {523, 523, 523, 523, 523, 523}, 7},  // oxidized_copper_trapdoor
+    {false, false, true, {523, 523, 523, 523, 523, 523}, 0},  // oxidized_copper_trapdoor
     {true, false, true, {524, 524, 524, 524, 524, 524}, 0},  // oxidized_cut_copper
     {false, false, true, {524, 524, 524, 524, 524, 524}, 4},  // oxidized_cut_copper_slab
     {false, false, true, {524, 524, 524, 524, 524, 524}, 5},  // oxidized_cut_copper_stairs
@@ -702,7 +702,7 @@
     {true, false, true, {527, 527, 527, 527, 527, 527}, 0},  // packed_mud
     {false, false, true, {528, 528, 528, 528, 528, 528}, 0},  // pale_hanging_moss
     {true, false, true, {529, 529, 529, 529, 529, 529}, 0},  // pale_moss_block
-    {false, false, true, {530, 530, 530, 530, 530, 530}, 6},  // pale_moss_carpet
+    {false, false, true, {530, 530, 530, 530, 530, 530}, 0},  // pale_moss_carpet
     {false, false, true, {535, 535, 535, 535, 535, 535}, 0},  // pale_oak_button
     {false, false, true, {531, 531, 531, 531, 531, 531}, 0},  // pale_oak_door
     {false, false, true, {535, 535, 535, 535, 535, 535}, 3},  // pale_oak_fence
@@ -717,7 +717,7 @@
     {false, false, true, {535, 535, 535, 535, 535, 535}, 0},  // pale_oak_sign
     {false, false, true, {535, 535, 535, 535, 535, 535}, 4},  // pale_oak_slab
     {false, false, true, {535, 535, 535, 535, 535, 535}, 5},  // pale_oak_stairs
-    {false, false, true, {538, 538, 538, 538, 538, 538}, 7},  // pale_oak_trapdoor
+    {false, false, true, {538, 538, 538, 538, 538, 538}, 0},  // pale_oak_trapdoor
     {false, false, true, {731, 731, 731, 731, 731, 731}, 0},  // pale_oak_wall_hanging_sign
     {false, false, true, {535, 535, 535, 535, 535, 535}, 0},  // pale_oak_wall_sign
     {true, false, true, {533, 533, 533, 533, 533, 533}, 0},  // pale_oak_wood
@@ -730,14 +730,14 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // pink_bed
     {false, false, true, {542, 542, 542, 542, 542, 542}, 0},  // pink_candle
     {false, false, true, {542, 542, 542, 542, 542, 542}, 0},  // pink_candle_cake
-    {false, false, true, {553, 553, 553, 553, 553, 553}, 6},  // pink_carpet
+    {false, false, true, {553, 553, 553, 553, 553, 553}, 0},  // pink_carpet
     {true, false, true, {543, 543, 543, 543, 543, 543}, 0},  // pink_concrete
     {true, false, true, {544, 544, 544, 544, 544, 544}, 0},  // pink_concrete_powder
     {true, false, true, {545, 545, 545, 545, 545, 545}, 0},  // pink_glazed_terracotta
     {false, false, true, {547, 547, 546, 546, 547, 547}, 1},  // pink_petals
     {false, false, true, {548, 548, 548, 548, 548, 548}, 0},  // pink_shulker_box
     {false, false, true, {549, 549, 549, 549, 549, 549}, 0},  // pink_stained_glass
-    {false, false, true, {550, 550, 550, 550, 550, 550}, 8},  // pink_stained_glass_pane
+    {false, false, true, {550, 550, 550, 550, 550, 550}, 0},  // pink_stained_glass_pane
     {true, false, true, {551, 551, 551, 551, 551, 551}, 0},  // pink_terracotta
     {false, false, true, {552, 552, 552, 552, 552, 552}, 0},  // pink_tulip
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // pink_wall_banner
@@ -757,17 +757,17 @@
     {true, false, true, {568, 568, 568, 568, 568, 568}, 0},  // polished_blackstone
     {false, false, true, {569, 569, 569, 569, 569, 569}, 4},  // polished_blackstone_brick_slab
     {false, false, true, {569, 569, 569, 569, 569, 569}, 5},  // polished_blackstone_brick_stairs
-    {false, false, true, {569, 569, 569, 569, 569, 569}, 9},  // polished_blackstone_brick_wall
+    {false, false, true, {569, 569, 569, 569, 569, 569}, 0},  // polished_blackstone_brick_wall
     {true, false, true, {569, 569, 569, 569, 569, 569}, 0},  // polished_blackstone_bricks
     {false, false, true, {568, 568, 568, 568, 568, 568}, 0},  // polished_blackstone_button
     {false, false, true, {568, 568, 568, 568, 568, 568}, 0},  // polished_blackstone_pressure_plate
     {false, false, true, {568, 568, 568, 568, 568, 568}, 4},  // polished_blackstone_slab
     {false, false, true, {568, 568, 568, 568, 568, 568}, 5},  // polished_blackstone_stairs
-    {false, false, true, {568, 568, 568, 568, 568, 568}, 9},  // polished_blackstone_wall
+    {false, false, true, {568, 568, 568, 568, 568, 568}, 0},  // polished_blackstone_wall
     {true, false, true, {570, 570, 570, 570, 570, 570}, 0},  // polished_deepslate
     {false, false, true, {570, 570, 570, 570, 570, 570}, 4},  // polished_deepslate_slab
     {false, false, true, {570, 570, 570, 570, 570, 570}, 5},  // polished_deepslate_stairs
-    {false, false, true, {570, 570, 570, 570, 570, 570}, 9},  // polished_deepslate_wall
+    {false, false, true, {570, 570, 570, 570, 570, 570}, 0},  // polished_deepslate_wall
     {true, false, true, {571, 571, 571, 571, 571, 571}, 0},  // polished_diorite
     {false, false, true, {571, 571, 571, 571, 571, 571}, 4},  // polished_diorite_slab
     {false, false, true, {571, 571, 571, 571, 571, 571}, 5},  // polished_diorite_stairs
@@ -777,7 +777,7 @@
     {true, false, true, {573, 573, 573, 573, 573, 573}, 0},  // polished_tuff
     {false, false, true, {573, 573, 573, 573, 573, 573}, 4},  // polished_tuff_slab
     {false, false, true, {573, 573, 573, 573, 573, 573}, 5},  // polished_tuff_stairs
-    {false, false, true, {573, 573, 573, 573, 573, 573}, 9},  // polished_tuff_wall
+    {false, false, true, {573, 573, 573, 573, 573, 573}, 0},  // polished_tuff_wall
     {false, false, true, {575, 575, 575, 575, 575, 575}, 0},  // potatoes
     {false, false, true, {5, 5, 274, 316, 5, 5}, 0},  // potted_acacia_sapling
     {false, false, true, {9, 9, 274, 316, 9, 9}, 0},  // potted_allium
@@ -826,20 +826,20 @@
     {true, false, true, {583, 583, 583, 583, 583, 583}, 0},  // prismarine_bricks
     {false, false, true, {582, 582, 582, 582, 582, 582}, 4},  // prismarine_slab
     {false, false, true, {582, 582, 582, 582, 582, 582}, 5},  // prismarine_stairs
-    {false, false, true, {582, 582, 582, 582, 582, 582}, 9},  // prismarine_wall
+    {false, false, true, {582, 582, 582, 582, 582, 582}, 0},  // prismarine_wall
     {true, false, true, {584, 584, 586, 586, 584, 584}, 0},  // pumpkin
     {false, false, true, {585, 585, 585, 585, 585, 585}, 0},  // pumpkin_stem
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // purple_banner
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // purple_bed
     {false, false, true, {587, 587, 587, 587, 587, 587}, 0},  // purple_candle
     {false, false, true, {587, 587, 587, 587, 587, 587}, 0},  // purple_candle_cake
-    {false, false, true, {595, 595, 595, 595, 595, 595}, 6},  // purple_carpet
+    {false, false, true, {595, 595, 595, 595, 595, 595}, 0},  // purple_carpet
     {true, false, true, {588, 588, 588, 588, 588, 588}, 0},  // purple_concrete
     {true, false, true, {589, 589, 589, 589, 589, 589}, 0},  // purple_concrete_powder
     {true, false, true, {590, 590, 590, 590, 590, 590}, 0},  // purple_glazed_terracotta
     {false, false, true, {591, 591, 591, 591, 591, 591}, 0},  // purple_shulker_box
     {false, false, true, {592, 592, 592, 592, 592, 592}, 0},  // purple_stained_glass
-    {false, false, true, {593, 593, 593, 593, 593, 593}, 8},  // purple_stained_glass_pane
+    {false, false, true, {593, 593, 593, 593, 593, 593}, 0},  // purple_stained_glass_pane
     {true, false, true, {594, 594, 594, 594, 594, 594}, 0},  // purple_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // purple_wall_banner
     {true, false, true, {595, 595, 595, 595, 595, 595}, 0},  // purple_wool
@@ -860,7 +860,7 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // red_bed
     {false, false, true, {609, 609, 609, 609, 609, 609}, 0},  // red_candle
     {false, false, true, {609, 609, 609, 609, 609, 609}, 0},  // red_candle_cake
-    {false, false, true, {625, 625, 625, 625, 625, 625}, 6},  // red_carpet
+    {false, false, true, {625, 625, 625, 625, 625, 625}, 0},  // red_carpet
     {true, false, true, {610, 610, 610, 610, 610, 610}, 0},  // red_concrete
     {true, false, true, {611, 611, 611, 611, 611, 611}, 0},  // red_concrete_powder
     {true, false, true, {612, 612, 612, 612, 612, 612}, 0},  // red_glazed_terracotta
@@ -868,16 +868,16 @@
     {false, false, true, {614, 614, 614, 614, 614, 614}, 0},  // red_mushroom_block
     {false, false, true, {615, 615, 615, 615, 615, 615}, 4},  // red_nether_brick_slab
     {false, false, true, {615, 615, 615, 615, 615, 615}, 5},  // red_nether_brick_stairs
-    {false, false, true, {615, 615, 615, 615, 615, 615}, 9},  // red_nether_brick_wall
+    {false, false, true, {615, 615, 615, 615, 615, 615}, 0},  // red_nether_brick_wall
     {true, false, true, {615, 615, 615, 615, 615, 615}, 0},  // red_nether_bricks
     {true, false, true, {616, 616, 616, 616, 616, 616}, 0},  // red_sand
     {true, false, true, {617, 617, 619, 618, 617, 617}, 0},  // red_sandstone
     {false, false, true, {617, 617, 619, 618, 617, 617}, 4},  // red_sandstone_slab
     {false, false, true, {617, 617, 619, 618, 617, 617}, 5},  // red_sandstone_stairs
-    {false, false, true, {617, 617, 617, 617, 617, 617}, 9},  // red_sandstone_wall
+    {false, false, true, {617, 617, 617, 617, 617, 617}, 0},  // red_sandstone_wall
     {false, false, true, {620, 620, 620, 620, 620, 620}, 0},  // red_shulker_box
     {false, false, true, {621, 621, 621, 621, 621, 621}, 0},  // red_stained_glass
-    {false, false, true, {622, 622, 622, 622, 622, 622}, 8},  // red_stained_glass_pane
+    {false, false, true, {622, 622, 622, 622, 622, 622}, 0},  // red_stained_glass_pane
     {true, false, true, {623, 623, 623, 623, 623, 623}, 0},  // red_terracotta
     {false, false, true, {624, 624, 624, 624, 624, 624}, 0},  // red_tulip
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // red_wall_banner
@@ -894,7 +894,7 @@
     {true, false, true, {637, 637, 637, 637, 637, 637}, 0},  // resin_block
     {false, false, true, {638, 638, 638, 638, 638, 638}, 4},  // resin_brick_slab
     {false, false, true, {638, 638, 638, 638, 638, 638}, 5},  // resin_brick_stairs
-    {false, false, true, {638, 638, 638, 638, 638, 638}, 9},  // resin_brick_wall
+    {false, false, true, {638, 638, 638, 638, 638, 638}, 0},  // resin_brick_wall
     {true, false, true, {638, 638, 638, 638, 638, 638}, 0},  // resin_bricks
     {false, false, true, {639, 639, 639, 639, 639, 639}, 0},  // resin_clump
     {true, false, true, {641, 641, 642, 640, 641, 641}, 0},  // respawn_anchor
@@ -903,7 +903,7 @@
     {true, false, true, {646, 646, 648, 647, 646, 646}, 0},  // sandstone
     {false, false, true, {646, 646, 648, 647, 646, 646}, 4},  // sandstone_slab
     {false, false, true, {646, 646, 648, 647, 646, 646}, 5},  // sandstone_stairs
-    {false, false, true, {646, 646, 646, 646, 646, 646}, 9},  // sandstone_wall
+    {false, false, true, {646, 646, 646, 646, 646, 646}, 0},  // sandstone_wall
     {false, false, true, {650, 650, 651, 649, 650, 650}, 0},  // scaffolding
     {true, false, true, {652, 652, 652, 652, 652, 652}, 0},  // sculk
     {true, false, true, {654, 654, 655, 653, 654, 654}, 0},  // sculk_catalyst
@@ -963,14 +963,14 @@
     {false, false, true, {703, 703, 703, 703, 703, 703}, 0},  // spruce_sign
     {false, false, true, {703, 703, 703, 703, 703, 703}, 4},  // spruce_slab
     {false, false, true, {703, 703, 703, 703, 703, 703}, 5},  // spruce_stairs
-    {false, false, true, {706, 706, 706, 706, 706, 706}, 7},  // spruce_trapdoor
+    {false, false, true, {706, 706, 706, 706, 706, 706}, 0},  // spruce_trapdoor
     {false, false, true, {733, 733, 733, 733, 733, 733}, 0},  // spruce_wall_hanging_sign
     {false, false, true, {703, 703, 703, 703, 703, 703}, 0},  // spruce_wall_sign
     {true, false, true, {701, 701, 701, 701, 701, 701}, 0},  // spruce_wood
     {true, false, true, {555, 555, 555, 555, 554, 557}, 0},  // sticky_piston
     {false, false, true, {708, 708, 708, 708, 708, 708}, 4},  // stone_brick_slab
     {false, false, true, {708, 708, 708, 708, 708, 708}, 5},  // stone_brick_stairs
-    {false, false, true, {708, 708, 708, 708, 708, 708}, 9},  // stone_brick_wall
+    {false, false, true, {708, 708, 708, 708, 708, 708}, 0},  // stone_brick_wall
     {true, false, true, {708, 708, 708, 708, 708, 708}, 0},  // stone_bricks
     {false, false, true, {707, 707, 707, 707, 707, 707}, 0},  // stone_button
     {false, false, true, {707, 707, 707, 707, 707, 707}, 0},  // stone_pressure_plate
@@ -1030,11 +1030,11 @@
     {true, false, true, {765, 765, 765, 765, 765, 765}, 0},  // tuff
     {false, false, true, {766, 766, 766, 766, 766, 766}, 4},  // tuff_brick_slab
     {false, false, true, {766, 766, 766, 766, 766, 766}, 5},  // tuff_brick_stairs
-    {false, false, true, {766, 766, 766, 766, 766, 766}, 9},  // tuff_brick_wall
+    {false, false, true, {766, 766, 766, 766, 766, 766}, 0},  // tuff_brick_wall
     {true, false, true, {766, 766, 766, 766, 766, 766}, 0},  // tuff_bricks
     {false, false, true, {765, 765, 765, 765, 765, 765}, 4},  // tuff_slab
     {false, false, true, {765, 765, 765, 765, 765, 765}, 5},  // tuff_stairs
-    {false, false, true, {765, 765, 765, 765, 765, 765}, 9},  // tuff_wall
+    {false, false, true, {765, 765, 765, 765, 765, 765}, 0},  // tuff_wall
     {false, false, true, {767, 767, 767, 767, 767, 767}, 0},  // turtle_egg
     {false, false, true, {768, 768, 768, 768, 768, 768}, 0},  // twisting_vines
     {false, false, true, {769, 769, 769, 769, 769, 769}, 0},  // twisting_vines_plant
@@ -1059,7 +1059,7 @@
     {false, false, true, {781, 781, 781, 781, 781, 781}, 4},  // warped_slab
     {false, false, true, {781, 781, 781, 781, 781, 781}, 5},  // warped_stairs
     {true, false, true, {785, 785, 786, 786, 785, 785}, 0},  // warped_stem
-    {false, false, true, {787, 787, 787, 787, 787, 787}, 7},  // warped_trapdoor
+    {false, false, true, {787, 787, 787, 787, 787, 787}, 0},  // warped_trapdoor
     {false, false, true, {735, 735, 735, 735, 735, 735}, 0},  // warped_wall_hanging_sign
     {false, false, true, {781, 781, 781, 781, 781, 781}, 0},  // warped_wall_sign
     {true, false, true, {788, 788, 788, 788, 788, 788}, 0},  // warped_wart_block
@@ -1074,7 +1074,7 @@
     {false, false, true, {179, 179, 179, 179, 179, 179}, 0},  // waxed_copper_golem_statue
     {false, false, true, {183, 183, 183, 183, 183, 183}, 0},  // waxed_copper_grate
     {false, false, true, {184, 184, 184, 184, 184, 184}, 0},  // waxed_copper_lantern
-    {false, false, true, {187, 187, 187, 187, 187, 187}, 7},  // waxed_copper_trapdoor
+    {false, false, true, {187, 187, 187, 187, 187, 187}, 0},  // waxed_copper_trapdoor
     {true, false, true, {217, 217, 217, 217, 217, 217}, 0},  // waxed_cut_copper
     {false, false, true, {217, 217, 217, 217, 217, 217}, 4},  // waxed_cut_copper_slab
     {false, false, true, {217, 217, 217, 217, 217, 217}, 5},  // waxed_cut_copper_stairs
@@ -1088,7 +1088,7 @@
     {false, false, true, {296, 296, 296, 296, 296, 296}, 0},  // waxed_exposed_copper_golem_statue
     {false, false, true, {301, 301, 301, 301, 301, 301}, 0},  // waxed_exposed_copper_grate
     {false, false, true, {302, 302, 302, 302, 302, 302}, 0},  // waxed_exposed_copper_lantern
-    {false, false, true, {303, 303, 303, 303, 303, 303}, 7},  // waxed_exposed_copper_trapdoor
+    {false, false, true, {303, 303, 303, 303, 303, 303}, 0},  // waxed_exposed_copper_trapdoor
     {true, false, true, {304, 304, 304, 304, 304, 304}, 0},  // waxed_exposed_cut_copper
     {false, false, true, {304, 304, 304, 304, 304, 304}, 4},  // waxed_exposed_cut_copper_slab
     {false, false, true, {304, 304, 304, 304, 304, 304}, 5},  // waxed_exposed_cut_copper_stairs
@@ -1104,7 +1104,7 @@
     {false, false, true, {516, 516, 516, 516, 516, 516}, 0},  // waxed_oxidized_copper_golem_statue
     {false, false, true, {521, 521, 521, 521, 521, 521}, 0},  // waxed_oxidized_copper_grate
     {false, false, true, {522, 522, 522, 522, 522, 522}, 0},  // waxed_oxidized_copper_lantern
-    {false, false, true, {523, 523, 523, 523, 523, 523}, 7},  // waxed_oxidized_copper_trapdoor
+    {false, false, true, {523, 523, 523, 523, 523, 523}, 0},  // waxed_oxidized_copper_trapdoor
     {true, false, true, {524, 524, 524, 524, 524, 524}, 0},  // waxed_oxidized_cut_copper
     {false, false, true, {524, 524, 524, 524, 524, 524}, 4},  // waxed_oxidized_cut_copper_slab
     {false, false, true, {524, 524, 524, 524, 524, 524}, 5},  // waxed_oxidized_cut_copper_stairs
@@ -1119,7 +1119,7 @@
     {false, false, true, {791, 791, 791, 791, 791, 791}, 0},  // waxed_weathered_copper_golem_statue
     {false, false, true, {796, 796, 796, 796, 796, 796}, 0},  // waxed_weathered_copper_grate
     {false, false, true, {797, 797, 797, 797, 797, 797}, 0},  // waxed_weathered_copper_lantern
-    {false, false, true, {798, 798, 798, 798, 798, 798}, 7},  // waxed_weathered_copper_trapdoor
+    {false, false, true, {798, 798, 798, 798, 798, 798}, 0},  // waxed_weathered_copper_trapdoor
     {true, false, true, {799, 799, 799, 799, 799, 799}, 0},  // waxed_weathered_cut_copper
     {false, false, true, {799, 799, 799, 799, 799, 799}, 4},  // waxed_weathered_cut_copper_slab
     {false, false, true, {799, 799, 799, 799, 799, 799}, 5},  // waxed_weathered_cut_copper_stairs
@@ -1134,7 +1134,7 @@
     {false, false, true, {791, 791, 791, 791, 791, 791}, 0},  // weathered_copper_golem_statue
     {false, false, true, {796, 796, 796, 796, 796, 796}, 0},  // weathered_copper_grate
     {false, false, true, {797, 797, 797, 797, 797, 797}, 0},  // weathered_copper_lantern
-    {false, false, true, {798, 798, 798, 798, 798, 798}, 7},  // weathered_copper_trapdoor
+    {false, false, true, {798, 798, 798, 798, 798, 798}, 0},  // weathered_copper_trapdoor
     {true, false, true, {799, 799, 799, 799, 799, 799}, 0},  // weathered_cut_copper
     {false, false, true, {799, 799, 799, 799, 799, 799}, 4},  // weathered_cut_copper_slab
     {false, false, true, {799, 799, 799, 799, 799, 799}, 5},  // weathered_cut_copper_stairs
@@ -1147,13 +1147,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // white_bed
     {false, false, true, {805, 805, 805, 805, 805, 805}, 0},  // white_candle
     {false, false, true, {805, 805, 805, 805, 805, 805}, 0},  // white_candle_cake
-    {false, false, true, {814, 814, 814, 814, 814, 814}, 6},  // white_carpet
+    {false, false, true, {814, 814, 814, 814, 814, 814}, 0},  // white_carpet
     {true, false, true, {806, 806, 806, 806, 806, 806}, 0},  // white_concrete
     {true, false, true, {807, 807, 807, 807, 807, 807}, 0},  // white_concrete_powder
     {true, false, true, {808, 808, 808, 808, 808, 808}, 0},  // white_glazed_terracotta
     {false, false, true, {809, 809, 809, 809, 809, 809}, 0},  // white_shulker_box
     {false, false, true, {810, 810, 810, 810, 810, 810}, 0},  // white_stained_glass
-    {false, false, true, {811, 811, 811, 811, 811, 811}, 8},  // white_stained_glass_pane
+    {false, false, true, {811, 811, 811, 811, 811, 811}, 0},  // white_stained_glass_pane
     {true, false, true, {812, 812, 812, 812, 812, 812}, 0},  // white_terracotta
     {false, false, true, {813, 813, 813, 813, 813, 813}, 0},  // white_tulip
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // white_wall_banner
@@ -1166,13 +1166,13 @@
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // yellow_bed
     {false, false, true, {818, 818, 818, 818, 818, 818}, 0},  // yellow_candle
     {false, false, true, {818, 818, 818, 818, 818, 818}, 0},  // yellow_candle_cake
-    {false, false, true, {826, 826, 826, 826, 826, 826}, 6},  // yellow_carpet
+    {false, false, true, {826, 826, 826, 826, 826, 826}, 0},  // yellow_carpet
     {true, false, true, {819, 819, 819, 819, 819, 819}, 0},  // yellow_concrete
     {true, false, true, {820, 820, 820, 820, 820, 820}, 0},  // yellow_concrete_powder
     {true, false, true, {821, 821, 821, 821, 821, 821}, 0},  // yellow_glazed_terracotta
     {false, false, true, {822, 822, 822, 822, 822, 822}, 0},  // yellow_shulker_box
     {false, false, true, {823, 823, 823, 823, 823, 823}, 0},  // yellow_stained_glass
-    {false, false, true, {824, 824, 824, 824, 824, 824}, 8},  // yellow_stained_glass_pane
+    {false, false, true, {824, 824, 824, 824, 824, 824}, 0},  // yellow_stained_glass_pane
     {true, false, true, {825, 825, 825, 825, 825, 825}, 0},  // yellow_terracotta
     {false, false, true, {492, 492, 492, 492, 492, 492}, 0},  // yellow_wall_banner
     {true, false, true, {826, 826, 826, 826, 826, 826}, 0},  // yellow_wool
