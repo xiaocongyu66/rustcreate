@@ -454,16 +454,17 @@ fn embedded_player_ejects_nearest_face_not_through_block() {
         aabb.min.x
     );
 
-    // 镜像：向 +X 推同一嵌人体，应就近推到 x≈3.0，不得被甩到 x≈2.0 以西。
+    // 镜像：嵌入 [2,3]∪[3,4]（脚底中心 x=2.75，盒 x∈[2.45,3.05]）向 +X
+    // 推，候选 {2.0(身后，过滤), 3.0} → 面=3.0，应就近停在 x=3.0 以西；
+    // 旧实现取 min=2.0 → 玩家被隔着两格甩到 x≈2.0 以西。
     world.set(3, 1, 0, STONE);
-    let mut p = ground_player(2.45, 1.0, 0.5);
+    let mut p = ground_player(2.75, 1.0, 0.5);
     p.vel = Vec3::new(4.0, 0.0, 0.0);
     let mut aabb = Aabb::from_player(p.pos);
-    // 盒 x∈[2.15,2.75]：+X 推进后候选 {2.0(身后，过滤), 3.0} → 面=3.0。
     assert!(move_axis(&world, &mut p, &mut aabb, Axis::X, 0.066));
     assert!(
-        aabb.max.x > 2.5,
-        "嵌入态应向西邻格面 x=3.0 就近弹出，实得 max.x = {}",
+        aabb.max.x > 2.5 && aabb.max.x < 3.0,
+        "嵌入态应向东邻格面 x=3.0 就近弹出，实得 max.x = {}（<2.5 = 隔着整块瞬移）",
         aabb.max.x
     );
 

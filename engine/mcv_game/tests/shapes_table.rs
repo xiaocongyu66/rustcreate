@@ -67,13 +67,13 @@ fn every_solid_block_yields_a_nonempty_collision_box() {
     for (i, def) in mcv_core::BLOCKS.iter().enumerate() {
         let id = BlockId(i as u16);
         let n = push_boxes(id, &w, p, RayTarget::Collide, &mut boxes);
-        let shapes: Vec<_> = boxes[..n].iter().copied().collect();
-        if def.solid && (n == 0 || shapes.iter().any(degenerate)) {
+        let shapes = &boxes[..n];
+        if def.solid && (shapes.is_empty() || shapes.iter().any(degenerate)) {
             offenders.push(format!(
                 "id {i} {} shape={:?} solid=true 碰撞盒数 {n}（含退化盒：{}）",
                 def.name,
                 Shape::from_u8(def.shape),
-                shapes.iter().filter(|b| degenerate(*b)).count()
+                shapes.iter().filter(|b| degenerate(b)).count()
             ));
         }
         // 反向：Cross/Torch 无碰撞形状 → solid 必须 false（否则是
