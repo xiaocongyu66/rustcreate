@@ -126,7 +126,13 @@ fn rust_geom_rule_matches_cpp_generated_table() {
             continue;
         }
         let compact: String = body.chars().filter(|c| *c != '{' && *c != '}').collect();
-        let flat: Vec<&str> = compact.split(',').map(str::trim).collect();
+        // C++ 初始化行以「},」收尾，剥壳后残留尾逗号 → 先去再切。
+        let flat: Vec<&str> = compact
+            .trim()
+            .trim_end_matches(',')
+            .split(',')
+            .map(str::trim)
+            .collect();
         assert_eq!(flat.len(), 10, "line {}: 意外字段数 {:?}", i + 1, flat);
         let def = &mcv_core::BLOCKS[count];
         assert_eq!(name.trim(), def.name, "id {count}: 表名漂移");
@@ -208,7 +214,7 @@ fn scene_cave() -> Chunk {
         id_of("torch"),
         id_of("oak_fence"),
         id_of("oak_slab"),
-        id_of("cobblestone"),
+        id_of("cobble"),
     );
     for x in 0..16 {
         for z in 0..16 {
@@ -425,46 +431,61 @@ impl Rng {
 }
 
 fn random_chunk(rng: &mut Rng) -> Chunk {
+    // 地形化生成（高度面 + 稀疏装饰 + 稀疏洞）：保持方块种类/状态多样性，
+    // 同时网格量受控——C++ 池尺寸类上限 4 MiB（mempool.cpp:30），超限
+    // acquire 返回 OOM（-3），与生产共用同一约束。
     let mut c = chunk(0, 0xF0);
-    let palette: [(usize, usize); 12] = [
-        // (id, 权重)
-        (0, 55),
-        (id_of("stone") as usize, 12),
-        (id_of("dirt") as usize, 6),
-        (id_of("grass") as usize, 6),
-        (id_of("water") as usize, 6),
-        (id_of("log") as usize, 3),
-        (id_of("leaves") as usize, 3),
-        (id_of("oak_fence") as usize, 2),
-        (id_of("oak_slab") as usize, 2),
-        (id_of("oak_stairs") as usize, 2),
-        (id_of("flower_red") as usize, 2),
-        (id_of("torch") as usize, 1),
+    let solid = [
+        id_of("stone"),
+        id_of("dirt"),
+        id_of("grass"),
+        id_of("sand"),
+        id_of("log"),
+        id_of("leaves"),
+        id_of("planks"),
     ];
-    let total: usize = palette.iter().map(|p| p.1).sum();
-    for y in 0..256 {
-        for z in 0..16 {
-            for x in 0..16 {
-                if rng.below(4) == 0 {
-                    continue; // 保持大片空气/实体结构，避免纯噪声
+    let deco = [
+        id_of("oak_fence"),
+        id_of("oak_slab"),
+        id_of("oak_stairs"),
+        id_of("flower_red"),
+        id_of("torch"),
+    ];
+    for x in 0..16usize {
+        for z in 0..16usize {
+            let h = 40 + rng.below(24) as usize; // 40..63
+            for y in 0..h {
+                let id = solid[rng.below(solid.len() as u64) as usize];
+                let raw = match mcv_core::shape::Shape::from_u8(mcv_core::BLOCKS[id as usize].shape)
+                {
+                    // 非立方固体按随机状态 nibble（半砖上下/楼梯朝向+top）。
+                    mcv_core::shape::Shape::Slab => id | ((rng.below(2) as u16) << 12),
+                    mcv_core::shape::Shape::Stairs => id | ((rng.below(8) as u16) << 12),
+                    _ => id,
+                };
+                c.0[(y << 8) | (z << 4) | x] = raw;
+            }
+            // 水面：洼地灌到 y=59（水顶波动 + 水下剔除 + 水间共面）。
+            if h < 60 {
+                for y in h..60 {
+                    c.0[(y << 8) | (z << 4) | x] = id_of("water");
                 }
-                let mut pick = rng.below(total as u64) as usize;
-                let mut id = 0u16;
-                for (bid, w) in palette {
-                    if pick < w {
-                        id = bid as u16;
-                        break;
-                    }
-                    pick -= w;
-                }
-                // 半砖上下/楼梯朝向+top 的随机状态 nibble。
+            }
+            // 稀疏装饰（约 1/8 列）：栅栏/半砖/楼梯/花草/火把，随机状态。
+            if rng.below(8) == 0 && h < 255 {
+                let id = deco[rng.below(deco.len() as u64) as usize];
                 let raw = match mcv_core::shape::Shape::from_u8(mcv_core::BLOCKS[id as usize].shape)
                 {
                     mcv_core::shape::Shape::Slab => id | ((rng.below(2) as u16) << 12),
                     mcv_core::shape::Shape::Stairs => id | ((rng.below(8) as u16) << 12),
                     _ => id,
                 };
-                c.0[(y << 8) | (z << 4) | x] = raw;
+                c.0[(h << 8) | (z << 4) | x] = raw;
+            }
+            // 稀疏洞（约 1/16 列）：孤立空腔的六向剔除与 AO。
+            if rng.below(16) == 0 && h > 6 {
+                let y = rng.below((h - 2) as u64) as usize + 1;
+                c.0[(y << 8) | (z << 4) | x] = 0;
             }
         }
     }
