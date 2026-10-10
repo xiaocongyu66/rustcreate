@@ -201,11 +201,16 @@ mod tests {
 
     /// expectedDeviation 以非零倍频的下标跨度计（NormalNoise.java:59-70 扫
     /// 非零 amplitude，:97-103 expectedDeviation(maxOctave−minOctave)），
-    /// 非 amplitudes.len()：[1,1,0] 的 span=1 → 0.1·(1+1/2)=0.15。
+    /// 非 amplitudes.len()：[1,1,0] 的 span=1 → 0.1·(1+1/2)≈0.15
+    /// （value_factor ≈ 1.111；若误用 len=3 → 0.125 → 1.333，必被此断言识破）。
     #[test]
     fn expected_deviation_uses_nonzero_octave_span() {
         let n = NormalNoise::new(7, 0xAB, -8, &[1.0, 1.0, 0.0]);
-        let want = 0.166_666_666_666_666_66_f64 / 0.15;
-        assert_eq!(n.value_factor.to_bits(), want.to_bits());
+        let want = 0.166_666_666_666_666_66_f64 / 0.15_f64;
+        assert!(
+            (n.value_factor - want).abs() < 1e-12,
+            "value_factor {} 偏离 span 语义期望 {want}",
+            n.value_factor
+        );
     }
 }
