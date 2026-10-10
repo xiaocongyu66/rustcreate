@@ -105,7 +105,7 @@ fn take_one_consumes_and_clears() {
 #[test]
 fn block_drops_follow_261_semantics() {
     use mcv_core::BlockId;
-    let zero = || 0u32;
+    let mut zero = || 0u32;
     // 石头→圆石(26.1 dropResources)。
     let d = mcv_item::drops_for_block(BlockId(1), &mut zero);
     assert_eq!(d.len(), 1);

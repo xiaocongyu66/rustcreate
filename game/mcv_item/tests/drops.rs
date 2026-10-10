@@ -110,7 +110,7 @@ fn oak_leaves_three_independent_pools() {
     assert!(drops_for_block(bid("leaves"), &mut rng(600)).is_empty());
     // 木棍数量上界 2：掷点序列 (100,100,0,1) → 树苗不中（100 ≥ 50）、
     // 苹果不中、木棍中（0 < 20）、数量掷点 1 % 2 = 1 → 1+1 = 2。
-    let seq = {
+    let mut seq = {
         let mut rolls = [100u32, 100, 0, 1];
         let mut i = 0usize;
         move || {
