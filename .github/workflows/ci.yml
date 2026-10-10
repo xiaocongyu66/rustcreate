@@ -13,11 +13,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          targets: aarch64-linux-android
       - uses: Swatinem/rust-cache@v2
       - name: Install ALSA dev headers (tinyaudio Linux backend)
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # Android APK 线编译债前置（任务板 #84）：build.yml 的 android job 只在
+      # push main 后才跑 cargo apk build（= mcv_app 及其依赖树，
+      # aarch64-linux-android），Android-only 代码路径（android-activity 装配、
+      # cfg(target_os="android") 块、wgpu Vulkan/GL 后端选择）的编译错只能等
+      # main 构建红才暴露，修复周期被拉长。此处以 check 补洞：
+      # - 包范围与 APK 线严格对齐：只 -p mcv_app（cargo apk build 在
+      #   game/mcv_app 下构建的正是该包及其传递依赖）。桌面壳 mcv_desktop
+      #   不在 APK 线里，不拉入 Android 目标编译制造无关红。
+      # - 纯 check 不链接，无需 NDK 交叉链接器；android-activity 的 cc 胶水
+      #   仅在 game-activity feature 下触发，本仓库走 native-activity，
+      #   目标侧零 C 编译 → 只装 rustup target 即可，不引 setup-android-env.sh。
+      - name: cargo check (aarch64-linux-android, APK line parity)
+        run: cargo check --locked -p mcv_app --target aarch64-linux-android
       - name: Layering guard — game crates must not link wgpu/winit
         run: |
           # 引擎提供能力，游戏提供规则：除平台壳（mcv_app/mcv_desktop）外，
