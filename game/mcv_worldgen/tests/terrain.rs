@@ -11,8 +11,8 @@ use mcv_core::{BlockId, CHUNK_VOL, ChunkPos};
 use mcv_worldgen::{TerrainBackend, TerrainOutput, generate_terrain_with};
 
 /// 与旧 `generate_terrain(seed, pos)` 同形，但显式选 legacy 后端（见文件头）。
-fn gen_legacy(seed: u64, cx: i32, cz: i32) -> Result<TerrainOutput, i32> {
-    generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
+fn gen_legacy(seed: u64, pos: ChunkPos) -> Result<TerrainOutput, i32> {
+    generate_terrain_with(TerrainBackend::Legacy, seed, pos)
 }
 
 const AIR: u16 = 0;
