@@ -41,14 +41,14 @@ fn build_flat(rt: &mut GameRuntime) {
         for y in 0..70usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    v[y << 8 | z << 4 | x] = BlockId(1);
+                    v[mcv_core::vidx(x, y as i32, z)] = BlockId(1);
                 }
             }
         }
         for y in 70..96usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    v[y << 8 | z << 4 | x] = BlockId(0);
+                    v[mcv_core::vidx(x, y as i32, z)] = BlockId(0);
                 }
             }
         }
@@ -363,7 +363,7 @@ fn water_pool_slows_to_swim_speed() {
         let mut v = h.voxels.write().unwrap();
         for z in 4..14usize {
             for x in 4..12usize {
-                v[70 << 8 | z << 4 | x] = BlockId(5); // water（liquid=true）
+                v[mcv_core::vidx(x, 70, z)] = BlockId(5); // water（liquid=true）
             }
         }
     }

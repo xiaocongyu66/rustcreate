@@ -81,8 +81,11 @@ impl mcv_game::VoxelAccess for ChunkVoxels<'_> {
         if chunk.stage() == Stage::Empty {
             return BlockId(1);
         }
-        let [lx, ly, lz] = p.local();
-        chunk.voxels.read().unwrap()[ly << 8 | lz << 4 | lx]
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
+            return BlockId(1); // 界外按缺格保守实心（v6 绝对域，防越界索引）
+        }
+        let [lx, _, lz] = p.local();
+        chunk.voxels.read().unwrap()[mcv_core::vidx(lx, p.y, lz)]
     }
     fn light(&self, _p: BlockPos) -> u8 {
         15

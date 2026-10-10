@@ -22,7 +22,7 @@ fn floor_world() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
         for y in 0..64u32 {
             for z in 0..16u32 {
                 for x in 0..16u32 {
-                    v[(y << 8 | z << 4 | x) as usize] = BlockId(1);
+                    v[mcv_core::vidx(x as usize, y as i32, z as usize)] = BlockId(1);
                 }
             }
         }

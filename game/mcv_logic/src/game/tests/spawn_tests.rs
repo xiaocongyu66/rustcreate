@@ -24,8 +24,8 @@ const GLASS: u16 = 419;
 const WATER: u16 = 5;
 const FLOWER_RED: u16 = 12;
 
-fn floor_voxels(top: usize) -> Box<[BlockId; 65536]> {
-    let mut v = Box::new([BlockId(0); 65536]);
+fn floor_voxels(top: usize) -> Box<[BlockId; mcv_core::CHUNK_VOL]> {
+    let mut v = Box::new([BlockId(0); mcv_core::CHUNK_VOL]);
     for y in 0..=top {
         for z in 0..16usize {
             for x in 0..16usize {
@@ -36,7 +36,7 @@ fn floor_voxels(top: usize) -> Box<[BlockId; 65536]> {
     v
 }
 
-fn hm_of(v: &[BlockId; 65536]) -> Box<[u8; 256]> {
+fn hm_of(v: &[BlockId; mcv_core::CHUNK_VOL]) -> Box<[i16; 256]> {
     mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(v))
 }
 
@@ -106,7 +106,7 @@ fn spawn_column_feet_y_rejects_unsafe_columns() {
     );
 
     // 全空列：recompute 回落 hm=1 → gy=0=空气，地面判定拒绝。
-    let empty = Box::new([BlockId(0); 65536]);
+    let empty = Box::new([BlockId(0); mcv_core::CHUNK_VOL]);
     let hm_e = hm_of(&empty);
     assert_eq!(
         spawn_column_feet_y(&empty[..], &hm_e[..], 8, 8),
