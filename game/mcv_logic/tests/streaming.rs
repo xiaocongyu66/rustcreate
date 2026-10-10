@@ -14,13 +14,14 @@
 //! ≥LightLocalReady）手工推进状态机，等价真机 CxxMesher+MeshUploader 的
 //! 建网格+上传（game.rs remesh 循环注释所述「由测试手工 advance_to」同款）。
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage, dirty, vidx};
-use mcv_logic::game::{GameMode, GameRuntime};
+use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage, dirty, vidx};
+use mcv_game::VoxelAccess;
+use mcv_logic::game::{GameMode, GamePhase, GameRuntime, WorldView};
 
 /// 唯一临时存档目录（并行安全，镜像 game.rs 单测 headless_rt 的做法）。
 fn temp_dir(tag: &str) -> std::path::PathBuf {
@@ -206,8 +207,9 @@ fn small_step_movement_no_flap_and_converges() {
             w[1].0
         );
     }
-    // (b) 振荡段内同一区块不得【既卸载又加载】：迟滞带（请求 ≤rd+1、卸载
-    //     >rd+2）下，center 在相邻区块间翻转只能让边缘块一次性离开或
+    // (b) 振荡段内同一区块不得【既卸载又加载】：迟滞带（请求 ≤rd+1=sim_dist、
+    //     卸载 >rd+4=unload_dist，fix/stream-collision 把带宽从 1 环加到
+    //     3 环）下，center 在相邻区块间翻转只能让边缘块一次性离开或
     //     一次性补进，不会往复——「离开又回到半径」即迟滞失效（嫌疑 D
     //     的防御性锁；真机取证已裁决 D 非主因，本断言防回归）。振荡段
     //     开局的一次性卸载（骑跨起点重定位）与补载 backlog 的合法插入
@@ -393,4 +395,349 @@ fn paired_edge_sync_is_idempotent() {
     assert_eq!((e2r, e2a), (0, 0), "第二轮 B→A 边同步仍报级联脏（不幂等）");
     assert_eq!(a_once, light_of(&a), "第二轮 B→A 光照变化");
     assert_eq!(b_once, light_of(&b), "反向同步扰动首轮结果（乒乓）");
+}
+
+// ---------------------------------------------------------------------------
+// fix/stream-collision：模拟区不变量 / 卸载迟滞 / 在途驻留 / 复活缓存 /
+// 无 unloaded-石代理。原版对照：玩家区块恒持 PLAYER_SIMULATION ticket
+// （DistanceManager.java:110-117），界外列 = VOID_AIR（Level.java:361-363）。
+// ---------------------------------------------------------------------------
+
+/// 廉价就位块：TerrainReady + y<5 石地板（够玩家站立），不做光照/体素工程。
+fn floor_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
+    {
+        let mut v = h.voxels.write().unwrap();
+        for y in 0..5usize {
+            for zz in 0..16usize {
+                for xx in 0..16usize {
+                    v[vidx(xx, y, zz)] = BlockId(1);
+                }
+            }
+        }
+    }
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+/// WorldView 未加载/Empty 列 = 空气（隐形墙代理已删）；就位后读真体素。
+#[test]
+fn unloaded_columns_read_as_air_not_stone() {
+    let chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    let view = WorldView { chunks: &chunks };
+    assert_eq!(
+        view.block(BlockPos::new(100, 70, -37)),
+        BlockId(0),
+        "缺区块列必须是空气：26.1 Level.java:361-363 VOID_AIR，旧石安全垫=隐形墙根因"
+    );
+    // Empty 态（已入册、体素未 commit）：即便数组里有数据也按空气读。
+    let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
+    h.voxels.write().unwrap()[vidx(3, 4, 5)] = BlockId(1);
+    chunks.into_iter().for_each(drop); // 借用检查占位（下方重新构造）
+    let mut chunks2: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    chunks2.insert(ChunkPos::new(0, 0), h.clone());
+    let view2 = WorldView { chunks: &chunks2 };
+    assert_eq!(
+        view2.block(BlockPos::new(3, 4, 5)),
+        BlockId(0),
+        "Empty 体素未就位，读空气"
+    );
+    h.advance_to(Stage::TerrainReady);
+    assert_eq!(
+        view2.block(BlockPos::new(3, 4, 5)),
+        BlockId(1),
+        "就位后读真体素"
+    );
+    assert_eq!(
+        view2.block(BlockPos::new(3, 5, 5)),
+        BlockId(0),
+        "就位后空气列是真空气"
+    );
+}
+
+/// 模拟区门：玩家本块未就位 → 物理整步冻结（不走、不坠、不查询未加载列）。
+#[test]
+fn physics_frozen_until_own_chunk_terrain_ready() {
+    let mut rt = headless("freeze");
+    rt.phase = GamePhase::Playing;
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    rt.player.yaw = std::f32::consts::FRAC_PI_2; // 朝 +X
+    rt.input.forward = true;
+    let before = rt.player.pos;
+    for _ in 0..60 {
+        rt.fixed_step(1.0 / 60.0);
+    }
+    assert_eq!(
+        rt.player.pos, before,
+        "本块未就位必须冻结（旧行为：撞隐形石墙或坠虚空）"
+    );
+    // 就位后物理恢复。
+    rt.chunks.insert(ChunkPos::new(0, 0), floor_chunk(0, 0));
+    rt.fixed_step(1.0 / 60.0);
+    assert_ne!(rt.player.pos, before, "就位后物理恢复");
+    assert!(rt.player.pos.x > 8.5, "恢复后应能前进");
+}
+
+/// 边缘钳制（r_safe=1：仅 3×3 就位）：玩家贴边行走被钉回本区块内侧，
+/// 永不越进未就位列（AABB 触达 ≤ ring1 ≤ 已就位环）。
+#[test]
+fn edge_clamp_pins_player_inside_ready_ring() {
+    let mut rt = headless("clamp1");
+    rt.render_dist = 4;
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.phase = GamePhase::Playing;
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    rt.player.yaw = std::f32::consts::FRAC_PI_2; // 朝 +X
+    rt.input.forward = true;
+    for _ in 0..600 {
+        rt.fixed_step(1.0 / 60.0);
+        assert!(
+            rt.player.pos.x < 16.0,
+            "钳制失效，玩家越进未就位区块：x={}",
+            rt.player.pos.x
+        );
+        assert!(
+            rt.player.pos.z >= 0.0 && rt.player.pos.z < 16.0,
+            "Z 同理：z={}",
+            rt.player.pos.z
+        );
+    }
+    assert!(
+        rt.player.pos.x > 15.0,
+        "应被推逼到钳制边界附近：x={}",
+        rt.player.pos.x
+    );
+    assert_eq!(rt.chunks.len(), 9, "物理路径不得偷偷加载新区块");
+    // 模拟区不变量：玩家 AABB 触达列（pos±1 格取整）恒 ≥TerrainReady。
+    for dx in -1..=1 {
+        for dz in -1..=1 {
+            let c = ChunkPos::new(
+                ((rt.player.pos.x + dx as f32) / 16.0).floor() as i32,
+                ((rt.player.pos.z + dz as f32) / 16.0).floor() as i32,
+            );
+            assert!(
+                rt.chunks
+                    .get(&c)
+                    .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8)),
+                "玩家邻域列 {c:?} 未就位——物理查询会命中未加载列"
+            );
+        }
+    }
+}
+
+/// 边缘钳制（r_safe=2：±2 环就位）：可活动区扩到 pc±1 区块，钳制位 =
+/// (pc+2)*16 − pad；同样永不越界。
+#[test]
+fn edge_clamp_allows_full_ready_margin() {
+    let mut rt = headless("clamp2");
+    rt.render_dist = 4;
+    for dx in -2..=2 {
+        for dz in -2..=2 {
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.phase = GamePhase::Playing;
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.player.vel = Vec3::ZERO;
+    rt.player.yaw = std::f32::consts::FRAC_PI_2;
+    rt.input.forward = true;
+    for _ in 0..600 {
+        rt.fixed_step(1.0 / 60.0);
+    }
+    // r_safe=2 → 矩形 = pc±1 区块：x ≤ 32 − pad（pad = 0.32）。
+    assert!(
+        rt.player.pos.x < 32.0,
+        "越进未就位区块：x={}",
+        rt.player.pos.x
+    );
+    assert!(
+        rt.player.pos.x > 31.0,
+        "应被推逼到钳制边界附近：x={}",
+        rt.player.pos.x
+    );
+}
+
+/// 卸载迟滞 ≥2 环（fix/stream-collision）：旧阈值 rd+2 会把 rd+3 环逐帧
+/// 撤回重请求；新阈值 rd+4 下 rd+2..rd+4 滞留环保留。
+#[test]
+fn unload_hysteresis_keeps_stay_ring() {
+    let mut rt = headless("hyst");
+    rt.render_dist = 2; // sim=3，unload=6，旧阈值=4
+    for dx in -6..=6 {
+        for dz in -6..=6 {
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    for _ in 0..5 {
+        rt.stream();
+    }
+    assert!(
+        rt.chunks.contains_key(&ChunkPos::new(5, 0)),
+        "rd+3 滞留环被误卸（迟滞失效）"
+    );
+    assert!(
+        rt.chunks.contains_key(&ChunkPos::new(6, 0)),
+        "rd+4 滞留环被误卸"
+    );
+    assert_eq!(rt.sim_dist(), 3);
+    assert_eq!(rt.unload_dist(), 6);
+    assert!(rt.unload_dist() - rt.sim_dist() >= 2, "迟滞带宽要求 ≥2 环");
+}
+
+/// 卸载预算 + pending_unloads 复活缓存（原版 ChunkMap.java:388-392）：
+/// 单帧淘汰 ≤4；玩家走远再回来，区块以同一 Arc 复活（不重 IO、不重生成、
+/// stage 保留），全程无「卸载后重新请求生成」的空窗。
+#[test]
+fn unload_budget_and_pending_revival() {
+    let mut rt = headless("pending");
+    rt.render_dist = 2;
+    for dx in -6..=6 {
+        for dz in -6..=6 {
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.stream();
+    let home = rt.chunks[&ChunkPos::new(0, 0)].clone();
+    let stage_before = home.stage();
+
+    // 走远：单帧淘汰必须 ≤4（原版 processUnloads 时间片）。
+    rt.player.pos = Vec3::new(150.5, 5.0, 8.5); // 新中心 (9,0)，(0,0) 距 9
+    let prev: HashSet<ChunkPos> = rt.chunks.keys().copied().collect();
+    rt.stream();
+    let now: HashSet<ChunkPos> = rt.chunks.keys().copied().collect();
+    let evicted = prev.iter().filter(|c| !now.contains(c)).count();
+    assert!(evicted <= 4, "单帧淘汰 {evicted} 块，超过卸载预算 4");
+
+    // 逐帧走到 (0,0) 真的被摘出活动表（时间片排队：它前面恒有近端候选，
+    // 必然出现在某帧 ≤4 的淘汰批次里；≤40 帧兜底失败暴露迟滞/预算异常）。
+    let mut gone_frames = 0usize;
+    while rt.chunks.contains_key(&ChunkPos::new(0, 0)) {
+        rt.stream();
+        gone_frames += 1;
+        assert!(gone_frames < 40, "(0,0) 始终未被淘汰，用例装配失效");
+    }
+
+    // 走回来：请求环 miss 先命中复活缓存 → 同一 Arc、stage 原样。
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.stream();
+    let Some(revived) = rt.chunks.get(&ChunkPos::new(0, 0)).cloned() else {
+        panic!("回环后出生区块未复活/未重载");
+    };
+    assert!(
+        Arc::ptr_eq(&revived, &home),
+        "复活必须命中 pending_unloads（同一 Arc），实际走了重新加载/生成路径"
+    );
+    assert_eq!(
+        revived.stage(),
+        stage_before,
+        "复活保留 stage（数据从未丢失）"
+    );
+}
+
+/// 在途请求驻留：已发 worker、体素未回（Empty）的区块不逐帧撤回——
+/// 走远后留在册（等待结果），杜绝「请求→撤回→重请求→再生成」乒乓。
+/// 确定性构造：等 worker 的**唯一**结果到达并由测试自己从 channel 吞掉
+/// ——此后 stream() 的 drain 永远等不到东西，(3,0) 恒为 Empty，驻留断言
+/// 不再与 worker 速度赛跑（结果若被 stream 消费，提交后的卸载是正确
+/// 行为，测试会误报）。
+#[test]
+fn inflight_request_survives_walkaway() {
+    let mut rt = headless("inflight");
+    rt.render_dist = 2; // sim=3：请求环 ≤3
+    for dx in -6..=6 {
+        for dz in -6..=6 {
+            if dx == 3 && dz == 0 {
+                continue; // 故意缺席：让 stream 真实发出 worker 请求
+            }
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.stream(); // 螺旋到 r=3 时请求 (3,0) → 入册为 Empty（在途）
+    let inflight = rt.chunks.get(&ChunkPos::new(3, 0));
+    match inflight {
+        // 存档命中路径（try_load_saved）不可能：temp 目录全新。
+        None => panic!("(3,0) 未被请求入册，用例装配失效"),
+        Some(h) => assert_eq!(
+            h.stage(),
+            Stage::Empty,
+            "(3,0) 已被 stream 内联 drain 提交（worker 快于入册帧，环境异常）"
+        ),
+    }
+
+    // 吞掉 worker 结果：结果不再可能被 stream 提交，Empty 状态恒定。
+    let mut absorbed = false;
+    for _ in 0..5000 {
+        if let Ok(r) = rt.scheduler.results().try_recv() {
+            match r {
+                mcv_worldgen::GenResult::Terrain(Ok(out)) => {
+                    assert_eq!(out.pos, ChunkPos::new(3, 0), "只应存在一个请求");
+                    absorbed = true;
+                }
+                mcv_worldgen::GenResult::Terrain(Err((pos, rc))) => {
+                    panic!("terrain gen failed at {pos:?}: {rc}");
+                }
+            }
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(absorbed, "worker 未在预算内产出 (3,0) 结果");
+
+    // 走远（(3,0) 距新中心 > unload_dist）：在途块驻留不撤回。
+    rt.player.pos = Vec3::new(200.5, 5.0, 8.5);
+    for _ in 0..10 {
+        rt.stream();
+    }
+    let Some(held) = rt.chunks.get(&ChunkPos::new(3, 0)) else {
+        panic!("在途（Empty）请求被逐帧撤回——回环后将重发请求再生成（症状 5 乒乓）");
+    };
+    assert_eq!(held.stage(), Stage::Empty, "驻留期间状态不许漂移");
+}
+
+/// y 越界不绕回（coords 审计 P2 + 任务板 #60）：越界列读空气而非绕回
+/// 同列另一端；heightmap 全柱遮光时饱和 255 而非 u8 溢出绕 0。
+#[test]
+fn y_out_of_bounds_never_wraps() {
+    let h = floor_chunk(0, 0);
+    {
+        let mut v = h.voxels.write().unwrap();
+        for y in 0..256usize {
+            v[vidx(4, y, 4)] = BlockId(1); // 全柱石头，顶格 = y255
+        }
+    }
+    let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    chunks.insert(ChunkPos::new(0, 0), h.clone());
+    let view = WorldView { chunks: &chunks };
+    assert_eq!(
+        view.block(BlockPos::new(4, 255, 4)),
+        BlockId(1),
+        "界内顶格照旧"
+    );
+    assert_eq!(
+        view.block(BlockPos::new(4, 256, 4)),
+        BlockId(0),
+        "y≥256 必须空气（旧行为 rem_euclid 绕回 y=0 读到实心=隐形地板/幽灵块）"
+    );
+    assert_eq!(
+        view.block(BlockPos::new(4, -1, 4)),
+        BlockId(0),
+        "y<0 必须空气（旧行为绕回 y=255）"
+    );
+    // heightmap 饱和：全柱遮光（含 y255）→ 255，不得绕回 0。
+    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let hm = mcv_worldgen::recompute_heightmap(&ids);
+    assert_eq!(
+        hm[(4 << 4) | 4],
+        255,
+        "顶盖遮光 heightmap 饱和 255（u8 绕 0 = 出生/碰撞错位）"
+    );
 }

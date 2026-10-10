@@ -262,8 +262,10 @@ fn day_factor_plateaus_per_day_json() {
 // ---------------------------------------------------------------------------
 
 fn air_chunk() -> Arc<ChunkHandle> {
-    // 单空气区块（体素全 BlockId(0) air），stage 抬到 TerrainReady 以免
-    // WorldView 按「未加载=实体石」兜底。
+    // 单空气区块（体素全 BlockId(0) air），stage 抬到 TerrainReady：
+    // fix/stream-collision 后 WorldView 未加载/Empty 一律读空气（原版
+    // VOID_AIR 语义，Level.java:361-363），抬 stage 只是保证这里读到的是
+    // 本块**真实体素表**（本用例的石头墙必须可命中）而非就位前代理。
     let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
     h.advance_to(Stage::TerrainReady);
     h

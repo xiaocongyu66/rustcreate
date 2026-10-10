@@ -95,7 +95,10 @@ pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
                 }
                 y -= 1;
             }
-            hm[(z << 4) | x] = if found { y as u8 + 1 } else { 1 };
+            // 饱和钳制（任务板 #60 / coords 审计 P2 并案）：y=255 遮光时
+            // y+1=256 在 u8 上 debug panic / release 绕回 0——heightmap
+            // 语义 =「首个非遮光格 y」，无解时钳到列顶 255。
+            hm[(z << 4) | x] = if found { (y + 1).min(255) as u8 } else { 1 };
         }
     }
     hm

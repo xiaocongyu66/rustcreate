@@ -297,7 +297,11 @@ fn burning_damage_cadence_is_20_ticks() {
     let mut app = harness();
     let chunks = air_chunk_map();
     let player = Vec3::new(8.0, 64.0, 100.0); // 远但 <128：不消散
-    let e = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 60.0));
+    // 怪必须摆进唯一已加载区块（fix/stream-collision 实体模拟区门：所在
+    // 区块未就位 = 冻结不 tick，26.1 ServerLevel.java:419 等价；同
+    // daylight_burn 测试注释的原则）。距玩家 92：>索敌半径、<128 消散线，
+    // AI 与消散都不干扰燃烧节拍。
+    let e = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 8.0));
     app.world.write::<MobTicks>().get_mut(e).unwrap().fire_ticks = 160;
     let hp = |app: &App| app.world.read::<mcv_entity::Health>().get(e).unwrap().0;
     // Entity.java:538-540：160 % 20 == 0 → 第 1 个 tick 即扣 1。
@@ -460,7 +464,10 @@ fn pathfinds_around_two_high_wall() {
 fn peaceful_despawns_hostiles() {
     let mut app = harness();
     let chunks = air_chunk_map();
-    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(20.0, 64.0, 20.0));
+    // 摆在唯一已加载区块内：和平清怪走 checkDespawn（tickProcessing 内部，
+    // 模拟区外实体本就不 tick——26.1 ServerLevel.java:419，实体门同样豁免
+    // 不得在此之外）。
+    spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(12.0, 64.0, 12.0));
     step_as(
         &mut app,
         &chunks,
