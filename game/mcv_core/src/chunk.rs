@@ -11,7 +11,7 @@
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::{BlockId, CHUNK_VOL, ChunkPos};
+use crate::{BlockId, CHUNK_VOL, ChunkPos, WORLD_MIN_Y};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -39,7 +39,10 @@ pub struct ChunkHandle {
     stage: AtomicU8,
     dirty: AtomicU8,
     pub voxels: RwLock<Box<[BlockId; CHUNK_VOL]>>,
-    pub heightmap: RwLock<Box<[u8; 256]>>,
+    /// 地表高度图，索引 `(z<<4)|x`；值 = 首个非遮光格**绝对 y**
+    /// （v6：i16 承载 -64..320；全空列 = WORLD_MIN_Y 哨兵，见
+    /// `mcv_worldgen::recompute_heightmap`）。
+    pub heightmap: RwLock<Box<[i16; 256]>>,
     pub light: RwLock<Box<[u8; CHUNK_VOL]>>,
 }
 
@@ -50,7 +53,7 @@ impl ChunkHandle {
             stage: AtomicU8::new(Stage::Empty as u8),
             dirty: AtomicU8::new(0),
             voxels: RwLock::new(Box::new([BlockId(0); CHUNK_VOL])),
-            heightmap: RwLock::new(Box::new([0; 256])),
+            heightmap: RwLock::new(Box::new([WORLD_MIN_Y; 256])),
             light: RwLock::new(Box::new([0; CHUNK_VOL])),
         }
     }
