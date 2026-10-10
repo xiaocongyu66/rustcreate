@@ -2532,6 +2532,25 @@ impl GameRuntime {
                     }
                     self.fire_ticks -= 1;
                 }
+                // 火焰方块（BaseFireBlock.entityInside:131-137）：FIRE_IGNITE
+                // （fireIgnite:139-155 → igniteForSeconds(8)=160 tick，只增
+                // 不减）+ in_fire() fireDamage/tick（i 帧节流）。数值：
+                // FireBlock 构造 1.0F（FireBlock.java Vineflower 反编译失败，
+                // 按 vanilla 常量；SoulFireBlock.java:22 = 2.0F 实读确认）。
+                // 判据同岩浆：脚/眼格任一是火（KNOWN-DIVERGENCE 单点采样）。
+                let in_fire = feet_def.name == "fire"
+                    || feet_def.name == "soul_fire"
+                    || eye_def.name == "fire"
+                    || eye_def.name == "soul_fire";
+                if in_fire {
+                    self.fire_ticks = self.fire_ticks.max(8 * 20);
+                    let dmg = if feet_def.name == "soul_fire" || eye_def.name == "soul_fire" {
+                        2.0
+                    } else {
+                        1.0
+                    };
+                    self.hurt_fire(dmg, 0.1);
+                }
             }
             // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
             // 随 entityTick 每 game tick 一次；与 FoodData.tick 同拍）----

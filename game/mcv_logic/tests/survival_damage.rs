@@ -198,3 +198,52 @@ fn fire_resistance_blocks_lava_damage() {
     run_ticks(&mut rt, 20);
     assert_eq!(rt.player.health, 20.0, "防火免疫 lava/on_fire");
 }
+
+// ---------------------------------------------------------------------------
+// #95-2 火焰方块接触点燃（Entity.java:539 伤害节奏按源）
+// ---------------------------------------------------------------------------
+
+/// 站火格 → 点燃 160 tick + in_fire 1.0/tick（i 帧后 0.5s/1.0 节奏，
+/// LivingEntity.java:1196 门在 invulnerableTime==10 处放行）。
+#[test]
+fn fire_block_ignites_and_deals_damage() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("fireblk"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    set_block(&mut rt, 8, 70, 8, BlockId(id_of("fire")));
+    run_ticks(&mut rt, 1);
+    assert!(
+        (rt.player.health - 19.0).abs() < 1e-4,
+        "火焰方块 in_fire 1.0，got {}",
+        rt.player.health
+    );
+    assert!(
+        rt.fire_ticks >= 8 * 20 - 5 && rt.fire_ticks > 0,
+        "fireIgnite 点燃 160 tick，got {}",
+        rt.fire_ticks
+    );
+    // 20 tick（1s）实际节奏：i 帧门放行两跳（t1、t11）→ 20−2=18。
+    run_ticks(&mut rt, 19);
+    assert!(
+        (rt.player.health - 18.0).abs() < 1e-4,
+        "火焰 0.5s/1.0 实际节奏，got {}",
+        rt.player.health
+    );
+}
+
+/// 魂火双倍：in_fire 2.0（SoulFireBlock.java:22）。
+#[test]
+fn soul_fire_deals_double_damage() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("soulfire"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    set_block(&mut rt, 8, 70, 8, BlockId(id_of("soul_fire")));
+    run_ticks(&mut rt, 1);
+    assert!(
+        (rt.player.health - 18.0).abs() < 1e-4,
+        "魂火 in_fire 2.0，got {}",
+        rt.player.health
+    );
+}
