@@ -75,6 +75,78 @@ fn setup() -> (wgpu::Device, wgpu::Queue, mcv_render::Renderer) {
     setup_with_assets(Some(&workspace_assets()))
 }
 
+/// 防纯色回归（2026-10-10 真机事故：方块全呈纯绿/纯棕、无任何花纹）。
+/// 原版草 tile 是灰度噪声图（colortype 0），正确采样下地面带会有几十种
+/// 颜色（噪声×tint×雾渐变）；uv 失效恒采样 tile 角点、或贴图上载退化成
+/// 单色 → 颜色数塌缩成 1~2。旧的「绿色占比」断言对纯色失明（纯色也绿），
+/// 这个洞由此断言堵死。
+#[test]
+fn grass_surface_contains_pattern_not_flat_tint() {
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = vec![];
+    let (sun, day) = mcv_render::sun_state(6000); // noon
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: std::slice::from_ref(&chunk),
+        hud: &hud,
+        cloud: None,
+        player: None,
+        mobs: None,
+        overlay: None,
+        underwater: false,
+        particles: None,
+    };
+    let mut encoder = device.create_command_encoder(&Default::default());
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    target.enqueue_copy(&mut encoder);
+    queue.submit([encoder.finish()]);
+    let rgba = target.read_pixels(&device);
+
+    // 地面带（与 sample_stats 同带）distinct 颜色数，32 级/通道量化：
+    // 草 tile 灰度噪声经 tint 后仍有数十个量化格；纯色塌缩到 1~2。
+    let mut colors = std::collections::HashSet::new();
+    let mut green_total = 0u64;
+    for y in 121..190u32 {
+        for x in 0..extent.width {
+            let o = ((y * extent.width + x) * 4) as usize;
+            let (r, g, b) = (rgba[o], rgba[o + 1], rgba[o + 2]);
+            if g > r.saturating_add(10) && g > b.saturating_add(10) {
+                green_total += 1;
+                colors.insert((r >> 3, g >> 3, b >> 3));
+            }
+        }
+    }
+    assert!(
+        colors.len() >= 8,
+        "grass band must carry tile pattern (vanilla grayscale noise × tint), got {} distinct colors on {green_total} green px — flat tint means uv/texel pipeline regression",
+        colors.len()
+    );
+}
+
 /// 真机症状守护（2026-10-10「动一下山没了」）：origins buffer 按可见列表
 /// 连续打包写入，而 draw 曾按 scene.chunks 原始索引取 origin——剔除任一区块
 /// 后其后所有区块画错位置。可见区块 origin 非零：错位会读零值空槽，整块
