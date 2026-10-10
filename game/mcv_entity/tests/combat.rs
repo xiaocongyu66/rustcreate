@@ -85,13 +85,13 @@ fn iron_sword_full_hit_on_zombie() {
     };
     let out = resolve_attack(&buffed);
     assert!((out.damage - 9.0).abs() < 1e-4, "6 + 3 = 9");
-    // 虚弱 I（−4，MobEffects.java:71-75）按序并入。
+    // 虚弱 I（−4，MobEffects.java:71-75）替换力量修饰：基础 1+5−4 = 2。
     let weak = AttackContext {
         attack_damage_bonus: -4.0,
         ..buffed
     };
     let out = resolve_attack(&weak);
-    assert!((out.damage - 5.0).abs() < 1e-4, "9 − 4 = 5");
+    assert!((out.damage - 2.0).abs() < 1e-4, "6 − 4 = 2");
 
     // crit: falling → 9.0
     let ctx = AttackContext {
