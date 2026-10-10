@@ -9,7 +9,7 @@
 //! 测试锁字节），同 seed 下与分块生成同构、成本可控。
 
 use mcv_core::{BlockId, ChunkPos};
-use mcv_worldgen::{generate_terrain_with, TerrainBackend};
+use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SEED: u64 = 0x7E_A20_0B1_u64;
 

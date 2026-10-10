@@ -61,11 +61,14 @@ pub const fn splitmix64(x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// [0, 1) 网格哈希（复用 legacy 内核同源结构）。
+/// [0, 1) 网格哈希（复用 legacy 内核同源结构）。种子取 i64：vanilla 模块的
+/// 通道种子一律经 `channel_seed`（Java 世界种子为 long 语义），按位重解释
+/// 进 u64 哈希域。
 #[must_use]
-pub fn hash01(seed: u64, x: i64, y: i64, z: i64) -> f32 {
+pub fn hash01(seed: i64, x: i64, y: i64, z: i64) -> f32 {
     let h = splitmix64(
-        seed ^ (x as u64).wrapping_mul(0x9E37_79B1)
+        (seed as u64)
+            ^ (x as u64).wrapping_mul(0x9E37_79B1)
             ^ (y as u64).wrapping_mul(0x85EB_CA77)
             ^ (z as u64).wrapping_mul(0xC2B2_AE3D),
     );
@@ -84,9 +87,13 @@ pub fn surface_block_y(world_seed: u64, block_x: i32, block_z: i32) -> i32 {
 #[must_use]
 pub fn biome_at(world_seed: u64, block_x: i32, block_z: i32) -> biomes::Biome {
     let sample = climate::ClimateSampler::new(world_seed).sample(block_x, block_z);
+    // 通道→参数对位（26.1 RandomState.java:101-109 构造 Climate.Sampler）：
+    // router.vegetation → humidity 槽位、router.ridges → weirdness 槽位；
+    // ClimateSample 字段名镜像 NoiseRouter 通道（vegetation/ridges），
+    // TargetPoint 字段名镜像 Climate.TargetPoint（humidity/weirdness）。
     let t = biomes::TargetPoint {
         temperature: (sample.temperature * biomes::Q as f64) as i64,
-        humidity: (sample.humidity * biomes::Q as f64) as i64,
+        humidity: (sample.vegetation * biomes::Q as f64) as i64,
         continentalness: (sample.continents * biomes::Q as f64) as i64,
         erosion: (sample.erosion * biomes::Q as f64) as i64,
         depth: 0,

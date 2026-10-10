@@ -13,7 +13,7 @@
 //! 步行尺度上限 256 格：一律 ÷8 压缩且保持通道间相对比例
 //! （2048:2048:512 → 256:256:64，xzScale 2.0），同 seed 确定性测试锁定。
 
-use crate::vanilla::noise::{noise_seed, splitmix64, NormalNoise};
+use crate::vanilla::noise::{NormalNoise, noise_seed, splitmix64};
 use crate::vanilla::spline::Climate;
 
 /// 温度/湿度通道 2D 压缩后的采样缩放（= 0.25 ÷8）。

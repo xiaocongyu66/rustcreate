@@ -16,9 +16,9 @@
 //!   Noodle 通道以常数 64 代入（min 不生效）。
 
 use crate::os2s::smooth;
-use crate::vanilla::climate::{ClimateSample, ClimateSampler};
+use crate::vanilla::climate::ClimateSampler;
 use crate::vanilla::noise::NormalNoise;
-use crate::vanilla::spline::{Builder, Climate, Coord, Spline};
+use crate::vanilla::spline::{Builder, Coord, Spline};
 
 /// 世界高（自研 256）。
 pub const SY: i32 = 256;
@@ -69,19 +69,11 @@ fn y_clamp(y_mc: f64) -> f64 {
 }
 
 fn quarter_negative(x: f64) -> f64 {
-    if x > 0.0 {
-        x
-    } else {
-        x * 0.25
-    }
+    if x > 0.0 { x } else { x * 0.25 }
 }
 
 fn half_negative(x: f64) -> f64 {
-    if x > 0.0 {
-        x
-    } else {
-        x * 0.5
-    }
+    if x > 0.0 { x } else { x * 0.5 }
 }
 
 /// 山脊折叠形（NoiseRouterData.peaksAndValleys）。
@@ -594,11 +586,7 @@ pub fn generate(
                 let id = if y == 0 || (y <= 2 && bedrock_noise(seed, wx, y, wz)) {
                     BEDROCK
                 } else if field <= 0.0 {
-                    if y <= SEA {
-                        WATER
-                    } else {
-                        AIR
-                    }
+                    if y <= SEA { WATER } else { AIR }
                 } else if y == surface {
                     if beach {
                         SAND
@@ -608,11 +596,7 @@ pub fn generate(
                         GRASS
                     }
                 } else if y >= surface - 3 {
-                    if beach {
-                        SAND
-                    } else {
-                        DIRT
-                    }
+                    if beach { SAND } else { DIRT }
                 } else {
                     STONE
                 };

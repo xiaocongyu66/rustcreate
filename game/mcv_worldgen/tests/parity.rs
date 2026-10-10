@@ -9,7 +9,7 @@
 //! `#[cfg(test)]`，已知答案 + 位模式，无 epsilon）。
 
 use mcv_core::ChunkPos;
-use mcv_worldgen::{generate_terrain_with, TerrainBackend};
+use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const VOL: usize = 65536;
 
