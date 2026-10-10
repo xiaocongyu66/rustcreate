@@ -1140,7 +1140,8 @@ mod tests {
             2,
             &mut target(&mut hp, &mut ab, None, &mut harms),
         );
-        assert!((hp - 26.0).abs() < 1e-6);
+        // 4<<2 = 16，heal 封顶 maxHealth（LivingEntity.heal）→ 20。
+        assert!((hp - 20.0).abs() < 1e-6, "heal 封顶 max");
         // instant_damage amp0/3 → 6/48 魔法伤害（6<<amp）。
         harms.clear();
         let (mut hp, mut ab) = (20.0f32, 0.0f32);
@@ -1557,7 +1558,10 @@ mod tests {
         }
         // 毒相位：25>>2=6 → 剩余 18,12,6 命中 → 3 次伤害。
         assert!((total_harm - 3.0).abs() < 1e-6, "毒 II 20t 掉 3 HP");
-        assert!((fe - 0.1).abs() < 1e-9, "饥饿效果每 tick 0.005×20");
+        assert!(
+            (fe - 0.1).abs() < 1e-6,
+            "饥饿效果每 tick 0.005×20（f32 累计容差）"
+        );
         assert_eq!(heals, 1, "再生 II 单次回血");
         assert!(book.is_empty(), "20t 双双到期");
     }
