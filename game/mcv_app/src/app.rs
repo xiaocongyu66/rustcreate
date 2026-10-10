@@ -146,6 +146,12 @@ struct AppState {
     focus_lost_at: Option<std::time::Instant>,
     /// C-2（波#127-3）：Android 挂起前的主增益（后台静音，回前台恢复）。
     gain_before_suspend: Option<f32>,
+    /// I-21（波#127-4）：桌面右键按住态（周期发火的 held 输入之一）。
+    right_use_held: bool,
+    /// I-21：触摸放置键上一帧按住态（检测按下沿置 rightClickDelay）。
+    touch_place_prev: bool,
+    /// I-21：rightClickDelay 周期门（见 [`RightUseRepeat`]）。
+    use_repeat: RightUseRepeat,
     /// 本启动会话随机 splash 短语
     splash: &'static str,
     /// splash 动画时间基准
@@ -236,6 +242,81 @@ fn feed_steps(paused: bool, step_accum: &mut f32, dt: f32) -> u32 {
     n
 }
 
+/// 按住 use（右键/放置键）周期触发门 —— I-21（波#127-4）。
+/// 26.1 `rightClickDelay` 机器：`startUseItem` 入口置 `rightClickDelay=4`
+/// （Minecraft.java:1705）；`tick()` 每 tick 减 1（:1779-1781）；
+/// `handleKeybinds` 在 `keyUse.isDown() && rightClickDelay==0 &&
+/// !player.isUsingItem()` 再次 `startUseItem`（:2036-2038）——即 fire tick +
+/// 4 tick 冷却共 5 个 tick 槽、每 4 tick 一发（5 次/秒，审计 I-21「周期
+/// 5 tick」）。本仓按 1/60s 喂 fixed_step（3 步/tick），换算成步数：
+/// 冷却 4 tick = 12 步，同 tick「先减后判」= 第 12 步减到 0 当步发火。
+#[derive(Default)]
+struct RightUseRepeat {
+    cooldown_steps: u32,
+}
+
+/// 冷却计数换算：原版 rightClickDelay=4 tick（game.rs 进食重触发用的
+/// `mcv_item::food::RIGHT_CLICK_DELAY_TICKS` 同源值）× 3 步/tick
+/// （本仓 1/60s 喂步，mcv_logic accumulate_ticks `frac += dt*20`）。
+const RIGHT_CLICK_DELAY_STEPS: u32 = mcv_item::food::RIGHT_CLICK_DELAY_TICKS * 3;
+
+impl RightUseRepeat {
+    /// 是否可立即发火（按下沿走这条：原版 handleKeybinds 的 delay==0 门——
+    /// 快速连点同样被 4 tick 节流，原版连点宏存在的原因）。
+    fn ready(&self) -> bool {
+        self.cooldown_steps == 0
+    }
+    /// 发火记账（调用方执行 use）：原版 startUseItem :1705 无条件置延迟。
+    fn on_fire(&mut self) {
+        self.cooldown_steps = RIGHT_CLICK_DELAY_STEPS;
+    }
+    /// 每固定步推进。`held`=右键或触摸放置键仍按住；`busy`=isUsingItem
+    /// （进食中，原版 :2036 第三门——interact 重入会重置 eat_hold 把进食
+    /// 从头再来，必须挡）。返回 true = 本步发火。
+    fn step(&mut self, held: bool, busy: bool) -> bool {
+        if self.cooldown_steps > 0 {
+            self.cooldown_steps -= 1;
+            if self.cooldown_steps > 0 {
+                return false;
+            }
+        }
+        if held && !busy {
+            self.on_fire();
+            return true;
+        }
+        false
+    }
+}
+
+/// 右键/放置键的一次 use（按下沿与周期发火共用）：工作台在准星下 = 开
+/// 3x3 合成界面（26.1 CraftingTableBlock 打开容器），拦截在放置之前；
+/// 其余走 interact(true)（方块 use 优先后物品 use/进食/放置，game.rs 内）。
+fn right_use(
+    runtime: &mut GameRuntime,
+    screen: &mut Screen,
+    craft: &mut Option<mcv_logic::ui::CraftScreen>,
+    craft_menu: &mut Option<mcv_ui::slot::ContainerScreen>,
+    craft_held: &mut u8,
+    craft_last_click: &mut Option<(i32, u8, std::time::Instant)>,
+    window: &Option<Arc<Window>>,
+) {
+    let on_table = runtime
+        .look_block()
+        .is_some_and(|(_, id)| id == crafting_table_id());
+    if on_table {
+        *screen = Screen::Crafting;
+        *craft = Some(mcv_logic::ui::CraftScreen::new(3));
+        // 容器波镜像同步初始化（app.rs make_craft_menu 契约：开屏即建，
+        // 每次交互灌回写；漏建 = 工作台开屏无菜单）。
+        *craft_menu = Some(make_craft_menu(3, runtime.mode == GameMode::Creative));
+        *craft_held = 0;
+        *craft_last_click = None;
+        set_cursor(window, false);
+    } else {
+        runtime.interact(true);
+    }
+}
+
 /// 进暂停（波#127 B-1）：对齐 26.1 `Minecraft.setScreen`（:1119-1150）——
 /// `KeyMapping.releaseAll()`（:1148）在开屏瞬间释放全部按压态。我们若只门
 /// 分发不清账：暂停期间松开事件被屏幕栈挡掉，`input.forward/mining/placing`
@@ -243,6 +324,9 @@ fn feed_steps(paused: bool, step_accum: &mut f32, dt: f32) -> u32 {
 /// （game.rs 每步从 touch 镜像，恢复后以实际触摸态为准，无残留）。
 fn enter_pause(runtime: &mut GameRuntime, screen: &mut Screen, window: &Option<Arc<Window>>) {
     runtime.input = Default::default();
+    // 触摸放置键按住态同释：暂停期间触摸被菜单层接管，place_held 悬真会
+    // 让恢复后的周期 use（I-21）幽灵连发。
+    runtime.touch.place_held = false;
     *screen = Screen::Paused;
     set_cursor(window, false);
 }
@@ -2126,6 +2210,12 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
+                // I-21：右键松开沿无条件清按住态——开屏（工作台）后的松开
+                // 走界面分支提前返回，不清会让按住态悬真、关屏后幽灵连放。
+                if button == MouseButton::Right && state == ElementState::Released {
+                    self.right_use_held = false;
+                }
+
                 // 合成界面：ContainerScreen 完整鼠标路径（按下/松开/拖动
                 // 三段分发、shift 快移、双击收拢、面板外丢弃全在 doClick；
                 // ACS:312-539 对应）。创造取物页：无光标持物，保持旧式
@@ -2216,22 +2306,23 @@ impl ApplicationHandler for AppState {
                     }
                     MouseButton::Right => {
                         runtime.input.placing = pressed;
-                        // 右键工作台 = 开 3x3 合成界面（26.1 CraftingTableBlock
-                        // 打开容器），拦截在放置之前；其余方块走放置。
-                        let on_table = pressed
-                            && runtime
-                                .look_block()
-                                .is_some_and(|(_, id)| id == crafting_table_id());
-                        if on_table {
-                            self.screen = Screen::Crafting;
-                            self.craft = Some(mcv_logic::ui::CraftScreen::new(3));
-                            self.craft_menu =
-                                Some(make_craft_menu(3, runtime.mode == GameMode::Creative));
-                            self.craft_held = 0;
-                            self.craft_last_click = None;
-                            set_cursor(&self.window, false);
-                        } else if pressed {
-                            runtime.interact(true);
+                        self.right_use_held = pressed;
+                        // I-21（波#127-4）：按下沿即时一发，但过原版 delay==0
+                        // 轮询门（Minecraft.java:2036——快速连点同样被 4 tick
+                        // 节流）；按住后的周期发火在喂步点由 use_repeat 接手。
+                        // 右键工作台=开 3x3 合成界面（26.1 CraftingTableBlock）
+                        // 的拦截收进 right_use，按下沿与周期发火共用。
+                        if pressed && self.use_repeat.ready() {
+                            self.use_repeat.on_fire();
+                            right_use(
+                                runtime,
+                                &mut self.screen,
+                                &mut self.craft,
+                                &mut self.craft_menu,
+                                &mut self.craft_held,
+                                &mut self.craft_last_click,
+                                &self.window,
+                            );
                         }
                     }
                     _ => {}
@@ -2521,8 +2612,36 @@ impl AppState {
         // 时长追帧（追帧预算另有 0.2s 钳，A-3）。
         let paused = is_pause_screen(self.screen);
         let n = feed_steps(paused, &mut self.step_accum, dt);
+        // I-21（波#127-4）：按住右键/放置键的周期 use —— 原版
+        // handleKeybinds 只在无屏时跑（Minecraft.java:1828），周期门
+        // delay==0 && isDown && !isUsingItem（:2036）。触摸按下沿那发由
+        // game.rs fx.place→interact（fixed_step 内）完成，这里只置延迟；
+        // 桌面按下沿在 MouseInput 即时发，周期续发走本循环。
+        let touch_held = runtime.touch.place_held;
+        if touch_held && !self.touch_place_prev {
+            self.use_repeat.on_fire();
+        }
+        self.touch_place_prev = touch_held;
         for _ in 0..n {
             runtime.fixed_step(1.0 / 60.0);
+            let use_gate = self.screen == Screen::InGame
+                && runtime.phase == mcv_logic::game::GamePhase::Playing
+                && !runtime.dead;
+            let busy = runtime.eat_progress().is_some();
+            if self
+                .use_repeat
+                .step(use_gate && (self.right_use_held || touch_held), busy)
+            {
+                right_use(
+                    runtime,
+                    &mut self.screen,
+                    &mut self.craft,
+                    &mut self.craft_menu,
+                    &mut self.craft_held,
+                    &mut self.craft_last_click,
+                    &self.window,
+                );
+            }
         }
         // 开着背包死亡：面板收起 + 网格/光标走世界掉落实体
         // （drop_container_items 通道已接；fixed_step 死亡丢弃刚清完 36 格，
@@ -2759,12 +2878,98 @@ mod tests {
             "暂停界面喂 1s 世界 0 tick（原版 !pause 门）"
         );
 
-        // 正例保持：死亡/合成界面不停 tick。
+        // 正例保持：死亡/合成界面不停 tick（每喂 1s 墙钟走 20 tick）。
+        let mut baseline = rt.time_ticks;
         for s in [Screen::Death, Screen::Crafting, Screen::Creative] {
             assert!(!is_pause_screen(s), "{s:?} 非 isPauseScreen，世界照常跑");
             feed(&mut rt, &mut acc, is_pause_screen(s));
-            assert_eq!(rt.time_ticks, t0 + 20, "{s:?} 界面下 1s 应再走 20 tick");
+            baseline += 20;
+            assert_eq!(rt.time_ticks, baseline, "{s:?} 界面下 1s 应再走 20 tick");
         }
+    }
+
+    /// I-21（右键连放周期门，纯节拍）：26.1 `rightClickDelay` 机器——
+    /// startUseItem 置延迟 4 tick（Minecraft.java:1705）、tick 每 tick 减 1
+    /// （:1779-1781）、`isDown && delay==0 && !isUsingItem` 再发（:2036-2038）。
+    /// 60Hz 步长换算（3 步/tick）：按住时首发 12 步后来、周期 12 步；
+    /// `busy`（进食=isUsingItem）与松开只走冷却不发火。
+    #[test]
+    fn right_use_repeat_fires_every_four_ticks_while_held() {
+        let mut u = RightUseRepeat::default();
+        assert!(
+            u.ready(),
+            "冷启动 delay=0 可立即发火（按下沿即时一发的前提）"
+        );
+        u.on_fire();
+        assert!(!u.ready(), "发火即置 delay=4 tick（:1705 无条件）");
+        let mut fires = Vec::new();
+        for i in 0..40 {
+            if u.step(true, false) {
+                fires.push(i);
+            }
+        }
+        assert_eq!(fires, vec![11, 23], "按住周期 = 12 步 = 4 tick");
+        // 松开：冷却照减（原版 tick 无条件 `rightClickDelay--`），不发火。
+        let mut u2 = RightUseRepeat::default();
+        u2.on_fire();
+        for _ in 0..12 {
+            assert!(!u2.step(false, false));
+        }
+        assert!(u2.ready(), "松开后冷却自然走尽，下次按下沿可再发");
+        // busy=进食中（:2036 !isUsingItem 门）：冷却走尽也不发，解除当步发。
+        let mut u3 = RightUseRepeat::default();
+        u3.on_fire();
+        for _ in 0..12 {
+            assert!(!u3.step(true, true), "isUsingItem 期间禁止 startUseItem");
+        }
+        assert!(u3.step(true, false), "解除使用态后当步恢复发火");
+    }
+
+    /// I-21（按住右键连放，行为级）：真实 GameRuntime 上重现 redraw 喂步点
+    /// 结构（按下沿即时 + step 周期发火），1s 墙钟按住 = 6 次 use；石头墙前
+    /// 至少落地 ≥2 块（修复前按下沿只发 1 次，砌墙需逐块点击）。
+    #[test]
+    fn hold_right_button_repeats_use_every_four_ticks() {
+        let mut rt = GameRuntime::new_headless(31, tmp_world("i21-hold"), GameMode::Survival);
+        rt.phase = mcv_logic::game::GamePhase::Playing;
+        // 手动一块地形：chunk(0,0) 石头墙 x=11（y66..72, z9），玩家 yaw=π/2
+        // 朝 +x。Uploaded 阶段体素才对 WorldView 可见（stage 门）。
+        let h = std::sync::Arc::new(mcv_core::ChunkHandle::new(mcv_core::ChunkPos::new(0, 0)));
+        for y in 66..=72 {
+            h.voxels.write().unwrap()[mcv_core::vidx(11, y, 9)] = mcv_core::BlockId(1);
+        }
+        h.advance_to(mcv_core::Stage::Uploaded);
+        rt.chunks.insert(mcv_core::ChunkPos::new(0, 0), h);
+        rt.player.pos = glam::Vec3::new(8.5, 68.0, 9.5);
+        rt.player.vel = glam::Vec3::ZERO;
+        rt.player.yaw = std::f32::consts::FRAC_PI_2;
+        rt.player.pitch = 0.0;
+        rt.hotbar.slots[0] = mcv_item::ItemStack::new(mcv_item::COBBLESTONE, 64);
+        rt.player.sel_slot = 0;
+        assert!(rt.look_block().is_some(), "准星须命中墙");
+
+        let mut u = RightUseRepeat::default();
+        // 按下沿（MouseInput ready() 即时发通路）。
+        assert!(u.ready());
+        u.on_fire();
+        rt.interact(true);
+        let mut uses = 1usize;
+        for _ in 0..60 {
+            rt.fixed_step(1.0 / 60.0);
+            if u.step(true, rt.eat_progress().is_some()) {
+                rt.interact(true);
+                uses += 1;
+            }
+        }
+        assert_eq!(
+            uses, 6,
+            "按住 1s = 按下沿 + 每 4 tick 一发（Minecraft:2036 周期）"
+        );
+        let placed = 64 - rt.hotbar.slots[0].count as usize;
+        assert!(
+            placed >= 2,
+            "连放至少落 2 块圆石（生存逐次消耗；旧行为仅按下沿 1 块），placed={placed}"
+        );
     }
 
     /// B-1/D-5（暂停拦输入）：玩法输入门只认 InGame——暂停菜单里 WASD/跳/
