@@ -157,14 +157,29 @@ fn small_step_movement_no_flap_and_converges() {
 
     // 等出生投放（spawn 投放块按 heightmap 落地；本测试不改该块逻辑，
     // 只等它发生——投放后 player.pos 离开 ZERO，center 才稳定可控）。
-    for _ in 0..600 {
+    // 预算 600→3000：#91 vanilla 后端 NormalNoise 两层独立 fBm 使每区块
+    // 噪声成本约 ×2/通道，且 streaming.rs 各测在 CI runner 上并行挤占，
+    // ±load_radius 窗在 600 轮内到不了 TerrainReady（就绪即 break，放宽
+    // 不增加常态耗时；本文件其余等待环本就取 1200-5000 量级）。
+    let mut n_ready = 0usize;
+    for _ in 0..3000 {
         rt.stream();
         if rt.player.pos != Vec3::ZERO {
             break;
         }
+        n_ready = rt
+            .chunks
+            .values()
+            .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+            .count();
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert_ne!(rt.player.pos, Vec3::ZERO, "出生投放未发生（地形未就绪）");
+    assert_ne!(
+        rt.player.pos,
+        Vec3::ZERO,
+        "出生投放未发生（地形未就绪：{n_ready}/{} 块 TerrainReady）",
+        rt.chunks.len()
+    );
 
     // —— 移动段：100 帧小步直线前进（每帧 0.8 格，跨 5 个区块边界），
     //    再 100 帧贴着「直线段结束时的实际 center 边界」±0.2 振荡（center

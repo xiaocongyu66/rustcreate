@@ -74,7 +74,11 @@ impl NormalNoise {
                 max_oct = max_oct.max(i);
             }
         }
-        let span = if min_oct == usize::MAX { 0 } else { max_oct - min_oct };
+        let span = if min_oct == usize::MAX {
+            0
+        } else {
+            max_oct - min_oct
+        };
         let expected_deviation = 0.1_f64 * (1.0 + 1.0 / (span as f64 + 1.0));
         let value_factor = 0.166_666_666_666_666_66_f64 / expected_deviation;
         // edgeValue(2.0)（PerlinNoise.edgeValue:168-182）：全倍频和哨兵值
@@ -193,8 +197,12 @@ mod tests {
         let n = NormalNoise::new(2024, 0x1234, -7, &[1.0, 1.0, 1.0]);
         assert_ne!(n.seed, n.seed2, "第二层根种子与第一层相同（未独立派生）");
         for i in 0..n.amplitudes.len() {
-            let s1 = n.seed.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
-            let s2 = n.seed2.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
+            let s1 = n
+                .seed
+                .wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
+            let s2 = n
+                .seed2
+                .wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
             assert_ne!(s1, s2, "第 {i} 倍频两层种子重合");
         }
     }

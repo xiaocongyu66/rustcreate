@@ -499,7 +499,9 @@ impl Orchestrator {
         let jag_noise = self.jagged.get_value(jag_x, 0.0, jag_z);
         // 层状意面海拔：2D 通道（yScale=0，NoiseRouterData.java:273-275），
         // 列常量；mapFromUnitTo(noise, -8.0, 8.0)。
-        let elev_n = self.sp2d_elevation.get_value(f64::from(block_x), 0.0, f64::from(block_z));
+        let elev_n = self
+            .sp2d_elevation
+            .get_value(f64::from(block_x), 0.0, f64::from(block_z));
         let sp2d_elev = span_map(elev_n, -8.0, 8.0);
         ColumnState {
             offset,
@@ -528,13 +530,23 @@ impl Orchestrator {
         let rarity_mod = self.sp3d_rarity.get_value(bx * 2.0, y_mc, bz * 2.0);
         let rarity = spaghetti_rarity_3d(rarity_mod);
         // WeirdScaledSampler TYPE1: rarity · |noise_i(bx/rarity, by/rarity, bz/rarity)|
-        let w1 = rarity * self.sp3d_1.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
-        let w2 = rarity * self.sp3d_2.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
+        let w1 = rarity
+            * self
+                .sp3d_1
+                .get_value(bx / rarity, y_mc / rarity, bz / rarity)
+                .abs();
+        let w2 = rarity
+            * self
+                .sp3d_2
+                .get_value(bx / rarity, y_mc / rarity, bz / rarity)
+                .abs();
         // thickness = mapped(SPAGHETTI_3D_THICKNESS, -0.065, -0.088)
         let thick = span_map(self.sp3d_thickness.get_value(bx, y_mc, bz), -0.065, -0.088);
         let sp3d = (w1.max(w2) + thick).clamp(-1.0, 1.0);
         // bigEntrances = noise(CAVE_ENTRANCE, 0.75, 0.5) + 0.37 + yClampedGradient(-10, 30, 0.3, 0)
-        let big_noise = self.cave_entrance.get_value(bx * 0.75, y_mc * 0.5, bz * 0.75);
+        let big_noise = self
+            .cave_entrance
+            .get_value(bx * 0.75, y_mc * 0.5, bz * 0.75);
         let big = big_noise + 0.37 + y_grad(y_mc, -10.0, 30.0, 0.3, 0.0);
         big.min(sp3d + self.spaghetti_roughness(bx, y_mc, bz))
     }
@@ -545,7 +557,11 @@ impl Orchestrator {
         let rarity_mod = self.sp2d_mod.get_value(bx * 2.0, y_mc, bz * 2.0);
         let rarity = spaghetti_rarity_2d(rarity_mod);
         // WeirdScaledSampler TYPE2
-        let cave = rarity * self.sp2d.get_value(bx / rarity, y_mc / rarity, bz / rarity).abs();
+        let cave = rarity
+            * self
+                .sp2d
+                .get_value(bx / rarity, y_mc / rarity, bz / rarity)
+                .abs();
         // thickness2 = mapped(SPAGHETTI_2D_THICKNESS, 2.0, 1.0, -0.6, -1.3)
         let thick2 = span_map(
             self.sp2d_thickness.get_value(bx * 2.0, y_mc, bz * 2.0),
