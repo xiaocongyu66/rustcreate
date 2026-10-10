@@ -162,6 +162,20 @@ impl mcv_render::particles::ParticleWorld for ParticleRt<'_> {
         };
         view.block(BlockPos::new(x, y, z)).def().liquid
     }
+
+    /// 水体顶面高度（WaterDrop「没入流体面即灭」判据，WaterDropParticle.
+    /// java:48-55）：本仓无半流体（流动水按满格存）→ 满高 1.0。
+    fn fluid_top(&self, x: i32, y: i32, z: i32) -> f64 {
+        let view = WorldView {
+            chunks: self.chunks,
+        };
+        let def = view.block(BlockPos::new(x, y, z)).def();
+        if def.liquid && def.name == "water" {
+            1.0
+        } else {
+            0.0
+        }
+    }
 }
 
 /// 边号 → 相邻区块方向：0=+X 1=-X 2=+Z 3=-Z（与 mcv_light 的边编码一致）。
@@ -1625,6 +1639,9 @@ impl GameRuntime {
                 chunks: &self.chunks,
             };
             self.particles.tick(&pw);
+            // 雨粒子：tick 后按天气强度在世界里补原版 RAIN 粒子
+            // （原版同为 tick 尾客户端生成，LevelRenderer.java:1164）。
+            self.spawn_rain_particles();
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
@@ -2552,6 +2569,59 @@ impl GameRuntime {
     /// :1662-1664；第三人称 prone 模型/气泡 HUD 消费）。
     pub fn is_swimming(&self) -> bool {
         self.swimming
+    }
+
+    /// 雨粒子生成（26.1 `WeatherEffectRenderer.tickRainParticles`，
+    /// WeatherEffectRenderer.java:224-268）：按 `count = 0.225·(2r+1)²·
+    /// rainLevel²`（:232）在相机四周 `weatherRadius`=10（Options.java:
+    /// 178-184 默认）随机列，查 MOTION_BLOCKING heightmap（本仓 chunk
+    /// heightmap 即首空 y，与 `getHeightmapPos().getY()` 同语义，但
+    /// **不计流体**是 worldgen 基线差异，下方手动补流体面）、相机高度
+    /// ±10 过滤（:239-240）、方块/流体顶面出生（:247-254）。
+    /// 生物群系降水门（:241/:282-288）本仓无 biome 系统 → 恒 RAIN；
+    /// 岩浆/岩浆块/营火→SMOKE 分支（:255-257）同理未接（KNOWN-DIVERGENCE，
+    /// 登记报告）。原版雨"雨幕"是 `textures/environment/rain.png` 列渲染
+    /// （WeatherEffectRenderer.java:57/:121-159），属渲染器扩展 → 遗留。
+    fn spawn_rain_particles(&mut self) {
+        let rain_level = self.weather.rain_level();
+        if rain_level <= 0.0 {
+            return;
+        }
+        let radius = RAIN_PARTICLE_RADIUS;
+        let count = rain_particle_count(rain_level, radius);
+        let p = self.player.pos;
+        // 相机 = 眼位（原版 `BlockPos.containing(camera.position())`，
+        // :228；第一人称相机即在眼睛，y = 脚底 + EYE）。
+        let cam = BlockPos::new(
+            p.x.floor() as i32,
+            (p.y + mcv_game::Player::EYE).floor() as i32,
+            p.z.floor() as i32,
+        );
+        let span = (2 * radius + 1) as u32;
+        for _ in 0..count {
+            let x = cam.x + (fast_rand() % span) as i32 - radius;
+            let z = cam.z + (fast_rand() % span) as i32 - radius;
+            let col = BlockPos::new(x, 0, z);
+            if !self.chunks.contains_key(&col.chunk()) {
+                continue; // 原版 hasChunk 门（getPrecipitationAt :283-285）
+            }
+            let mut top = self.surface_at(x, z);
+            if top <= 0 {
+                continue; // 原版 heightmapPos.getY() > minY 门（:238）
+            }
+            // heightmap 不计流体（recompute_heightmap 基线）→ 上溯流体面
+            // （原版 particleY = max(blockTop, fluidTop)，:252-254）。
+            while top < 255 && self.block_at(BlockPos::new(x, top, z)).def().liquid {
+                top += 1;
+            }
+            if top > cam.y + 10 || top < cam.y - 10 {
+                continue;
+            }
+            let rx = fast_rand() as f64 / u32::MAX as f64;
+            let rz = fast_rand() as f64 / u32::MAX as f64;
+            self.particles
+                .spawn_rain_drop(x as f64 + rx, top as f64, z as f64 + rz);
+        }
     }
 
     /// 固定步余量（partialTickTime 0..1，26.1 Minecraft.getFrameTime 语义）：
@@ -4295,6 +4365,23 @@ pub fn swimming_tick(
     } else {
         sprinting && under_water && feet_water
     }
+}
+
+/// 雨粒子半径（26.1 客户端设置 `weatherRadius` 默认 **10**、范围 3..10，
+/// Options.java:178-184；调用点 LevelRenderer.java:1164。本仓无该设置
+/// 界面，直取默认值——设置接线登记遗留）。
+pub const RAIN_PARTICLE_RADIUS: i32 = 10;
+
+/// 雨粒子每 tick 生成数（`WeatherEffectRenderer.tickRainParticles`，
+/// WeatherEffectRenderer.java:232：`count = (int)(0.225·(2r+1)²·rainLevel²)`；
+/// ParticleStatus 减半分支 :231-232 本仓无粒子质量设置，恒 FULL）。
+pub fn rain_particle_count(rain_level: f32, radius: i32) -> u32 {
+    if rain_level <= 0.0 {
+        return 0;
+    }
+    let diameter = 2 * radius + 1;
+    let area = (diameter * diameter) as f32;
+    (0.225 * area * rain_level * rain_level) as u32
 }
 
 /// 射线 vs AABB（slab 法）：返回原点到入射点的距离（原点在盒内取 0）。

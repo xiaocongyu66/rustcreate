@@ -8,6 +8,8 @@ use std::sync::Arc;
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_entity::combat::{attack_strength, cooldown_damage_scale, invulnerable_gate};
+use mcv_game::Player;
+use mcv_game::physics::{StepInput, step};
 use mcv_item::ItemStack;
 use mcv_logic::difficulty::Difficulty;
 use mcv_logic::game::{
@@ -15,7 +17,6 @@ use mcv_logic::game::{
     air_supply_tick, block_hit_t, food_data_tick, move_exhaustion, pick_attack_target,
     rain_particle_count, ray_aabb_t, swimming_tick,
 };
-
 use mcv_render::{day_factor, sun_state};
 
 // ---------------------------------------------------------------------------
@@ -317,6 +318,36 @@ fn wall_between_player_and_mob_blocks_attack() {
 // 游泳状态机、雨粒子密度。Java 依据均为 src-26.1。
 // ---------------------------------------------------------------------------
 
+/// 测试用：按注册名查方块 id（与 engine tests/physics.rs::id_of 同款）。
+fn id_of(name: &str) -> u16 {
+    (0..mcv_core::BLOCKS.len() as u16)
+        .find(|i| mcv_core::BLOCKS[*i as usize].name == name)
+        .unwrap()
+}
+
+/// 单区块世界（x/z 0..15）：`floor_max_x` 列以内铺 y≤9 石头地表。
+fn floor_chunk(floor_max_x: i32) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
+    {
+        let mut v = h.voxels.write().unwrap();
+        for x in 0..floor_max_x {
+            for z in 0..16 {
+                for y in 0..=9usize {
+                    v[(y << 8) | (z << 4) | x as usize] = BlockId(1);
+                }
+            }
+        }
+    }
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+fn walk_world(h: Arc<ChunkHandle>) -> HashMap<ChunkPos, Arc<ChunkHandle>> {
+    let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
+    chunks.insert(ChunkPos::new(0, 0), h);
+    chunks
+}
+
 #[test]
 fn drown_air_supply_tick_table() {
     // 满气 300（Entity.java:2739-2741 getMaxAirSupply）。
@@ -396,34 +427,18 @@ fn swimming_state_machine_matches_update_swimming() {
     assert!(!swimming_tick(true, true, true, true, true, true));
 }
 
-/// 测试用：按注册名查方块 id（与 engine tests/physics.rs::id_of 同款）。
-fn id_of(name: &str) -> u16 {
-    (0..mcv_core::BLOCKS.len() as u16)
-        .find(|i| mcv_core::BLOCKS[*i as usize].name == name)
-        .unwrap()
-}
-
-/// 单区块世界（x/z 0..15）：`floor_max_x` 列以内铺 y≤9 石头地表。
-fn floor_chunk(floor_max_x: i32) -> Arc<ChunkHandle> {
-    let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
-    {
-        let mut v = h.voxels.write().unwrap();
-        for x in 0..floor_max_x {
-            for z in 0..16 {
-                for y in 0..=9usize {
-                    v[(y << 8) | (z << 4) | x as usize] = BlockId(1);
-                }
-            }
-        }
-    }
-    h.advance_to(Stage::TerrainReady);
-    h
-}
-
-fn walk_world(h: Arc<ChunkHandle>) -> HashMap<ChunkPos, Arc<ChunkHandle>> {
-    let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
-    chunks.insert(ChunkPos::new(0, 0), h);
-    chunks
+#[test]
+fn rain_particle_count_formula() {
+    // WeatherEffectRenderer.java:232 count = (int)(0.225·(2r+1)²·level²)。
+    assert_eq!(
+        rain_particle_count(0.0, RAIN_PARTICLE_RADIUS),
+        0,
+        "无雨不生成"
+    );
+    assert_eq!(rain_particle_count(1.0, 10), 99, "0.225·441 = 99.225 → 99");
+    assert_eq!(rain_particle_count(0.5, 10), 24, "0.225·441·0.25 → 24");
+    assert_eq!(RAIN_PARTICLE_RADIUS, 10, "Options.java:178-184 默认 10");
+    assert_eq!(rain_particle_count(1.0, 3), 11, "0.225·49 = 11.025 → 11");
 }
 
 #[test]
