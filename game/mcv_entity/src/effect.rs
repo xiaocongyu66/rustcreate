@@ -1246,16 +1246,25 @@ mod tests {
         let (mut food, mut sat, mut ex) = (20.0f32, 5.0f32, 0.0f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Hunger,
                 0,
-                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
+                &mut target(
+                    &mut hp,
+                    &mut ab,
+                    Some((&mut food, &mut sat, &mut ex)),
+                    &mut harms,
+                ),
             );
             apply_tick(
                 Kind::Hunger,
                 2,
-                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
+                &mut target(
+                    &mut hp,
+                    &mut ab,
+                    Some((&mut food, &mut sat, &mut ex)),
+                    &mut harms,
+                ),
             );
         }
         assert!((ex - 0.02).abs() < 1e-9, "0.005 + 0.015");
@@ -1263,11 +1272,15 @@ mod tests {
         let (mut food, mut sat, mut ex) = (20.0f32, 5.0f32, 39.9999f32);
         {
             let (mut hp, mut ab) = (20.0f32, 0.0f32);
-            let fm = (&mut food, &mut sat, &mut ex);
             apply_tick(
                 Kind::Hunger,
                 0,
-                &mut target(&mut hp, &mut ab, Some(fm), &mut harms),
+                &mut target(
+                    &mut hp,
+                    &mut ab,
+                    Some((&mut food, &mut sat, &mut ex)),
+                    &mut harms,
+                ),
             );
         }
         assert!((ex - 40.0).abs() < 1e-6);
@@ -1285,7 +1298,6 @@ mod tests {
     /// 吸收盾入场与耗尽终止（AbsorptionMobEffect.java:12-25）。
     #[test]
     fn absorption_entrance_and_expiry() {
-        let mut harms = Vec::new();
         // 入场：absorb = max(current, 4×(amp+1))（:22-25）。
         let mut book = EffectBook::default();
         book.apply_simple(Kind::Absorption, 200, 0);
@@ -1300,15 +1312,15 @@ mod tests {
         book.entrance(&mut ab);
         assert!((ab - 12.0).abs() < 1e-6);
         // 盾耗尽 → applyEffectTick 返回 false → 账本移除（:12-14）。
+        let mut hp = 20.0f32;
         let mut ab = 0.0f32;
-        let (mut hp, mut ab) = (20.0f32, 0.0f32);
         let harms = book.tick(0, &mut hp, 20.0, &mut ab, None);
         assert!(harms.is_empty());
         assert!(!book.has(Kind::Absorption), "吸收 0 → 效果终止");
         // 盾>0 → 存续。
         book.apply_simple(Kind::Absorption, 100, 0);
+        let mut hp = 20.0f32;
         let mut ab = 4.0f32;
-        let (mut hp, mut ab) = (20.0f32, 0.0f32);
         let _ = book.tick(0, &mut hp, 20.0, &mut ab, None);
         assert!(book.has(Kind::Absorption));
     }
