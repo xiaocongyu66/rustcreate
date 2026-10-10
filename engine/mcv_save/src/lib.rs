@@ -278,10 +278,13 @@ impl LevelMeta {
                     }
                     let f32_at =
                         |o: usize| f32::from_le_bytes(data[i + o..i + o + 4].try_into().unwrap());
-                    let air = i32::from_le_bytes(data[i + 16..i + 20].try_into().unwrap());
+                    let (health, hunger, saturation, exhaustion) =
+                        (f32_at(0), f32_at(4), f32_at(8), f32_at(12));
+                    let air_supply = i32::from_le_bytes(data[i + 16..i + 20].try_into().unwrap());
                     let difficulty = data[i + 20];
-                    i += SURVIVAL_BYTES;
-                    (f32_at(0), f32_at(4), f32_at(8), f32_at(12), air, difficulty)
+                    (
+                        health, hunger, saturation, exhaustion, air_supply, difficulty,
+                    )
                 } else {
                     // 与 Player::default / FoodData 起步式一致(开局满血满饥饿、
                     // 饱和 5.0、空气满、难度普通)。

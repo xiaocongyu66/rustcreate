@@ -223,9 +223,7 @@ pub fn step_eating(
         *state = None;
         return None;
     };
-    let Some(s) = state.as_mut() else {
-        return None;
-    };
+    let s = state.as_mut()?;
     if on_tick {
         s.ticks += 1;
         if s.ticks >= props.consume_ticks() {
