@@ -601,6 +601,36 @@ impl ParticleEngine {
         }
     }
 
+    /// 溺水气泡（26.1 `broadcastEntityEvent(67)` → `makeDrownParticles`，
+    /// LivingEntity.java:2087-2088/:2113-2123）：8 个 BUBBLE，出生偏移 =
+    /// `random.triangle(0,1)` = nextDouble−nextDouble ∈ [-1,1]（
+    /// RandomSource.java:59-61），速度 = 实体 movement（BubbleParticle
+    /// 构造 ×0.2±rand·0.02，BubbleParticle.java:21-28，与 splash 波 1
+    /// 同款构造）。
+    pub fn spawn_drown_bubbles(&mut self, x: f64, y: f64, z: f64, mv: [f64; 3]) {
+        for _ in 0..8 {
+            let ox = self.rng.next_f64() - self.rng.next_f64();
+            let oy = self.rng.next_f64() - self.rng.next_f64();
+            let oz = self.rng.next_f64() - self.rng.next_f64();
+            let mut q = QuadData::born(&mut self.rng);
+            q.bb_width = 0.02;
+            q.bb_height = 0.02;
+            q.quad_size *= self.rng.next_f32() * 0.6 + 0.2;
+            q.layer = sprites::BUBBLE;
+            q.tex_set = 1;
+            let dx = mv[0] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            let dy = mv[1] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            let dz = mv[2] * 0.2 + (self.rng.next_f64() * 2.0 - 1.0) * 0.02;
+            self.spawn(
+                Kind::Bubble,
+                [x + ox, y + oy, z + oz],
+                [dx, dy, dz],
+                false,
+                q,
+            );
+        }
+    }
+
     /// 受击 crit（26.1 `CritParticle.Provider`，CritParticle.java:117-126；
     /// `Player.attack` 命中驱动）。`indicator=true` 走 DamageIndicator 变体
     /// （CritParticle.java:88-104：lifetime=20、ya+1 上飘）。
@@ -1379,5 +1409,39 @@ mod tests {
             4,
             "behind-camera particle culled (QuadParticleGroup.java:35)"
         );
+    }
+
+    #[test]
+    fn drown_bubbles_are_8_and_die_outside_water() {
+        // makeDrownParticles（LivingEntity.java:2113-2123）：8 个 BUBBLE、
+        // 偏移 triangle(0,1) ∈ [-1,1]；离水即灭（BubbleParticle.java:43-45）。
+        struct Air;
+        impl ParticleWorld for Air {
+            fn is_solid(&self, _x: i32, _y: i32, _z: i32) -> bool {
+                false
+            }
+            fn is_water(&self, _x: i32, _y: i32, _z: i32) -> bool {
+                false
+            }
+        }
+        let mut e = ParticleEngine::with_seed(11);
+        e.spawn_drown_bubbles(0.5, 8.5, 0.5, [0.4, -0.2, 0.0]);
+        assert_eq!(e.len(), 8, "8 BUBBLE（LivingEntity.java:2116）");
+        let i = *e.live.front().unwrap() as usize;
+        assert_eq!(e.kind[i], Kind::Bubble);
+        // triangle 偏移域。
+        for &slot in &e.live {
+            let i = slot as usize;
+            for (v, c) in [(e.x[i], 0.5), (e.y[i], 8.5), (e.z[i], 0.5)] {
+                assert!((v - c).abs() <= 1.0 + 1e-9, "triangle offset ∈ [-1,1]");
+            }
+        }
+        // 水中存活（NoWorld is_water 默认 true）、空气中下一 tick 全灭。
+        let mut ew = ParticleEngine::with_seed(11);
+        ew.spawn_drown_bubbles(0.5, 8.5, 0.5, [0.0, 0.0, 0.0]);
+        ew.tick(&NoWorld);
+        assert_eq!(ew.len(), 8, "水中存活");
+        e.tick(&Air);
+        assert!(e.is_empty(), "离水即灭（BubbleParticle.java:43-45）");
     }
 }

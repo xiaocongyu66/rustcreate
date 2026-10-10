@@ -11,9 +11,11 @@ use mcv_entity::combat::{attack_strength, cooldown_damage_scale, invulnerable_ga
 use mcv_item::ItemStack;
 use mcv_logic::difficulty::Difficulty;
 use mcv_logic::game::{
-    ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, WorldView, block_hit_t, food_data_tick, move_exhaustion,
-    pick_attack_target, ray_aabb_t,
+    ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, MAX_AIR_SUPPLY, RAIN_PARTICLE_RADIUS, WorldView,
+    air_supply_tick, block_hit_t, food_data_tick, move_exhaustion, pick_attack_target,
+    rain_particle_count, ray_aabb_t, swimming_tick,
 };
+
 use mcv_render::{day_factor, sun_state};
 
 // ---------------------------------------------------------------------------
@@ -308,4 +310,88 @@ fn wall_between_player_and_mob_blocks_attack() {
     assert!(pick_attack_target(eye, dir, &far, None).is_none());
     // 打偏（瞄准上方）不命中。
     assert!(pick_attack_target(eye, Vec3::new(0.0, 1.0, 0.0), &mobs, None).is_none());
+}
+
+// ---------------------------------------------------------------------------
+// 水与移动还原（fix/water-movement）：空气/溺水 tick 数、步高、潜行防跌落、
+// 游泳状态机、雨粒子密度。Java 依据均为 src-26.1。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn drown_air_supply_tick_table() {
+    // 满气 300（Entity.java:2739-2741 getMaxAirSupply）。
+    assert_eq!(MAX_AIR_SUPPLY, 300);
+    let mut air = MAX_AIR_SUPPLY;
+    // 水下前 300 tick：只耗不伤（air 300→0，LivingEntity.java:424/565-575）。
+    for t in 1..=300 {
+        assert!(
+            !air_supply_tick(&mut air, true, true),
+            "tick {t} 不应触发伤害"
+        );
+    }
+    assert_eq!(air, 0);
+    // air 0 → −20 再 19 tick 无伤，第 20 tick 触发（shouldTakeDrowningDamage
+    // `air ≤ −20`，LivingEntity.java:487-489 + 伤害 :425-428）。
+    for t in 1..=19 {
+        assert!(!air_supply_tick(&mut air, true, true), "尾段 tick {t}");
+    }
+    assert_eq!(air, -19);
+    assert!(
+        air_supply_tick(&mut air, true, true),
+        "第 320 tick 溺水伤害"
+    );
+    assert_eq!(air, 0, "伤害 tick 空气清 0（:426）");
+    // 之后每 20 tick 一伤。
+    for _ in 0..19 {
+        assert!(!air_supply_tick(&mut air, true, true));
+    }
+    assert!(
+        air_supply_tick(&mut air, true, true),
+        "第二发（每 20 tick）"
+    );
+    // 出水恢复 +4/tick（LivingEntity.java:577-579），上限 300。
+    let mut air = 0;
+    for _ in 0..74 {
+        assert!(!air_supply_tick(&mut air, false, true));
+    }
+    assert_eq!(air, 296, "+4/tick");
+    assert!(!air_supply_tick(&mut air, false, true));
+    assert_eq!(air, 300, "封顶 300");
+    for _ in 0..10 {
+        assert!(!air_supply_tick(&mut air, false, true));
+    }
+    assert_eq!(air, 300, "不越上限");
+    // 创造（abilities.invulnerable，LivingEntity.java:422-423）：水下
+    // 不耗不伤也不回（原版水下回气只走药水分支 :430-432）。
+    let mut air = MAX_AIR_SUPPLY;
+    for _ in 0..400 {
+        assert!(!air_supply_tick(&mut air, true, false), "创造免溺");
+    }
+    assert_eq!(air, MAX_AIR_SUPPLY);
+}
+
+#[test]
+fn swimming_state_machine_matches_update_swimming() {
+    // 维持：sprinting && isInWater（身体触水即可，Entity.java:1560）。
+    assert!(swimming_tick(true, true, true, false, false, false));
+    // 起步：sprinting && isUnderWater && 脚下格水（:1561-1563）。
+    assert!(swimming_tick(false, true, true, true, true, false));
+    assert!(
+        !swimming_tick(false, true, true, false, true, false),
+        "浅水（眼未没入）不起步"
+    );
+    assert!(
+        !swimming_tick(false, true, true, true, false, false),
+        "脚下非水格不起步"
+    );
+    assert!(
+        !swimming_tick(false, false, true, true, true, false),
+        "不按冲刺不起步"
+    );
+    // 松开冲刺 / 出水 → 退出。
+    assert!(!swimming_tick(true, false, true, true, true, false));
+    assert!(!swimming_tick(true, true, false, true, true, false));
+    // 创造飞行恒 false（Player.java:1410-1416）。
+    assert!(!swimming_tick(false, true, true, true, true, true));
+    assert!(!swimming_tick(true, true, true, true, true, true));
 }

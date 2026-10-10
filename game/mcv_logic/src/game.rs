@@ -463,6 +463,14 @@ pub struct GameRuntime {
     /// LocalPlayer.java:835-836 窗口 7 tick = 350ms；Player.aiStep:443-445
     /// 每 tick −1）。首按沿置 7，窗口内再按沿 → 切换 abilities.flying。
     flight_jump_trigger: f32,
+    /// 空气供给（Entity.java:2739-2741 getMaxAirSupply = 300；消耗/恢复/
+    /// 溺水伤害结算见 [`air_supply_tick`]，LivingEntity.java:417-439）。
+    air_supply: i32,
+    /// 游泳姿态（Entity shared flag bit4，Entity.java:2657-2659/:2669-2671；状态机
+    /// [`swimming_tick`]，Entity.java:1558-1564 + Player.java:1410-1416）。
+    /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
+    /// prone 模型接线在 mcv_app（遗留清单，见报告）。
+    swimming: bool,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -732,6 +740,8 @@ impl GameRuntime {
             smoothed_progress: 0.0,
             jump_held_prev: false,
             flight_jump_trigger: 0.0,
+            air_supply: MAX_AIR_SUPPLY,
+            swimming: false,
             was_in_water: false,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
@@ -868,6 +878,8 @@ impl GameRuntime {
         self.player.flying = self.mode == GameMode::Creative;
         self.dead = false;
         self.fall_y = None;
+        self.air_supply = MAX_AIR_SUPPLY;
+        self.swimming = false;
         // 26.1 重生与首次进入同走加载画面：handleRespawn →
         // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
         // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
@@ -1928,6 +1940,61 @@ impl GameRuntime {
                     self.difficulty,
                 );
             }
+            // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
+            if self.on_tick {
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                // 眼位流体（原版 isEyeInFluid(**WATER**)，LivingEntity.java:417
+                // 只认水不认岩浆；eye_in_water 是挖掘惩罚用的“任意流体”版，
+                // 语义不同不能复用）。
+                let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                let ec = eye.floor().as_ivec3();
+                let eye_def = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                let eyes_water = eye_def.liquid && eye_def.name == "water";
+                let feet_pos = BlockPos::new(
+                    self.player.pos.x.floor() as i32,
+                    self.player.pos.y.floor() as i32,
+                    self.player.pos.z.floor() as i32,
+                );
+                let feet_def = view.block(feet_pos).def();
+                let feet_water = feet_def.liquid && feet_def.name == "water";
+                // 姿态位（Pose.SWIMMING 的驱动源，Entity.java:1558-1564 +
+                // Player.java:1410-1416；第三人称 prone 模型接线遗留）。
+                self.swimming = swimming_tick(
+                    self.swimming,
+                    sprinting,
+                    in_water,
+                    eyes_water && in_water,
+                    feet_water,
+                    self.player.flying,
+                );
+                // 空气供给（LivingEntity.java:417-439）：创造 invulnerable
+                // 免溺（:422-423），旁观者本仓无。
+                let drown = air_supply_tick(
+                    &mut self.air_supply,
+                    eyes_water,
+                    self.mode != GameMode::Creative,
+                );
+                if drown {
+                    // broadcastEntityEvent(67) → makeDrownParticles：8 个
+                    // BUBBLE（LivingEntity.java:2087-2088/:2113-2123）。
+                    // 出生点 = 实体坐标（getY() = 脚底，:2121-2122，偏移
+                    // triangle ±1 自行散布全身，无 +0.5 抬升）。
+                    let p = self.player.pos;
+                    let v = [
+                        self.player.vel.x as f64,
+                        self.player.vel.y as f64,
+                        self.player.vel.z as f64,
+                    ];
+                    self.particles
+                        .spawn_drown_bubbles(p.x as f64, p.y as f64, p.z as f64, v);
+                    // damageSources().drown() 2.0F（LivingEntity.java:428）；
+                    // 环境伤害不进难度缩放（DamageSource.java:92-97 判据
+                    // = 实体伤害，hurt_player 的 from=None 分支同语义）。
+                    self.hurt_player(2.0, None);
+                }
+            }
         }
 
         // ---- 弓（BowItem.releaseUsing:28-43 蓄力放箭；状态机 mcv_item::bow）----
@@ -2474,6 +2541,17 @@ impl GameRuntime {
         self.eye_in_water(&WorldView {
             chunks: &self.chunks,
         })
+    }
+
+    /// 空气供给 0..=300（原版气泡 HUD 消费；HUD 接线登记遗留，见报告）。
+    pub fn air_supply(&self) -> i32 {
+        self.air_supply
+    }
+
+    /// 游泳姿态（26.1 `Pose.SWIMMING` 驱动源，Player.java:342-361 +
+    /// :1662-1664；第三人称 prone 模型/气泡 HUD 消费）。
+    pub fn is_swimming(&self) -> bool {
+        self.swimming
     }
 
     /// 固定步余量（partialTickTime 0..1，26.1 Minecraft.getFrameTime 语义）：
@@ -4154,6 +4232,68 @@ pub fn food_data_tick(
         }
     } else {
         *tick_timer = 0;
+    }
+}
+
+/// 满气（26.1 `Entity.getMaxAirSupply` = **300**，Entity.java:2739-2741；
+/// 即派单「水下 air 供给 300 tick」的原版出处）。
+pub const MAX_AIR_SUPPLY: i32 = 300;
+
+/// 每 game tick 的空气供给结算（26.1 `LivingEntity.baseTick` 水门分支，
+/// LivingEntity.java:417-439；`shouldTakeDrowningDamage` :487-489；
+/// decrease/increaseAirSupply :565-579）。返回 true = 本 tick 触发溺水
+/// 伤害（原版 `damageSources().drown(), 2.0F`，:428）。
+///
+/// - 眼下水 + 可溺水：供给 −1/tick（`decreaseAirSupply`，OXYGEN_BONUS
+///   属性默认 0 → 无跳过概率，:565-575）；`air ≤ −20` 时伤害并把供给
+///   清回 0（:425-429）→ 满气后第 320 tick 首伤、之后每 20 tick 一伤。
+/// - 眼下水 + 不可溺水（创造 `abilities.invulnerable`，:422-423）：
+///   不减、不伤、**也不回**（原版水下回气只有水下呼吸药水分支 :430-432）。
+/// - 眼未下水：+4/tick 恢复到上限（`increaseAirSupply` :577-579）。
+pub fn air_supply_tick(air: &mut i32, eyes_in_water: bool, can_drown: bool) -> bool {
+    if eyes_in_water {
+        if !can_drown {
+            return false;
+        }
+        *air -= 1;
+        if *air <= -20 {
+            // LivingEntity.java:425-429（清 0 + broadcastEvent(67) + hurt 2.0）。
+            *air = 0;
+            return true;
+        }
+        false
+    } else if *air < MAX_AIR_SUPPLY {
+        *air = (*air + 4).min(MAX_AIR_SUPPLY);
+        false
+    } else {
+        false
+    }
+}
+
+/// 游泳姿态状态机（26.1 `Entity.updateSwimming`，Entity.java:1558-1564；
+/// 创造飞行恒关 `Player.updateSwimming`，Player.java:1410-1416）。
+/// 原版判据（`isPassenger` 恒假，本仓无骑乘）：
+/// - 维持：`sprinting && isInWater`（身体触水即可，不必没顶）；
+/// - 起步：`sprinting && isUnderWater`（=wasEyeInWater && isInWater，
+///   Entity.java:1536-1538）`&& 脚下格流体为水`（blockPosition 的
+///   FluidState is WATER，:1562-1563）。
+/// `sprinting` 传带饥饿门的冲刺态（LocalPlayer.java:1133 → Player.java
+/// :1569-1571，GameRuntime 侧已算）。
+pub fn swimming_tick(
+    prev: bool,
+    sprinting: bool,
+    in_water: bool,
+    under_water: bool,
+    feet_water: bool,
+    flying: bool,
+) -> bool {
+    if flying {
+        return false;
+    }
+    if prev {
+        sprinting && in_water
+    } else {
+        sprinting && under_water && feet_water
     }
 }
 
