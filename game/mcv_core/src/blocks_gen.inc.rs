@@ -13,6 +13,9 @@
 // mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。
 // cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何
 // （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。
+// carpet/trapdoor/pane/wall（shape 6..9）渲染暂全盒占位，模板待 Rust
+// 网格器 #77；碰撞/拾取几何已在 engine/mcv_game/src/blockshapes.rs 按
+// 原版数值落地。
 #[allow(clippy::type_complexity)]
 static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); 1171] = [
     /*    0 */ ("air", false, false, false, 0, [827, 827, 827, 827, 827, 827], 0f32, 0),

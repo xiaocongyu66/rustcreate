@@ -24,6 +24,10 @@ pub enum Shape {
     Fence = 3,
     Slab = 4,
     Stairs = 5,
+    Carpet = 6,
+    Trapdoor = 7,
+    Pane = 8,
+    Wall = 9,
 }
 
 impl Shape {
@@ -35,6 +39,10 @@ impl Shape {
             3 => Self::Fence,
             4 => Self::Slab,
             5 => Self::Stairs,
+            6 => Self::Carpet,
+            7 => Self::Trapdoor,
+            8 => Self::Pane,
+            9 => Self::Wall,
             _ => Self::Cube,
         }
     }
@@ -113,8 +121,13 @@ const fn ends_with(hay: &[u8], suf: &[u8]) -> bool {
 /// 名字 → 形状编号（`Shape` 的 u8 判别值）。const 供 `gen_def` 建表期使用。
 /// 规则顺序（与 python 版逐字一致）：
 /// `potted_*` → Cube（盆栽装饰，非植物本体）；含 `fence` 且不含 `gate` →
-/// Fence；含 `slab` → Slab；含 `stairs` → Stairs；精确花草名或 `sapling`
-/// 后缀 → Cross；含 `torch` 且不含 `wall` → Torch；否则 Cube。
+/// Fence；含 `slab` → Slab；含 `stairs` → Stairs；含 `carpet` → Carpet；
+/// 含 `trapdoor` → Trapdoor；含 `pane` → Pane；`_wall` 后缀 → Wall；
+/// 精确花草名或 `sapling` 后缀 → Cross；含 `torch` 且不含 `wall` → Torch；
+/// 否则 Cube。
+///
+/// `_wall` 后缀只命中 `cobblestone_wall` 类真墙名；`wall_torch`/
+/// `oak_wall_sign` 等贴墙变体名不以 `_wall` 结尾，落回 Torch/Cube。
 pub const fn shape_of_name(name: &str) -> u8 {
     let n = name.as_bytes();
     if contains(n, b"potted") {
@@ -128,6 +141,18 @@ pub const fn shape_of_name(name: &str) -> u8 {
     }
     if contains(n, b"stairs") {
         return Shape::Stairs as u8;
+    }
+    if contains(n, b"carpet") {
+        return Shape::Carpet as u8;
+    }
+    if contains(n, b"trapdoor") {
+        return Shape::Trapdoor as u8;
+    }
+    if contains(n, b"pane") {
+        return Shape::Pane as u8;
+    }
+    if ends_with(n, b"_wall") {
+        return Shape::Wall as u8;
     }
     let mut i = 0;
     while i < CROSS_PLANTS.len() {
@@ -175,5 +200,13 @@ mod tests {
         assert_eq!(shape_of_name("bamboo_mosaic_stairs"), 5);
         assert_eq!(shape_of_name("potted_oak_sapling"), 0);
         assert_eq!(shape_of_name("torchflower"), 1); // 花草名单优先于 torch 词根
+        assert_eq!(shape_of_name("red_carpet"), 6);
+        assert_eq!(shape_of_name("oak_trapdoor"), 7);
+        assert_eq!(shape_of_name("iron_trapdoor"), 7);
+        assert_eq!(shape_of_name("glass_pane"), 8);
+        assert_eq!(shape_of_name("cobblestone_wall"), 9);
+        assert_eq!(shape_of_name("wall_torch"), 0); // 贴墙火把非墙（_wall 后缀）
+        assert_eq!(shape_of_name("oak_wall_sign"), 0);
+        assert_eq!(shape_of_name("stone_pressure_plate"), 0); // plate ≠ pane
     }
 }

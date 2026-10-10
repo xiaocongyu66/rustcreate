@@ -24,9 +24,36 @@
 //!   （`cpp/src/mesher.cpp` `emit_cross`），拾取盒与引擎自身视觉一致
 //!   优先于贴原版细轮廓（单一 Cross 形状位也容纳不下花/草两种尺寸）。
 //!
+//! - 地毯：`CarpetBlock.java:17` `SHAPE = column(16, 0, 1)` → 全宽
+//!   1/16 薄盒（y 0..0.0625），碰撞=拾取；模型
+//!   `models/block/carpet.json` 元素 [0,0,0]→[16,1,16] 同值。
+//! - 活板门（关态）：`TrapDoorBlock.java:48`
+//!   `boxZ(16, 13, 16)`=box(0,13,0,16,16,16) 上态；下态 y 0..3px
+//!   （模型 `template_trapdoor_bottom/_top` 3px 薄板）。状态 bit2=1 上态
+//!   （与楼梯 top 位同位）；关态平板几何与 facing 无关。open 开态
+//!   （绕铰链竖转）无状态位承载——登记遗留。
+//! - 玻璃板：`StainedGlassPaneBlock extends IronBarsBlock`，
+//!   `IronBarsBlock.java:29-31` `super(2, 16, 2, 16, 16)`
+//!   （CrossCollisionBlock）→ 柱 `column(2,0,16)`（x/z 7..9px）、臂
+//!   `boxZ(2,0,16,0,8)`（格边→中心、断面同柱宽）；碰撞=拾取（高均 1.0，
+//!   无栅栏式 1.5 抬高）。模型 `template_glass_pane_post/_side`
+//!   （柱/臂 x 7..9、臂 z 0..7）。
+//! - 墙：`WallBlock.java:66-74`——拾取 `makeShapes(16, 14)`：柱
+//!   `column(8,0,16)`（x/z 4..12px）+ 低臂 `boxZ(6,0,14,0,11)`（x/z
+//!   5..11px、臂自格边至 11px、高 14px）；碰撞 `makeShapes(24, 24)`：
+//!   柱/臂全抬到 24px（1.5，防跳，与栅栏同语义）。模型
+//!   `template_wall_post` [4,0,4]→[12,16,12]、`template_wall_side`
+//!   [5,0,0]→[11,14,8]。本引擎无 height_state/side 三态（none/low/
+//!   tall）状态位——恒出柱+低臂，tall 叠墙登记遗留。
+//!
 //! 楼梯 facing 编码（0=+Z 1=-Z 2=+X 3=-X）与 C++ 网格器
 //! `emit_stairs`、`mcv_core::BlockId::state` 注释同一约定；几何含义
 //! （踏步在朝向侧）按上表 StairBlock 源码核对。
+//!
+//! KNOWN-DIVERGENCE（渲染侧）：carpet/trapdoor/pane/wall（Shape 6..9）
+//! 的**渲染**暂为全盒占位（C++ `emit_shapes` default 分支 / Rust
+//! mcv_mesher 全盒路径），薄盒/柱臂模板待 Rust 网格器（#77）按本文件
+//! 数值落地；碰撞/拾取先行按原版几何，保证物理与交互正确。
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, Shape, shape::shape};
@@ -88,11 +115,33 @@ fn local_box(p: BlockPos, x0: f32, y0: f32, z0: f32, x1: f32, y1: f32, z1: f32) 
 ///   南瓜/南瓜灯/西瓜/南瓜/潜影盒）未移植——叶因 opaque=false 行为碰巧一致，
 ///   南瓜系 sturdy 会被误连。
 pub fn fence_connects(nb: BlockId) -> bool {
+    connects_family(nb, Shape::Fence)
+}
+
+/// 玻璃板臂连接：26.1 `IronBarsBlock.getStateForPlacement` 四邻
+/// `attachsTo ∥ isFaceSturdy`——同板类（`_pane` 名族）或 sturdy 邻块；
+/// sturdy 近似同 [`fence_connects`]（实体不透明整立方，宁缺勿错连）。
+/// KNOWN-DIVERGENCE：`iron_bars`/`iron_trapdoor` 在原版属板/门类可互连，
+/// 本引擎无 tag 不识别（保守方向）。
+pub fn pane_connects(nb: BlockId) -> bool {
+    connects_family(nb, Shape::Pane)
+}
+
+/// 墙臂连接：26.1 `WallBlock.canConnectTo` = 墙类同族或 sturdy 整方块；
+/// 近似规则同 [`fence_connects`]。
+pub fn wall_connects(nb: BlockId) -> bool {
+    connects_family(nb, Shape::Wall)
+}
+
+/// 同类臂连接判据（栅栏/板/墙共用）：同族形状 → 连；否则
+/// “实体不透明整立方”近似原版 sturdy。`fence_connects` 的
+/// KNOWN-DIVERGENCE 清单（无 tag、无例外名单）同样适用。
+fn connects_family(nb: BlockId, family: Shape) -> bool {
     if nb.id() == 0 {
         return false;
     }
     let sh = shape(nb.id());
-    if sh == Shape::Fence {
+    if sh == family {
         return true;
     }
     let d = nb.def();
@@ -191,6 +240,66 @@ pub fn push_boxes(
                     continue;
                 }
                 add!(x0, 0.0, z0, x1, h, z1);
+            }
+        }
+        Shape::Carpet => {
+            // CarpetBlock.java:17 column(16,0,1)：全宽 1/16 薄盒，碰撞=拾取。
+            // moss_carpet（MossyCarpetBlock makeShapes：BASE 态同为
+            // boxZ(16,0,1)）取 BASE 几何；悬边 draped 态登记遗留。
+            add!(0.0, 0.0, 0.0, 1.0, 0.0625, 1.0);
+        }
+        Shape::Trapdoor => {
+            // 关态平板（TrapDoorBlock.java:48 + template_trapdoor_*）：
+            // bit2=1 上态 y 13..16px，否则下态 y 0..3px。facing/open 位
+            // 未启用（开态登记遗留），关态几何与 facing 无关。
+            let (y0, y1) = if (st & 4) != 0 {
+                (0.8125, 1.0)
+            } else {
+                (0.0, 0.1875)
+            };
+            add!(0.0, y0, 0.0, 1.0, y1, 1.0);
+        }
+        Shape::Pane => {
+            // IronBarsBlock（CrossCollisionBlock 子类，super(2,16,2,16,16)）：
+            // 柱 column(2,0,16)、臂 boxZ(2,0,16,0,8) 格边→中心；碰撞=拾取。
+            add!(0.4375, 0.0, 0.4375, 0.5625, 1.0, 0.5625);
+            const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+            const ARMS: [(f32, f32, f32, f32); 4] = [
+                (0.5, 0.4375, 1.0, 0.5625), // +X：x 0.5..1，z 断面 7..9px
+                (0.0, 0.4375, 0.5, 0.5625), // -X
+                (0.4375, 0.5, 0.5625, 1.0), // +Z
+                (0.4375, 0.0, 0.5625, 0.5), // -Z
+            ];
+            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
+                if !pane_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
+                    continue;
+                }
+                add!(x0, 0.0, z0, x1, 1.0, z1);
+            }
+        }
+        Shape::Wall => {
+            // WallBlock.java:66-74：拾取 post column(8,0,16) + low 臂
+            // boxZ(6,0,14,0,11)；碰撞 post/臂均抬高到 24px（1.5，防跳，
+            // 与栅栏同语义）。臂断面 6px（0.3125..0.6875）、自格边伸入
+            // 11px（越过中心与对侧臂/柱搭接）。
+            let (hp, ha) = if mode == RayTarget::Collide {
+                (1.5f32, 1.5f32)
+            } else {
+                (1.0, 0.875)
+            };
+            add!(0.25, 0.0, 0.25, 0.75, hp, 0.75);
+            const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+            const ARMS: [(f32, f32, f32, f32); 4] = [
+                (0.3125, 0.3125, 1.0, 0.6875), // +X：x 0.3125..1
+                (0.0, 0.3125, 0.6875, 0.6875), // -X
+                (0.3125, 0.3125, 0.6875, 1.0), // +Z：z 0.3125..1
+                (0.3125, 0.0, 0.6875, 0.6875), // -Z
+            ];
+            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
+                if !wall_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
+                    continue;
+                }
+                add!(x0, 0.0, z0, x1, ha, z1);
             }
         }
     }

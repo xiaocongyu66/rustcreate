@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 use mcv_core::{BlockId, BlockPos, ChunkPos, Shape};
 use mcv_game::VoxelAccess;
-use mcv_game::blockshapes::{EMPTY_AABB, MAX_SHAPE_BOXES, RayTarget, push_boxes};
+use mcv_game::blockshapes::{EMPTY_AABB, MAX_SHAPE_BOXES, RayTarget, pick_boxes, push_boxes};
 
 /// 全空气世界（栅栏臂等邻格查询都取不到连接对象）。
 struct EmptyWorld;
@@ -153,6 +153,138 @@ fn force_solid_blocks_have_no_phantom_collision() {
         let n = collision_at(&w, BlockPos::new(0, 0, 0), &mut boxes);
         assert_eq!(n, 0, "{name} 不应产出碰撞盒");
     }
+}
+
+#[test]
+fn carpet_is_one_sixteenth_thin_box() {
+    // CarpetBlock.java:17 column(16,0,1)：碰撞=拾取=全宽 y 0..1/16。
+    let id = by_name("red_carpet").expect("red_carpet 在表");
+    assert_eq!(
+        Shape::from_u8(mcv_core::BLOCKS[id as usize].shape),
+        Shape::Carpet
+    );
+    assert!(mcv_core::BLOCKS[id as usize].solid, "地毯原版有薄碰撞盒");
+    let w = Mem {
+        m: [((0, 0, 0), id)].into_iter().collect(),
+    };
+    let mut boxes = [EMPTY_AABB; MAX_SHAPE_BOXES];
+    for mode in [RayTarget::Collide, RayTarget::Pick] {
+        let n = push_boxes(BlockId(id), &w, BlockPos::new(0, 0, 0), mode, &mut boxes);
+        assert_eq!(n, 1, "{mode:?} 地毯应 1 盒");
+        assert_eq!(boxes[0].min.y, 0.0);
+        assert_eq!(boxes[0].max.y, 0.0625);
+        assert_eq!(boxes[0].max.x, 1.0);
+    }
+}
+
+#[test]
+fn trapdoor_closed_thin_plate_halves() {
+    // TrapDoorBlock.java:48 boxZ(16,13,16)：上态 y 13..16px；下态 y 0..3px。
+    let id = by_name("oak_trapdoor").expect("oak_trapdoor 在表");
+    assert_eq!(
+        Shape::from_u8(mcv_core::BLOCKS[id as usize].shape),
+        Shape::Trapdoor
+    );
+    let w = Mem {
+        m: [((0, 0, 0), id)].into_iter().collect(),
+    };
+    let p = BlockPos::new(0, 0, 0);
+    let mut boxes = [EMPTY_AABB; MAX_SHAPE_BOXES];
+    let n = push_boxes(
+        BlockId(id).with_state(0),
+        &w,
+        p,
+        RayTarget::Collide,
+        &mut boxes,
+    );
+    assert_eq!(n, 1);
+    assert_eq!(boxes[0].min.y, 0.0);
+    assert_eq!(boxes[0].max.y, 0.1875);
+    // bit2=1 上态（与楼梯 top 位同位约定）。
+    let n = push_boxes(
+        BlockId(id).with_state(4),
+        &w,
+        p,
+        RayTarget::Pick,
+        &mut boxes,
+    );
+    assert_eq!(n, 1);
+    assert_eq!(boxes[0].min.y, 0.8125);
+    assert_eq!(boxes[0].max.y, 1.0);
+}
+
+#[test]
+fn pane_post_and_connection_arms() {
+    // IronBarsBlock super(2,16,2,16,16)：柱 7..9px 全高；臂按邻格
+    // （同板族 ∥ 不透明整立方近似 sturdy）从格边伸到中心。
+    let pane = by_name("glass_pane").expect("glass_pane 在表");
+    let stone = by_name("stone").expect("stone 在表");
+    let mut boxes = [EMPTY_AABB; MAX_SHAPE_BOXES];
+
+    // 孤立：仅柱。
+    let mut m = std::collections::HashMap::new();
+    m.insert((0, 0, 0), pane);
+    let solo = Mem { m };
+    let p = BlockPos::new(0, 0, 0);
+    let n = collision_at(&solo, p, &mut boxes);
+    assert_eq!(n, 1, "孤立板仅柱");
+    assert_eq!(boxes[0].min.x, 0.4375);
+    assert_eq!(boxes[0].max.x, 0.5625);
+    assert_eq!(boxes[0].max.y, 1.0, "板无栅栏式 1.5 抬高");
+
+    // +X 接另一板、-X 接石头 → 柱 + 两臂；拾取=碰撞。
+    let mut m = std::collections::HashMap::new();
+    m.insert((0, 0, 0), pane);
+    m.insert((1, 0, 0), pane);
+    m.insert((-1, 0, 0), stone);
+    let w = Mem { m };
+    for mode in [RayTarget::Collide, RayTarget::Pick] {
+        let n = push_boxes(BlockId(pane), &w, p, mode, &mut boxes);
+        assert_eq!(n, 3, "{mode:?} 柱+双臂");
+        // 切片必须截至 n：MAX_SHAPE_BOXES=5，[1..] 会扫到上轮残留槽位。
+        assert!(boxes[1..n].iter().any(|b| b.max.x == 1.0 && b.min.x == 0.5));
+        assert!(boxes[1..n].iter().any(|b| b.min.x == 0.0 && b.max.x == 0.5));
+    }
+}
+
+#[test]
+fn wall_post_low_arms_and_collision_heights() {
+    // WallBlock.java:66-74：拾取 post 高 1.0 + low 臂高 0.875（14px）；
+    // 碰撞柱/臂均 1.5（24px 防抬）；臂断面 6px、自格边伸入 11px。
+    let wall = by_name("cobblestone_wall").expect("cobblestone_wall 在表");
+    let stone = by_name("stone").expect("stone 在表");
+    assert_eq!(
+        Shape::from_u8(mcv_core::BLOCKS[wall as usize].shape),
+        Shape::Wall
+    );
+    let mut m = std::collections::HashMap::new();
+    m.insert((0, 0, 0), wall);
+    m.insert((0, 0, 1), wall); // +Z 同族连臂
+    m.insert((1, 0, 0), stone); // +X sturdy 连臂
+    let w = Mem { m };
+    let p = BlockPos::new(0, 0, 0);
+    let mut boxes = [EMPTY_AABB; MAX_SHAPE_BOXES];
+
+    let n = collision_at(&w, p, &mut boxes);
+    assert_eq!(n, 3, "碰撞：柱 + 双臂");
+    assert_eq!(boxes[0].min.x, 0.25);
+    assert_eq!(boxes[0].max.x, 0.75);
+    assert_eq!(boxes[0].max.y, 1.5, "碰撞柱抬高防跳");
+    // +Z 臂：z 0.3125..1（格边伸入 11px 的镜像端），y 碰撞也抬 1.5。
+    let arm_z = boxes[1..n]
+        .iter()
+        .find(|b| b.max.z == 1.0)
+        .expect("+Z 臂盒");
+    assert_eq!(arm_z.min.z, 0.3125);
+    assert_eq!(arm_z.min.x, 0.3125);
+    assert_eq!(arm_z.max.x, 0.6875);
+    assert_eq!(arm_z.max.y, 1.5);
+
+    // 拾取：柱 1.0、臂 0.875（low，14px）。
+    let n = pick_boxes(&w, p, &mut boxes);
+    assert_eq!(n, 3);
+    assert_eq!(boxes[0].max.y, 1.0);
+    assert!(boxes[1..n].iter().all(|b| b.max.y == 0.875));
 }
 
 fn collision_at(
