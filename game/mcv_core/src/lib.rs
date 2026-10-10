@@ -14,19 +14,30 @@ pub use pool::{TaskPool, world_worker_count};
 pub use shape::Shape;
 
 pub const CHUNK_SX: usize = 16;
-pub const CHUNK_SY: usize = 256;
+pub const CHUNK_SY: usize = 384;
 pub const CHUNK_SZ: usize = 16;
-pub const CHUNK_VOL: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ; // 65536
+pub const CHUNK_VOL: usize = CHUNK_SX * CHUNK_SY * CHUNK_SZ; // 98304
 /// One chunk's voxel storage in bytes: BlockId is u16 since the block-id
-/// widening (registry grows toward ~1000 blocks). 128 KiB per chunk.
-pub const CHUNK_VOXEL_BYTES: usize = CHUNK_VOL * std::mem::size_of::<BlockId>(); // 131072
-pub const SEA_LEVEL: i32 = 96;
+/// widening (registry grows toward ~1000 blocks). 192 KiB per chunk.
+pub const CHUNK_VOXEL_BYTES: usize = CHUNK_VOL * std::mem::size_of::<BlockId>(); // 196608
+/// 世界竖直下界（绝对 y；26.1 dimension_type/overworld.json:44
+/// `min_y: -64`——v6 几何升原版后，全仓方块/实体/heightmap 的 y 一律为
+/// 绝对世界 y，本常量为唯一定义源）。
+pub const WORLD_MIN_Y: i32 = -64;
+/// 世界竖直上界（不含；= WORLD_MIN_Y + CHUNK_SY，overworld.json:47
+/// `height: 384`）。
+pub const WORLD_MAX_Y: i32 = WORLD_MIN_Y + CHUNK_SY as i32; // 320
+/// 海平面（绝对 y；26.1 noise_settings/overworld.json:392
+/// `sea_level: 63`——v6 起为原生值，旧 96 是 bloomcraft 256 基准自选）。
+pub const SEA_LEVEL: i32 = 63;
 
-/// Chunk-local voxel index: `(y<<8) | (z<<4) | x`.
+/// Chunk-local voxel index: `((y - WORLD_MIN_Y) << 8) | (z << 4) | x`。
+/// `y` 为**绝对**世界 y ∈ [WORLD_MIN_Y, WORLD_MAX_Y)，`x`/`z` 为区块内
+/// 局部坐标（0..16）。入口断言防越界回绕（coords 审计 P2）。
 #[inline]
-pub const fn vidx(x: usize, y: usize, z: usize) -> usize {
-    debug_assert!(x < CHUNK_SX && y < CHUNK_SY && z < CHUNK_SZ);
-    (y << 8) | (z << 4) | x
+pub const fn vidx(x: usize, y: i32, z: usize) -> usize {
+    debug_assert!(x < CHUNK_SX && (WORLD_MIN_Y..WORLD_MAX_Y).contains(&y) && z < CHUNK_SZ);
+    (((y - WORLD_MIN_Y) as usize) << 8) | (z << 4) | x
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -57,10 +68,14 @@ impl BlockPos {
         ChunkPos::new(self.x.div_euclid(16), self.z.div_euclid(16))
     }
 
+    /// 区块内局部索引（存储槽位，y_local = y − WORLD_MIN_Y ∈ 0..CHUNK_SY）。
+    /// 界外 y 产出越界槽位（索引即 panic，不再 rem_euclid 回绕成「另一端
+    /// 幽灵方块」，coords 审计 P2）——调用方必须先做 [WORLD_MIN_Y,
+    /// WORLD_MAX_Y) 门（mcv_logic WorldView::block 即此判据）。
     pub const fn local(self) -> [usize; 3] {
         [
             self.x.rem_euclid(16) as usize,
-            self.y.rem_euclid(256) as usize,
+            (self.y - WORLD_MIN_Y) as usize,
             self.z.rem_euclid(16) as usize,
         ]
     }
@@ -399,8 +414,9 @@ impl BlockId {
 
 /// Chunk voxel storage owned by Rust; C++ borrows per call.
 ///
-/// 内存预算（u16 加宽后）：体素 128 KiB/区块 + 光照 64 KiB + 高度图 256 B。
-/// 视距 8（17×17 = 289 区块）≈ 289 × 192 KiB ≈ 54 MiB 体素+光照常驻。
+/// 内存预算（u16 加宽 + v6 几何 384 后）：体素 192 KiB/区块 + 光照 96 KiB
+/// + 高度图（i16×256）512 B。视距 8（17×17 = 289 区块）≈ 289 × 288.5 KiB
+/// ≈ 81 MiB 体素+光照常驻（刀 5 的 resident 断言按此重估）。
 /// 网格缓冲（mcv_mesher，纯 Rust 自有缓冲）只存网格不存体素，预算不变。
 pub struct ChunkVoxels(pub Box<[BlockId; CHUNK_VOL]>);
 
@@ -432,15 +448,36 @@ impl ChunkLight {
 mod tests {
     use super::*;
 
-    /// u16 加宽锁定：id 必须 2 字节，区块体素存储必须 128 KiB。
+    /// u16 加宽锁定：id 必须 2 字节，区块体素存储必须 192 KiB
+    /// （v6 几何 16×384×16 × u16）。
     #[test]
     fn block_id_widened_to_u16() {
         assert!(
-            std::mem::size_of::<BlockId>() == 2 && CHUNK_VOXEL_BYTES == 131072,
+            std::mem::size_of::<BlockId>() == 2 && CHUNK_VOXEL_BYTES == 196608,
             "size_of::<BlockId>()={}, CHUNK_VOXEL_BYTES={}",
             std::mem::size_of::<BlockId>(),
             CHUNK_VOXEL_BYTES
         );
+    }
+
+    /// v6 几何锁：16×16×384、y ∈ [-64, 320)、海平面 63、vidx 以绝对 y
+    /// 入口（对齐 26.1 dimension_type/overworld.json:44,47 +
+    /// noise_settings/overworld.json:392）。改动即漂移。
+    #[test]
+    fn v6_geometry_locks() {
+        assert_eq!(CHUNK_SY, 384);
+        assert_eq!(CHUNK_VOL, 98304);
+        assert_eq!(WORLD_MIN_Y, -64);
+        assert_eq!(WORLD_MAX_Y, 320);
+        assert_eq!(SEA_LEVEL, 63);
+        assert_eq!(vidx(0, WORLD_MIN_Y, 0), 0);
+        assert_eq!(vidx(15, WORLD_MAX_Y - 1, 15), CHUNK_VOL - 1);
+        assert_eq!(
+            vidx(3, 63, 9),
+            ((63 - WORLD_MIN_Y) as usize) << 8 | (9 << 4) | 3
+        );
+        let l = BlockPos::new(-1, WORLD_MIN_Y, -1).local();
+        assert_eq!(l, [15, 0, 15]);
     }
 
     /// 旧 14 方块表（千块表接入前 `BLOCKS` 的原样，含旧 tiles 常量层号）。
