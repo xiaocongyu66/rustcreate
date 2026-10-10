@@ -207,9 +207,12 @@ fn mine_durability_matches_item_mine_block() {
 fn tool_breaks_when_durability_exhausted_by_mining() {
     let mut wooden = ItemStack::new(WOODEN_PICKAXE_INDEX, 1); // 木镐耐久 59
     let mut rng = || 0u32;
-    for i in 0..59 {
+    // 前 58 次都活（damage 1..=58 < 59）。
+    for i in 0..58 {
         assert!(!wooden.hurt(1, &mut rng), "第 {} 次挖掘不该坏", i + 1);
     }
-    assert_eq!(wooden.damage, 59);
-    assert!(wooden.hurt(1, &mut rng), "第 60 次 damage≥max → 工具销毁");
+    assert_eq!(wooden.damage, 58);
+    // 第 59 次 damage=59 ≥ max → hurt 返回 true（applyDamage shrink(1)），
+    // 调用方据 true 清槽销毁工具。
+    assert!(wooden.hurt(1, &mut rng), "第 59 次 damage≥max → 工具销毁");
 }
