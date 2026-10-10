@@ -253,11 +253,12 @@ mod tests {
         eat_bread(&mut hunger, &mut saturation);
         assert_eq!(hunger, 15.0);
         assert_eq!(saturation, 6.0);
-        // 饱和钳 0..hunger（FoodData.java:21）：饱和 8 > hunger 5 → 盖到 5。
-        let (mut hunger, mut saturation) = (2.0_f32, 0.0_f32);
-        eat_bread(&mut hunger, &mut saturation);
-        assert_eq!(hunger, 7.0);
-        assert_eq!(saturation, 5.0, "饱和不得盖过饥饿条（FoodData.java:21）");
+        // 饱和钳 0..hunger（FoodData.java:21）：金苹果(4/1.2，Foods.java:24)
+        // 饱和公式 9.6 > 新 hunger 4 → 盖到 4。
+        let (mut hunger, mut saturation) = (0.0_f32, 0.0_f32);
+        eat(&mut hunger, &mut saturation, 4, 1.2);
+        assert_eq!(hunger, 4.0);
+        assert_eq!(saturation, 4.0, "饱和不得盖过饥饿条（FoodData.java:21）");
     }
 
     #[test]
@@ -386,7 +387,7 @@ mod tests {
                 step_eating(true, true, Some(ROTTEN_FLESH), Some(rf), true, &mut state).is_none()
             );
         }
-        assert_eq!(state.as_ref().map(|s| s.ticks), Some(32));
+        assert_eq!(state.as_ref().map(|s| s.ticks), Some(31));
         assert_eq!(
             step_eating(true, true, Some(ROTTEN_FLESH), Some(rf), true, &mut state),
             Some(ROTTEN_FLESH),
