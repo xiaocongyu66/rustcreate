@@ -17,6 +17,14 @@
 //! psx_psl/cellular/int 等输出变体——工单里该提法无源码实据（见汇报
 //! 「派单说法 vs 源码实况」）。正确性以官方 Java 编译跑出的黄金向量
 //! 锁定（`tests/os2s_parity.rs`）。
+// vendored 保持上游代码原样：以下 clippy 提示均为上游源码自身的风格
+//（字面量精度按算法锚点书写、位逻辑含 | 0、into_iter 在引用上、grad4
+// 参数多），修写它们会偏离 vendored 基线，故整模块 allow。
 #![allow(non_snake_case)]
+#![allow(clippy::approx_constant)]
+#![allow(clippy::excessive_precision)]
+#![allow(clippy::identity_op)]
+#![allow(clippy::into_iter_on_ref)]
+#![allow(clippy::too_many_arguments)]
 
 pub mod smooth;
