@@ -5607,38 +5607,6 @@ mod tests {
     // 出生投放专项测试见 spawn_tests.rs（本 mod 子模块，标准嵌套路径
     // src/game/tests/，共用无头装配 headless_rt / lit_chunk）。
     mod spawn_tests;
-}
-
-#[cfg(test)]
-mod tick_tests {
-    use super::accumulate_ticks;
-
-    #[test]
-    fn sixty_hertz_steps_map_to_twenty_hertz_ticks() {
-        let d = 1.0f32 / 60.0;
-        let mut frac = 0.0f64;
-        assert_eq!(accumulate_ticks(&mut frac, d), 0);
-        assert_eq!(accumulate_ticks(&mut frac, d), 0);
-        assert_eq!(
-            accumulate_ticks(&mut frac, d),
-            1,
-            "每 3 个固定步 = 1 原版 tick"
-        );
-        // 一秒（60 步）恰好 20 tick——(dt*20) as u64 截断版恒 0 的回归锁。
-        let mut sec = 0.0f64;
-        let total: u64 = (0..60).map(|_| accumulate_ticks(&mut sec, d)).sum();
-        assert_eq!(total, 20, "60 fps 下每秒必须走满 20 tick");
-        // 帧率不敏感：240 fps（每步 1/240 s）同样 20 tick/s。
-        let mut fast = 0.0f64;
-        let total: u64 = (0..240)
-            .map(|_| accumulate_ticks(&mut fast, 1.0 / 240.0))
-            .sum();
-        assert_eq!(total, 20);
-        // burst 封顶 4（卡顿/后台回归防级联）。
-        let mut burst = 0.0f64;
-        assert_eq!(accumulate_ticks(&mut burst, 10.0), 4);
-    }
-
     // ---- 进食整链（26.1 Consumable；板载 #94）----
 
     use mcv_item::ItemStack as ItemSt;
@@ -5833,5 +5801,36 @@ mod tick_tests {
         assert_eq!(rt2.player.hunger, 6.0);
         assert_eq!(rt2.player.health, 9.0);
         assert_eq!(rt2.air_supply(), 120);
+    }
+}
+
+#[cfg(test)]
+mod tick_tests {
+    use super::accumulate_ticks;
+
+    #[test]
+    fn sixty_hertz_steps_map_to_twenty_hertz_ticks() {
+        let d = 1.0f32 / 60.0;
+        let mut frac = 0.0f64;
+        assert_eq!(accumulate_ticks(&mut frac, d), 0);
+        assert_eq!(accumulate_ticks(&mut frac, d), 0);
+        assert_eq!(
+            accumulate_ticks(&mut frac, d),
+            1,
+            "每 3 个固定步 = 1 原版 tick"
+        );
+        // 一秒（60 步）恰好 20 tick——(dt*20) as u64 截断版恒 0 的回归锁。
+        let mut sec = 0.0f64;
+        let total: u64 = (0..60).map(|_| accumulate_ticks(&mut sec, d)).sum();
+        assert_eq!(total, 20, "60 fps 下每秒必须走满 20 tick");
+        // 帧率不敏感：240 fps（每步 1/240 s）同样 20 tick/s。
+        let mut fast = 0.0f64;
+        let total: u64 = (0..240)
+            .map(|_| accumulate_ticks(&mut fast, 1.0 / 240.0))
+            .sum();
+        assert_eq!(total, 20);
+        // burst 封顶 4（卡顿/后台回归防级联）。
+        let mut burst = 0.0f64;
+        assert_eq!(accumulate_ticks(&mut burst, 10.0), 4);
     }
 }
