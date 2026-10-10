@@ -7,7 +7,7 @@
 /// 黄金场景顺序（= mesh_scenes/*.bin 文件名；每个场景跑 opaque+water 两
 /// pass，即 `<name>_k0.bin` / `<name>_k1.bin`）。
 pub const SCENES: [(&str, bool); 7] = [
-    ("plains", true),          // 全 9 slot 加载
+    ("plains", true), // 全 9 slot 加载
     ("cave_full9", true),
     ("cave_only_center", false), // 仅中心加载（8 邻 None = 不透明边界）
     ("water", true),

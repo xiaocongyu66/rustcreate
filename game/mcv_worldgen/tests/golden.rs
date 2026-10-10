@@ -81,9 +81,15 @@ fn check_one(seed: u64, cx: i32, cz: i32, want_vox: u64, want_hm: u64) {
     let b = rust.voxels.as_u16_slice();
     assert_eq!(b.len(), VOL);
     let got_vox = fnv1a(&voxels_le(b));
-    assert_eq!(got_vox, want_vox, "seed {seed} chunk ({cx},{cz}): voxel 黄金哈希漂移");
+    assert_eq!(
+        got_vox, want_vox,
+        "seed {seed} chunk ({cx},{cz}): voxel 黄金哈希漂移"
+    );
     let got_hm = fnv1a(&rust.heightmap[..]);
-    assert_eq!(got_hm, want_hm, "seed {seed} chunk ({cx},{cz}): heightmap 黄金哈希漂移");
+    assert_eq!(
+        got_hm, want_hm,
+        "seed {seed} chunk ({cx},{cz}): heightmap 黄金哈希漂移"
+    );
 
     // Rust 侧不变量（防同错的独立哨兵）：基岩地板 + 高度图语义自洽。
     assert_eq!(b[0], BEDROCK, "legacy 路径 (0,0,0) 应为基岩");
@@ -106,14 +112,22 @@ fn terrain_golden_hash_4_seeds_x_25_chunks() {
     }
     // 输入规格自检：黄金表必须恰好覆盖 cases.rs 声明的 4 seed × 4 偏移 ×
     // 25 区块网格（共享常量源纪律——表与常量源不同步即红）。
-    assert_eq!(pairs, SEEDS.len() * OFFSETS.len() * ((2 * GRID + 1) * (2 * GRID + 1)) as usize, "黄金表覆盖漂移");
+    assert_eq!(
+        pairs,
+        SEEDS.len() * OFFSETS.len() * ((2 * GRID + 1) * (2 * GRID + 1)) as usize,
+        "黄金表覆盖漂移"
+    );
     let mut i = 0usize;
     for &seed in &SEEDS {
         for &(ox, oz) in &OFFSETS {
             for dx in -GRID..=GRID {
                 for dz in -GRID..=GRID {
                     let (s, cx, cz, _, _) = rows[i];
-                    assert_eq!((s, cx, cz), (seed, ox + dx, oz + dz), "黄金表第 {i} 行坐标漂移");
+                    assert_eq!(
+                        (s, cx, cz),
+                        (seed, ox + dx, oz + dz),
+                        "黄金表第 {i} 行坐标漂移"
+                    );
                     i += 1;
                 }
             }
@@ -124,7 +138,10 @@ fn terrain_golden_hash_4_seeds_x_25_chunks() {
 #[test]
 fn terrain_golden_full_dumps_byte_identical() {
     for &(seed, cx, cz) in &DUMPS {
-        let path = format!("{}/terrain/terrain_s{seed:016x}_c{cx}_{cz}.bin", golden_dir());
+        let path = format!(
+            "{}/terrain/terrain_s{seed:016x}_c{cx}_{cz}.bin",
+            golden_dir()
+        );
         let blob = std::fs::read(&path).expect("黄金全量落盘应随仓库存在");
         let rust = generate_terrain_with(TerrainBackend::Legacy, seed, ChunkPos::new(cx, cz))
             .expect("legacy 路径生成失败");

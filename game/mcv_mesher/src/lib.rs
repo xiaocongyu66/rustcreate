@@ -42,11 +42,7 @@ impl Mesher {
     /// `(dz+1)*3 + (dx+1)`; `None` = not loaded，按不透明边界处理
     /// （mesher.rs BARRIER 哨兵）。`kind`: [`MESH_OPAQUE`] = 0,
     /// [`MESH_WATER`] = 1；其余值 `Err(BAD_ARG)`。
-    pub fn build(
-        &self,
-        neighborhood: &[Option<Slot<'_>>; 9],
-        kind: u32,
-    ) -> Result<MeshData, i32> {
+    pub fn build(&self, neighborhood: &[Option<Slot<'_>>; 9], kind: u32) -> Result<MeshData, i32> {
         if kind > 1 {
             return Err(BAD_ARG);
         }

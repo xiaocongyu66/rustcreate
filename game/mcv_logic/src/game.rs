@@ -788,12 +788,7 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
-        Self::assemble(
-            seed,
-            Box::new(RustMesher::new(uploader)),
-            save_dir,
-            mode,
-        )
+        Self::assemble(seed, Box::new(RustMesher::new(uploader)), save_dir, mode)
     }
 
     /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。

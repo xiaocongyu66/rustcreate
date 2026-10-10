@@ -14,8 +14,10 @@
 #[path = "golden/cases.rs"]
 mod cases;
 
-use cases::{RANDOM_BATCH_SEED, RANDOM_BATCH_CHUNKS, SCENES, Rng, fnv1a, full9, only_center,
-            random_chunk, scene_by_name};
+use cases::{
+    RANDOM_BATCH_CHUNKS, RANDOM_BATCH_SEED, Rng, SCENES, fnv1a, full9, only_center, random_chunk,
+    scene_by_name,
+};
 use mcv_mesher::{MESH_OPAQUE, MESH_WATER, Mesher, Slot};
 
 fn golden_dir() -> String {
@@ -62,9 +64,8 @@ fn deterministic_scenes_byte_match_golden() {
 /// in_hash 锁输入规格（cases.rs 与黄金数据不同步即红），后三列锁输出。
 #[test]
 fn random_batch_matches_golden_table() {
-    let text =
-        std::fs::read_to_string(format!("{}/mesh_random_batch.tsv", golden_dir()))
-            .expect("黄金表应随仓库存在");
+    let text = std::fs::read_to_string(format!("{}/mesh_random_batch.tsv", golden_dir()))
+        .expect("黄金表应随仓库存在");
     let rows: Vec<Vec<&str>> = text
         .lines()
         .map(|l| l.split_whitespace().collect())
@@ -98,7 +99,11 @@ fn random_batch_matches_golden_table() {
         // 131072B 体素 LE + 65536B 光照)。
         for kind in [MESH_OPAQUE, MESH_WATER] {
             let row = &rows[ri];
-            assert_eq!(row[0], format!("{:03}", ci * 2 + kind as usize + 14), "行号漂移 @ {ri}");
+            assert_eq!(
+                row[0],
+                format!("{:03}", ci * 2 + kind as usize + 14),
+                "行号漂移 @ {ri}"
+            );
             assert_eq!(row[1], format!("rand{ci}"), "用例名漂移 @ {ri}");
             assert_eq!(row[2], kind.to_string(), "kind 漂移 @ {ri}");
             let mut input = Vec::with_capacity(4 + 9 * (1 + 131072 + 65536));
