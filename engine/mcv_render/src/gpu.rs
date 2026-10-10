@@ -169,7 +169,7 @@ pub struct MeshUploader {
     staging: Vec<StagingSlot>,
     /// 映射回调回执（map_async/map_buffer_on_submit 完成的槽下标 + 是否
     /// 成功）。回调无法借用 self，经 Arc 信道送回 flush 消化。
-    mapped_mailbox: std::sync::Arc<std::mutex::Mutex<Vec<(usize, bool)>>>,
+    mapped_mailbox: std::sync::Arc<std::sync::Mutex<Vec<(usize, bool)>>>,
     /// 待 flush 的拷贝（目标缓冲 + 字节）；flush 记入 encoder 并 submit，
     /// 先于同帧任何 draw（单队列按提交序执行）。
     uploads: Vec<PendingUpload>,
@@ -198,7 +198,10 @@ impl MeshUploader {
                 }
                 mb.lock().expect("staging mailbox").push((i, ok));
             });
-            staging.push(StagingSlot { buf, state: SlotState::Mapping });
+            staging.push(StagingSlot {
+                buf,
+                state: SlotState::Mapping,
+            });
         }
         Self {
             device,
@@ -283,18 +286,25 @@ impl MeshUploader {
             }
             // 找一个可写且有剩余容量的环槽；超槽容量或环耗尽 → 一次性
             // mapped_at_creation 兜底（改动前同机制）。
-            let slot = self.staging.iter().position(|s| {
-                matches!(s.state, SlotState::Mapped { used } if used + len <= STAGING_SLOT_BYTES)
-            });
+            let mut slot = None;
+            for (i, st) in self.staging.iter().enumerate() {
+                let SlotState::Mapped { used } = st.state else {
+                    continue;
+                };
+                if used + len <= STAGING_SLOT_BYTES {
+                    slot = Some(i);
+                    break;
+                }
+            }
             match slot {
-                Some(si) if len <= STAGING_SLOT_BYTES => {
+                Some(si) => {
                     let off = match self.staging[si].state {
                         SlotState::Mapped { used } => used,
-                        _ => unreachable!("position 已过滤出 Mapped 槽"),
+                        _ => unreachable!("上方循环已过滤出 Mapped 槽"),
                     };
                     let dst = &self.staging[si];
-                    let mut view = dst.buf.get_mapped_range_mut().expect("slot mapped");
-                    view[off as usize..(off + len) as usize].copy_from_slice(&up.bytes);
+                    let mut view = dst.buf.slice(..).get_mapped_range_mut().expect("slot mapped");
+                    view.slice(off as usize..(off + len) as usize).copy_from_slice(&up.bytes);
                     drop(view);
                     encoder.copy_buffer_to_buffer(&dst.buf, off, &up.dst, 0, len);
                     if let SlotState::Mapped { used } = &mut self.staging[si].state {
@@ -316,7 +326,10 @@ impl MeshUploader {
                         mapped_at_creation: true,
                     });
                     {
-                        let mut view = tmp.get_mapped_range_mut().expect("one-shot staged");
+                        let mut view = tmp
+                            .slice(..)
+                            .get_mapped_range_mut()
+                            .expect("one-shot staged");
                         view.slice(0..len as usize).copy_from_slice(&up.bytes);
                     }
                     tmp.unmap();
@@ -567,7 +580,10 @@ impl MeshUploader {
         }
         let vertex_buf = self.empty_buffer(vbytes.len() as u64, wgpu::BufferUsages::VERTEX);
         if !vbytes.is_empty() {
-            uploads.push(PendingUpload { dst: vertex_buf.clone(), bytes: vbytes });
+            uploads.push(PendingUpload {
+                dst: vertex_buf.clone(),
+                bytes: vbytes,
+            });
         }
         let index_buf = self.empty_buffer(opaque_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
         if !opaque_idx.is_empty() {
