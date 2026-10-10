@@ -1847,6 +1847,13 @@ impl ApplicationHandler for AppState {
     }
 
     fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        // C-3（波#127-2）：Android 进程随时可被杀（onPause 后无删除保证），
+        // 自动保存的 30s 墙钟节拍（redraw 内）挂起后不再推进——进后台首件事
+        // 同步落盘（CloseRequested 同款通路），被杀丢档上限 30s → 0。
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.save_dirty(None);
+            runtime.save_meta();
+        }
         self.surface = None;
         self.window = None;
         // runtime persists; its GPU buffers die with the device on Android —
