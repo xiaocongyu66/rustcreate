@@ -48,12 +48,7 @@ pub struct NormalNoise {
 
 impl NormalNoise {
     #[must_use]
-    pub const fn new(
-        world_seed: u64,
-        salt: u64,
-        first_octave: i32,
-        amplitudes: &'static [f64],
-    ) -> Self {
+    pub fn new(world_seed: u64, salt: u64, first_octave: i32, amplitudes: &'static [f64]) -> Self {
         let seed = noise_seed(world_seed, salt);
         let octaves = amplitudes.len();
         // legacy ImprovedNoise 期望偏差（NormalNoise.java:97-103）
@@ -99,11 +94,15 @@ impl NormalNoise {
             / (2.0_f64.powi(self.amplitudes.len() as i32) - 1.0);
         for (i, &amp) in self.amplitudes.iter().enumerate() {
             if amp != 0.0 {
-                let seed = self.seed.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
+                let seed = self
+                    .seed
+                    .wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
                 let nx = wrap(x * factor);
                 let ny = wrap(y * factor);
                 let nz = wrap(z * factor);
-                value += amp * crate::os2s::smooth::noise3_ImproveXZ(seed as i64, nx, ny, nz) as f64 * value_factor;
+                value += amp
+                    * crate::os2s::smooth::noise3_ImproveXZ(seed as i64, nx, ny, nz) as f64
+                    * value_factor;
             }
             factor *= 2.0;
             value_factor /= 2.0;
@@ -127,17 +126,19 @@ mod tests {
     ///（同坐标抽查均值不为 1）。
     #[test]
     fn normal_noise_stays_in_domain() {
-        let a = NormalNoise::new(7, 0x1111, -9, &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0]);
+        let a = NormalNoise::new(
+            7,
+            0x1111,
+            -9,
+            &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
+        );
         let b = NormalNoise::new(7, 0x2222, -10, &[1.5, 0.0, 1.0]);
         let mut same = 0;
         for k in 0..64_i64 {
             let (x, y, z) = (k as f64 * 1.7, k as f64 * 0.3, k as f64 * 2.1);
             for (n, mx) in [(&a, a.max_value()), (&b, b.max_value())] {
                 let v = n.get_value(x, y, z);
-                assert!(
-                    v.abs() <= n.max_value() + 1e-9,
-                    "fBm 越界 {v} > {mx}"
-                );
+                assert!(v.abs() <= n.max_value() + 1e-9, "fBm 越界 {v} > {mx}");
             }
             if a.get_value(x, y, z) == b.get_value(x, y, z) {
                 same += 1;
@@ -149,7 +150,12 @@ mod tests {
     /// 确定性：同 seed 同坐标两次求值位型一致。
     #[test]
     fn normal_noise_deterministic() {
-        let n = NormalNoise::new(42, 0xABCD, -9, &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0]);
+        let n = NormalNoise::new(
+            42,
+            0xABCD,
+            -9,
+            &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
+        );
         let a = n.get_value(1.23, 4.56, 7.89);
         let b = n.get_value(1.23, 4.56, 7.89);
         assert_eq!(a.to_bits(), b.to_bits());

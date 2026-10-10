@@ -117,7 +117,13 @@ impl Spline {
                     return linear_extend(input, locations, values[0].eval(c), derivatives, 0);
                 }
                 if start == last {
-                    return linear_extend(input, locations, values[last].eval(c), derivatives, last);
+                    return linear_extend(
+                        input,
+                        locations,
+                        values[last].eval(c),
+                        derivatives,
+                        last,
+                    );
                 }
                 let x1 = locations[start];
                 let x2 = locations[start + 1];
@@ -153,7 +159,13 @@ fn find_interval_start(locations: &[f64], input: f64) -> i64 {
 }
 
 #[must_use]
-fn linear_extend(input: f64, locations: &[f64], value: f64, derivatives: &[f64], index: usize) -> f64 {
+fn linear_extend(
+    input: f64,
+    locations: &[f64],
+    value: f64,
+    derivatives: &[f64],
+    index: usize,
+) -> f64 {
     let derivative = derivatives[index];
     if derivative == 0.0 {
         value
@@ -202,9 +214,7 @@ mod tests {
             .point(-1.0, 0.5)
             .point(1.0, 1.5)
             .build();
-        let outer = Builder::new(Coord::Continents)
-            .spline(0.0, inner)
-            .build();
+        let outer = Builder::new(Coord::Continents).spline(0.0, inner).build();
         let mut c = Climate::default();
         c.continents = 0.0;
         c.ridges_folded = 0.5;

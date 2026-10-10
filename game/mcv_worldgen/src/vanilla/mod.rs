@@ -8,6 +8,8 @@
 //! y_mc = y_ours·1.5 − 64（`mc_y_to_ours` / `ours_y_to_mc` 集中换算）；
 //! 海平面 96、总高 256 为任务拍板基准。
 
+pub mod biomes;
+pub mod climate;
 pub mod noise;
 pub mod spline;
 

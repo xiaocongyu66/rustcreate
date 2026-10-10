@@ -14,8 +14,8 @@ pub mod vanilla;
 mod rust_noise;
 mod rust_terrain;
 
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
+use std::sync::Arc;
 
 use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
 use mcv_ffi::terrain_generate_raw;

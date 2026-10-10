@@ -791,7 +791,11 @@ fn grad4(
 
 fn fastFloor(x: f64) -> i32 {
     let xi = x as i32;
-    if x < xi as f64 { xi - 1 } else { xi }
+    if x < xi as f64 {
+        xi - 1
+    } else {
+        xi
+    }
 }
 
 /*

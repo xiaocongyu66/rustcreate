@@ -310,7 +310,11 @@ pub fn generate(
                 {
                     BEDROCK
                 } else if y > surface {
-                    if y <= SEA { WATER } else { AIR }
+                    if y <= SEA {
+                        WATER
+                    } else {
+                        AIR
+                    }
                 } else if y == surface {
                     if beach {
                         SAND
@@ -320,7 +324,11 @@ pub fn generate(
                         GRASS
                     }
                 } else if y >= surface - 3 {
-                    if beach { SAND } else { DIRT }
+                    if beach {
+                        SAND
+                    } else {
+                        DIRT
+                    }
                 } else {
                     STONE
                 };
