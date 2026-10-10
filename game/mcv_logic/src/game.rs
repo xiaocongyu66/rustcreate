@@ -2441,14 +2441,39 @@ impl GameRuntime {
                 self.player.invulnerable = self.player.invulnerable.saturating_sub(1);
             }
             // 事件式 exhaustion 累加（原版在移动/跳跃事件即时加，非每 tick）：
-            // 冲刺地面水平位移 0.1/m、走路/潜行 0.0/m 且只计水平分量
-            // （ServerPlayer.checkMovementStatistics:1443-1456 +
-            // FoodConstants.java:25-27）；跳跃 = 冲刺跳 0.2 / 普通跳 0.05
-            // （ServerPlayer.jumpFromGround:1532-1540 +
+            // 水中 0.01/m——游泳/眼下水按 3D 距离、水面行进按水平距离
+            // （ServerPlayer.checkMovementStatistics:1422-1439 +
+            // FoodConstants.java:28 EXHAUSTION_SWIM），优先序 isSwimming >
+            // eyeInFluid(WATER) > inWater > onGround 与原版 else-if 链一致
+            // （self.swimming 为上一拍值，姿态位本拍尾才翻转，1 tick 滞后）。
+            // 地面冲刺 0.1/m、走路/潜行 0.0/m 且只计水平分量
+            // （checkMovementStatistics:1443-1456 + FoodConstants.java:25-27，
+            // 旧实现水中零消耗为登记差异，本提交消解）；跳跃 = 冲刺跳 0.2 /
+            // 普通跳 0.05（ServerPlayer.jumpFromGround:1532-1540 +
             // FoodConstants.java:21-22，旧实现恒 0.2 高估普通跳）。
             if self.mode != GameMode::Creative {
+                // 眼位水样（eyeInFluid(WATER) 分支判据，:1428）。
+                let eyes_in_water = {
+                    let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                    let ec = eye.floor().as_ivec3();
+                    let view = WorldView {
+                        chunks: &self.chunks,
+                    };
+                    let d = view.block(BlockPos::new(ec.x, ec.y, ec.z)).def();
+                    d.liquid && d.name == "water"
+                };
                 let p = &mut self.player;
-                if p.on_ground {
+                let moved_3d = delta.length();
+                let water_cost = if self.swimming || eyes_in_water {
+                    0.01 * moved_3d
+                } else if in_water {
+                    0.01 * moved_h
+                } else {
+                    0.0
+                };
+                if water_cost > 0.0 {
+                    p.exhaustion = (p.exhaustion + water_cost).min(EXHAUSTION_MAX);
+                } else if p.on_ground {
                     p.exhaustion =
                         (p.exhaustion + move_exhaustion(sprinting, moved_h)).min(EXHAUSTION_MAX);
                 }
@@ -2459,10 +2484,12 @@ impl GameRuntime {
             }
             // FoodData.tick 每 game tick 一次（26.1 FoodData.java:32-72）：
             // exhaustion>4 先扣 1 饱和、饱和耗尽才扣饥饿；回血/饥饿掉血走
-            // tickTimer（和平封顶 10 为本仓既有登记偏差）。
+            // tickTimer（和平封顶 10 为本仓既有登记偏差）。饿死拍命中时由
+            // 调用方走完整 hurt 管线（FoodData.java:64 hurtServer(starve)，
+            // i 帧门/死亡结算/受伤音照常；exhaustion 按 starve.json=0.0）。
             if self.on_tick && self.mode != GameMode::Creative {
                 let p = &mut self.player;
-                food_data_tick(
+                let starve = food_data_tick(
                     &mut p.exhaustion,
                     &mut p.saturation,
                     &mut p.hunger,
@@ -2470,6 +2497,9 @@ impl GameRuntime {
                     &mut self.food_tick_timer,
                     self.difficulty,
                 );
+                if starve {
+                    self.hurt_player(1.0, None);
+                }
             }
             // ---- 游泳姿态 + 空气/溺水（每 game tick，20 Hz）----
             if self.on_tick {
@@ -4948,12 +4978,16 @@ pub fn move_exhaustion(sprinting: bool, horizontal_m: f32) -> f32 {
 /// 1. exhaustion **>4**（FoodData.java:35 严格大于，非 >=4）扣 4，先扣 1 点
 ///    饱和度、饱和见底才扣饥饿；
 /// 2. 回血快线：饱和>0 且 hunger≥20 且受伤，每 10 tick 回 min(饱和,6)/6 HP，
-///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52）；
+///    代价走 exhaustion+min(饱和,6)（FoodData.java:45-52；naturalRegen 游
+///    戏规则默认 true，本仓无 gamerules 设施按默认建模）；
 /// 3. 回血慢线：hunger≥18 且受伤，每 80 tick 回 1 HP，代价 exhaustion+6
 ///    （FoodData.java:53-59，FoodConstants.java:20 EXHAUSTION_HEAL=6.0——旧实现
 ///    回血零代价）；
-/// 4. 饥饿掉血：hunger=0 每 80 tick 掉 1（难度封顶为既有登记偏差：一律按
-///    和平封顶 10）。
+/// 4. 饥饿掉血：hunger=0 每 80 tick 一拍，难度封顶门 `health>10 || HARD ||
+///    (health>1 && NORMAL)`（FoodData.java:63）。命中时返回 true，**由调用
+///    方走完整受伤管线**（原版 `player.hurtServer(…starve(), 1.0F)`，
+///    FoodData.java:64；旧实现就地 `health -= 1.0` 绕过 i 帧门/死亡结算，
+///    已消解）。starve.json exhaustion = 0.0。
 pub fn food_data_tick(
     exhaustion: &mut f32,
     saturation: &mut f32,
@@ -4961,7 +4995,7 @@ pub fn food_data_tick(
     health: &mut f32,
     tick_timer: &mut u32,
     difficulty: crate::difficulty::Difficulty,
-) {
+) -> bool {
     if *exhaustion > 4.0 {
         *exhaustion -= 4.0;
         if *saturation > 0.0 {
@@ -4992,14 +5026,14 @@ pub fn food_data_tick(
         if *tick_timer >= 80 {
             // 封顶表（FoodData.java:63 `health > 10 || HARD || (health > 1 && NORMAL)`，
             // 和平/简单只掉到 10）——旧「一律封顶 10」登记偏差已消解。
-            if crate::difficulty::starve_can_hurt(*health, difficulty) {
-                *health -= 1.0;
-            }
+            let starve = crate::difficulty::starve_can_hurt(*health, difficulty);
             *tick_timer = 0;
+            return starve; // 伤害由调用方走 hurt 管线（FoodData.java:64）。
         }
     } else {
         *tick_timer = 0;
     }
+    false
 }
 
 /// 满气（26.1 `Entity.getMaxAirSupply` = **300**，Entity.java:2739-2741；
