@@ -1163,10 +1163,11 @@ mod tests {
             )
         };
         let base = mk(0.0);
+        let cnt = MOB_PART_COUNTS[MobModelKind::Zombie.idx()];
         for yaw in [std::f32::consts::FRAC_PI_2, std::f32::consts::PI] {
             let ry3 = m3(&Mat4::from_axis_angle(Vec3::Y, -yaw));
             let rot = mk(yaw);
-            for (p, (b, r)) in base.iter().zip(rot.iter()).enumerate() {
+            for (p, (b, r)) in base[..cnt].iter().zip(rot[..cnt].iter()).enumerate() {
                 let want = ry3 * m3(b);
                 let got = m3(r);
                 for (i, row) in want.to_cols_array_2d().iter().enumerate() {
@@ -1199,11 +1200,13 @@ mod tests {
         let m = build_mob_mesh();
         let pose = MobPose::default();
         let mm = mob_model_matrices(MobModelKind::Zombie, &pose);
-        let r = &m.slices[MobModelKind::Zombie as usize];
-        // 部位序：头0 身1 右臂2 左臂3，各 24 顶点。
+        // 顶点按盒序累积（slices 是索引单位、verts 每盒 24，不可混用）：
+        // 僵尸之前 = 鸡 8 + 牛 10 + 羊 12 + 猪 7 = 37 盒 → 起于 888。
+        // 部位序：头0 身1 右臂2 左臂3，各 1 盒 24 顶点。
+        let z0 = (8 + 10 + 12 + 7) * 24;
         let x_span = |part: usize| {
             let (mut lo, mut hi) = (f32::MAX, f32::MIN);
-            for v in &m.verts[r.start as usize + part * 24..r.start as usize + (part + 1) * 24] {
+            for v in &m.verts[z0 + part * 24..z0 + (part + 1) * 24] {
                 let w = mm[part].transform_point3(Vec3::from(v.pos));
                 lo = lo.min(w.x);
                 hi = hi.max(w.x);
