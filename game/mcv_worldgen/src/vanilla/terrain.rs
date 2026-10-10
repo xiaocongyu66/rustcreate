@@ -497,8 +497,8 @@ impl Orchestrator {
         // 地表零点：yClampGradient(-64,320,+1.5,-1.5) 与 offset 抵消处
         //（y_clamp 斜率 -1/128 格/密度单位）
         let surface_mc = (128.0 + 128.0 * offset).clamp(-64.0, 320.0);
-        let surface_ours =
-            (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(MIN_Y + 4, SY - 10);
+        let surface_ours = (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32)
+            .clamp(MIN_Y + 4, mcv_core::WORLD_MAX_Y - 10);
         // jaggedness 通道：noise(JAGGED, 1500.0, 0.0)（NoiseRouterData.java:99），
         // yScale=0 → 列常量，提升到列级（每体素省 32 次倍频求值，值逐位不变）。
         let jag_x = f64::from(block_x) * 1500.0;

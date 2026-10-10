@@ -17,8 +17,9 @@
 
 use crate::rust_noise::{fbm2, fbm2_w, fbm3, fbm3_w, hash01, peaks_valleys};
 
-/// 世界高（terrain.cpp:20；v6 = 384，唯一定义源 `mcv_core::CHUNK_SY`）。
-const SY: i32 = mcv_core::CHUNK_SY as i32;
+/// 绝对 y 独占上界（v6 = 320 = WORLD_MIN_Y + CHUNK_SY）。旧 256 基准下
+/// 「世界高」与「绝对上界」数值重合，v6 起分家——当上界用必须取此值。
+const MAX_Y: i32 = mcv_core::WORLD_MAX_Y;
 /// 世界竖直下界（v6 = -64）。
 const MIN_Y: i32 = mcv_core::WORLD_MIN_Y;
 /// 海平面（terrain.cpp:21；v6 起取原生 63 = `mcv_core::SEA_LEVEL`，
@@ -245,7 +246,7 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
     let top = t.base_y + t.height;
     for dy in -2..=1 {
         let y = top + dy;
-        if !((MIN_Y)..SY).contains(&y) {
+        if !(MIN_Y..MAX_Y).contains(&y) {
             continue;
         }
         let r: i32 = if dy <= -1 { 2 } else { 1 };
@@ -282,7 +283,7 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
     let tz = t.z - base_z;
     if (0..16).contains(&tx) && (0..16).contains(&tz) {
         let mut y = t.base_y + 1;
-        while (MIN_Y..SY).contains(&y) && y <= top {
+        while (MIN_Y..MAX_Y).contains(&y) && y <= top {
             voxels[vidx(tx as usize, y, tz as usize)] = LOG;
             y += 1;
         }
@@ -315,7 +316,7 @@ pub fn generate(
             let wx = base_x.wrapping_add(x);
             let wz = base_z.wrapping_add(z);
             let surface =
-                (base_height(seed, wx as f32, wz as f32) as i32).clamp(MIN_Y + 4, SY - 10);
+                (base_height(seed, wx as f32, wz as f32) as i32).clamp(MIN_Y + 4, MAX_Y - 10);
             let ocean = surface <= SEA;
             let beach = surface <= SEA + 1;
             let snowy = surface > SNOW_Y;
@@ -360,7 +361,8 @@ pub fn generate(
 
             // 完好草柱上撒花（terrain.cpp:326-333）。
             if out_voxels[vidx(x as usize, surface, z as usize)] == GRASS
-                && surface + 1 < SY
+                // 绝对上界门（v6：越 320 即 vidx 断言）
+                && surface + 1 < MAX_Y
                 && out_voxels[vidx(x as usize, surface + 1, z as usize)] == AIR
             {
                 let f = hash01(seed ^ SEED_FLOWER, i64::from(wx), 7, i64::from(wz));
@@ -392,7 +394,7 @@ pub fn generate(
     for z in 0..16_usize {
         for x in 0..16_usize {
             let mut found = None;
-            for y in (MIN_Y..SY).rev() {
+            for y in (MIN_Y..MAX_Y).rev() {
                 let id = out_voxels[vidx(x, y, z)];
                 if id != AIR && id != WATER && id != FLOWER_RED && id != FLOWER_YELLOW {
                     found = Some(y);
