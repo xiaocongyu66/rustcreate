@@ -235,25 +235,6 @@ impl AssetManager {
         Ok(arc)
     }
 
-    /// 解码 PNG（走同一缓存/登记）。
-    pub fn read_png(&self, rel: &str) -> Result<(Vec<u8>, u32, u32), AssetError> {
-        let path = self.path(rel);
-        let bytes = self.read_path(&path)?;
-        let img = image::load_from_memory(&bytes)
-            .map_err(|e| AssetError {
-                path: path.clone(),
-                reason: format!("PNG 解码失败: {e}"),
-            })?
-            .to_rgba8();
-        if img.width() == 0 || img.height() == 0 {
-            return Err(AssetError {
-                path,
-                reason: "图像尺寸为空".to_string(),
-            });
-        }
-        Ok((img.into_raw(), img.width(), img.height()))
-    }
-
     // ---- 类别加载 ----
 
     /// **图集重建（rebuild() 语义）**：源贴图 → `atlas::LAYERS`(838) 层

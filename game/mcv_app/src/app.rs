@@ -1411,15 +1411,16 @@ impl ApplicationHandler for AppState {
                         let assets = mcv_assets::AssetManager::new(dir.clone());
                         let steve = assets.read_optional("textures/entity/player/wide/steve.png");
                         let alex = assets.read_optional("textures/entity/player/slim/alex.png");
-                        if let (Some(s), Some(a)) = (steve, alex) {
-                            if let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a) {
-                                log::warn!("skin load failed: {e}");
+                        match (steve, alex) {
+                            (Some(s), Some(a)) => {
+                                if let Err(e) = self.renderer.as_mut().unwrap().load_skins(&s, &a) {
+                                    log::warn!("skin load failed: {e}");
+                                }
                             }
-                        } else {
-                            log::error!(
+                            _ => log::error!(
                                 "玩家皮肤缺失（{dir:?}/textures/entity/player/\
                                  {{wide/steve,slim/alex}}.png）——玩家皮肤不上屏"
-                            );
+                            ),
                         }
                         // 音效索引状态一次性上报（缺 sounds.json → 播放侧
                         // no-op 降级，但错误必须可见；开发树拉取见 fetch-sounds.sh）。
