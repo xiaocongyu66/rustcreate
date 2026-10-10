@@ -6219,15 +6219,18 @@ mod tests {
         h.voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(id);
     }
 
-    /// 俯视脚下（pitch=−1 朝下，eye≈72.62 垂直射线必中 (8,69,8) 顶面）。
+    /// 俯视脚下：pitch 取鼠标 clamp 下限 −1.55（≈88.8°，camera 约定
+    /// `clamp(-1.55, 1.55)`；−π/2 会被裁回，−1.0 弧度只有 57° 会斜打邻列）。
+    /// 视线近乎垂直：眼 (8.5,71.62,8.5) 下探 1.62 格水平漂移仅 ~0.03，
+    /// 必中 (8,69,8) 顶面。
     fn look_down(rt: &mut GameRuntime) {
-        rt.player.pitch = -1.0;
+        rt.player.pitch = -1.55;
         rt.player.yaw = 0.0;
     }
 
     /// B1 基岩豁免（26.1 `strength(-1)` Blocks.java:193-196 →
     /// getDestroyProgress 恒 0，BlockBehaviour.java:355-359）：生存按住左键
-    /// 20 秒，挖掘状态机不得起头、基岩纹丝不动；创造按下秒破
+    /// 20 秒，进度恒 0、基岩纹丝不动；创造按下秒破
     /// （`abilities.instabuild` 先于硬度判定，ServerPlayerGameMode.java:172-175）。
     #[test]
     fn survival_cannot_mine_bedrock_creative_can() {
@@ -6236,14 +6239,18 @@ mod tests {
         // 覆盖，此处直接落体素，聚焦挖掘侧）。
         look_down(&mut rt);
         set_under_player(&mut rt, BEDROCK);
-        // 生存按住挖 400 tick：per=0 起不了手，方块不掉。
+        // 生存按住挖 400 tick：per=0 无任何进度、方块不掉。长按 CONTINUE
+        // 换目标时状态机会登记 pos——原版同款：continueDestroyBlock 对
+        // getDestroyProgress=0 的方块照样进入 destroy 状态、仅进度恒 0
+        // （ServerPlayerGameMode.java:205-217），故锁进度恒 0 + 方块完好，
+        // 不锁 pos。
         rt.on_left_press();
         rt.input.mining = true;
         for _ in 0..400 {
             rt.fixed_step(1.0 / 20.0);
         }
-        assert!(rt.mine.pos.is_none(), "不可破坏方块不得进入挖掘状态");
-        assert_eq!(rt.mine.progress, 0.0);
+        assert_eq!(rt.mine.progress, 0.0, "无限硬度不得推进进度");
+        assert_eq!(rt.mine.per_tick, 0.0);
         assert_eq!(
             rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
             BlockId(BEDROCK),
@@ -6270,35 +6277,38 @@ mod tests {
         let mut rt = playing_rt("b3-replace");
         rt.hotbar = mcv_item::Hotbar::empty();
         rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
+        // 玩家悬空到 y=72.5（不推进 tick、不落位）：脚部 AABB y∈[72.5,74.3]
+        // 与目标格 [70,71]/[71,72] 全不相交，聚焦可替换门本身；眼
+        // 74.12 → 石柱顶面 70.0 距离 4.12 < 生存 reach 4.5。
+        rt.player.pos = Vec3::new(8.5, 72.5, 8.5);
+        rt.player.vel = Vec3::ZERO;
         look_down(&mut rt);
-        // ① 空气目标：脚底格 (8,70,8) 成功放置并消耗（回归基线）。
+        let v = |rt: &GameRuntime, x: usize, y: usize, z: usize| -> u16 {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(x, y, z)].id()
+        };
+        let set = |rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: u16| {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(x, y, z)] = BlockId(id);
+        };
+        // ① 空气目标：俯视命中 (8,69,8) 石顶 → 目标格 (8,70,8) 空气，
+        //    成功放置并消耗（回归基线）。
         rt.interact(true);
-        assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
-            9,
-            "空气格应放得下方块"
-        );
+        assert_eq!(v(&rt, 8, 70, 8), 9, "空气格应放得下方块");
         assert_eq!(rt.hotbar.slots[0].count, 1, "成功放置消耗一格");
-        // ② 实心目标：俯视脚底基岩，目标格 = (8,70,8) 现是圆石实心 →
-        //    拒放：不写体素、不扣物品（26.1 canPlace=false → useOn 中止）。
-        set_under_player(&mut rt, BEDROCK);
+        // ② 实心目标：(8,71,8) 手工灌石头，俯视命中圆石 (8,70,8) 顶面 →
+        //    目标格 = 石头实心 → 拒放：不写体素、不扣物品
+        //    （26.1 canPlace=false → useOn 中止）。
+        set(&mut rt, 8, 71, 8, STONE);
         rt.interact(true);
-        assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
-            9,
-            "实心格不可替换，不得改写"
-        );
+        assert_eq!(v(&rt, 8, 71, 8), STONE, "实心格不可替换，不得改写");
+        assert_eq!(v(&rt, 8, 70, 8), 9, "圆石格未被波及");
         assert_eq!(rt.hotbar.slots[0].count, 1, "拒放不消耗手持（不发放置）");
-        // ③ 水目标：拆掉圆石，(8,70,8) 灌入水。水射线不可拾取（Pick 判据
-        //    solid=false），射线穿透打到 (8,69,8) 石顶 → 目标格 = 水格 →
-        //    可替换，放置成功替换水并消耗。
-        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 70, 8)] = BlockId(0);
-        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(STONE);
-        rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(8, 70, 8)] = BlockId(WATER);
+        // ③ 水目标：实心石头换成水（replaceable+liquid）→ 同一条射线，
+        //    目标格 = 水格 → 可替换，放置成功替换水并消耗。
+        set(&mut rt, 8, 71, 8, WATER);
         rt.hotbar.slots[0].count = 2;
         rt.interact(true);
         assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)].id(),
+            v(&rt, 8, 71, 8),
             9,
             "水可替换：放置替换水（26.1 water .replaceable() Blocks.java:202）"
         );
