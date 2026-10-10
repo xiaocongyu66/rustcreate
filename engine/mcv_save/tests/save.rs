@@ -182,6 +182,13 @@ fn meta_roundtrip() {
             // 中间空槽以 (0,0,0) 占位，槽序即下标。
             hotbar: vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)],
             main: vec![(0, 0, 0); 26].into_iter().chain([(1, 5, 0)]).collect(),
+            // v5 生存数值（非默认值，锁死往返）。
+            health: 7.5,
+            hunger: 14.0,
+            saturation: 2.25,
+            exhaustion: 12.5,
+            air_supply: 240,
+            difficulty: 1,
         }),
     };
     let bytes = meta.encode();
@@ -198,10 +205,14 @@ fn meta_roundtrip() {
     assert_eq!(p.hotbar[..3], vec![(9, 1, 0), (0, 0, 0), (27, 64, 3)]);
     assert_eq!(p.main.len(), 27);
     assert_eq!(p.main[26], (1, 5, 0), "主背包尾槽保序");
+    // v5 生存数值往返。
+    assert_eq!((p.health, p.hunger), (7.5, 14.0));
+    assert_eq!((p.saturation, p.exhaustion), (2.25, 12.5));
+    assert_eq!((p.air_supply, p.difficulty), (240, 1));
 
-    // 版本 5 必须拒绝。
+    // 版本 6（超前）必须拒绝。
     let mut future = bytes.clone();
-    future[4] = 5;
+    future[4] = 6;
     assert!(LevelMeta::decode(&future).is_err());
 
     let bare = LevelMeta {
