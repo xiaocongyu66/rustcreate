@@ -146,6 +146,19 @@ struct AppState {
     creative: Option<mcv_logic::ui::CreativePicker>,
     /// 合成/创造界面命中矩形（每帧随 craft_ui 重建）。
     craft_hot: Vec<crate::craft_ui::HotRect>,
+    /// 波 #126 接线：合成界面的容器状态机（engine/mcv_ui ContainerScreen，
+    /// AbstractContainerMenu.doClick 高保真移植）。Screen::Crafting 期间存在；
+    /// items/carried = 网格+结果槽+36 背包+光标镜像（StackRef.meta 令牌无损
+    /// 往返耐久/附魔），每次交互经 `craft_flush_menu` 灌入→doClick→回写。
+    craft_menu: Option<mcv_ui::slot::ContainerScreen>,
+    /// 容器界面按住的按钮位图（bit0 左 / bit1 右）：拖拽 mouseDragged 路由。
+    craft_held: u8,
+    /// 双击判定基准（ACS:319 lastClickSlot + 250ms；winit CursorInput 无
+    /// doubleClick 标志，游戏层自计时）：(槽 id，-999=面板外/-1=无槽, 按钮, 时刻)。
+    craft_last_click: Option<(i32, u8, std::time::Instant)>,
+    /// 修饰键态（shift=QUICK_MOVE，ctrl=Q 整堆丢）。
+    shift_held: bool,
+    ctrl_held: bool,
     /// Android 应用私有目录（internal_data_path），存档放这里
     #[cfg(target_os = "android")]
     android_data: Option<std::path::PathBuf>,
@@ -183,16 +196,123 @@ fn set_cursor(window: &Option<Arc<Window>>, grab: bool) {
     w.set_cursor_visible(!grab);
 }
 
-/// 关合成界面：网格 + 光标物品全部归还背包（ui.rs 的守恒红线）；
-/// `add` 已覆盖全 36 格（Inventory.add 语义），满栏时丢弃余量并告警
-/// （drops 分支合入后改为世界掉落物）。
-fn close_craft(craft: &mut Option<mcv_logic::ui::CraftScreen>, rt: &mut GameRuntime) {
+/// 关合成界面（原版 `removed` 语义，审计 #52 数据丢失修复）：
+/// - carried 先塞背包、装不下的余量 drop 到世界（dropOrPlaceInInventory，
+///   ACM:588-596）；`to_inventory=false`（死亡路径）直接掉世界——fixed_step
+///   死亡丢弃刚清完 36 格，塞回去 = 免死漏洞；
+/// - 网格物品**逐堆掉世界**，不塞背包（CM:96-99 / IM:87-94 clearContainer）。
+/// 旧实现全部塞背包、满栏 log 后静默丢弃 = 双重偏离 + 吞物，禁。
+/// ContainerScreen 镜像随屏丢弃：真数据在 craft/hotbar，每次交互已回写。
+fn close_craft(
+    craft: &mut Option<mcv_logic::ui::CraftScreen>,
+    craft_menu: &mut Option<mcv_ui::slot::ContainerScreen>,
+    to_inventory: bool,
+    rt: &mut GameRuntime,
+) {
+    *craft_menu = None;
     let Some(cs) = craft.take() else { return };
-    for st in cs.close() {
-        if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
-            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+    let (cursor, grid) = cs.close_to_world();
+    let mut spills: Vec<mcv_item::ItemStack> = Vec::new();
+    if let Some(st) = cursor {
+        if to_inventory {
+            if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
+                log::debug!("背包已满，carried 余量掉世界");
+                spills.push(rest);
+            }
+        } else {
+            spills.push(st);
         }
     }
+    spills.extend(grid);
+    if !spills.is_empty() {
+        mcv_logic::ui::drop_container_items(rt, &spills);
+    }
+}
+
+/// 容器界面构造（波 #126 接线）：槽位表 = 原版容器身份序——结果 0、网格
+/// 1..n²+1、主背包 27、热栏 9（盔甲 5..8 / 副手 45 整段缺 = 已登记债
+/// 审计 #55，索引紧凑排布）。分组路由对照 quickMoveStack 重载：
+/// 3x3 = CraftingMenu.java:110-129（结果→背包倒序、背包→网格段优先
+/// 失败再另一段、网格→背包正向）；2x2 = InventoryMenu.java:110-136
+/// （无网格路由；装备路由依赖物品内容分支，router 签名不可表达 =
+/// 审计 #24 债）。
+fn make_craft_menu(cw: usize, creative: bool) -> mcv_ui::slot::ContainerScreen {
+    use mcv_ui::slot::{ContainerScreen, SlotDef};
+    let n = cw * cw;
+    let inv = 1 + n;
+    let mut slots = vec![SlotDef::result(0.0, 0.0, 0)];
+    slots.extend((0..n).map(|_| SlotDef::new(0.0, 0.0, 1)));
+    slots.extend((0..27).map(|_| SlotDef::new(0.0, 0.0, 2)));
+    slots.extend((0..9).map(|_| SlotDef::new(0.0, 0.0, 3)));
+    let (inv_end, hot) = (inv + 36, inv + 27);
+    let router = Box::new(move |g: u16| -> Vec<(usize, usize, bool)> {
+        match g {
+            // 结果槽 → 玩家背包，倒序（CM:111 / IM:111）
+            0 => vec![(inv, inv_end, true)],
+            // 网格 → 背包正向（CM:129 else 段 / IM:114-116）
+            1 => vec![(inv, inv_end, false)],
+            // 主/热栏 → 3x3 先试网格段（CM:118），再另一段（CM:120-126）；
+            // 2x2 只有另一段（IM:127-134）
+            2 => {
+                if cw == 3 {
+                    vec![(1, 1 + n, false), (hot, inv_end, false)]
+                } else {
+                    vec![(hot, inv_end, false)]
+                }
+            }
+            _ => {
+                if cw == 3 {
+                    vec![(1, 1 + n, false), (inv, hot, false)]
+                } else {
+                    vec![(inv, hot, false)]
+                }
+            }
+        }
+    });
+    let mut cs = ContainerScreen::new(
+        mcv_ui::context::Rect::new(0.0, 0.0, 176.0, 166.0),
+        slots,
+        |kind| mcv_item::Hotbar::max_stack(kind as u16) as u32,
+        router,
+    );
+    cs.infinite_materials = creative;
+    cs
+}
+
+/// ItemStack → StackRef 镜像：damage/enchants 走侧表，meta = 表索引+1
+/// （0=无令牌）；引擎契约保证整堆往返（mcv_ui slot.rs StackRef.meta）。
+fn stack_to_ref(
+    st: &mcv_item::ItemStack,
+    table: &mut Vec<mcv_item::ItemStack>,
+) -> mcv_ui::slot::StackRef {
+    if st.is_empty() {
+        return mcv_ui::slot::StackRef::default();
+    }
+    let meta = if st.damage > 0 || !st.enchants.is_empty() {
+        table.push(st.clone());
+        table.len() as u32
+    } else {
+        0
+    };
+    mcv_ui::slot::StackRef {
+        kind: st.item as u32,
+        count: st.count as u32,
+        meta,
+    }
+}
+
+/// StackRef → ItemStack 回写：meta>0 从侧表克隆再刷实时 count。
+fn ref_to_stack(r: &mcv_ui::slot::StackRef, table: &[mcv_item::ItemStack]) -> mcv_item::ItemStack {
+    if r.is_empty() {
+        return mcv_item::ItemStack::empty();
+    }
+    let mut st = if r.meta > 0 {
+        table[(r.meta - 1) as usize].clone()
+    } else {
+        mcv_item::ItemStack::new(r.kind as u16, 1)
+    };
+    st.count = r.count.min(u8::MAX as u32) as u8;
+    st
 }
 
 /// 工作台方块 id：按注册名查（blocks_gen），查不到回退已知值 252。
@@ -1293,8 +1413,9 @@ impl AppState {
         q
     }
 
-    /// 合成/创造界面点击：id 前缀路由（g/i/c + 序号，res/close/prev/next）。
-    /// `left` = false 为右键（拆半/单个放，触屏恒 true）。
+    /// 创造取物页点击路由（波 #126 后仅 Screen::Creative 使用；合成界面的
+    /// 槽位交互已整体切到 ContainerScreen）：id 前缀路由（c + 序号、
+    /// close/prev/next）。创造页无光标持物，点击直接发物。
     fn handle_craft_pointer(&mut self, x: f64, y: f64, left: bool) {
         let (px, py) = (x as f32, y as f32);
         let Some(hit) = self
@@ -1306,19 +1427,7 @@ impl AppState {
             return;
         };
         match hit {
-            "close" => {
-                if let Some(rt) = self.runtime.as_mut() {
-                    close_craft(&mut self.craft, rt);
-                }
-                self.creative = None;
-                self.screen = Screen::InGame;
-                set_cursor(&self.window, true);
-            }
-            "res" => {
-                if let Some(c) = self.craft.as_mut() {
-                    c.take_result(!left);
-                }
-            }
+            "close" => self.close_craft_ui(),
             "prev" | "next" => {
                 if let Some(cp) = self.creative.as_mut() {
                     let step = if hit == "next" { 1 } else { -1 };
@@ -1327,16 +1436,8 @@ impl AppState {
                 }
             }
             id => {
-                let idx = |p: char| id.strip_prefix(p).and_then(|s| s.parse::<usize>().ok());
-                if let Some(i) = idx('g') {
-                    if let Some(c) = self.craft.as_mut() {
-                        c.click_grid(i, left);
-                    }
-                } else if let Some(i) = idx('i') {
-                    if let (Some(c), Some(rt)) = (self.craft.as_mut(), self.runtime.as_mut()) {
-                        c.click_inv(i, left, &mut rt.hotbar);
-                    }
-                } else if let Some(i) = idx('c') {
+                // 注意 "close" 也带 c 前缀，但已在上面分支消费；"lose" 非数字。
+                if let Some(i) = id.strip_prefix('c').and_then(|s| s.parse::<usize>().ok()) {
                     let give = self
                         .creative
                         .as_ref()
@@ -1346,12 +1447,224 @@ impl AppState {
                     {
                         let st = mcv_item::ItemStack::new(item, n);
                         if let Some(rest) = rt.hotbar.add(rt.player.sel_slot, st) {
-                            log::warn!("背包已满，丢弃 {} x{}", rest.def().name, rest.count);
+                            mcv_logic::ui::drop_container_items(rt, std::slice::from_ref(&rest));
                         }
                     }
                 }
             }
         }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// 关屏按钮命中（引擎自有控件，桌面/触屏共用；craft_hot 物理像素域）。
+    fn craft_close_hit(&self, x: f64, y: f64) -> bool {
+        let (x, y) = (x as f32, y as f32);
+        self.craft_hot
+            .iter()
+            .any(|r| r.id == "close" && x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h)
+    }
+
+    /// 关合成/创造界面：原版归还语义（close_craft）+ 光标释放回游戏。
+    fn close_craft_ui(&mut self) {
+        if let Some(rt) = self.runtime.as_mut() {
+            close_craft(&mut self.craft, &mut self.craft_menu, true, rt);
+        } else {
+            self.craft = None;
+            self.craft_menu = None;
+        }
+        self.creative = None;
+        self.craft_held = 0;
+        self.craft_last_click = None;
+        self.screen = Screen::InGame;
+        set_cursor(&self.window, true);
+    }
+
+    /// 容器坐标换算：(gui scale, 面板逻辑像素原点)。面板 = 176x166 居中
+    /// （AbstractContainerScreen.java:89-90 leftPos/topPos），与 craft_quads
+    /// 物理像素布局同基准（同 ÷gui_scale 即命中一致）。
+    fn craft_geom(&self) -> Option<(f32, f32, f32)> {
+        let sp = self.surface.as_ref()?;
+        let s = gui_scale(sp.config.height as f32);
+        let lw = sp.config.width as f32 / s;
+        let lh = sp.config.height as f32 / s;
+        Some((s, (lw - 176.0) * 0.5, (lh - 166.0) * 0.5))
+    }
+
+    /// 容器交互执行器（双轨合一：doClick 是唯一裁决）——
+    /// ① 槽坐标按当前窗口重写（resize 跟随 craft_quads 布局）；
+    /// ② 灌镜像：网格 + 结果槽（实时按配方重算 = vanilla ResultContainer/
+    ///    slotChangedCraftingGrid）+ 36 背包 + 光标，耐久/附魔经 meta 令牌；
+    /// ③ 执行事件（mouse_down/up/drag、key_throw 皆经 doClick）；
+    /// ④ 结果槽计数减少 = 消耗一次配方（ResultSlot.onTake 的逐格 −1，
+    ///    Q 丢/shift 带走的也一并消耗，堵结果槽白取重算漏洞）；
+    /// ⑤ 回写 craft.grid/cursor/hotbar，take_drops → 世界掉落实体。
+    fn craft_flush_menu(&mut self, ev: impl FnOnce(&mut mcv_ui::slot::ContainerScreen)) {
+        if self.craft.is_none() || self.craft_menu.is_none() {
+            return;
+        }
+        let cw = self.craft.as_ref().map_or(2, |c| c.width);
+        let (_, px, py) = self.craft_geom().unwrap_or((1.0, 0.0, 0.0));
+        // 面板内槽位原点：与 craft_quads 的 craft_panel/inv_panel 常量同源。
+        let (gx, gy, rx, ry) = if cw == 3 {
+            (30.0f32, 17.0f32, 124.0f32, 35.0f32)
+        } else {
+            (98.0, 18.0, 154.0, 28.0)
+        };
+        let mut extra: Vec<mcv_item::ItemStack> = Vec::new();
+        let mut items: Vec<mcv_ui::slot::StackRef> = Vec::new();
+        let mut carried = mcv_ui::slot::StackRef::default();
+        {
+            let craft = self.craft.as_ref().unwrap();
+            items.push(
+                craft
+                    .result()
+                    .map(|r| stack_to_ref(&r, &mut extra))
+                    .unwrap_or_default(),
+            );
+            for g in &craft.grid {
+                items.push(stack_to_ref(g, &mut extra));
+            }
+            if let Some(rt) = self.runtime.as_ref() {
+                // 灌入序 = 槽位表序（主背包 27 → 热栏 9），回写同序。
+                for st in rt.hotbar.main.iter().chain(rt.hotbar.slots.iter()) {
+                    items.push(stack_to_ref(st, &mut extra));
+                }
+            }
+            carried = stack_to_ref(&craft.cursor, &mut extra);
+        }
+        let (consumed, drop_stacks);
+        {
+            let cs = self.craft_menu.as_mut().unwrap();
+            cs.panel = mcv_ui::context::Rect::new(px, py, 176.0, 166.0);
+            cs.slots[0].x = px + rx;
+            cs.slots[0].y = py + ry;
+            for i in 0..cw * cw {
+                cs.slots[1 + i].x = px + gx + (i % cw) as f32 * 18.0;
+                cs.slots[1 + i].y = py + gy + (i / cw) as f32 * 18.0;
+            }
+            let base = 1 + cw * cw;
+            for j in 0..27 {
+                cs.slots[base + j].x = px + 8.0 + (j % 9) as f32 * 18.0;
+                cs.slots[base + j].y = py + 84.0 + (j / 9) as f32 * 18.0;
+            }
+            for j in 0..9 {
+                cs.slots[base + 27 + j].x = px + 8.0 + j as f32 * 18.0;
+                cs.slots[base + 27 + j].y = py + 142.0;
+            }
+            cs.set_items(items);
+            cs.carried = carried;
+            let before = cs.items[0].count;
+            ev(cs);
+            consumed = cs.items[0].count < before;
+            // 单机镜像自洽：MenuCmd 只是 screen→server 记账，不重放。
+            cs.take_cmds();
+            drop_stacks = cs
+                .take_drops()
+                .iter()
+                .map(|r| ref_to_stack(r, &extra))
+                .collect::<Vec<_>>();
+            let cs = self.craft_menu.as_ref().unwrap();
+            let craft = self.craft.as_mut().unwrap();
+            for i in 0..cw * cw {
+                craft.grid[i] = ref_to_stack(&cs.items[1 + i], &extra);
+            }
+            craft.cursor = ref_to_stack(&cs.carried, &extra);
+        }
+        if let Some(rt) = self.runtime.as_mut() {
+            let base = 1 + cw * cw;
+            let cs = self.craft_menu.as_ref().unwrap();
+            for j in 0..27 {
+                rt.hotbar.main[j] = ref_to_stack(&cs.items[base + j], &extra);
+            }
+            for j in 0..9 {
+                rt.hotbar.slots[j] = ref_to_stack(&cs.items[base + 27 + j], &extra);
+            }
+            if consumed {
+                let craft = self.craft.as_mut().unwrap();
+                mcv_item::crafting::consume_grid(&mut craft.grid);
+            }
+            if !drop_stacks.is_empty() {
+                mcv_logic::ui::drop_container_items(rt, &drop_stacks);
+            }
+        }
+    }
+
+    /// 容器界面按下（物理像素入）：双击自计时（ACS:319 lastClickSlot +
+    /// GUI 双击窗 250ms；winit 无 doubleClick 标志）后喂 mouse_down。
+    fn craft_menu_down(&mut self, x: f64, y: f64, button: u8) {
+        let Some((s, _, _)) = self.craft_geom() else {
+            return;
+        };
+        let (lx, ly) = (x as f32 / s, y as f32 / s);
+        let slot = self
+            .craft_menu
+            .as_ref()
+            .and_then(|cs| cs.hovered_at(lx, ly))
+            .map_or(-1, |i| i as i32);
+        let now = std::time::Instant::now();
+        let dc = self.craft_last_click.is_some_and(|(ls, lb, t)| {
+            ls == slot && lb == button && now.duration_since(t).as_millis() < 250
+        });
+        self.craft_last_click = Some((slot, button, now));
+        let shift = self.shift_held;
+        self.craft_flush_menu(|cs| cs.mouse_down(lx, ly, button, shift, dc));
+        if button <= 1 {
+            self.craft_held |= 1 << button;
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// 容器界面松开：三段拖拽收尾 / 双击收拢 / 面板外丢弃皆在
+    /// ContainerScreen::mouse_up 内（ACS:444-539）。
+    fn craft_menu_up(&mut self, x: f64, y: f64, button: u8) {
+        if button <= 1 {
+            self.craft_held &= !(1 << button);
+        }
+        let Some((s, _, _)) = self.craft_geom() else {
+            return;
+        };
+        let (lx, ly) = (x as f32 / s, y as f32 / s);
+        let shift = self.shift_held;
+        self.craft_flush_menu(|cs| cs.mouse_up(lx, ly, button, shift));
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// 容器拖拽收集（按住键移动 = ACS:408-441 quickCraftSlots 收集段）。
+    fn craft_menu_drag(&mut self, x: f64, y: f64) {
+        let Some((s, _, _)) = self.craft_geom() else {
+            return;
+        };
+        let (lx, ly) = (x as f32 / s, y as f32 / s);
+        self.craft_flush_menu(|cs| cs.mouse_drag(lx, ly, 0));
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
+    /// Q/Ctrl+Q 丢弃悬停槽（Minecraft.java keyDrop/keyDropStack → THROW
+    /// button0/1；门槛 carried 空在 ContainerScreen 内）。keymap Action 无
+    /// Drop = 审计 #54 债，暂硬编码；非容器屏的世界丢弃同债未接。
+    fn craft_key_throw(&mut self, whole_stack: bool) {
+        let Some((s, _, _)) = self.craft_geom() else {
+            return;
+        };
+        let Some((cx, cy)) = self.last_cursor else {
+            return;
+        };
+        let Some(h) = self
+            .craft_menu
+            .as_ref()
+            .and_then(|cs| cs.hovered_at(cx as f32 / s, cy as f32 / s))
+        else {
+            return;
+        };
+        self.craft_flush_menu(|cs| cs.key_throw(h, whole_stack));
         if let Some(w) = self.window.as_ref() {
             w.request_redraw();
         }
@@ -1557,6 +1870,18 @@ impl ApplicationHandler for AppState {
                     }
                     return;
                 }
+                // Q/Ctrl+Q = 容器界面丢弃悬停槽 1 件/整堆（Minecraft.java
+                // keyDrop/keyDropStack → THROW button0/1，门槛 carried 空在
+                // ContainerScreen 内；非容器屏的世界丢弃 = 审计 #54 债）。
+                // 先于 runtime 借用处理：craft_key_throw 需要 &mut self。
+                if state == ElementState::Pressed
+                    && code == KeyCode::Q
+                    && self.screen == Screen::Crafting
+                {
+                    let whole = self.ctrl_held;
+                    self.craft_key_throw(whole);
+                    return;
+                }
                 let Some(runtime) = self.runtime.as_mut() else {
                     return;
                 };
@@ -1588,12 +1913,17 @@ impl ApplicationHandler for AppState {
                             } else {
                                 self.screen = Screen::Crafting;
                                 self.craft = Some(mcv_logic::ui::CraftScreen::new(2));
+                                self.craft_menu = Some(make_craft_menu(2, false));
+                                self.craft_held = 0;
+                                self.craft_last_click = None;
                             }
                             set_cursor(&self.window, false);
                         }
                         Screen::Crafting | Screen::Creative => {
-                            close_craft(&mut self.craft, runtime);
+                            close_craft(&mut self.craft, &mut self.craft_menu, true, runtime);
                             self.creative = None;
+                            self.craft_held = 0;
+                            self.craft_last_click = None;
                             self.screen = Screen::InGame;
                             set_cursor(&self.window, true);
                         }
@@ -1621,10 +1951,13 @@ impl ApplicationHandler for AppState {
                                 self.screen = Screen::InGame;
                                 set_cursor(&self.window, true);
                             }
-                            // 关合成/创造界面：归还网格 + 光标物品后回游戏。
+                            // 关合成/创造界面：carried 先背包后掉、网格掉世界
+                            // （close_craft，原版 removed 语义）后回游戏。
                             Screen::Crafting | Screen::Creative => {
-                                close_craft(&mut self.craft, runtime);
+                                close_craft(&mut self.craft, &mut self.craft_menu, true, runtime);
                                 self.creative = None;
+                                self.craft_held = 0;
+                                self.craft_last_click = None;
                                 self.screen = Screen::InGame;
                                 set_cursor(&self.window, true);
                             }
@@ -1648,6 +1981,9 @@ impl ApplicationHandler for AppState {
                     // mcv_ui 悬停路由（物理 → 逻辑像素；tooltip 延迟基准）
                     let (lx, ly) = self.ui_ctx.to_logical(position.x as f32, position.y as f32);
                     self.ui_stack.mouse_move(lx, ly);
+                } else if self.screen == Screen::Crafting && self.craft_held != 0 {
+                    // 容器按住拖动 = quickCraftSlots 收集（ACS:408-441）。
+                    self.craft_menu_drag(position.x, position.y);
                 } else if self.screen == Screen::InGame
                     && let (Some(runtime), Some(last)) = (self.runtime.as_mut(), self.last_cursor)
                 {
@@ -1655,13 +1991,28 @@ impl ApplicationHandler for AppState {
                 }
                 self.last_cursor = Some((position.x, position.y));
             }
+            WindowEvent::ModifiersChanged(m) => {
+                // 容器交互修饰键：shift=QUICK_MOVE/双击副序、ctrl=Q 整堆丢
+                // （ACS event.hasShiftDown / Minecraft.java keyDropStack）。
+                self.shift_held = m.state().shift_key();
+                self.ctrl_held = m.state().control_key();
+            }
             WindowEvent::Touch { .. } => {
                 if matches!(self.screen, Screen::Crafting | Screen::Creative) {
-                    // 合成/创造界面：触摸按下 = 左键点击
+                    // 合成/创造界面：触摸按下 = 左键单击（按下+松手一发；
+                    // 触屏拖拽分发未接 = 与触屏 quickdrop 同列遗留债）。
                     if let WindowEvent::Touch(t) = &event
                         && t.phase == winit::event::TouchPhase::Started
                     {
-                        self.handle_craft_pointer(t.location.x, t.location.y, true);
+                        let (tx, ty) = (t.location.x, t.location.y);
+                        if self.craft_close_hit(tx, ty) {
+                            self.close_craft_ui();
+                        } else if self.screen == Screen::Crafting {
+                            self.craft_menu_down(tx, ty, 0);
+                            self.craft_menu_up(tx, ty, 0);
+                        } else {
+                            self.handle_craft_pointer(tx, ty, true);
+                        }
                     }
                     return;
                 }
@@ -1681,12 +2032,42 @@ impl ApplicationHandler for AppState {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                // 合成/创造界面：左键=交换/取物，右键=拆半/单个放。
+                // 合成界面：ContainerScreen 完整鼠标路径（按下/松开/拖动
+                // 三段分发、shift 快移、双击收拢、面板外丢弃全在 doClick；
+                // ACS:312-539 对应）。创造取物页：无光标持物，保持旧式
+                // 按下即发。关屏按钮（引擎自有控件）命中表优先。
                 if matches!(self.screen, Screen::Crafting | Screen::Creative) {
-                    if state == ElementState::Pressed
-                        && let Some(cur) = self.last_cursor
-                    {
-                        self.handle_craft_pointer(cur.0, cur.1, button == MouseButton::Left);
+                    let cur = self.last_cursor;
+                    let on_close = cur.is_some_and(|(cx, cy)| self.craft_close_hit(cx, cy));
+                    match state {
+                        ElementState::Pressed => {
+                            if on_close {
+                                self.close_craft_ui();
+                            } else if let Some((cx, cy)) = cur {
+                                let b = match button {
+                                    MouseButton::Left => 0,
+                                    MouseButton::Right => 1,
+                                    _ => 2,
+                                };
+                                if self.screen == Screen::Crafting {
+                                    self.craft_menu_down(cx, cy, b);
+                                } else {
+                                    self.handle_craft_pointer(cx, cy, button == MouseButton::Left);
+                                }
+                            }
+                        }
+                        ElementState::Released => {
+                            if self.screen == Screen::Crafting && !on_close {
+                                if let Some((cx, cy)) = cur {
+                                    let b = match button {
+                                        MouseButton::Left => 0,
+                                        MouseButton::Right => 1,
+                                        _ => 2,
+                                    };
+                                    self.craft_menu_up(cx, cy, b);
+                                }
+                            }
+                        }
                     }
                     return;
                 }
@@ -1749,6 +2130,10 @@ impl ApplicationHandler for AppState {
                         if on_table {
                             self.screen = Screen::Crafting;
                             self.craft = Some(mcv_logic::ui::CraftScreen::new(3));
+                            self.craft_menu =
+                                Some(make_craft_menu(3, runtime.mode == GameMode::Creative));
+                            self.craft_held = 0;
+                            self.craft_last_click = None;
                             set_cursor(&self.window, false);
                         } else if pressed {
                             runtime.interact(true);
@@ -2022,10 +2407,13 @@ impl AppState {
             runtime.fixed_step(1.0 / 60.0);
             self.step_accum -= 1.0 / 60.0;
         }
-        // 开着背包死亡：面板直接收起（网格/光标物品随死亡丢弃，
-        // 世界掉落物实体待 drops 分支），再走下面的死亡界面切换。
+        // 开着背包死亡：面板收起 + 网格/光标走世界掉落实体
+        // （drop_container_items 通道已接；fixed_step 死亡丢弃刚清完 36 格，
+        // to_inventory=false 让 carried 也直落世界，不许塞回空手）。
         if runtime.dead && matches!(self.screen, Screen::Crafting | Screen::Creative) {
-            self.craft = None;
+            close_craft(&mut self.craft, &mut self.craft_menu, false, runtime);
+            self.craft_held = 0;
+            self.craft_last_click = None;
             self.creative = None;
             self.screen = Screen::InGame;
         }

@@ -1,8 +1,12 @@
 //! 合成/创造界面的纯状态机(无 wgpu、可无头测试)。
 //! [`CraftScreen`] 是 2x2(玩家随身)/3x3(工作台)合成网格 + 光标手持物,
-//! 左键交换/合并、右键拆分/单放,vanilla-ish 语义(无 shift-click、无拖动)。
+//! 现作为网格/光标存储与配方重算;线上交互(左右键/shift/双击/三段
+//! 拖拽/Q 丢弃/面板外丢弃)由 engine/mcv_ui 的 ContainerScreen
+//! (AbstractContainerMenu.doClick 高保真移植)裁决,app 层喂事件、每次
+//! 交互后回写本网格/光标/背包(click_slot 系语义保留作兼容/回退路径)。
 //! [`CreativePicker`] 是创造模式物品选择页。
-//! 物品守恒是硬约束:`close()` 必须归还网格 + 光标的全部物品。
+//! 物品守恒是硬约束:关屏归还 carried(先背包后 drop 余量,ACM:588-596)
+//! + 网格(**掉世界**,CM:96-99),见 `close_to_world` + [`drop_container_items`]。
 
 use crate::game::GameRuntime;
 use mcv_item::crafting::{self, EMPTY_SLOT};
