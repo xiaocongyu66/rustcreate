@@ -9,6 +9,7 @@ pub enum MobKind {
     Cow,
     Pig,
     Sheep,
+    Chicken,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -22,6 +23,7 @@ impl MobId {
     pub const COW: MobId = MobId(4);
     pub const PIG: MobId = MobId(5);
     pub const SHEEP: MobId = MobId(6);
+    pub const CHICKEN: MobId = MobId(7);
 
     pub const fn def(self) -> &'static MobDef {
         &MOBS[self.0 as usize]
@@ -47,7 +49,7 @@ pub struct MobDef {
     pub half_size: [f32; 3],
 }
 
-pub static MOBS: [MobDef; 7] = [
+pub static MOBS: [MobDef; 8] = [
     // Zombie.java:130-137 — ATTACK 3.0, ARMOR 2.0, FOLLOW 35, SPEED 0.23
     MobDef {
         name: "zombie",
@@ -103,6 +105,8 @@ pub static MOBS: [MobDef; 7] = [
         half_size: [0.7, 0.45, 0.7],
     },
     // Cow: health 10, passive
+    // EntityType.java:351 — .sized(0.9F, 1.4F) → half [0.45, 0.7, 0.45]
+    //（旧值 y=0.65 误用羊的尺寸，修正之）
     MobDef {
         name: "cow",
         kind: MobKind::Cow,
@@ -113,7 +117,7 @@ pub static MOBS: [MobDef; 7] = [
         speed_attr: 0.2,
         hostile: false,
         xp: 1,
-        half_size: [0.45, 0.65, 0.45],
+        half_size: [0.45, 0.7, 0.45],
     },
     MobDef {
         name: "pig",
@@ -138,6 +142,20 @@ pub static MOBS: [MobDef; 7] = [
         hostile: false,
         xp: 1,
         half_size: [0.45, 0.65, 0.45],
+    },
+    // Chicken.java:109-111 — MAX_HEALTH 4.0, MOVEMENT_SPEED 0.25；
+    // EntityType.java:333 — .sized(0.4F, 0.7F) → half [0.2, 0.35, 0.2]
+    MobDef {
+        name: "chicken",
+        kind: MobKind::Chicken,
+        health: 4.0,
+        attack_damage: 0.0,
+        armor: 0.0,
+        follow_range: 16.0,
+        speed_attr: 0.25,
+        hostile: false,
+        xp: 1,
+        half_size: [0.2, 0.35, 0.2],
     },
 ];
 

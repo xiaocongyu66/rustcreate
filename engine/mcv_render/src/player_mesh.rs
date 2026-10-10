@@ -81,10 +81,23 @@ pub struct PlayerVertex {
 /// `su/tv ∈ {0,1}`：该角的 UV 在矩形内的水平/垂直位置（s 沿 u0→u1、
 /// t 沿 v0→v1，皮肤 v 向下）。
 #[derive(Clone, Copy)]
-struct Face {
+pub(crate) struct Face {
     corners: [usize; 4],
-    uv: [f32; 4],        // u0 v0 u1 v1（像素）
-    st: [(f32, f32); 4], // 与 corners 一一对应
+    pub(crate) uv: [f32; 4], // u0 v0 u1 v1（像素）
+    st: [(f32, f32); 4],     // 与 corners 一一对应
+}
+
+impl Face {
+    /// 第 k 角的 (s, t)（s 沿 u0→u1、t 沿 v0→v1）。mob_mesh 复用同一展开。
+    #[inline]
+    pub(crate) fn st(&self, k: usize) -> (f32, f32) {
+        self.st[k]
+    }
+    /// 该角在盒体 8 角中的位索引（bit0=x bit1=y bit2=z）。
+    #[inline]
+    pub(crate) fn corner(&self, k: usize) -> usize {
+        self.corners[k]
+    }
 }
 
 /// 盒体定义（像素，MC Box/pivot 约定）。
@@ -101,8 +114,8 @@ fn b(x: u32, y: u32, z: u32) -> usize {
 }
 
 /// 经典展开 → 6 面。条带行 y=v+d：right(u..u+d) front(..+w) left(..+d) back(..+w)；
-/// 顶 (u+d,v)+(w,d)、底 (u+d+w,v)+(w,d)。
-fn classic_faces(u: f32, v: f32, w: f32, h: f32, d: f32) -> [Face; 6] {
+/// 顶 (u+d,v)+(w,d)、底 (u+d+w,v)+(w,d)。mob_mesh（生物盒体）复用同一展开。
+pub(crate) fn classic_faces(u: f32, v: f32, w: f32, h: f32, d: f32) -> [Face; 6] {
     let vs = v + d;
     let ve = vs + h;
     [
@@ -164,6 +177,26 @@ fn classic_faces(u: f32, v: f32, w: f32, h: f32, d: f32) -> [Face; 6] {
             st: [(0.0, 0.0), (0.0, 1.0), (1.0, 1.0), (1.0, 0.0)], // s = !bx
         },
     ]
+}
+
+/// 四足生物展开：与 [`classic_faces`] 同一张表，仅 front/back 两段（面 4/5）
+/// 的角点 z 位翻转（bz=1 ↔ bz=0），UV 矩形与 s 映射原位保留。
+///
+/// 依据 26.1 `ModelPart.Cube`（geom/ModelPart.java:296-318）：face-with-eyes
+/// 段 (u+d,v+d)-(u+d+w,v+d+h) 指派给 NORTH（z=min）面，back 段
+/// (u+2d+w,…) 给 SOUTH。玩家变换 z 取反（本模块头），NORTH 落在引擎 +z，
+/// 故玩家把 front 段挂在 bz=1 角（面 4）。生物变换保留 z（见 mob_mesh
+/// 模块头，喙/鼻朝引擎 -z），NORTH 落在引擎 -z，front 段须挂 bz=0 角；
+/// 逐角 s/t（照 Cube 的 Polygon 顶点级指派 vertices[0]→(u1,v0)，
+/// ModelPart.java:359-362）经各自顶点变换共轭后不变，故只翻角点。
+pub(crate) fn quadruped_faces(u: f32, v: f32, w: f32, h: f32, d: f32) -> [Face; 6] {
+    let mut f = classic_faces(u, v, w, h, d);
+    for face in &mut f[4..6] {
+        for c in &mut face.corners {
+            *c ^= 0b100; // 翻转 z 位
+        }
+    }
+    f
 }
 
 /// overlay（第二层）盒体：每面向外扩张 e 像素。

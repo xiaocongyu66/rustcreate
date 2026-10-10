@@ -216,6 +216,7 @@ fn terrain_sky_and_hud_render() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -315,9 +316,10 @@ fn terrain_multi_array_grass_render() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
-        particles: None,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -379,6 +381,7 @@ fn mining_crack_and_outline_darken_target() {
             hud: &hud,
             cloud: None,
             player: None,
+            mobs: None,
             overlay,
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -544,6 +547,7 @@ fn gles_fallback_world_frame_smoke() {
         hud: &hud,
         cloud: Some((&clouds, mcv_render::CloudSettings::default())),
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -613,6 +617,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             hud: empty_hud,
             cloud: cloud_on.then_some((&clouds, mcv_render::CloudSettings::default())),
             player: None,
+            mobs: None,
             overlay: None,
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -702,6 +707,7 @@ fn cjk_text_stays_within_line_box() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -782,6 +788,7 @@ fn celestial_sun_texture_paints_core() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
@@ -850,9 +857,10 @@ fn missing_assets_never_paint_fake_pixels() {
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
-        particles: None,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -932,9 +940,10 @@ fn missing_assets_never_paint_fake_pixels() {
         hud: &hud_b,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
-        particles: None,
+        particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -966,4 +975,184 @@ fn missing_assets_never_paint_fake_pixels() {
         white, 0,
         "素材缺失下出现假字形/假实心矩形像素 white={white}"
     );
+}
+
+/// M7b 最小接线验证：鸡/牛/羊/猪四型以原版模型 + 原版贴图（entity/
+/// {chicken,cow,sheep,pig}/…temperate 系）在世界里出像素；缺素材路径下
+/// mob 必须一像素不出（素材红线：宁缺勿画，draw_mobs 短路）。
+#[test]
+fn four_mobs_paint_with_vanilla_textures() {
+    use mcv_render::gpu::MobInstance;
+    use mcv_render::mob_mesh::{MAX_MOB_PARTS, MobModelKind, MobPose, mob_model_matrices};
+
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    // 四站位：站在 y=100 草地（ground_chunk 覆盖 0..16），绕视场中心展开。
+    let placements = [
+        (MobModelKind::Chicken, Vec3::new(4.0, 100.0, 10.0)),
+        (MobModelKind::Cow, Vec3::new(8.0, 100.0, 8.0)),
+        (MobModelKind::Sheep, Vec3::new(12.0, 100.0, 10.0)),
+        (MobModelKind::Pig, Vec3::new(8.0, 100.0, 14.0)),
+    ];
+    let instances: Vec<MobInstance> = placements
+        .iter()
+        .map(|(k, p)| {
+            let pose = MobPose {
+                pos: *p,
+                yaw: 0.6,
+                phase: 1.0,
+                amount: 0.5,
+                ..Default::default()
+            };
+            let mut models = [[[0.0f32; 4]; 4]; MAX_MOB_PARTS];
+            for (m, dst) in mob_model_matrices(*k, &pose).iter().zip(models.iter_mut()) {
+                *dst = m.to_cols_array_2d();
+            }
+            MobInstance {
+                kind: k.idx() as u32,
+                models,
+            }
+        })
+        .collect();
+
+    let camera = Camera {
+        pos: Vec3::new(8.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+
+    // 同一 renderer 渲两帧对比（闭包只管提交与回读）。
+    fn frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut mcv_render::Renderer,
+        target: &OffscreenTarget,
+        chunk: &RenderChunk,
+        camera: &Camera,
+        mobs: Option<&[MobInstance]>,
+    ) -> Vec<u8> {
+        let (sun, day) = mcv_render::sun_state(6000); // noon
+        let hud: Vec<HudQuad> = Vec::new();
+        let scene = Scene {
+            camera,
+            time: 0.0,
+            day_factor: day,
+            fog_tint: [1.0, 1.0, 1.0],
+            fog_density_mult: 1.0,
+            sun_dir: sun,
+            moon_phase: 0,
+            width: 320.0,
+            height: 240.0,
+            chunks: std::slice::from_ref(chunk),
+            hud: &hud,
+            cloud: None,
+            player: None,
+            mobs,
+            overlay: None,
+            underwater: false,
+            particles: None, // M8a 接线：Some((&runtime.particles, tick_frac))
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        target.read_pixels(device)
+    }
+
+    let (device, queue, mut renderer) = setup();
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let base = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk,
+        &camera,
+        None,
+    );
+    let with = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk,
+        &camera,
+        Some(&instances),
+    );
+    let (diff, bbox) = a_diff_pixels(&base, &with);
+    assert!(
+        diff > 400,
+        "四生物应共同遮挡 >400px，实测 {diff}（bbox {bbox:?}）"
+    );
+
+    // 逐型单独出场：每种都必须有自己的像素（贴图/网格路由按 kind 正确）。
+    for (i, (k, _)) in placements.iter().enumerate() {
+        let solo = frame(
+            &device,
+            &queue,
+            &mut renderer,
+            &target,
+            &chunk,
+            &camera,
+            Some(&instances[i..i + 1]),
+        );
+        let (d, bb) = a_diff_pixels(&base, &solo);
+        assert!(d > 20, "{k:?} 独应出像素，实测 {d}（bbox {bb:?}）");
+    }
+
+    // 「原版贴图」证据：被生物改写的像素必须多彩且有亮部——程序化黑/纯色
+    // 占位只能给出色数 ≤2 或全暗的签名。
+    let mut colors: std::collections::HashSet<(u8, u8, u8)> = std::collections::HashSet::new();
+    let mut max_lum = 0u32;
+    for (p, q) in base.chunks(4).zip(with.chunks(4)) {
+        let dp: i32 = p[..3].iter().map(|&v| v as i32).sum();
+        let dq: i32 = q[..3].iter().map(|&v| v as i32).sum();
+        if (dp - dq).abs() > 40 {
+            colors.insert((q[0], q[1], q[2]));
+            max_lum = max_lum.max(dq as u32);
+        }
+    }
+    assert!(
+        colors.len() >= 5,
+        "生物像素色数 {}/亮峰 {max_lum}：疑似程序化纯色贴图而非原版素材",
+        colors.len()
+    );
+    assert!(
+        max_lum > 150,
+        "生物像素全暗（亮峰 {max_lum}）：疑似黑占位贴图"
+    );
+
+    // 素材红线：缺素材 renderer 下 mobs 必须与不画逐像素一致（短路 no-op，
+    // 无任何程序化假生物）。
+    let (device2, queue2, mut renderer2) = setup_with_assets(None);
+    let target2 = OffscreenTarget::new(&device2, extent);
+    let chunk2 = ground_chunk(&device2);
+    let base2 = frame(
+        &device2,
+        &queue2,
+        &mut renderer2,
+        &target2,
+        &chunk2,
+        &camera,
+        None,
+    );
+    let with2 = frame(
+        &device2,
+        &queue2,
+        &mut renderer2,
+        &target2,
+        &chunk2,
+        &camera,
+        Some(&instances),
+    );
+    let (d2, bb2) = a_diff_pixels(&base2, &with2);
+    assert_eq!(d2, 0, "缺素材路径画出了假生物像素 {d2}（bbox {bb2:?}）");
 }

@@ -262,6 +262,16 @@ fn build_crack_overlay(ov: &MiningOverlay) -> (Vec<CrackVertex>, Vec<u32>) {
     (verts, idx)
 }
 
+/// 一个生物绘制实例：`kind` = [`mcv_render::mob_mesh::MobModelKind`] 序号，
+/// `models` = 该实例的部位模型矩阵（来自 `mob_mesh::mob_model_matrices`，
+/// 只取前 `MOB_PART_COUNTS[kind]` 个）。
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct MobInstance {
+    pub kind: u32,
+    pub models: [[[f32; 4]; 4]; crate::mob_mesh::MAX_MOB_PARTS],
+}
+
 pub struct Scene<'a> {
     pub camera: &'a Camera,
     pub time: f32,
@@ -286,6 +296,8 @@ pub struct Scene<'a> {
     pub cloud: Option<(&'a crate::Clouds, crate::CloudSettings)>,
     /// 玩家模型：(12 部位模型矩阵, 皮肤层 0=steve 1=alex)；第三人称时传入。
     pub player: Option<(&'a [glam::Mat4; PART_COUNT], u32)>,
+    /// 生物实例（鸡/牛/羊/猪…）；None 或空 = 不画。
+    pub mobs: Option<&'a [MobInstance]>,
     /// 挖掘裂纹 + 选中描边；None = 准星无目标。
     pub overlay: Option<MiningOverlay>,
     /// 眼睛在水中（Player.isEyeInFluid(WATER)）：帧雾切水下参数
@@ -323,6 +335,15 @@ pub struct Renderer {
     player_bind: wgpu::BindGroup,
     player_sampler: wgpu::Sampler,
     skins_loaded: bool,
+    /// 生物管线：复用 player 管线（同顶点格式/同 uniform 布局），只换贴图
+    /// 数组 bind group + 独立顶点/索引缓冲。uniform 按 `MOB_MAX_INSTANCES`
+    /// 个槽位动态偏移（256B 对齐）切分，每槽 view_proj + 部位矩阵。
+    mob_uniform: wgpu::Buffer,
+    mob_vbuf: wgpu::Buffer,
+    mob_ibuf: wgpu::Buffer,
+    mob_bind: wgpu::BindGroup,
+    mob_index_ranges: [(u32, u32); crate::mob_mesh::MOB_KIND_COUNT],
+    mobs_loaded: bool,
     crack_pipeline: wgpu::RenderPipeline,
     outline_pipeline: wgpu::RenderPipeline,
     /// 裂纹 quad 顶点/索引（每帧覆写，最多 6 面 × 4 顶点 / 36 索引）。
@@ -1550,7 +1571,10 @@ impl Renderer {
                         visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
+                            // mob 管线复用本 layout，按 MOB_MAX_INSTANCES 个
+                            // 256B 对齐槽位动态偏移切分同一 uniform 条带；
+                            // 玩家本体恒用偏移 0。
+                            has_dynamic_offset: true,
                             min_binding_size: None,
                         },
                         count: None,
@@ -1664,11 +1688,108 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: player_uniform.as_entire_binding(),
+                    // 带动态偏移的 uniform 绑定必须显式给 size（玩家恒占
+                    // 偏移 0 的一个 PlayerUniforms 槽位）。
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &player_uniform,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::TextureView(&placeholder.create_view(
+                        &wgpu::TextureViewDescriptor {
+                            dimension: Some(wgpu::TextureViewDimension::D2Array),
+                            ..Default::default()
+                        },
+                    )),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&player_sampler),
+                },
+            ],
+        });
+
+        // ---- mob pipeline：复用 player 管线，只换贴图数组 + 独立缓冲 ------
+        let mob = crate::mob_mesh::build_mob_mesh();
+        let mob_ranges = mob.slices.map(|r| (r.start, r.end));
+        // uniform 槽位步长：PlayerUniforms(832B) 向上对齐 256（动态偏移对齐）。
+        let mob_stride = size_of::<PlayerUniforms>().next_multiple_of(256) as u64;
+        let mob_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mob-uniforms"),
+            size: mob_stride * crate::mob_mesh::MOB_MAX_INSTANCES as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mob_vbuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mob-vbuf"),
+            contents: bytemuck::cast_slice(&mob.verts),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let mob_ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("mob-ibuf"),
+            contents: bytemuck::cast_slice(&mob.indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        // 原版 mob 贴图（entity/{chicken,cow,sheep,pig}/...）：素材缺失时
+        // mobs_loaded=false 短路不画，绝不程序化伪造。
+        let mob_payload = crate::mob_mesh::load_mob_payload(assets_dir);
+        let mobs_loaded = mob_payload.is_some();
+        let mob_tex_data = mob_payload.unwrap_or_else(|| {
+            vec![
+                0u8;
+                crate::mob_mesh::MOB_TEX_LAYERS
+                    * crate::mob_mesh::MOB_TEX_PX
+                    * crate::mob_mesh::MOB_TEX_PX
+                    * 4
+            ]
+        });
+        let mob_px = crate::mob_mesh::MOB_TEX_PX as u32;
+        let mob_tex = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("mob-textures"),
+            size: wgpu::Extent3d {
+                width: mob_px,
+                height: mob_px,
+                depth_or_array_layers: crate::mob_mesh::MOB_TEX_LAYERS as u32,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            mob_tex.as_image_copy(),
+            &mob_tex_data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(mob_px * 4), // 256B 对齐，无需 padding
+                rows_per_image: Some(mob_px),
+            },
+            wgpu::Extent3d {
+                width: mob_px,
+                height: mob_px,
+                depth_or_array_layers: crate::mob_mesh::MOB_TEX_LAYERS as u32,
+            },
+        );
+        let mob_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("mob-bind"),
+            layout: &player_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &mob_uniform,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&mob_tex.create_view(
                         &wgpu::TextureViewDescriptor {
                             dimension: Some(wgpu::TextureViewDimension::D2Array),
                             ..Default::default()
@@ -1693,6 +1814,12 @@ impl Renderer {
             player_bind,
             player_sampler,
             skins_loaded: false,
+            mob_uniform,
+            mob_vbuf,
+            mob_ibuf,
+            mob_bind,
+            mob_index_ranges: mob_ranges,
+            mobs_loaded,
             terrain_pipeline,
             water_pipeline,
             sky_pipeline,
@@ -1784,7 +1911,12 @@ impl Renderer {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: self.player_uniform.as_entire_binding(),
+                    // 同上：动态偏移绑定要求显式 size。
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &self.player_uniform,
+                        offset: 0,
+                        size: std::num::NonZeroU64::new(size_of::<PlayerUniforms>() as u64),
+                    }),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -1828,11 +1960,64 @@ impl Renderer {
         self.queue
             .write_buffer(&self.player_uniform, 0, bytemuck::bytes_of(&u));
         pass.set_pipeline(&self.player_pipeline);
-        pass.set_bind_group(0, &self.player_bind, &[]);
+        // layout 声明动态偏移（mob 管线共用），玩家恒用槽位 0。
+        pass.set_bind_group(0, &self.player_bind, &[0]);
         pass.set_vertex_buffer(0, self.player_vbuf.slice(..));
         pass.set_index_buffer(self.player_ibuf.slice(..), wgpu::IndexFormat::Uint32);
         // 整款一次 draw:shader 按 meta.y 逐顶点取模型矩阵、meta.x 取皮肤层。
         pass.draw_indexed(0..(PART_COUNT * player_mesh::PART_INDEXES) as u32, 0, 0..1);
+    }
+
+    /// 在 world pass 内绘制一批生物。复用 player 管线与采样器，贴图数组
+    /// 为 entity/{chicken,cow,sheep,pig}/... 四种原版素材（pad 到 64x64x5）。
+    /// uniform 按 256B 对齐的槽位动态偏移切分，每实例一次 write_buffer +
+    /// 一次 draw_indexed。素材缺失时 no-op。
+    pub fn draw_mobs(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view_proj: [[f32; 4]; 4],
+        instances: &[MobInstance],
+    ) {
+        if !self.mobs_loaded || instances.is_empty() {
+            return;
+        }
+        let stride = size_of::<PlayerUniforms>().next_multiple_of(256) as u32;
+        for (i, inst) in instances
+            .iter()
+            .enumerate()
+            .take(crate::mob_mesh::MOB_MAX_INSTANCES)
+        {
+            let mut u = PlayerUniforms {
+                view_proj,
+                models: [[[0.0; 4]; 4]; PART_COUNT],
+            };
+            // MobInstance.models 已是 to_cols_array_2d 的列数组形（由
+            // mob_render 拼装），这里逐矩阵直拷即可。
+            for (m, dst) in inst.models.iter().zip(u.models.iter_mut()) {
+                *dst = *m;
+            }
+            self.queue.write_buffer(
+                &self.mob_uniform,
+                (i as u64) * (stride as u64),
+                bytemuck::bytes_of(&u),
+            );
+        }
+        pass.set_pipeline(&self.player_pipeline);
+        pass.set_vertex_buffer(0, self.mob_vbuf.slice(..));
+        pass.set_index_buffer(self.mob_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+        for (i, inst) in instances
+            .iter()
+            .enumerate()
+            .take(crate::mob_mesh::MOB_MAX_INSTANCES)
+        {
+            let kind = inst.kind as usize;
+            if kind >= self.mob_index_ranges.len() {
+                continue;
+            }
+            pass.set_bind_group(0, &self.mob_bind, &[i as u32 * stride]);
+            let (start, end) = self.mob_index_ranges[kind];
+            pass.draw_indexed(start..end, 0, 0..1);
+        }
     }
 
     /// Renders one frame into `target` (color view + matching depth view).
@@ -1985,6 +2170,11 @@ impl Renderer {
             // player: 不透明地形后、水前（entity 在 translucent 之前渲染）
             if let Some((models, skin)) = scene.player {
                 self.draw_player(&mut pass, vp.to_cols_array_2d(), models, skin);
+            }
+
+            // mobs: 同序（entity 透不透明阶段，水前）
+            if let Some(mobs) = scene.mobs {
+                self.draw_mobs(&mut pass, vp.to_cols_array_2d(), mobs);
             }
 
             // 挖掘裂纹 + 选中描边：不透明后、水前（26.1 translucent 序）。

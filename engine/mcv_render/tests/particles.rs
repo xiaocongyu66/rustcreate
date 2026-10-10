@@ -150,6 +150,7 @@ fn render(
         hud: &hud,
         cloud: None,
         player: None,
+        mobs: None,
         overlay: None,
         underwater: false,
         particles: particles.map(|p| (p, 0.0_f32)),
