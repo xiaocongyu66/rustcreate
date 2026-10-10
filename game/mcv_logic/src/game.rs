@@ -573,6 +573,11 @@ pub struct GameRuntime {
     /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
     /// prone 模型接线在 mcv_app（遗留清单，见报告）。
     swimming: bool,
+    /// 玩家剩余燃烧 tick（26.1 Entity.remainingFireTicks，Entity.java:534-544
+    /// 服务端分支：>0 时每 20 tick 1 点 on_fire 伤害并每 tick −1；点燃入口
+    /// lavaIgnite/fireIgnite，:607-640）。创造不死但同样挂燃烧账
+    /// （hurt_player 创造豁免在伤害侧，燃烧账照记——与原版一致）。
+    pub fire_ticks: i32,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -852,6 +857,7 @@ impl GameRuntime {
             air_supply: MAX_AIR_SUPPLY,
             swimming: false,
             was_in_water: false,
+            fire_ticks: 0,
         };
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
@@ -901,6 +907,38 @@ impl GameRuntime {
     /// 不建模）；`lastHurtByMobTimestamp`/`lastHurtMobTimestamp` 只用于仇恨
     /// 记录（LivingEntity.java:241-244），不构成本门的一部分——按源码实况实现。
     pub fn hurt_player(&mut self, amount: f32, from: Option<Vec3>) {
+        // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
+        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
+        // mob_attack/player_attack.json = 0.1；创造豁免同原版
+        // abilities.invulnerable（Player.causeFoodExhaustion:1561-1567）。
+        self.hurt_ex(amount, from, if from.is_some() { 0.1 } else { 0.0 }, false);
+    }
+
+    /// 火系伤害统一入口（damage_type effects=burning 家族：lava/in_fire/
+    /// on_fire，均 ∈ IS_FIRE 标签）：现役防火效果 → 整段免伤
+    /// （LivingEntity.hurtServer:1163-1165 `source.is(IS_FIRE) &&
+    /// hasEffect(FIRE_RESISTANCE) → return false`）。
+    fn hurt_fire(&mut self, amount: f32, food_exhaustion: f32) {
+        if self.effects.has(mcv_entity::Kind::FireResistance) {
+            return;
+        }
+        self.hurt_ex(amount, None, food_exhaustion, false);
+    }
+
+    /// hurt_player 的参数化内核：`food_exhaustion` = damage_type.json 的
+    /// exhaustion 值（lava/in_fire = 0.1、on_fire/in_wall/out_of_world/starve/
+    /// drown = 0.0）；`bypass_creative` = 伤害类型 ∈ bypasses_invulnerability
+    /// 标签（仅 out_of_world/fell_out_of_world，tags/damage_type/
+    /// bypasses_invulnerability.json：values = [out_of_world, generic_kill]）
+    /// ——创造免疫走 Entity.isInvulnerableToBase:2955-2960 的
+    /// `invulnerable && !BYPASSES_INVULNERABILITY` 门，穿标签的伤害照常结算。
+    fn hurt_ex(
+        &mut self,
+        amount: f32,
+        from: Option<Vec3>,
+        food_exhaustion: f32,
+        bypass_creative: bool,
+    ) {
         // 难度缩放（Player.hurtServer:692-706）：仅 scalesWithDifficulty 伤
         // 害源（DamageSource.java:92-97 = LivingEntity 造成且非玩家 → 本仓
         // mob 近战/箭/爆炸，`from` 有值）参与；和平归 0 直接免伤结算。
@@ -913,7 +951,7 @@ impl GameRuntime {
             return;
         }
         let p = &mut self.player;
-        if p.health <= 0.0 || self.mode == GameMode::Creative {
+        if p.health <= 0.0 || (self.mode == GameMode::Creative && !bypass_creative) {
             return;
         }
         let guard = p.invulnerable > 10;
@@ -936,12 +974,9 @@ impl GameRuntime {
         p.absorption = (p.absorption - absorbed).max(0.0);
         p.health -= dmg;
         // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
-        // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
-        // mob_attack/player_attack.json = 0.1，fall/out_of_world.json = 0.0；
-        // 本入口 `from` 有值 ≙ 实体攻击。创造已在上方豁免（对应
-        // Player.causeFoodExhaustion:1561-1567 的 abilities.invulnerable 门）。
-        if from.is_some() {
-            p.exhaustion = (p.exhaustion + 0.1).min(EXHAUSTION_MAX);
+        // causeFoodExhaustion(source.getFoodExhaustion())）。
+        if food_exhaustion > 0.0 {
+            p.exhaustion = (p.exhaustion + food_exhaustion).min(EXHAUSTION_MAX);
         }
         if let Some(src) = from {
             let push = glam::Vec3::new(p.pos.x - src.x, 0.0, p.pos.z - src.z);
@@ -953,6 +988,8 @@ impl GameRuntime {
         if p.health <= 0.0 {
             p.health = 0.0;
             self.dead = true;
+            // clearFire（26.1 Player.die:554-555 死亡即熄灭）。
+            self.fire_ticks = 0;
             if self.mode == GameMode::Hardcore {
                 self.hardcore_death = true;
             }
@@ -1003,6 +1040,8 @@ impl GameRuntime {
         self.fall_y = None;
         self.air_supply = MAX_AIR_SUPPLY;
         self.swimming = false;
+        // 燃烧不随复活保留（26.1 死亡 clearFire，Player.die:554）。
+        self.fire_ticks = 0;
         // 26.1 重生与首次进入同走加载画面：handleRespawn →
         // startWaitingForNewLevel（ClientPacketListener.java:1259、:1280），
         // closeDelay 用默认 0（重生不走 `new LevelLoadTracker(500)` 那条
@@ -2465,6 +2504,33 @@ impl GameRuntime {
                     // 环境伤害不进难度缩放（DamageSource.java:92-97 判据
                     // = 实体伤害，hurt_player 的 from=None 分支同语义）。
                     self.hurt_player(2.0, None);
+                }
+                // ---- 方块接触伤害（26.1 InsideBlockEffectApplier：
+                // 与实体 AABB 重叠的每格触发 entityInside）----
+                // 岩浆（LavaFluid.entityInside:119-123）：CLEAR_FREEZE +
+                // LAVA_IGNITE（Entity.lavaIgnite:607-611 点燃 15s）+
+                // Entity::lavaHurt:613-624 → lava() 4.0F/tick（i 帧节流成
+                // 4.0/s）。判据按 AABB 与岩浆格任一重叠近似为「脚部或眼部
+                // 格是岩浆」（本引擎单点采样脚/眼，1.8 m 身高横跨 ≤3 格，
+                // 差异登记 KNOWN-DIVERGENCE）。
+                let in_lava = (feet_def.liquid && feet_def.name == "lava")
+                    || (eye_def.liquid && eye_def.name == "lava");
+                if in_lava {
+                    // lavaIgnite：igniteForSeconds(15) = 300 tick（只增不减，
+                    // igniteForTicks:634-640 `remainingFireTicks < n` 门）。
+                    self.fire_ticks = self.fire_ticks.max(15 * 20);
+                    // lavaHurt：lava() 4.0F（Entity.java:613-624，含
+                    // GENERIC_BURN 音，音效接 event 表后再挂）。
+                    self.hurt_fire(4.0, 0.1);
+                }
+                // 燃烧结算（Entity.baseTick:534-544）：remainingFireTicks>0
+                // 且每 20 tick 边界且**不在岩浆**（岩浆侧 lavaHurt 每 tick
+                // 独立结算）→ on_fire() 1.0F；随后每 tick −1。
+                if self.fire_ticks > 0 {
+                    if self.fire_ticks % 20 == 0 && !in_lava {
+                        self.hurt_fire(1.0, 0.0);
+                    }
+                    self.fire_ticks -= 1;
                 }
             }
             // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
