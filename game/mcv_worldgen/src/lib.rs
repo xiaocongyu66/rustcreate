@@ -75,7 +75,7 @@ pub fn generate_terrain_with(
     pos: ChunkPos,
 ) -> Result<TerrainOutput, i32> {
     let mut voxels = ChunkVoxels::filled(mcv_core::BlockId(0));
-    let mut heightmap = vec![mcv_core::WORLD_MIN_Y; 256];
+    let mut heightmap = vec![mcv_core::WORLD_MIN_Y as i16; 256];
     match backend {
         TerrainBackend::Legacy => {
             rust_terrain::generate(

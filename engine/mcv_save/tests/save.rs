@@ -94,8 +94,12 @@ fn region_roundtrip() {
     let b = sample_voxels(9);
     // v6：v3 记录尾带 heightmap i16[256]（绝对 y，可负）——往返同锁。
     let hm: [i16; 256] = std::array::from_fn(|i| (i as i32 - 64) as i16);
-    region.save_chunk(chunk_local(0, 0), &a, &hm).expect("save a");
-    region.save_chunk(chunk_local(5, 7), &b, &hm).expect("save b");
+    region
+        .save_chunk(chunk_local(0, 0), &a, &hm)
+        .expect("save a");
+    region
+        .save_chunk(chunk_local(5, 7), &b, &hm)
+        .expect("save b");
     assert!(region.has_chunk(chunk_local(0, 0)).unwrap());
     assert!(!region.has_chunk(chunk_local(1, 1)).unwrap());
 
@@ -153,7 +157,9 @@ fn region_rejects_truncated_heightmap_tail() {
     let mut out = vec![0u16; mcv_core::CHUNK_VOL];
     let mut hm = [0i16; 256];
     assert!(
-        region.load_chunk(chunk_local(0, 0), &mut out, &mut hm).is_err(),
+        region
+            .load_chunk(chunk_local(0, 0), &mut out, &mut hm)
+            .is_err(),
         "缺 heightmap 尾的 v3 记录必须拒载"
     );
 }
@@ -190,7 +196,8 @@ fn region_rejects_old_version() {
             .write(true)
             .open(&off)
             .expect("reopen");
-        file.seek(SeekFrom::Start(512 * 8 + 2)).expect("seek ver byte");
+        file.seek(SeekFrom::Start(512 * 8 + 2))
+            .expect("seek ver byte");
         file.write_all(&[stale]).expect("write ver byte");
         drop(file);
         let mut region = RegionFile::open(&dir, 0, 0).expect("reopen");

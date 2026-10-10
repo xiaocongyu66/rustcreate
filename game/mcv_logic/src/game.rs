@@ -3349,7 +3349,7 @@ impl GameRuntime {
             let mut top = self.surface_at(x, z);
             if top <= mcv_core::WORLD_MIN_Y {
                 continue; // 原版 heightmapPos.getY() > minY 门（:238；v6：
-                          // 全空列哨兵 = WORLD_MIN_Y，绝对域下即拒）
+                // 全空列哨兵 = WORLD_MIN_Y，绝对域下即拒）
             }
             // heightmap 不计流体（recompute_heightmap 基线）→ 上溯流体面
             // （原版 particleY = max(blockTop, fluidTop)，:252-254）。
