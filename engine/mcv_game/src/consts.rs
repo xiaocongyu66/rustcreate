@@ -163,5 +163,20 @@ pub const SWIM_EXIT_SPEED: f32 = 6.0;
 /// collectCandidateStepUpHeights :1111-1136）补上，取原版 0.6。
 pub const STEP_HEIGHT: f32 = 0.6;
 
+/// 梯子爬升竖直速度：0.12 块/tick = **2.4 m/s**（≈原版 2.35）。原版离散
+/// 链：travelInAir 碰撞爬升 `(horizontalCollision || jumping) && onClimbable`
+/// → movement.y 置 0.2 块/tick（LivingEntity.java:2620-2622，move 后回写、
+/// 下一拍生效），下一拍 tick 首重力 −0.08 → 实际位移 0.12 块/tick。本仓
+/// 60 Hz 固定步把该稳态折算成恒定 +0.12 块/tick 竖直速度（位移等价，
+/// KNOWN 简化）。
+pub const LADDER_CLIMB_SPEED: f32 = 2.4;
+
+/// 梯子缓降钳：`yd = max(yd, −0.15)` 块/tick = **−3 m/s**
+/// （LivingEntity.java:2648 handleOnClimbable）。
+pub const LADDER_SLIDE_SPEED: f32 = 3.0;
+
+/// 梯子水平钳：x/z 各 ±0.15 块/tick（LivingEntity.java:2646-2647）。
+pub const LADDER_H_CLAMP: f32 = 3.0;
+
 /// 固定物理步长：1/60 s。
 pub const FIXED_DT: f32 = 1.0 / 60.0;

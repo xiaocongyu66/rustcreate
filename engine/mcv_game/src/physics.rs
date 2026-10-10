@@ -25,6 +25,11 @@ use crate::consts;
 const MAX_SUBSTEP: f32 = 0.5;
 /// 钳位到方块面时保留的间隙（米）。
 const SKIN: f32 = 1e-4;
+/// 梯子攀附探测外扩（米）：本仓梯子按生成表仍是**满格碰撞**（形状分类
+/// 无梯子细板，KNOWN-DIVERGENCE：原版 LadderBlock 是贴面薄板、实体可嵌入
+/// 梯子格；本仓实体最多贴面 SKIN≈1e-4），故「AABB 与梯子格相交」放宽为
+/// 「AABB 外扩本量后与梯子格相交」= 贴上梯子即视为 onClimbable。
+const LADDER_PROBE: f32 = 1e-3;
 
 /// 轴对齐包围盒（世界坐标，米）。
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -223,6 +228,43 @@ pub fn move_box(
 /// 出水余量检查：玩家盒整体抬升 `rise` 后是否与任何碰撞形状重叠
 /// （vanilla `jumpOutOfFluid` 的 `isFree(dx, movement.y + 0.6 − Δy, dz)`
 /// 近似——只验竖直抬升，水平位移分量以已发生的碰撞判定替代）。
+/// 玩家是否处于可攀附状态（原版 `LivingEntity.onClimbable` :1689-1713，
+/// 实查：谓词 = 身处格的方块态属 CLIMBABLE 标签，梯子是唯一注册者）。
+/// 观测量 = 玩家 AABB 外扩 [`LADDER_PROBE`] 后与任意梯子格严格相交
+/// （原版为嵌入梯子格；本仓梯子满格碰撞贴面即达，见 LADDER_PROBE 注）。
+pub fn on_climbable(world: &dyn VoxelAccess, aabb: &Aabb) -> bool {
+    let p = Aabb {
+        min: Vec3::new(
+            aabb.min.x - LADDER_PROBE,
+            aabb.min.y - LADDER_PROBE,
+            aabb.min.z - LADDER_PROBE,
+        ),
+        max: Vec3::new(
+            aabb.max.x + LADDER_PROBE,
+            aabb.max.y + LADDER_PROBE,
+            aabb.max.z + LADDER_PROBE,
+        ),
+    };
+    let x0 = p.min.x.floor() as i32;
+    let x1 = p.max.x.floor() as i32;
+    let y0 = p.min.y.floor() as i32;
+    let y1 = p.max.y.floor() as i32;
+    let z0 = p.min.z.floor() as i32;
+    let z1 = p.max.z.floor() as i32;
+    for bx in x0..=x1 {
+        for by in y0..=y1 {
+            for bz in z0..=z1 {
+                if world.block(BlockPos::new(bx, by, bz)).def().name == "ladder"
+                    && p.intersects_voxel(bx, by, bz)
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 fn headroom_clear(world: &dyn VoxelAccess, pos: Vec3, rise: f32) -> bool {
     let hx = crate::Player::HALF[0];
     let h = 2.0 * crate::Player::HALF[1];
@@ -532,6 +574,9 @@ pub fn step_entity(world: &dyn VoxelAccess, e: &mut Entity, half: [f32; 3], inpu
 pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
     let dt = consts::FIXED_DT;
     let mut aabb = Aabb::from_player(player.pos);
+    // 攀附谓词（onClimbable）在步首判定；创造飞行优先（原版 onClimbable
+    // 对 spectator=false 才成立，飞行中无攀附爬升）。
+    let on_ladder = !player.flying && on_climbable(world, &aabb);
 
     // --- 碰撞位移（轴序 = 原版 collideWithShapes，Entity.java:1174-1184）---
     // Y 恒最先（Direction.axisStepOrder，Direction.java:379-381），水平两轴
@@ -719,6 +764,33 @@ pub fn step(world: &dyn VoxelAccess, player: &mut Player, input: &StepInput) {
             player.vel.x += boost.x;
             player.vel.z += boost.z;
         }
+    } else if on_ladder {
+        // ---- 梯子攀爬（LivingEntity.handleOnClimbable :2642-2654 + travelInAir
+        // 碰撞爬升 :2620-2622）----
+        // 爬升条件 = (水平碰撞 || 跳) && onClimbable：贴面向上爬
+        // consts::LADDER_CLIMB_SPEED（≈2.4 格/s，离散折算见 consts 注）。
+        // 松手不按跳：重力保留但下落钳 max(yd, −0.15 块/tick)（:2648）；
+        // 潜行（isSuppressingSlidingDownLadder :3585-3587 = isShiftKeyDown，
+        // Player 专属）钉停 y=0。水平钳 ±0.15 块/tick（:2646-2647）。
+        // 原版 onClimbable 每拍 resetFallDistance（:2644）——摔落账豁免由
+        // GameRuntime 侧挂同一 on_climbable 谓词。
+        if horizontal_collision || input.jump {
+            player.vel.y = consts::LADDER_CLIMB_SPEED;
+        } else {
+            player.vel.y -= consts::GRAVITY * dt;
+            if input.sneak {
+                player.vel.y = 0.0;
+            }
+            player.vel.y = player.vel.y.max(-consts::LADDER_SLIDE_SPEED);
+        }
+        player.vel.x = player
+            .vel
+            .x
+            .clamp(-consts::LADDER_H_CLAMP, consts::LADDER_H_CLAMP);
+        player.vel.z = player
+            .vel
+            .z
+            .clamp(-consts::LADDER_H_CLAMP, consts::LADDER_H_CLAMP);
     } else {
         // 空气：g=32 + 竖直空气阻力（仅下落时，见 consts::AIR_DRAG_K）。
         player.vel.y -= consts::GRAVITY * dt;

@@ -2326,8 +2326,18 @@ impl GameRuntime {
                 );
             }
             self.was_in_water = in_water;
+            // 攀附中免摔落账（原版 handleOnClimbable 每拍 resetFallDistance，
+            // LivingEntity.java:2644）——谓词与 physics::step 同源
+            // on_climbable（贴面即达，见 LADDER_PROBE 注）。
+            let on_ladder = !self.player.flying
+                && mcv_game::physics::on_climbable(
+                    &WorldView {
+                        chunks: &self.chunks,
+                    },
+                    &mcv_game::Aabb::from_player(self.player.pos),
+                );
             // 空中累计最高点（MC fallDistance：上升不计，下落距离 = 最高点到落点）
-            if !self.player.flying && !in_water {
+            if !self.player.flying && !in_water && !on_ladder {
                 if self.player.on_ground {
                     self.fall_y = None;
                 } else {
@@ -2335,7 +2345,7 @@ impl GameRuntime {
                     self.fall_y = Some(self.fall_y.map_or(y, |f| f.max(y)));
                 }
             } else {
-                self.fall_y = None; // 飞行/游泳免疫摔落
+                self.fall_y = None; // 飞行/游泳/攀附免疫摔落
             }
             let step_input = mcv_game::StepInput {
                 wish_dir,
