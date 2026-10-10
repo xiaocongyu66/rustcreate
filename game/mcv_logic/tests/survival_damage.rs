@@ -102,9 +102,12 @@ fn run_steps(rt: &mut GameRuntime, steps: usize) {
     }
 }
 
-/// 驱动 n 个 20 Hz game tick（3 步/tick，另 +2 步余量保证最后一个 tick 跨界）。
+/// 驱动 n 个 20 Hz game tick。tick 按 3 步/tick 落在 60 Hz 步网格上
+/// （accumulate_ticks：frac 每 1/60 步 +1/3，第 3 步整数过界 → 恰好 n 个
+/// tick、零余量；前任的 +2 余量反而把边界顶出第 n+1 个 tick，使 tick 账
+/// 随 frac 残留漂移 1——固测试节奏先修这个）。
 fn run_ticks(rt: &mut GameRuntime, ticks: usize) {
-    run_steps(rt, ticks * 3 + 2);
+    run_steps(rt, ticks * 3);
 }
 
 // ---------------------------------------------------------------------------
@@ -132,17 +135,21 @@ fn lava_contact_deals_4_damage_and_ignites() {
         rt.player.health
     );
     assert!(
-        rt.fire_ticks >= 15 * 20 - 5 && rt.fire_ticks > 0,
+        rt.fire_ticks >= 15 * 20 - 5,
         "lavaIgnite 点燃 300 tick（每 tick −1 后），got {}",
         rt.fire_ticks
     );
 
     // 节奏：i 帧门在 invulnerableTime==10 处放行（LivingEntity.java:1196）
-    // → 岩浆实际每 10 tick（0.5s）一跳 4.0，20 tick 后 20−8=12。
+    // → 岩浆实际每 10 tick（0.5s）一跳 4.0：t1、t11 两跳 = 20−8=12。但
+    // FoodData 自然回血同样每拍结算（FoodData.java:44-52 无条件 tick，游戏
+    // 规则 NATURAL_HEALTH_REGENERATION 默认 true）：t11 先回 min(饱和,6)/6
+    // = 5.0/6（起始饱和 5.0、food=20、受伤），再吃岩浆跳 → 12 + 5/6。
+    // 回血代价 exhaustion+5：t12 起 5>4 扣饱和 → 下轮回血量 4/6（本窗不达）。
     run_ticks(&mut rt, 19);
     assert!(
-        (rt.player.health - 12.0).abs() < 1e-4,
-        "岩浆 0.5s/4.0 节奏（源码 i 帧门实况），got {}",
+        (rt.player.health - (12.0 + 5.0 / 6.0)).abs() < 1e-4,
+        "岩浆 0.5s/4.0 节奏 + FoodData 自然回血（FoodData.java:48-49），got {}",
         rt.player.health
     );
 }
@@ -175,10 +182,15 @@ fn burning_continues_after_leaving_lava() {
     let fire_before = rt.fire_ticks;
     assert!(fire_before > 0, "余燃持续");
     // on_fire 节拍：fire_ticks%20==0 处 1.0（Entity.java:538-540）。
+    // 燃烧账 t1 置 300 并 −1 → 299；t2 lavaIgnite 只增不减再回 300、拍末
+    // 仍 299；离岩浆后每拍 −1，t21（=280）首撞 %20==0 → 恰一跳 1.0（此刻
+    // invul 早已衰减见底，全额过门）。同时 FoodData 自然回血两轮：t11 回
+    // 5.0/6（起始饱和 5.0）、t12 扣饱和 → t21 回 4.0/6（FoodData.java:44-52）。
+    // 终值 = 16 − 1 + 5/6 + 4/6。
     run_ticks(&mut rt, 20);
     assert!(
-        (rt.player.health - (hp_after_lava - 1.0)).abs() < 1e-4,
-        "离火后 20 tick 内 on_fire 恰好一跳 1.0，got {}",
+        (rt.player.health - (hp_after_lava - 1.0 + 5.0 / 6.0 + 4.0 / 6.0)).abs() < 1e-4,
+        "离火后 20 tick 内 on_fire 恰一跳 1.0 + FoodData 两轮回血，got {}",
         rt.player.health
     );
     assert!(rt.fire_ticks < fire_before, "燃烧账随 tick 递减");
@@ -197,6 +209,44 @@ fn fire_resistance_blocks_lava_damage() {
     set_block(&mut rt, 8, 70, 8, BlockId(id_of("lava")));
     run_ticks(&mut rt, 20);
     assert_eq!(rt.player.health, 20.0, "防火免疫 lava/on_fire");
+}
+
+// ---------------------------------------------------------------------------
+// #95-1b 饿死走完整受伤管线（FoodData.java:60-68）
+// ---------------------------------------------------------------------------
+
+/// hunger=0 的 80 tick 门开拍 → starve 1.0 走 hurtServer 完整管线
+/// （FoodData.java:64 `player.hurtServer(…starve(), 1.0F)`；难度封顶门
+/// Normal `health>1` :63。旧实现就地 `health -= 1.0` 绕过 i 帧门，
+/// 用 i 帧窗内的第二拍被门住来证伪）。
+#[test]
+fn starvation_routes_through_hurt_pipeline() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("starve"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    // 直落 hunger=0 且 tickTimer=79：下一拍 80 tick 门开
+    // （FoodData.java:61-62），封顶门 Normal health=20>1 放行。
+    rt.player.hunger = 0.0;
+    rt.player.saturation = 0.0;
+    rt.food_tick_timer = 79;
+    run_ticks(&mut rt, 1);
+    assert_eq!(
+        rt.player.health, 19.0,
+        "饿死 1.0 走完整管线（FoodData.java:64），got {}",
+        rt.player.health
+    );
+    // 一拍后再开 80 tick 门：第一拍已置 invulnerableTime=20
+    // （LivingEntity.java:1206），窗内同额 starve 被 i 帧门整段忽略
+    // （:1196-1198 damage <= lastHurt → return false）→ 血不动。
+    // 旧直扣实现会掉到 18.0，此处即管线接线证伪点。
+    rt.food_tick_timer = 79;
+    run_ticks(&mut rt, 1);
+    assert_eq!(
+        rt.player.health, 19.0,
+        "i 帧窗内饿死被 invulnerable_gate 门住（LivingEntity.java:1196），got {}",
+        rt.player.health
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -219,15 +269,19 @@ fn fire_block_ignites_and_deals_damage() {
         rt.player.health
     );
     assert!(
-        rt.fire_ticks >= 8 * 20 - 5 && rt.fire_ticks > 0,
+        rt.fire_ticks >= 8 * 20 - 5,
         "fireIgnite 点燃 160 tick，got {}",
         rt.fire_ticks
     );
-    // 20 tick（1s）实际节奏：i 帧门放行两跳（t1、t11）→ 20−2=18。
+    // 20 tick（1s）实际节奏：t1（in_fire）、t11（fire_ticks=160 首撞
+    // %20==0，on_fire 与 in_fire 同拍同为 1.0，只过一跳）→ 20−2=18；t11
+    // 先走 FoodData 自然回血 min(饱和,6)/6 = 5/6（FoodData.java:44-52，
+    // 起始饱和 5.0、food=20、受伤）→ 18 + 5/6。回血代价 exhaustion+5，
+    // t12 扣饱和 → 下轮回血量 4/6（本窗不达）。
     run_ticks(&mut rt, 19);
     assert!(
-        (rt.player.health - 18.0).abs() < 1e-4,
-        "火焰 0.5s/1.0 实际节奏，got {}",
+        (rt.player.health - (18.0 + 5.0 / 6.0)).abs() < 1e-4,
+        "火焰 0.5s/1.0 实际节奏 + FoodData 自然回血（FoodData.java:48-49），got {}",
         rt.player.health
     );
 }
@@ -268,11 +322,14 @@ fn suffocation_deals_1_per_second() {
         "首拍 in_wall 1.0，got {}",
         rt.player.health
     );
-    // 20 tick 实际节奏：i 帧门放行两跳（t1、t11）→ 20−2=18。
+    // 20 tick 实际节奏：i 帧门放行两跳（t1、t11）→ 20−2=18；t11 处
+    // FoodData 自然回血先于伤害结算（min(饱和,6)/6 = 5/6，FoodData.java:
+    // 44-52：起始饱和 5.0、food=20、受伤；回血代价 exhaustion+5 → t12 扣
+    // 饱和，下轮 4/6 本窗不达）→ 18 + 5/6。
     run_ticks(&mut rt, 19);
     assert!(
-        (rt.player.health - 18.0).abs() < 1e-4,
-        "窒息 ~1/s（i 帧实况 0.5s/跳），got {}",
+        (rt.player.health - (18.0 + 5.0 / 6.0)).abs() < 1e-4,
+        "窒息 ~1/s（i 帧实况 0.5s/跳）+ FoodData 自然回血，got {}",
         rt.player.health
     );
 }
@@ -306,12 +363,16 @@ fn void_deals_4_per_tick_until_death_survival() {
     rt.player.pos.y = WORLD_MIN_Y - 63.0;
     run_ticks(&mut rt, 2);
     assert_eq!(rt.player.health, 20.0, "y=−63 未越界不掉血");
-    // 越界（y=−70 < −64）→ 每 10 tick 一跳 4.0（i 帧门放行节奏）。
+    // 越界（y=−70 < −64）→ 每 10 tick 一跳 4.0（i 帧门放行节奏）：本窗
+    // t3（invul 从 0 全额过门）、t13（invul 衰减到 10 再过门）两跳
+    // = 20−8=12；t13 处 FoodData 自然回血先于虚空伤害（min(饱和,6)/6
+    // = 5/6，FoodData.java:44-52：起始饱和 5.0、food=20、受伤；回血代价
+    // exhaustion+5 → t14 扣饱和，下轮 4/6 本窗不达）→ 12 + 5/6。
     rt.player.pos.y = WORLD_MIN_Y - 70.0;
     run_ticks(&mut rt, 11);
     assert!(
-        (rt.player.health - 12.0).abs() < 1e-4,
-        "两跳 4.0（t1、t11），got {}",
+        (rt.player.health - (12.0 + 5.0 / 6.0)).abs() < 1e-4,
+        "两跳 4.0（t3、t13）+ FoodData 自然回血，got {}",
         rt.player.health
     );
     // 持续坠落 → 死亡置位（不再复活传送外的豁免）。
