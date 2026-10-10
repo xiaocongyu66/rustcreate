@@ -114,6 +114,14 @@ pub struct AttackContext {
     pub on_ground: bool,
     pub in_water: bool,
     pub sprinting: bool,
+    /// ATTACK_DAMAGE 的加值修饰 Σ（力量 +3×(amp+1)、虚弱 −4×(amp+1)，
+    /// MobEffects.java:41-45/:71-75 ADD_VALUE）——在冷却缩放**之前**并入基础
+    /// 伤害（Player.attack:945-950 属性值即含效果修饰）。
+    pub attack_damage_bonus: f32,
+    /// ATTACK_SPEED 乘子 Π(1+amount)（急迫 +0.1×(amp+1)、挖掘疲劳 −0.1×
+    /// (amp+1)，MobEffects.java:29-40 ADD_MULTIPLIED_TOTAL）——作用于冷却
+    /// delay = 20/attackSpeed 的分母。
+    pub attack_speed_mult: f32,
 }
 
 pub struct AttackOutcome {
@@ -126,8 +134,11 @@ pub struct AttackOutcome {
 
 pub fn resolve_attack(ctx: &AttackContext) -> AttackOutcome {
     let weapon = ctx.weapon.clone().unwrap_or_else(ItemStack::empty);
-    let scale = attack_strength(ctx.cooldown_ticker, weapon.attacks_per_second());
-    let base = 1.0 + weapon.full_attack(); // player 1.0 + item attribute
+    let scale = attack_strength(
+        ctx.cooldown_ticker,
+        weapon.attacks_per_second() * ctx.attack_speed_mult,
+    );
+    let base = 1.0 + weapon.full_attack() + ctx.attack_damage_bonus; // player 1.0 + item attribute + 效果加值
     let mut damage = base * cooldown_damage_scale(scale);
     let crit = scale > 0.9
         && is_critical(
