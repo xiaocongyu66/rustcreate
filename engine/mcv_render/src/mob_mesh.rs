@@ -506,7 +506,9 @@ impl Default for MobPose {
 }
 
 /// 合并网格：四种生物顶点共用一个缓冲（`meta.x` = 贴图层、`meta.y` = 部位
-/// 索引），逐 kind 连续切片。
+/// 在**单种内**的序号，每 kind 从 0 起，< [`MAX_MOB_PARTS`]——与
+/// `mob_model_matrices` 输出的局部槽位和 shader `models[12]` 数组同构），
+/// 逐 kind 连续切片。
 pub struct MobMesh {
     pub verts: Vec<PlayerVertex>,
     pub indices: Vec<u32>,
@@ -519,8 +521,8 @@ fn remap(st: (f32, f32), mirror: bool) -> (f32, f32) {
     if mirror { (1.0 - st.0, st.1) } else { st }
 }
 
-/// 展开一个部位的所有盒体为 24 顶点/盒 + 索引。`part_index` = 全局部位序
-/// （meta.y，模型矩阵数组下标）。
+/// 展开一个部位的所有盒体为 24 顶点/盒 + 索引。`part_index` = 该部位在
+/// 单种内的序号（meta.y，模型矩阵数组下标；每 kind 从 0 重置）。
 fn push_part(m: &mut MobMesh, def: &PartDef, part_index: usize) {
     for b in def.boxes {
         let (min, size) = if b.grow != 0.0 {
@@ -595,6 +597,11 @@ pub fn build_mob_mesh() -> MobMesh {
     };
     for (k, parts) in PARTS.iter().enumerate() {
         debug_assert_eq!(parts.len(), MOB_PART_COUNTS[k]);
+        // meta.y 必须是 kind 内局部序：shader `models[meta.y]` 数组仅
+        // MAX_MOB_PARTS=12 槽，实例 uniform 由 mob_model_matrices 按
+        // 局部序填充（跨种全局序会让羊/猪越界读零矩阵 → 部位塌缩）。
+        debug_assert!(parts.len() <= MAX_MOB_PARTS);
+        b.part_index = 0;
         let start = b.mesh.indices.len() as u32;
         for def in parts.iter() {
             b.part(def);
@@ -735,7 +742,7 @@ mod tests {
         // 顶点序：部位 0（头）前 24 顶点
         let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
         for v in &m.verts[0..24] {
-            assert_eq!(v.meta, [0, 0]);
+            assert_eq!(v.meta, [0, 0], "meta.y 必须是 kind 内局部序");
             let w = mm[0].transform_point3(Vec3::from(v.pos));
             lo = lo.min(w);
             hi = hi.max(w);
@@ -770,7 +777,10 @@ mod tests {
         // × 24 = 96 顶点）→ 牛躯干（含乳房，2 盒 48 顶点）在 192+96=288 起。
         let (mut lo, mut hi) = (Vec3::MAX, Vec3::MIN);
         for v in &m.verts[288..288 + 48] {
-            assert_eq!(v.meta[1] as usize, 8 + 1, "牛躯干部位序");
+            assert_eq!(
+                v.meta[1] as usize, 1,
+                "牛躯干部位序（kind 内局部：头 0 躯干 1）"
+            );
             let w = mm[1].transform_point3(Vec3::from(v.pos));
             lo = lo.min(w);
             hi = hi.max(w);
@@ -790,11 +800,13 @@ mod tests {
         // = 18 盒 → 羊起于 18×24=432；羊 12 盒 → 基模 432..576、羊毛
         // 576..720。
         let base = (8 + 10) * 24;
-        for v in &m.verts[base..base + 6 * 24] {
+        for (i, v) in m.verts[base..base + 6 * 24].iter().enumerate() {
             assert_eq!(v.meta[0], 2, "羊基模层号");
+            assert_eq!(v.meta[1] as usize, i / 24, "羊基模局部部位序");
         }
-        for v in &m.verts[base + 6 * 24..base + 12 * 24] {
+        for (i, v) in m.verts[base + 6 * 24..base + 12 * 24].iter().enumerate() {
             assert_eq!(v.meta[0], 3, "羊毛层层号");
+            assert_eq!(v.meta[1] as usize, 6 + i / 24, "羊毛层局部部位序");
         }
     }
 
