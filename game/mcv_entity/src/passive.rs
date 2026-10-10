@@ -8,7 +8,7 @@
 //!   [`spawn_passive_mob`] 装配）；game.rs 的 Brain 路线不插该组件，
 //!   两套运行时互不触碰；
 //! - 物理固定步复用 `mcv_game::step_entity`（AABB 碰撞），与敌对怪
-//!   同一引擎通路；鸡额外做慢落（Chicken.java:121-126 扑翼 ×0.6）；
+//!   同一引擎通路；鸡额外做慢落（Chicken.java:123-126 扑翼 ×0.6）；
 //! - 羊吃草只播放动画（低头 40 tick），不销毁草方块
 //!   ——KNOWN-DIVERGENCE（方块变更需要世界编辑面，留待集成）。
 //!
@@ -90,7 +90,8 @@ pub struct AnimState {
     pub phase: f32,
     /// 行走摆动幅值（0..0.88，静止指数衰减）。
     pub amount: f32,
-    /// 鸡扑翼相位 `flap`（Chicken.java：空中每 tick +2）。
+    /// 鸡扑翼相位 `flap`（简化账本：空中每 tick +2；原版 119-123 经
+    /// flapping 状态实际为 +1.8、落地 0.9ⁿ 渐停，见 mob_mesh 同名注释）。
     pub wing_phase: f32,
     /// 鸡扑翼速度 `flapSpeed`（0..1，落地收拢）。
     pub wing_speed: f32,
@@ -393,7 +394,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         };
         let mut eng = body.body();
         if def.kind == MobKind::Chicken && !body.on_ground && eng.vel.y < 0.0 {
-            // Chicken.java:121-123 — 下落中 y 速度 ×0.6（扑翼缓降）。
+            // Chicken.java:123-126 — 空中下落 y 速度 ×0.6（扑翼缓降）。
             eng.vel.y *= 0.6;
         }
         step_entity(&view, &mut eng, def.half_size, &input);

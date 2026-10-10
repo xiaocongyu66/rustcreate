@@ -6,7 +6,8 @@
 //!   喙 tex(14,0)、红髯 tex(14,4) 是头的 **PartPose.ZERO 子部位**（共享头
 //!   pivot、随头旋转，此处扁平化成同 pivot 部位）；躯干 tex(0,9)
 //!   box(-3,-4,-3,6,8,6) pivot(0,16,0) 静态 xRot=π/2；腿 tex(26,0)
-//!   box(-1,0,-3,3,5,3) pivot(±2,19,1)；翅 tex(24,13) box(±,0,-3,1,4,6)
+//!   box(-1,0,-3,3,5,3) pivot(-2/+1,19,1)（Java 右腿 x=-2、左腿 x=+1，
+//!   盒宽 3px 非对称摆位）；翅 tex(24,13) box(±,0,-3,1,4,6)
 //!   pivot(±4,13,0)。层定义 64x32。
 //! - 牛 `CowModel`：头 pivot(0,4,-8) 含 4 盒（头 tex(0,0) box(-4,-4,-6,8,8,6)、
 //!   鼻 tex(1,33) box(-3,1,-7,6,3,1)、双角 tex(22,0) box(±,-5,-5,1,3,1)）；
@@ -667,8 +668,12 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
     out
 }
 
-/// 鸡的扑翼推进（Chicken.java:116-129，tick 语义；游戏侧每 tick 调一次）。
-/// 落地 flapSpeed 指数收拢、空中冲到 1；`flap`（相位）在空中每 tick +2。
+/// 鸡的扑翼推进（Chicken.java:117-129，tick 语义；游戏侧每 tick 调一次）。
+/// flapSpeed 账本与 Java 逐字一致：`+(onGround?-1:4)×0.3` 后 clamp 0..1
+/// （117-118）。`flap` 相位为**简化账本**：Java 另有 `flapping` 状态
+/// （空中钳到 1 后 ×0.9 → 每 tick 实增 1.8；落地 ×0.9ⁿ 渐停，119-123、
+/// 129），本实现不跟踪 flapping，取空中恒 +2.0、落地恒 0——起停比原版
+/// 略硬，wing_angle 幅值域不变（M7b 不要求动画完整，见任务报告）。
 /// 返回 (新 flap, 新 flapSpeed)；wing_angle = (sin(flap)+1)·flapSpeed。
 pub fn update_wing_animation(flap: f32, flap_speed: f32, on_ground: bool) -> (f32, f32) {
     let mut fs = flap_speed + (if on_ground { -1.0 } else { 4.0 }) * 0.3;
