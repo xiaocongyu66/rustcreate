@@ -138,6 +138,11 @@ impl Default for MobPath {
     }
 }
 
+/// 活动状态效果账本（药水/信标等效果源的落点；本仓暂无施加方，
+/// 组件先行占位——效果机制见 [`crate::effect::EffectBook`]）。
+#[derive(Default)]
+pub struct Effects(pub crate::effect::EffectBook);
+
 /// 预注册全部 mob 组件表：`GameRuntime` 建 World 后调一次——零怪时
 /// AI tick 仍会 `read::<MobKind>()` 等视图，未注册类型 read 会 panic。
 pub fn register_mob_components(world: &mut World) {
@@ -151,6 +156,7 @@ pub fn register_mob_components(world: &mut World) {
     world.register::<MobIntent>();
     world.register::<MobPath>();
     world.register::<MobArrow>();
+    world.register::<Effects>();
 }
 
 /// 集中装配一只怪（原 `Mob::new` 的组件化等价），避免散点漏插。
@@ -180,5 +186,6 @@ pub fn spawn_mob(world: &mut World, id: MobId, pos: Vec3) -> Entity {
     world.insert(e, MobBrain(Brain::new()));
     world.insert(e, MobIntent::IDLE);
     world.insert(e, MobPath::default());
+    world.insert(e, Effects::default());
     e
 }

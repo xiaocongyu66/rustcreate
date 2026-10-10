@@ -514,6 +514,10 @@ pub struct GameRuntime {
     pub difficulty: crate::difficulty::Difficulty,
     /// 天气状态机（ServerLevel.advanceWeatherCycle；[`weather::Weather`]）。
     pub weather: crate::weather::Weather,
+    /// 玩家活动状态效果账本（26.1 LivingEntity.activeEffects；机制层
+    /// [`mcv_entity::effect::EffectBook`]，每 on_tick 推进一次。施加方
+    /// （药水/信标）待上游域，机制与行为对拍已就位）。
+    pub effects: mcv_entity::EffectBook,
     /// M8a 粒子池（挖掘碎屑/破坏爆裂/溅水/暴击）：fixed_step 里 on_tick
     /// 推进，app.rs 每帧经 Scene.particles 交 mcv_render 绘制。
     pub particles: mcv_render::particles::ParticleEngine,
@@ -822,6 +826,7 @@ impl GameRuntime {
             mode,
             difficulty: crate::difficulty::Difficulty::Normal,
             weather: crate::weather::Weather::new(),
+            effects: mcv_entity::EffectBook::default(),
             particles: mcv_render::particles::ParticleEngine::new(),
             bow_hold: None,
             hardcore_death: false,
@@ -906,7 +911,7 @@ impl GameRuntime {
             return;
         }
         let guard = p.invulnerable > 10;
-        let Some(dmg) =
+        let Some(mut dmg) =
             combat::invulnerable_gate(p.invulnerable.max(0) as u32, p.last_hurt, amount)
         else {
             return;
@@ -917,6 +922,12 @@ impl GameRuntime {
         if !guard {
             p.invulnerable = 20;
         }
+        // 吸收盾先扣（LivingEntity.actuallyHurt:1933-1939：dmg = max(dmg−absorb,0)，
+        // absorb −= 吸收量；:3335 clamp 0..maxAbsorption——本仓 maxAbsorption
+        // 由吸收效果修饰给出，见 effects bundle）。伤害为 0 时不作结算音外副作用。
+        let absorbed = dmg.min(p.absorption);
+        dmg -= absorbed;
+        p.absorption = (p.absorption - absorbed).max(0.0);
         p.health -= dmg;
         // 受伤 exhaustion 按 damage_type 数据取值（Player.java:761
         // causeFoodExhaustion(source.getFoodExhaustion())）：实体攻击
@@ -977,6 +988,9 @@ impl GameRuntime {
         self.player.last_hurt = 0.0;
         self.food_tick_timer = 0;
         self.player.invulnerable = 0;
+        // 效果与吸收盾不随复活保留（26.1 死亡即清 activeEffects）。
+        self.effects.clear();
+        self.player.absorption = 0.0;
         self.player.vel = Vec3::ZERO;
         self.player.flying = self.mode == GameMode::Creative;
         self.dead = false;
@@ -2216,7 +2230,12 @@ impl GameRuntime {
             // 模拟量随输入幅度缩放（触屏摇杆 0..1，键盘 1.0）；>1 的键盘
             // 斜向合成由 step 内按原版 getInputVector 规则归一化
             // （Entity.java:1677：模长 >1 才归一化）。
-            let wish_dir = wish * self.input.analog;
+            // 速度效果修饰（急速 +0.2×(amp+1)、迟缓 −0.15×(amp+1)，
+            // MobEffects.java:15-28 ADD_MULTIPLIED_TOTAL）。KNOWN-DIVERGENCE：
+            // physics.rs（冻结域）对 |wish|>1 归一化 → 键盘满输入下急速的
+            // 放大被钳回 1；迟缓与亚单位模拟量输入正确。根治需 StepInput
+            // 速度倍率缝（physics 域解冻后补）。
+            let wish_dir = wish * self.input.analog * self.effects.bundle().move_speed_mult as f32;
             let was_air = !self.player.on_ground;
             let fall_v = self.player.vel.y.min(0.0);
             let jumped_off = i.jump && self.player.on_ground;
@@ -2284,6 +2303,18 @@ impl GameRuntime {
                 &mut self.player,
                 &step_input,
             );
+            // 跳跃提升的跳跃初速加成（LivingEntity.getJumpBoostPower:2340：
+            // +0.1 块/tick ×(amp+1) = +2.0×(amp+1) m/s，叠在 JUMP_STRENGTH
+            // 0.42 之上）。physics.rs（冻结域）内部置 JUMP_SPEED → 落地跳后
+            // 补加；vel.y>0 门防顶头跳（天花板钳零）被再抬升。水中无
+            // jumpFromGround（LivingEntity aiStep 流体分支）。
+            if jumped_off
+                && !in_water
+                && let Some(a) = self.effects.amplifier(mcv_entity::Kind::JumpBoost)
+                && self.player.vel.y > 0.0
+            {
+                self.player.vel.y += 2.0 * (f32::from(a) + 1.0);
+            }
             // 步末钳制：一步最大位移（≤0.4 格）≪ 钳制余量（≥1 整区块），
             // 常态不可达；只有生成/IO 掉队时才把玩家钉在已就位区边缘
             // （替代旧「隐形石墙」）。
@@ -2305,9 +2336,13 @@ impl GameRuntime {
                         0.5,
                     );
                 }
-                // 摔落伤害（MC: damage = floor(fallDistance - 3)）
+                // 摔落伤害（MC: damage = floor(fallDistance - 3)）；安全坠落
+                // 距离 = 基础 3 + 跳跃提升 +1×(amp+1)（MobEffects.java:48-52
+                // SAFE_FALL_DISTANCE ADD_VALUE；LivingEntity.java:1824
+                // fallPower − SAFE_FALL_DISTANCE）。
                 if let Some(top) = self.fall_y.take() {
-                    let dmg = (top - self.player.pos.y - 3.0).floor().max(0.0);
+                    let safe = 3.0 + self.effects.bundle().safe_fall_add as f32;
+                    let dmg = (top - self.player.pos.y - safe).floor().max(0.0);
                     if dmg > 0.0 {
                         self.hurt_player(dmg, None);
                     }
@@ -2425,6 +2460,33 @@ impl GameRuntime {
                     // = 实体伤害，hurt_player 的 from=None 分支同语义）。
                     self.hurt_player(2.0, None);
                 }
+            }
+            // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
+            // 随 entityTick 每 game tick 一次；与 FoodData.tick 同拍）----
+            // 回血/进食/exhaustion/吸收盾就地结算（保持逐效果顺序语义）；
+            // 伤害（毒/凋零/瞬间伤害）出队后走 hurt_player 完整管线
+            // （无敌帧/吸收先扣/难度——魔法无来源不缩放，与原版一致）。
+            // 生命上限加值来自 health_boost（MobEffects.java:78-82）。
+            let harms = if self.on_tick {
+                let game_ticks = self.game_ticks.min(i32::MAX as u64) as i32;
+                let max_hp = 20.0 + self.effects.bundle().max_health_add as f32;
+                self.effects.tick(
+                    game_ticks,
+                    &mut self.player.health,
+                    max_hp,
+                    &mut self.player.absorption,
+                    // FoodData 三元组裸引用（FoodData.java:19-22 的唯一触碰面）。
+                    Some((
+                        &mut self.player.hunger,
+                        &mut self.player.saturation,
+                        &mut self.player.exhaustion,
+                    )),
+                )
+            } else {
+                Vec::new()
+            };
+            for h in harms {
+                self.hurt_player(h.amount, None);
             }
         }
 
@@ -2799,6 +2861,10 @@ impl GameRuntime {
             on_ground: self.player.on_ground,
             in_water: false,
             sprinting: false,
+            // 力量/虚弱加值与急迫/挖掘疲劳攻速乘子（MobEffects.java:41-45/
+            // :71-75/:29-40；加值在冷却缩放前并入基础伤害，Player.attack:945-950）。
+            attack_damage_bonus: self.effects.bundle().attack_damage_add as f32,
+            attack_speed_mult: self.effects.bundle().attack_speed_mult as f32,
         };
         let out = combat::resolve_attack(&ctx);
         // 准星射线选目标（旧实现 3.5m + cos>0.92 锥形近似、无遮挡，可隔墙

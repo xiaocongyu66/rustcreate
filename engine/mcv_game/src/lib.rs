@@ -54,6 +54,11 @@ pub struct Player {
     /// FoodData.addExhaustion:100-101；增量表见 FoodConstants.java 与
     /// GameRuntime::fixed_step）。
     pub exhaustion: f32,
+    /// 吸收盾（26.1 LivingEntity.absorptionAmount，LivingEntity.java:247；
+    /// clamp 0..maxAbsorption :3335，maxAbsorption 由吸收效果 +4×(amp+1)
+    /// 给出——MobEffects.java:83-87）。伤害先扣盾后扣血
+    ///（actuallyHurt LivingEntity.java:1933-1939）。
+    pub absorption: f32,
 }
 
 impl Player {
@@ -79,6 +84,7 @@ impl Default for Player {
             invulnerable: 0,
             last_hurt: 0.0,
             exhaustion: 0.0,
+            absorption: 0.0,
         }
     }
 }

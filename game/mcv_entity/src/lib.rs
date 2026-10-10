@@ -9,6 +9,7 @@ pub mod combat;
 pub mod components;
 pub mod defs;
 pub mod drops;
+pub mod effect;
 pub mod items;
 pub mod passive;
 pub mod pathfinding;
@@ -17,11 +18,16 @@ pub mod spawner;
 pub use ai::{AiAction, Brain, MobAiTable, MobState, Percept, ai_table};
 pub use arrow::{BOW_MIN_POWER, crit_bonus, hit_damage, mob_base_damage, ranged_power, triangle};
 pub use components::{
-    Health, LastHurt, MobArrow, MobBrain, MobIntent, MobKind, MobPath, MobTicks, PhysBody, Yaw,
-    register_mob_components, spawn_mob,
+    Effects, Health, LastHurt, MobArrow, MobBrain, MobIntent, MobKind, MobPath, MobTicks, PhysBody,
+    Yaw, register_mob_components, spawn_mob,
 };
 pub use defs::{MOBS, MobDef, MobId};
 pub use drops::{DropEvent, death_drops};
+pub use effect::{
+    ALL_KINDS, Bundle, DeathBurst, EffectBook, Harm, Kind, MAX_AMPLIFIER, apply_instant,
+    apply_tick, attribute_modifier, blend_durations, blend_step, category, color, death_burst,
+    fires_this_tick, hurt_burst, is_instant, slimes_to_spawn, wind_burst_power,
+};
 pub use items::{
     DEATH_PICKUP_DELAY, DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, PICKUP_DELAY,
     PICKUP_INFLATE_XZ, PICKUP_INFLATE_Y, PickupReq, item_merge_system, item_physics_system,

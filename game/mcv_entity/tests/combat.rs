@@ -63,10 +63,35 @@ fn iron_sword_full_hit_on_zombie() {
         on_ground: true,
         in_water: false,
         sprinting: false,
+        attack_damage_bonus: 0.0,
+        attack_speed_mult: 1.0,
     };
     let out = resolve_attack(&ctx);
     assert!((out.damage - 6.0).abs() < 1e-4, "iron sword full hit = 6");
     assert!(!out.critical);
+
+    // 力量 I（+3 ADD_VALUE）、急迫 II（攻速 ×1.2，MobEffects.java:41-45/:29-33）：
+    // 加值在冷却缩放之前并入基础伤害（Player.attack:945-950 属性值即含效果修饰）。
+    let buffed = AttackContext {
+        attacker_pos_eye: Vec3::ZERO,
+        weapon: Some(ItemStack::new(mcv_item::IRON_SWORD_INDEX, 1)),
+        cooldown_ticker: 20.0,
+        fall_distance: 0.0,
+        on_ground: true,
+        in_water: false,
+        sprinting: false,
+        attack_damage_bonus: 3.0,
+        attack_speed_mult: 1.2,
+    };
+    let out = resolve_attack(&buffed);
+    assert!((out.damage - 9.0).abs() < 1e-4, "6 + 3 = 9");
+    // 虚弱 I（−4，MobEffects.java:71-75）替换力量修饰：基础 1+5−4 = 2。
+    let weak = AttackContext {
+        attack_damage_bonus: -4.0,
+        ..buffed
+    };
+    let out = resolve_attack(&weak);
+    assert!((out.damage - 2.0).abs() < 1e-4, "6 − 4 = 2");
 
     // crit: falling → 9.0
     let ctx = AttackContext {
