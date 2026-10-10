@@ -610,17 +610,24 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
 ///     必抓（lavapipe 有 robust buffer access 会静默补零画错位，由 (a)/(b)
 ///     兜底）。
 ///
-/// 阈值定标（非拍脑袋，随「白水面→水色」修复重标）：解码仓库内原版
-/// water_still.png——16x512 条带、调色板全灰度 165..216、alpha=180。
-/// fs_water 现乘生物群系水色常数 0x3F76E4（原版 FluidRenderer.java:88 逐
-/// 顶点 tint 语义，OverworldBiomes.java:28），alpha 回 tex.a（≈0.71，
-/// 塘底泥土半透出）。推算水面片元：lit=灰度×shade(1.0)×tint，与雾色
-/// (0.62,0.76,0.95) 按 fog≈0.89 混、再与塘底按 α=0.706 混 → 屏上 ≈
-/// **(75..90, 95..115, 140..165) 的蓝色**（b−r≈60..80）。旧「亮中性灰」
-/// 签名是白水面缺陷（水未染色）的写照，已按新正确值改为蓝水谓词：
-/// `b>120 && b−r>45 && g−r>10 && r<120`——草地（b<100）、泥土
-/// （b−r<0）、天空（r≈158>120）均不落入，断言语义不变：仍是
-/// 「水带里的像素必须具有水的颜色，且该签名不来自背景」。
+/// 阈值定标（非拍脑袋，随「白水面→水色」修复重标；第二版按 sRGB
+/// 帧缓冲纠正——首版谓词按线性 raw 值推，CI 实测 wet_blue=269 全灭）：
+/// 解码仓库内原版 water_still.png——16x512 条带、调色板主峰
+/// 165/174/194/211 灰度、alpha=180 常数。fs_water 现乘生物群系水色常数
+/// 0x3F76E4（原版 FluidRenderer.java:88 逐顶点 tint 语义，
+/// OverworldBiomes.java:28），alpha 回 tex.a（≈0.706，塘底泥土半透出）。
+/// 屏上推算要过两层色彩空间：离屏目标 Rgba8UnormSrgb（offscreen.rs:20）
+/// ——shader 写线性、写回 gamma 编码；图集解码行为两模型都算过（A：sRGB
+/// 纹理采样解码到线性 + 编码域混合；B：raw 直通 + 仅 FBO 编码）：
+/// 水像素落 **r 116..151, g 128..172, b 151..204，b−r∈[35,53]，
+/// b−g∈[23,32]**（tex165 A 模型 (116,128,151)…tex211 B 模型 (151,172,204)）。
+/// 谓词取两模型交集并排除全部背景反例：
+/// `b>130 && b<210 && b−r>30 && b−g>12`
+/// - 白水面回归（旧缺陷，中性灰 b−r≈0..8）→ 不落入 ✓（断言核心语义）
+/// - 天空（地平线 b≈249 编码后）→ b<210 挡；草地（b<r）→ b−r>30 挡；
+///   塘底干泥土 (134,113,105)（b−r<0）→ 挡。
+/// 断言语义不变：仍是「水带里的像素必须具有水的颜色，且签名不来自背景」，
+/// 未削成恒真——水色丢失（tint 断线）或水面变灰即挂。
 #[test]
 fn water_pass_renders_uploaded_water_vertices() {
     let (device, queue, mut renderer) = setup();
@@ -777,7 +784,8 @@ fn water_pass_renders_uploaded_water_vertices() {
     );
 
     // 水面像素签名：投影水带框（x 90..230，y 84..118）内「蓝水色」像素
-    // （谓词推导见测试头部注释；0x3F76E4 tint 生效后 b−r≈60..80）。
+    // （谓词推导见测试头部注释：sRGB 帧缓冲下两色彩空间模型的交集
+    // b−r∈[35,53]、b−g∈[23,32]，上界 b<210 挡天空）。
     // 有水帧必须大量存在；无水帧同框只有草地/泥土/天空（均不落入谓词）。
     let water_blue = |px: &[u8]| -> usize {
         let mut n = 0usize;
@@ -786,7 +794,7 @@ fn water_pass_renders_uploaded_water_vertices() {
                 let o = ((y * extent.width + x) * 4) as usize;
                 let (r, g, b) = (px[o], px[o + 1], px[o + 2]);
                 let (r, g, b) = (r as i32, g as i32, b as i32);
-                if b > 120 && b - r > 45 && g - r > 10 && r < 120 {
+                if b > 130 && b < 210 && b - r > 30 && b - g > 12 {
                     n += 1;
                 }
             }
