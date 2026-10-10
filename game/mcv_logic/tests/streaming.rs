@@ -472,9 +472,13 @@ fn physics_frozen_until_own_chunk_terrain_ready() {
         rt.player.pos, before,
         "本块未就位必须冻结（旧行为：撞隐形石墙或坠虚空）"
     );
-    // 就位后物理恢复。
+    // 就位后物理恢复。注意 step 的次序（physics.rs:389-408）是「先按当前
+    // 速度位移、后积分输入速度」——从静止起步第 1 步只建立速度（vel.x>0）
+    // 而零位移，位移从第 2 步开始，故恢复断言须走多步。
     rt.chunks.insert(ChunkPos::new(0, 0), floor_chunk(0, 0));
-    rt.fixed_step(1.0 / 60.0);
+    for _ in 0..10 {
+        rt.fixed_step(1.0 / 60.0);
+    }
     assert_ne!(rt.player.pos, before, "就位后物理恢复");
     assert!(rt.player.pos.x > 8.5, "恢复后应能前进");
 }
