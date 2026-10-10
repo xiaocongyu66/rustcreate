@@ -144,50 +144,50 @@ pub static ITEMS: [ItemDef; 59] = [
         1
     ),
     // pickaxes: baseline 1.0, speed -2.8
-    def!("wooden_pickaxe", ItemKind::Pickaxe(WOOD), 1.0, -2.8, 59, 1),
+    def!("wooden_pickaxe", ItemKind::Pickaxe(WOOD), 1.0, -2.8, 59, 2),
     def!(
         "stone_pickaxe",
         ItemKind::Pickaxe(STONE_M),
         1.0,
         -2.8,
         131,
-        1
+        2
     ),
-    def!("iron_pickaxe", ItemKind::Pickaxe(IRON), 1.0, -2.8, 250, 1),
+    def!("iron_pickaxe", ItemKind::Pickaxe(IRON), 1.0, -2.8, 250, 2),
     def!(
         "diamond_pickaxe",
         ItemKind::Pickaxe(DIAMOND),
         1.0,
         -2.8,
         1561,
-        1
+        2
     ),
-    def!("golden_pickaxe", ItemKind::Pickaxe(GOLD), 1.0, -2.8, 32, 1),
+    def!("golden_pickaxe", ItemKind::Pickaxe(GOLD), 1.0, -2.8, 32, 2),
     def!(
         "netherite_pickaxe",
         ItemKind::Pickaxe(NETHERITE),
         1.0,
         -2.8,
         2031,
-        1
+        2
     ),
     // axes (speed -3.0, baseline 5.0 in 26.1; NOTES-2 notes baseline only for
     // sword/pickaxe — axe values approximate MC data, marked TODO(research))
-    def!("wooden_axe", ItemKind::Axe(WOOD), 5.0, -3.0, 59, 1),
-    def!("stone_axe", ItemKind::Axe(STONE_M), 5.0, -3.0, 131, 1),
-    def!("iron_axe", ItemKind::Axe(IRON), 5.0, -3.0, 250, 1),
-    def!("diamond_axe", ItemKind::Axe(DIAMOND), 5.0, -3.0, 1561, 1),
+    def!("wooden_axe", ItemKind::Axe(WOOD), 5.0, -3.0, 59, 2),
+    def!("stone_axe", ItemKind::Axe(STONE_M), 5.0, -3.0, 131, 2),
+    def!("iron_axe", ItemKind::Axe(IRON), 5.0, -3.0, 250, 2),
+    def!("diamond_axe", ItemKind::Axe(DIAMOND), 5.0, -3.0, 1561, 2),
     // shovels (speed -3.0, baseline 1.5, TODO(research))
-    def!("iron_shovel", ItemKind::Shovel(IRON), 1.5, -3.0, 250, 1),
+    def!("iron_shovel", ItemKind::Shovel(IRON), 1.5, -3.0, 250, 2),
     def!(
         "diamond_shovel",
         ItemKind::Shovel(DIAMOND),
         1.5,
         -3.0,
         1561,
-        1
+        2
     ),
-    def!("wooden_shovel", ItemKind::Shovel(WOOD), 1.5, -3.0, 59, 1),
+    def!("wooden_shovel", ItemKind::Shovel(WOOD), 1.5, -3.0, 59, 2),
     // block items (mine -> item; place -> block)
     def!("planks", ItemKind::Block(BlockId(8)), 0.0, 0.0, 0, 0),
     def!("cobblestone", ItemKind::Block(BlockId(9)), 0.0, 0.0, 0, 0),

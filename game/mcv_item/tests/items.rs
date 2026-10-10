@@ -53,6 +53,38 @@ fn durability_break() {
     );
 }
 
+/// 近战耐久扣减：`ToolMaterial.java:59` 工具 `new Weapon(2, …)`、:94 剑
+/// `new Weapon(1)` → 一次近战攻击工具扣 2、剑扣 1。
+#[test]
+fn tool_melee_durability_is_two_sword_one() {
+    for idx in [
+        WOODEN_PICKAXE_INDEX,
+        IRON_PICKAXE_INDEX,
+        DIAMOND_PICKAXE_INDEX,
+        mcv_item::WOODEN_AXE_INDEX,
+        mcv_item::WOODEN_SHOVEL_INDEX,
+    ] {
+        assert_eq!(
+            mcv_item::ITEMS[idx as usize].item_damage_per_attack, 2,
+            "{} 工具近战应扣 2（Weapon(2)）",
+            mcv_item::ITEMS[idx as usize].name
+        );
+    }
+    for idx in [WOODEN_SWORD_INDEX, STONE_SWORD_INDEX, IRON_SWORD_INDEX] {
+        assert_eq!(
+            mcv_item::ITEMS[idx as usize].item_damage_per_attack, 1,
+            "{} 剑近战应扣 1（Weapon(1)）",
+            mcv_item::ITEMS[idx as usize].name
+        );
+    }
+    // 端到端：木镐(59) 两次近战 = 4 点，未碎；第 30 次攻击(60) 碎。
+    let mut pick = ItemStack::new(WOODEN_PICKAXE_INDEX, 1);
+    let mut rng = lcg(5);
+    assert!(!pick.hurt(2, &mut rng));
+    assert_eq!(pick.damage, 2);
+    assert!(pick.hurt(58, &mut rng), "59 耐久扣满必须碎");
+}
+
 #[test]
 fn mending_two_per_xp() {
     let mut iron = ItemStack::new(IRON_SWORD_INDEX, 1); // 250 max
