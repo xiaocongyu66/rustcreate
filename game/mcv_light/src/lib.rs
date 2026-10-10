@@ -1,10 +1,11 @@
 //! Pure-Rust lighting engine: dual-channel (sky/block) BFS with removal
 //! propagation and cross-chunk border sync. Lands in M4.
 //!
-//! Layout contract (matches `mcv_core`):
-//! - light: 65536 bytes, index `(y<<8)|(z<<4)|x`, low nibble = block light,
+//! Layout contract (matches `mcv_core`, v6 几何 16×16×384):
+//! - light: 98304 bytes, index `((y - WORLD_MIN_Y)<<8)|(z<<4)|x`（y 为绝对
+//!   世界 y ∈ [-64, 320)）, low nibble = block light,
 //!   high nibble = sky light (0..=15 each).
-//! - heightmap: 256 bytes, index `(z<<4)|x`, terrain surface height
+//! - heightmap: 256 × i16, index `(z<<4)|x`, terrain surface height
 //!   (topmost solid-terrain y + 1; water/flowers excluded — see
 //!   `mcv_worldgen::recompute_heightmap`). It is a *gameplay* surface array
 //!   (spawn/mob logic); lighting never reads it — the direct-sky source
@@ -17,7 +18,7 @@
 //! skipped by re-reading the stored level, and removal waves feeding
 //! re-light sources into the increase queue.
 
-use mcv_core::{BlockId, CHUNK_VOL, vidx};
+use mcv_core::{BlockId, CHUNK_SY, CHUNK_VOL, WORLD_MAX_Y, WORLD_MIN_Y, vidx};
 
 /// Channel selector for the packed light byte.
 const SKY_SHIFT: u32 = 4;
@@ -29,11 +30,15 @@ pub const SIDE_MINUS_X: u8 = 1;
 pub const SIDE_PLUS_Z: u8 = 2;
 pub const SIDE_MINUS_Z: u8 = 3;
 
+/// One boundary edge in cells: CHUNK_SY(384) × 16（v6 起随 384 世界高，
+/// 旧 256 高时代为 4096）。槽位 `(y_local<<4)|h`，y_local = y−WORLD_MIN_Y。
+pub const EDGE_CELLS: usize = CHUNK_SY * 16; // 6144
+
 /// Borrowed views over one chunk's voxel, light and heightmap storage.
 pub struct LightChunk<'a> {
     pub voxels: &'a [u16],
     pub light: &'a mut [u8],
-    pub heightmap: &'a [u8],
+    pub heightmap: &'a [i16],
 }
 
 /// One boundary-cell change to hand to the neighbouring chunk.
@@ -43,6 +48,8 @@ pub struct BorderSeed {
     pub side: u8,
     /// Horizontal coordinate along the edge: `z` for ±X, `x` for ±Z.
     pub xz: u8,
+    /// 区块内局部 y（0..CHUNK_SY；= 绝对 y − WORLD_MIN_Y，与边快照槽位
+    /// `(y_local<<4)|h` 同一坐标系）。
     pub y: u16,
     pub sky: u8,
     pub blk: u8,
@@ -119,19 +126,21 @@ const NEIGHBORS: [(i32, i32, i32); 6] = [
     (0, 0, -1),
 ];
 
-/// Decompose a voxel index into `(x, y, z)`.
+/// Decompose a chunk-local voxel index into `(x, y_abs, z)`（v6：
+/// CHUNK_VOL=98304 需 17 bit，队列索引 u16→u32；y 还原为**绝对**世界 y，
+/// 直接喂给 `vidx`）。
 #[inline]
-fn coords(idx: u16) -> (usize, usize, usize) {
+fn coords(idx: u32) -> (usize, i32, usize) {
     (
         (idx & 0xF) as usize,
-        (idx >> 8) as usize,
+        ((idx >> 8) as i32) + WORLD_MIN_Y,
         ((idx >> 4) & 0xF) as usize,
     )
 }
 
 #[inline]
 fn out_of_bounds(x: i32, y: i32, z: i32) -> bool {
-    !(0..=15).contains(&x) || !(0..=255).contains(&y) || !(0..=15).contains(&z)
+    !(0..=15).contains(&x) || !(WORLD_MIN_Y..WORLD_MAX_Y).contains(&y) || !(0..=15).contains(&z)
 }
 
 /// Vanilla spread rule (26.1 `LightEngine.propagateIncrease`): every step
@@ -165,7 +174,7 @@ fn spread_target(shift: u32, level: u8, down: bool, nopacity: u8) -> u8 {
 /// Increase-only BFS over one channel. The queue holds `(idx, level)` pairs
 /// written just before enqueueing; stale entries (storage moved on) are
 /// skipped by re-reading the stored level, like the vanilla queue.
-fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut Vec<(u16, u8)>) {
+fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut Vec<(u32, u8)>) {
     let mut head = 0usize;
     while head < queue.len() {
         let (idx, level) = queue[head];
@@ -178,19 +187,19 @@ fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut V
         let (x, y, z) = coords(idx);
         for (dx, dy, dz) in NEIGHBORS {
             let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
+            let ny = y + dy;
             let nz = z as i32 + dz;
             if out_of_bounds(nx, ny, nz) {
                 continue;
             }
-            let nidx = vidx(nx as usize, ny as usize, nz as usize);
+            let nidx = vidx(nx as usize, ny, nz as usize);
             let target = spread_target(shift, level, dy < 0, opacity(BlockId(voxels[nidx])));
             if target == 0 {
                 continue;
             }
             if get_ch(light, nidx, shift) < target {
                 set_ch(light, nidx, shift, target);
-                queue.push((nidx as u16, target));
+                queue.push((nidx as u32, target));
             }
         }
     }
@@ -211,8 +220,8 @@ fn removal_channel(
     voxels: &[u16],
     light: &mut [u8],
     shift: u32,
-    queue: &mut Vec<(u16, u8)>,
-    readd: &mut Vec<(u16, u8)>,
+    queue: &mut Vec<(u32, u8)>,
+    readd: &mut Vec<(u32, u8)>,
 ) {
     let mut head = 0usize;
     while head < queue.len() {
@@ -221,12 +230,12 @@ fn removal_channel(
         let (x, y, z) = coords(idx);
         for (dx, dy, dz) in NEIGHBORS {
             let nx = x as i32 + dx;
-            let ny = y as i32 + dy;
+            let ny = y + dy;
             let nz = z as i32 + dz;
             if out_of_bounds(nx, ny, nz) {
                 continue;
             }
-            let nidx = vidx(nx as usize, ny as usize, nz as usize);
+            let nidx = vidx(nx as usize, ny, nz as usize);
             let ncur = get_ch(light, nidx, shift);
             if ncur == 0 {
                 continue;
@@ -244,43 +253,46 @@ fn removal_channel(
                 };
                 if emit > 0 {
                     set_ch(light, nidx, shift, emit);
-                    readd.push((nidx as u16, emit));
+                    readd.push((nidx as u32, emit));
                 }
                 if emit < ncur {
-                    queue.push((nidx as u16, ncur));
+                    queue.push((nidx as u32, ncur));
                 }
             } else {
-                readd.push((nidx as u16, ncur));
+                readd.push((nidx as u32, ncur));
             }
         }
     }
 }
 
-/// Highest light-blocking y in a column, or -1 for an open column.
-/// `subst` overrides one cell (reconstructs the pre-edit column top, because
-/// `LightChunk.voxels` is already written with the new block).
-fn column_top(voxels: &[u16], x: usize, z: usize, subst: Option<(usize, u16)>) -> i32 {
-    for y in (0..256).rev() {
+/// Highest light-blocking **绝对 y** in a column, or `WORLD_MIN_Y - 1`
+/// （哨兵 −65）for a fully open column。`subst` overrides one cell（绝对 y）
+/// —— reconstructs the pre-edit column top, because `LightChunk.voxels`
+/// is already written with the new block.
+fn column_top(voxels: &[u16], x: usize, z: usize, subst: Option<(i32, u16)>) -> i32 {
+    for y in (WORLD_MIN_Y..WORLD_MAX_Y).rev() {
         let id = match subst {
             Some((sy, sid)) if sy == y => sid,
             _ => voxels[vidx(x, y, z)],
         };
         if opacity(BlockId(id)) > 0 {
-            return y as i32;
+            return y;
         }
     }
-    -1
+    WORLD_MIN_Y - 1
 }
 
 /// Byte snapshot of all four boundary edges; edge `side` is stored at
-/// `side * 4096 .. (side + 1) * 4096`, indexed `(y<<4)|h`.
-fn snapshot_edges(chunk: &LightChunk) -> Box<[u8; 16384]> {
-    let mut out = Box::new([0u8; 16384]);
+/// `side * EDGE_CELLS .. (side + 1) * EDGE_CELLS`, indexed
+/// `(y_local<<4)|h`（y_local = 绝对 y − WORLD_MIN_Y ∈ 0..384）。
+fn snapshot_edges(chunk: &LightChunk) -> Box<[u8; 4 * EDGE_CELLS]> {
+    let mut out = Box::new([0u8; 4 * EDGE_CELLS]);
     for side in 0..4usize {
-        for y in 0..256usize {
+        for y in WORLD_MIN_Y..WORLD_MAX_Y {
+            let yl = (y - WORLD_MIN_Y) as usize;
             for h in 0..16usize {
                 let (x, z) = edge_cell(side, h);
-                out[side * 4096 + (y << 4) + h] = chunk.light[vidx(x, y, z)];
+                out[side * EDGE_CELLS + (yl << 4) + h] = chunk.light[vidx(x, y, z)];
             }
         }
     }
@@ -302,18 +314,19 @@ fn edge_cell(side: usize, h: usize) -> (usize, usize) {
 /// dirty mask. `exclude` suppresses one side bit (a side just synced from a
 /// neighbour must not be reported back, or direct-sky columns ping-pong).
 fn diff_edges(
-    before: &[u8; 16384],
+    before: &[u8; 4 * EDGE_CELLS],
     chunk: &LightChunk,
     exclude: Option<u8>,
     mut out_seeds: Option<&mut Vec<BorderSeed>>,
 ) -> u8 {
     let mut mask = 0u8;
     for side in 0..4usize {
-        for y in 0..256usize {
+        for y in WORLD_MIN_Y..WORLD_MAX_Y {
+            let yl = (y - WORLD_MIN_Y) as usize;
             for h in 0..16usize {
                 let (x, z) = edge_cell(side, h);
                 let now = chunk.light[vidx(x, y, z)];
-                if now == before[side * 4096 + (y << 4) + h] {
+                if now == before[side * EDGE_CELLS + (yl << 4) + h] {
                     continue;
                 }
                 mask |= 1 << side;
@@ -321,7 +334,7 @@ fn diff_edges(
                     seeds.push(BorderSeed {
                         side: side as u8,
                         xz: h as u8,
-                        y: y as u16,
+                        y: yl as u16,
                         sky: now >> 4,
                         blk: now & 0xF,
                     });
@@ -340,8 +353,8 @@ fn diff_edges(
 /// Returns the border dirty mask (bits 0..3 = +X, -X, +Z, -Z).
 pub fn init(chunk: &mut LightChunk) -> u8 {
     chunk.light.fill(0);
-    let mut sky_q: Vec<(u16, u8)> = Vec::new();
-    let mut blk_q: Vec<(u16, u8)> = Vec::new();
+    let mut sky_q: Vec<(u32, u8)> = Vec::new();
+    let mut blk_q: Vec<(u32, u8)> = Vec::new();
 
     // Direct-sky seeding (C3; vanilla `ChunkSkyLightSources.lowestSourceY`
     // — isEdgeOccluded truncates the source column at the first cell whose
@@ -357,10 +370,10 @@ pub fn init(chunk: &mut LightChunk) -> u8 {
     for z in 0..16usize {
         for x in 0..16usize {
             let top = column_top(chunk.voxels, x, z, None);
-            for y in (top + 1) as usize..256usize {
+            for y in (top + 1).max(WORLD_MIN_Y)..WORLD_MAX_Y {
                 let idx = vidx(x, y, z);
                 set_ch(chunk.light, idx, SKY_SHIFT, 15);
-                sky_q.push((idx as u16, 15));
+                sky_q.push((idx as u32, 15));
             }
         }
     }
@@ -369,7 +382,7 @@ pub fn init(chunk: &mut LightChunk) -> u8 {
         let emit = light_emit(BlockId(chunk.voxels[idx]));
         if emit > 0 {
             set_ch(chunk.light, idx, BLK_SHIFT, emit);
-            blk_q.push((idx as u16, emit));
+            blk_q.push((idx as u32, emit));
         }
     }
 
@@ -378,7 +391,7 @@ pub fn init(chunk: &mut LightChunk) -> u8 {
 
     // Every nonzero boundary cell is new information for the neighbours.
     let mut mask = 0u8;
-    for y in 0..256usize {
+    for y in WORLD_MIN_Y..WORLD_MAX_Y {
         for h in 0..16usize {
             if chunk.light[vidx(15, y, h)] != 0 {
                 mask |= 1 << SIDE_PLUS_X;
@@ -398,16 +411,18 @@ pub fn init(chunk: &mut LightChunk) -> u8 {
 }
 
 /// Serialise one boundary edge. `side`: 0=+X 1=-X 2=+Z 3=-Z.
-/// ±X edges are indexed `(y<<4)|z`, ±Z edges `(y<<4)|x`.
-pub fn extract_edge(chunk: &LightChunk, side: u8) -> [u8; 4096] {
-    let mut out = [0u8; 4096];
+/// ±X edges are indexed `(y_local<<4)|z`, ±Z edges `(y_local<<4)|x`
+/// （y_local = 绝对 y − WORLD_MIN_Y ∈ 0..384，v6 起边长 6144）。
+pub fn extract_edge(chunk: &LightChunk, side: u8) -> [u8; EDGE_CELLS] {
+    let mut out = [0u8; EDGE_CELLS];
     if side > 3 {
         return out;
     }
-    for y in 0..256usize {
+    for y in WORLD_MIN_Y..WORLD_MAX_Y {
+        let yl = (y - WORLD_MIN_Y) as usize;
         for h in 0..16usize {
             let (x, z) = edge_cell(side as usize, h);
-            out[(y << 4) + h] = chunk.light[vidx(x, y, z)];
+            out[(yl << 4) + h] = chunk.light[vidx(x, y, z)];
         }
     }
     out
@@ -428,23 +443,24 @@ pub fn extract_edge(chunk: &LightChunk, side: u8) -> [u8; 4096] {
 /// re-lighting survivors at their raw stored brightness
 /// (BlockLightEngine.java:103-105 `toLevel >= oldFromLevel` →
 /// `enqueueIncrease(toNode, toLevel)`).
-pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -> u8 {
+pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; EDGE_CELLS], side: u8, op: u8) -> u8 {
     if side > 3 || op > 1 {
         return 0;
     }
     let before = snapshot_edges(chunk);
-    let mut sky_rem: Vec<(u16, u8)> = Vec::new();
-    let mut blk_rem: Vec<(u16, u8)> = Vec::new();
-    let mut sky_add: Vec<(u16, u8)> = Vec::new();
-    let mut blk_add: Vec<(u16, u8)> = Vec::new();
-    let mut sky_readd: Vec<(u16, u8)> = Vec::new();
-    let mut blk_readd: Vec<(u16, u8)> = Vec::new();
+    let mut sky_rem: Vec<(u32, u8)> = Vec::new();
+    let mut blk_rem: Vec<(u32, u8)> = Vec::new();
+    let mut sky_add: Vec<(u32, u8)> = Vec::new();
+    let mut blk_add: Vec<(u32, u8)> = Vec::new();
+    let mut sky_readd: Vec<(u32, u8)> = Vec::new();
+    let mut blk_readd: Vec<(u32, u8)> = Vec::new();
 
-    for y in 0..256usize {
+    for y in WORLD_MIN_Y..WORLD_MAX_Y {
+        let yl = (y - WORLD_MIN_Y) as usize;
         for h in 0..16usize {
             let (x, z) = edge_cell(side as usize, h);
             let sidx = vidx(x, y, z);
-            let n = edge[(y << 4) + h];
+            let n = edge[(yl << 4) + h];
             let n_sky = n >> 4;
             let n_blk = n & 0xF;
             let dec = opacity(BlockId(chunk.voxels[sidx])).max(1);
@@ -455,11 +471,11 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
                 let t_blk = n_blk.saturating_sub(dec);
                 if s_sky < t_sky {
                     set_ch(chunk.light, sidx, SKY_SHIFT, t_sky);
-                    sky_add.push((sidx as u16, t_sky));
+                    sky_add.push((sidx as u32, t_sky));
                 }
                 if s_blk < t_blk {
                     set_ch(chunk.light, sidx, BLK_SHIFT, t_blk);
-                    blk_add.push((sidx as u16, t_blk));
+                    blk_add.push((sidx as u32, t_blk));
                 }
             } else {
                 // 撤销判据（MINOR 边界撤销）：`s > n + 1` 才回撤。协议拿不到
@@ -470,13 +486,13 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
                 // 注意方向（A5 纠偏，旧注释写反）：直天 s=15 源柱仅在
                 // n≥14 时不被回撤，n≤13 会回撤清 0——实践中靠
                 // removal_channel readd + spread_target 的 direct_down 豁免
-                // 从上方空气柱原值恢复（净 0 不回报）掩盖；贴边 y=255 行
+                // 从上方空气柱原值恢复（净 0 不回报）掩盖；贴边 y=319 行
                 // 上方无源格时可净降 1 档（vanilla 源柱不受邻 section
                 // decrease 影响，SkyLightEngine.java:106-131，s==15 直接
                 // 豁免为后续项）。
                 if s_sky > n_sky + 1 && s_sky > 0 {
                     set_ch(chunk.light, sidx, SKY_SHIFT, 0);
-                    sky_rem.push((sidx as u16, s_sky));
+                    sky_rem.push((sidx as u32, s_sky));
                 }
                 if s_blk > n_blk + 1 && s_blk > 0 {
                     // 清零后回播本格自发光（26.1 checkNode：stored > emission
@@ -488,9 +504,9 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
                     let emit = light_emit(BlockId(chunk.voxels[sidx]));
                     if emit > 0 {
                         set_ch(chunk.light, sidx, BLK_SHIFT, emit);
-                        blk_readd.push((sidx as u16, emit));
+                        blk_readd.push((sidx as u32, emit));
                     }
-                    blk_rem.push((sidx as u16, s_blk));
+                    blk_rem.push((sidx as u32, s_blk));
                 }
             }
         }
@@ -532,15 +548,15 @@ pub fn apply_edge(chunk: &mut LightChunk, edge: &[u8; 4096], side: u8, op: u8) -
 /// Returns the border dirty mask over all four sides.
 pub fn propagate(chunk: &mut LightChunk) -> u8 {
     let before = snapshot_edges(chunk);
-    let mut sky_q: Vec<(u16, u8)> = Vec::new();
-    let mut blk_q: Vec<(u16, u8)> = Vec::new();
+    let mut sky_q: Vec<(u32, u8)> = Vec::new();
+    let mut blk_q: Vec<(u32, u8)> = Vec::new();
     for idx in 0..CHUNK_VOL {
         let l = chunk.light[idx];
         if l & 0xF0 != 0 {
-            sky_q.push((idx as u16, l >> 4));
+            sky_q.push((idx as u32, l >> 4));
         }
         if l & 0x0F != 0 {
-            blk_q.push((idx as u16, l & 0xF));
+            blk_q.push((idx as u32, l & 0xF));
         }
     }
     propagate_channel(chunk.voxels, chunk.light, SKY_SHIFT, &mut sky_q);
@@ -562,16 +578,17 @@ pub fn propagate(chunk: &mut LightChunk) -> u8 {
 pub fn update_block(
     chunk: &mut LightChunk,
     x: u32,
-    y: u32,
+    y: i32,
     z: u32,
     old_block: u16,
     new_block: u16,
     out_seeds: &mut Vec<BorderSeed>,
 ) -> u8 {
-    if x > 15 || y > 255 || z > 15 || old_block == new_block {
+    // v6：`y` 为**绝对**世界 y（x/z 仍为区块内局部 0..15）。
+    if x > 15 || z > 15 || !(WORLD_MIN_Y..WORLD_MAX_Y).contains(&y) || old_block == new_block {
         return 0;
     }
-    let (x, y, z) = (x as usize, y as usize, z as usize);
+    let (x, z) = (x as usize, z as usize);
     let before = snapshot_edges(chunk);
     let idx = vidx(x, y, z);
     let cur = chunk.light[idx];
@@ -586,39 +603,39 @@ pub fn update_block(
     let new_top = column_top(chunk.voxels, x, z, None);
     let old_top = column_top(chunk.voxels, x, z, Some((y, old_block)));
 
-    let mut sky_rem: Vec<(u16, u8)> = Vec::new();
-    let mut blk_rem: Vec<(u16, u8)> = Vec::new();
-    let mut sky_add: Vec<(u16, u8)> = Vec::new();
-    let mut blk_add: Vec<(u16, u8)> = Vec::new();
+    let mut sky_rem: Vec<(u32, u8)> = Vec::new();
+    let mut blk_rem: Vec<(u32, u8)> = Vec::new();
+    let mut sky_add: Vec<(u32, u8)> = Vec::new();
+    let mut blk_add: Vec<(u32, u8)> = Vec::new();
 
     // 1. Retract the edited cell's old light.
     if old_sky > 0 {
         set_ch(chunk.light, idx, SKY_SHIFT, 0);
-        sky_rem.push((idx as u16, old_sky));
+        sky_rem.push((idx as u32, old_sky));
     }
     if old_blk > 0 {
         set_ch(chunk.light, idx, BLK_SHIFT, 0);
-        blk_rem.push((idx as u16, old_blk));
+        blk_rem.push((idx as u32, old_blk));
     }
 
     // 2. Direct-column fix for the edited (x, z) column.
     if new_top > old_top {
         // Placed a blocker higher up: cells between the old top and the new
         // blocker lost direct sunlight. Zero and retract them.
-        for yy in (old_top + 1)..=new_top {
-            let i2 = vidx(x, yy as usize, z);
+        for yy in (old_top + 1).max(WORLD_MIN_Y)..=new_top {
+            let i2 = vidx(x, yy, z);
             let s = get_ch(chunk.light, i2, SKY_SHIFT);
             if s > 0 {
                 set_ch(chunk.light, i2, SKY_SHIFT, 0);
-                sky_rem.push((i2 as u16, s));
+                sky_rem.push((i2 as u32, s));
             }
         }
     } else if new_top < old_top {
         // Dug the top blocker open: newly exposed cells gain direct sunlight.
-        for yy in (new_top + 1)..=old_top {
-            let i2 = vidx(x, yy as usize, z);
+        for yy in (new_top + 1).max(WORLD_MIN_Y)..=old_top {
+            let i2 = vidx(x, yy, z);
             set_ch(chunk.light, i2, SKY_SHIFT, 15);
-            sky_add.push((i2 as u16, 15));
+            sky_add.push((i2 as u32, 15));
         }
     }
 
@@ -647,25 +664,25 @@ pub fn update_block(
     // retract).
     for (dx, dy, dz) in NEIGHBORS {
         let nx = x as i32 + dx;
-        let ny = y as i32 + dy;
+        let ny = y + dy;
         let nz = z as i32 + dz;
         if out_of_bounds(nx, ny, nz) {
             continue;
         }
-        let nidx = vidx(nx as usize, ny as usize, nz as usize);
+        let nidx = vidx(nx as usize, ny, nz as usize);
         let s = get_ch(chunk.light, nidx, SKY_SHIFT);
         if s > 0 {
-            sky_add.push((nidx as u16, s));
+            sky_add.push((nidx as u32, s));
         }
         let b = get_ch(chunk.light, nidx, BLK_SHIFT);
         if b > 0 {
-            blk_add.push((nidx as u16, b));
+            blk_add.push((nidx as u32, b));
         }
     }
     let emit = light_emit(BlockId(new_block));
     if emit > 0 {
         set_ch(chunk.light, idx, BLK_SHIFT, emit);
-        blk_add.push((idx as u16, emit));
+        blk_add.push((idx as u32, emit));
     }
 
     propagate_channel(chunk.voxels, chunk.light, SKY_SHIFT, &mut sky_add);

@@ -7,10 +7,10 @@
 //!   （damp=1）截断源柱并逐格 -1；
 //! - 方块光火把参照值 14，每格 -1。
 
-use mcv_core::{BlockId, CHUNK_VOL, vidx};
+use mcv_core::{BlockId, CHUNK_VOL, WORLD_MAX_Y, WORLD_MIN_Y, vidx};
 use mcv_light::{
-    BorderSeed, LightChunk, SIDE_MINUS_X, SIDE_MINUS_Z, SIDE_PLUS_X, SIDE_PLUS_Z, apply_edge,
-    extract_edge, init, opacity, propagate, update_block,
+    BorderSeed, EDGE_CELLS, LightChunk, SIDE_MINUS_X, SIDE_MINUS_Z, SIDE_PLUS_X, SIDE_PLUS_Z,
+    apply_edge, extract_edge, init, opacity, propagate, update_block,
 };
 
 const AIR: u16 = 0;
@@ -23,7 +23,7 @@ const FLOWER_RED: u16 = 12;
 struct World {
     voxels: Vec<u16>,
     light: Vec<u8>,
-    hm: Vec<u8>,
+    hm: Vec<i16>,
 }
 
 impl World {
@@ -31,12 +31,12 @@ impl World {
         Self {
             voxels: vec![AIR; CHUNK_VOL],
             light: vec![0; CHUNK_VOL],
-            hm: vec![0; 256],
+            hm: vec![WORLD_MIN_Y; 256],
         }
     }
 
     /// Flat ground: solid stone up to and including `top`.
-    fn flat(top: usize) -> Self {
+    fn flat(top: i32) -> Self {
         let mut w = Self::new();
         w.box_fill(0, 15, 0, top, 0, 15, STONE);
         w.rebuild_heightmap();
@@ -44,16 +44,7 @@ impl World {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn box_fill(
-        &mut self,
-        x0: usize,
-        x1: usize,
-        y0: usize,
-        y1: usize,
-        z0: usize,
-        z1: usize,
-        id: u16,
-    ) {
+    fn box_fill(&mut self, x0: usize, x1: usize, y0: i32, y1: i32, z0: usize, z1: usize, id: u16) {
         for y in y0..=y1 {
             for z in z0..=z1 {
                 for x in x0..=x1 {
@@ -63,18 +54,19 @@ impl World {
         }
     }
 
-    /// Heightmap = highest light-blocking block y + 1 (0 = open column).
+    /// Heightmap = 首个非遮光格**绝对 y**（v6 i16；全空列 = WORLD_MIN_Y
+    /// 哨兵，同 `mcv_worldgen::recompute_heightmap` 语义）。
     fn rebuild_heightmap(&mut self) {
         for z in 0..16usize {
             for x in 0..16usize {
-                let mut h = 0usize;
-                for y in (0..256).rev() {
+                let mut h = WORLD_MIN_Y;
+                for y in (WORLD_MIN_Y..WORLD_MAX_Y).rev() {
                     if opacity(BlockId(self.voxels[vidx(x, y, z)])) > 0 {
                         h = y + 1;
                         break;
                     }
                 }
-                self.hm[(z << 4) | x] = h as u8;
+                self.hm[(z << 4) | x] = h as i16;
             }
         }
     }
@@ -88,15 +80,15 @@ impl World {
     }
 }
 
-fn sky(c: &LightChunk, x: usize, y: usize, z: usize) -> u8 {
+fn sky(c: &LightChunk, x: usize, y: i32, z: usize) -> u8 {
     c.light[vidx(x, y, z)] >> 4
 }
 
-fn blk(c: &LightChunk, x: usize, y: usize, z: usize) -> u8 {
+fn blk(c: &LightChunk, x: usize, y: i32, z: usize) -> u8 {
     c.light[vidx(x, y, z)] & 0xF
 }
 
-fn sky_w(w: &World, x: usize, y: usize, z: usize) -> u8 {
+fn sky_w(w: &World, x: usize, y: i32, z: usize) -> u8 {
     w.light[vidx(x, y, z)] >> 4
 }
 
@@ -105,7 +97,7 @@ fn sky_w(w: &World, x: usize, y: usize, z: usize) -> u8 {
 fn edit(
     w: &mut World,
     x: usize,
-    y: usize,
+    y: i32,
     z: usize,
     old_block: u16,
     new_block: u16,
@@ -115,7 +107,7 @@ fn edit(
     let mask = {
         let mut c = w.chunk();
         update_block(
-            &mut c, x as u32, y as u32, z as u32, old_block, new_block, &mut seeds,
+            &mut c, x as u32, y, z as u32, old_block, new_block, &mut seeds,
         )
     };
     (mask, seeds)
@@ -129,7 +121,7 @@ fn flat_ground_direct_sky() {
     // Every open column is direct sunlight all the way down to the surface.
     for z in 0..16usize {
         for x in 0..16usize {
-            for y in 41..256 {
+            for y in 41..WORLD_MAX_Y {
                 assert_eq!(sky(&c, x, y, z), 15, "sky at ({x},{y},{z})");
                 assert_eq!(blk(&c, x, y, z), 0);
             }
@@ -167,8 +159,8 @@ fn sealed_room_block_light() {
     // Interior height limits the vertical falloff to 3 cells.
     for d in 1..=3usize {
         let expect = (14 - d) as u8;
-        assert_eq!(blk(&c, 5, 35 - d, 5), expect, "y-{d}");
-        assert_eq!(blk(&c, 5, 35 + d, 5), expect, "y+{d}");
+        assert_eq!(blk(&c, 5, (35 - d) as i32, 5), expect, "y-{d}");
+        assert_eq!(blk(&c, 5, (35 + d) as i32, 5), expect, "y+{d}");
     }
     // Walls swallow the light: shell and the world beyond stay 0.
     assert_eq!(blk(&c, 13, 35, 5), 0);
@@ -225,8 +217,9 @@ fn edge_add_feeds_neighbour() {
     cb.light.iter_mut().for_each(|l| *l &= 0x0F);
 
     // A's +X edge feeds B's -X edge.
-    for y in 41..256 {
-        assert_eq!(edge[((y << 4) + 3) as usize], 0xF0);
+    for y in 41..WORLD_MAX_Y {
+        let yl = (y - WORLD_MIN_Y) as usize;
+        assert_eq!(edge[(yl << 4) + 3], 0xF0);
     }
     let mask = apply_edge(&mut cb, &edge, 1, 0); // side 1 = -X, ADD
     assert_eq!(sky(&cb, 0, 50, 0), 14);
@@ -258,7 +251,7 @@ fn edge_remove_retracts_light() {
     assert_eq!(sky(&cb, 0, 50, 0), 14);
 
     // The neighbour's light went away: retract the whole gradient.
-    let dark = [0u8; 4096];
+    let dark = [0u8; EDGE_CELLS];
     apply_edge(&mut cb, &dark, 1, 1); // REMOVE
     assert_eq!(sky(&cb, 0, 50, 0), 0);
     assert_eq!(sky(&cb, 1, 50, 0), 0);
@@ -344,7 +337,7 @@ fn golden_torch_decay_sequence() {
     // 垂直方向同样逐格 -1（26.1 方块光无垂直特例）。
     {
         let c = w.chunk();
-        for (y, expect) in [(32usize, 12u8), (33, 13), (34, 14), (35, 13), (36, 12)] {
+        for (y, expect) in [(32i32, 12u8), (33, 13), (34, 14), (35, 13), (36, 12)] {
             assert_eq!(blk(&c, 1, y, 8), expect, "火把垂直 y={y}");
         }
         // 墙体吞光：石头 damp=15，14-15 饱和为 0，不透射。
@@ -374,20 +367,20 @@ fn golden_sky_source_column_transmission() {
     init(&mut c);
 
     // 全透竖井整列 15：垂直下落穿透透明介质不衰减（源柱机制）。
-    for y in [62usize, 61, 60, 59, 58, 30, 0] {
+    for y in [62i32, 61, 60, 59, 58, 30, 0] {
         assert_eq!(sky(&c, 5, y, 5), 15, "空气源柱 y={y} 应保持 15");
     }
 
     // 树叶截断源柱：15 → 14（入叶格）→ 13 → 12 …
     for (y, expect) in [
-        (62u32, 15u8),
+        (62i32, 15u8),
         (61, 14),
         (60, 13),
         (59, 12),
         (58, 11),
         (57, 10),
     ] {
-        assert_eq!(sky(&c, 8, y as usize, 8), expect, "树叶柱 y={y}");
+        assert_eq!(sky(&c, 8, y, 8), expect, "树叶柱 y={y}");
     }
 
     // 石台本体挡光；其上方仍是满照度。
@@ -411,7 +404,7 @@ fn golden_sky_source_column_transmission() {
 fn golden_sky_through_material_columns() {
     // (材料, 期望的天光序列 [(y, level)])：y=51 为板上方，50 为材料
     // 格本身，49..46 为板下洞窟中的柱内序列。
-    const CASES: [(u16, [(u32, u8); 6]); 4] = [
+    const CASES: [(u16, [(i32, u8); 6]); 4] = [
         // 石头：板上方 15，材料格及其下全挡（15-15=0）。
         (
             STONE,
@@ -445,7 +438,7 @@ fn golden_sky_through_material_columns() {
 
         for (y, expect) in expected {
             assert_eq!(
-                sky(&c, 4, y as usize, 4),
+                sky(&c, 4, y, 4),
                 expect,
                 "材料 id={material} 在 y={y} 的天光"
             );
@@ -652,16 +645,16 @@ fn ocean_water_column_falls_off_below_surface() {
     w.rebuild_heightmap();
     // init 不再读 heightmap（播种判据=voxels/column_top，M4 统一判据）：
     // 故意抹成全 0，旧实现会把整柱（含水）种满 15，新实现结果不变。
-    w.hm.fill(0);
+    w.hm.fill(WORLD_MIN_Y);
     let mut c = w.chunk();
     init(&mut c);
     // 水面以上的空气是源柱：整段 15。
-    for y in 56..256usize {
+    for y in 56..WORLD_MAX_Y {
         assert_eq!(sky(&c, 4, y, 4), 15, "水面上方 y={y}");
     }
     // 水面格 = 源柱底：15 - max(1, 水 damp=1) = 14，往下每格恰好 -1。
     for d in 0..=15usize {
-        let y = 55 - d;
+        let y = (55 - d) as i32;
         assert_eq!(
             sky(&c, 4, y, 4),
             14u8.saturating_sub(d as u8),
@@ -819,7 +812,7 @@ fn torch_placement_seeds_block_light_via_update_block() {
         assert_eq!(blk(&c, 4, 34, 8), 13);
         assert_eq!(blk(&c, 3, 34, 8), 12);
         assert_eq!(blk(&c, 2, 34, 8), 0, "西墙");
-        for (y, expect) in [(33usize, 13u8), (32, 12), (35, 13), (36, 12)] {
+        for (y, expect) in [(33i32, 13u8), (32, 12), (35, 13), (36, 12)] {
             assert_eq!(blk(&c, 5, y, 8), expect, "垂直 y={y}");
         }
         assert_eq!(blk(&c, 5, 31, 8), 0, "地板");
@@ -852,13 +845,13 @@ struct PairWorld {
 }
 
 impl PairWorld {
-    fn flat(top: usize) -> Self {
+    fn flat(top: i32) -> Self {
         Self {
             chunks: [World::flat(top), World::flat(top)],
         }
     }
 
-    fn set(&mut self, gx: usize, y: usize, z: usize, id: u16) {
+    fn set(&mut self, gx: usize, y: i32, z: usize, id: u16) {
         if gx < 16 {
             self.chunks[0].voxels[vidx(gx, y, z)] = id;
         } else {
@@ -871,8 +864,8 @@ impl PairWorld {
         &mut self,
         gx0: usize,
         gx1: usize,
-        y0: usize,
-        y1: usize,
+        y0: i32,
+        y1: i32,
         z0: usize,
         z1: usize,
         id: u16,
@@ -897,7 +890,7 @@ impl PairWorld {
         &mut self,
         which: u8,
         x: usize,
-        y: usize,
+        y: i32,
         z: usize,
         old: u16,
         new: u16,
@@ -907,7 +900,7 @@ impl PairWorld {
         let mut seeds = Vec::new();
         let mask = {
             let mut c = w.chunk();
-            update_block(&mut c, x as u32, y as u32, z as u32, old, new, &mut seeds)
+            update_block(&mut c, x as u32, y, z as u32, old, new, &mut seeds)
         };
         (mask, seeds)
     }
@@ -966,7 +959,7 @@ impl PairWorld {
     }
 }
 
-fn blk_p(p: &PairWorld, gx: usize, y: usize, z: usize) -> u8 {
+fn blk_p(p: &PairWorld, gx: usize, y: i32, z: usize) -> u8 {
     let (which, x) = if gx < 16 {
         (0usize, gx)
     } else {
@@ -975,7 +968,7 @@ fn blk_p(p: &PairWorld, gx: usize, y: usize, z: usize) -> u8 {
     p.chunks[which].light[vidx(x, y, z)] & 0xF
 }
 
-fn sky_p(p: &PairWorld, gx: usize, y: usize, z: usize) -> u8 {
+fn sky_p(p: &PairWorld, gx: usize, y: i32, z: usize) -> u8 {
     let (which, x) = if gx < 16 {
         (0usize, gx)
     } else {
