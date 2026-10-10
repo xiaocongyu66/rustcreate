@@ -152,6 +152,8 @@ struct AppState {
     /// D-6（波#127-5）：滚轮换槽累计器（原版 `ScrollWheelHandler` 移植，
     /// 见 [`mcv_platform::keybind::ScrollWheelSelection`]）。
     scroll_hotbar: mcv_platform::keybind::ScrollWheelSelection,
+    /// D-2（波#127-6）：双击前进冲刺窗（见 [`SprintTapWindow`]）。
+    sprint_tap: SprintTapWindow,
     /// I-21（波#127-4）：桌面右键按住态（周期发火的 held 输入之一）。
     right_use_held: bool,
     /// I-21：触摸放置键上一帧按住态（检测按下沿置 rightClickDelay）。
@@ -323,16 +325,85 @@ fn right_use(
     }
 }
 
+/// 双击前进冲刺窗（D-2，波#127-6）。26.1 `LocalPlayer.aiStep`：
+/// `sprintTriggerTime` 每 tick −1（:764-766）；潜行按住/使用减速/后退清窗
+/// （:798-800）；前进侧（:802-810，`hasForwardImpulse` 取 :775 的**上一 tick**
+/// 快照，input.tick() :784 在后——净效果即「按下沿开/耗窗」）：窗口内 →
+/// `setSprinting(true)`，否则开窗 `options.sprintWindow()`（Options.java:580-587
+/// 默认 **7** tick，0=关）。冲刺维持到条件破坏（`shouldStopRunSprinting`
+/// :918-922：失去前进冲量即停；潜行清窗 :798）。本仓消费面是逐 tick 布尔
+/// `input.sprint`（game.rs:2376），latch 语义等价 setSprinting。
+/// 60Hz 步长换算：7 tick = 21 步。
+#[derive(Default)]
+struct SprintTapWindow {
+    window_steps: u32,
+    latched: bool,
+    key_held: bool,
+}
+
+/// 原版 sprintWindow 默认 7 tick × 3 步/tick（与 RIGHT_CLICK_DELAY_STEPS
+/// 同一换算）。
+const SPRINT_WINDOW_STEPS: u32 = 7 * 3;
+
+impl SprintTapWindow {
+    /// 前进键事件：按下沿开窗/耗窗（窗口内二次按下 = 冲刺点火），松开沿
+    /// 解除 latch（shouldStopRunSprinting 的失去前进冲量语义在输入层的投影）。
+    fn on_forward(&mut self, pressed: bool) {
+        if pressed {
+            if self.window_steps > 0 {
+                self.latched = true;
+                self.window_steps = 0;
+            } else {
+                self.window_steps = SPRINT_WINDOW_STEPS;
+            }
+        } else {
+            self.latched = false;
+        }
+    }
+    /// 潜行/后退按下沿清窗清 latch（LocalPlayer:798-800）。
+    fn on_sneak_or_back(&mut self) {
+        self.window_steps = 0;
+        self.latched = false;
+    }
+    /// 冲刺键（Ctrl/toggle）状态镜像。
+    fn set_key_held(&mut self, held: bool) {
+        self.key_held = held;
+    }
+    /// 世界每 tick 推进窗口（fixed_step 域节拍：暂停冻结、死亡清理由
+    /// game.rs 清 input 兜住）。
+    fn step(&mut self) {
+        self.window_steps = self.window_steps.saturating_sub(1);
+    }
+    /// 写入 `input.sprint` 的合成值 = 冲刺键按住 ∨ 双击 latch。
+    fn sprint(&self) -> bool {
+        self.key_held || self.latched
+    }
+    /// `KeyMapping.releaseAll()`（Minecraft.setScreen :1148）等价重置。
+    fn release_all(&mut self) {
+        *self = Self::default();
+    }
+}
+
 /// 进暂停（波#127 B-1）：对齐 26.1 `Minecraft.setScreen`（:1119-1150）——
 /// `KeyMapping.releaseAll()`（:1148）在开屏瞬间释放全部按压态。我们若只门
 /// 分发不清账：暂停期间松开事件被屏幕栈挡掉，`input.forward/mining/placing`
 /// 悬真，恢复即“没人碰键盘也往前走/挖”。清 input 同时覆盖触摸按动态
 /// （game.rs 每步从 touch 镜像，恢复后以实际触摸态为准，无残留）。
-fn enter_pause(runtime: &mut GameRuntime, screen: &mut Screen, window: &Option<Arc<Window>>) {
+/// `screen`/`sprint`/`right_use_held` 是 app 层的按压态镜像（game.rs 的
+/// `input` 之外），须随 releaseAll 一同清，否则恢复后悬真。
+fn enter_pause(
+    runtime: &mut GameRuntime,
+    screen: &mut Screen,
+    window: &Option<Arc<Window>>,
+    sprint: &mut SprintTapWindow,
+    right_use_held: &mut bool,
+) {
     runtime.input = Default::default();
     // 触摸放置键按住态同释：暂停期间触摸被菜单层接管，place_held 悬真会
     // 让恢复后的周期 use（I-21）幽灵连发。
     runtime.touch.place_held = false;
+    sprint.release_all();
+    *right_use_held = false;
     *screen = Screen::Paused;
     set_cursor(window, false);
 }
@@ -2114,13 +2185,34 @@ impl ApplicationHandler for AppState {
                     match self.keymap.action_for(vk) {
                         // 波#127 B-1：玩法动作只认 `playing`（暂停/死亡界面里
                         // 键盘不得再写 runtime.input——原版 KeyMapping 门）。
-                        Some(Action::Forward) if playing => runtime.input.forward = pressed,
-                        Some(Action::Back) if playing => runtime.input.back = pressed,
+                        Some(Action::Forward) if playing => {
+                            runtime.input.forward = pressed;
+                            // D-2（波#127-6）：前进键两侧驱动 7 tick 双击窗。
+                            self.sprint_tap.on_forward(pressed);
+                            runtime.input.sprint = self.sprint_tap.sprint();
+                        }
+                        Some(Action::Back) if playing => {
+                            runtime.input.back = pressed;
+                            if pressed {
+                                self.sprint_tap.on_sneak_or_back();
+                                runtime.input.sprint = self.sprint_tap.sprint();
+                            }
+                        }
                         Some(Action::Left) if playing => runtime.input.left = pressed,
                         Some(Action::Right) if playing => runtime.input.right = pressed,
                         Some(Action::Jump) if playing => runtime.input.jump = pressed,
-                        Some(Action::Sneak) if playing => runtime.input.sneak = pressed,
-                        Some(Action::Sprint) if playing => runtime.input.sprint = pressed,
+                        Some(Action::Sneak) if playing => {
+                            runtime.input.sneak = pressed;
+                            // 潜行按下沿清窗清 latch（LocalPlayer:798-800）。
+                            if pressed {
+                                self.sprint_tap.on_sneak_or_back();
+                                runtime.input.sprint = self.sprint_tap.sprint();
+                            }
+                        }
+                        Some(Action::Sprint) if playing => {
+                            self.sprint_tap.set_key_held(pressed);
+                            runtime.input.sprint = self.sprint_tap.sprint();
+                        }
                         Some(Action::FlyToggle) if pressed && playing => {
                             runtime.player.flying = !runtime.player.flying;
                         }
@@ -2129,7 +2221,13 @@ impl ApplicationHandler for AppState {
                                 // 进暂停：releaseAll 语义清按压态（26.1 setScreen
                                 // :1148），否则暂停期间松开事件被门挡掉、恢复后
                                 // 输入悬真。
-                                enter_pause(runtime, &mut self.screen, &self.window);
+                                enter_pause(
+                                    runtime,
+                                    &mut self.screen,
+                                    &self.window,
+                                    &mut self.sprint_tap,
+                                    &mut self.right_use_held,
+                                );
                             }
                             Screen::Paused => {
                                 self.screen = Screen::InGame;
@@ -2630,7 +2728,13 @@ impl AppState {
                 .focus_lost_at
                 .is_some_and(|t| t.elapsed().as_millis() >= 500)
         {
-            enter_pause(runtime, &mut self.screen, &self.window);
+            enter_pause(
+                runtime,
+                &mut self.screen,
+                &self.window,
+                &mut self.sprint_tap,
+                &mut self.right_use_held,
+            );
             self.focus_lost_at = None;
         }
 
@@ -2659,6 +2763,9 @@ impl AppState {
         self.touch_place_prev = touch_held;
         for _ in 0..n {
             runtime.fixed_step(1.0 / 60.0);
+            // D-2：冲刺窗只在世界 tick 域递减（暂停冻结/死亡由 game.rs 清
+            // input 兜底，同 LocalPlayer.aiStep 的 sprintTriggerTime--）。
+            self.sprint_tap.step();
             let use_gate = self.screen == Screen::InGame
                 && runtime.phase == mcv_logic::game::GamePhase::Playing
                 && !runtime.dead;
@@ -2899,13 +3006,24 @@ mod tests {
         rt.input.forward = true;
         rt.input.mining = true;
         let mut screen = Screen::InGame;
-        enter_pause(&mut rt, &mut screen, &None);
+        let mut sprint = SprintTapWindow {
+            window_steps: 5,
+            latched: true,
+            key_held: true,
+        };
+        let mut right_held = true;
+        enter_pause(&mut rt, &mut screen, &None, &mut sprint, &mut right_held);
         assert_eq!(screen, Screen::Paused);
         assert!(
             !rt.input.forward,
             "进暂停须 releaseAll（setScreen :1148 语义）"
         );
         assert!(!rt.input.mining, "挖/放按压态一并释放，恢复后无悬真");
+        assert!(
+            !sprint.sprint() && sprint.window_steps == 0,
+            "冲刺窗/latch/按键态同释"
+        );
+        assert!(!right_held, "右键按住态同释");
         let t0 = rt.time_ticks;
         feed(&mut rt, &mut acc, is_pause_screen(screen));
         assert_eq!(
@@ -3005,6 +3123,55 @@ mod tests {
             placed >= 2,
             "连放至少落 2 块圆石（生存逐次消耗；旧行为仅按下沿 1 块），placed={placed}"
         );
+    }
+
+    /// D-2（双击前进冲刺窗，行为级）：26.1 LocalPlayer:764-766/798-810 +
+    /// Options sprintWindow 默认 7 tick。第一次按下开窗；窗口内第二次按下
+    /// latch 冲刺（=setSprinting）；第 8 tick（21 步）后窗口过期，二次按下
+    /// 只重开窗不冲刺；松开解除 latch（shouldStopRunSprinting 失去前进冲量）；
+    /// 潜行/后退按下沿清窗清 latch（:798-800）。
+    #[test]
+    fn double_tap_forward_opens_seven_tick_sprint_window() {
+        let mut w = SprintTapWindow::default();
+        assert!(!w.sprint());
+        w.on_forward(true); // 第一次按下：开窗
+        assert!(!w.sprint(), "单击不开冲刺");
+        w.on_forward(false);
+        w.on_forward(true); // 窗口内第二次按下：点火
+        assert!(w.sprint(), "双击必须 latch 冲刺（原版 setSprinting）");
+        w.on_forward(false);
+        assert!(!w.sprint(), "松开前进=失去冲量，冲刺解除");
+        // 窗口过期：21 步（7 tick）后再按只重开窗。
+        let mut w = SprintTapWindow::default();
+        w.on_forward(true);
+        for _ in 0..21 {
+            w.step();
+        }
+        assert_eq!(w.window_steps, 0, "7 tick 窗口整步走尽");
+        w.on_forward(false);
+        w.on_forward(true);
+        assert!(!w.sprint(), "窗口过期的第二次按下不得冲刺");
+        // 窗口有效到最后一格：20 步后仍 >0。
+        let mut w = SprintTapWindow::default();
+        w.on_forward(true);
+        for _ in 0..20 {
+            w.step();
+        }
+        w.on_forward(false);
+        w.on_forward(true);
+        assert!(w.sprint(), "第 7 tick 内的双击仍须冲刺");
+        // 潜行/后退清窗清 latch；Ctrl 冲刺键与 latch 正交（key_held ∨ latch）。
+        let mut w = SprintTapWindow::default();
+        w.on_forward(true);
+        w.on_sneak_or_back();
+        assert_eq!(w.window_steps, 0);
+        w.on_forward(false);
+        w.on_forward(true);
+        assert!(!w.sprint(), "潜行清窗后再按=新窗口，不冲刺");
+        w.set_key_held(true);
+        assert!(w.sprint(), "Ctrl 长按冲刺（既有语义）不受窗影响");
+        w.set_key_held(false);
+        assert!(!w.sprint());
     }
 
     /// B-1/D-5（暂停拦输入）：玩法输入门只认 InGame——暂停菜单里 WASD/跳/
