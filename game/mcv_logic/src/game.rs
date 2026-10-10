@@ -6322,8 +6322,13 @@ mod tests {
         let mut rt = playing_rt("b3-self");
         rt.hotbar = mcv_item::Hotbar::empty();
         rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 2);
-        // 平视打不到脚下格：直接构造命中——俯视时命中 (8,69,8) 顶面，
-        // 目标格 = (8,70,8) = 玩家脚部所在格。
+        // 显式落位到石柱顶面 y=70.0（fill_neighborhood 悬在 71.0，单步
+        // fixed_step 不足以跨 tick 落位——悬浮时脚部 AABB 与目标格 [70,71]
+        // 恰好边界相切（`cmax.y > pmin.y` 为 71>71 false），AABB 门反而
+        // 放行；站上后 [70,71.8] ∩ [70,71] 严格相交才是真实占格语义）。
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        // 俯视命中 (8,69,8) 顶面 → 目标格 = (8,70,8) = 玩家脚部所在格。
         look_down(&mut rt);
         rt.interact(true);
         assert_eq!(
