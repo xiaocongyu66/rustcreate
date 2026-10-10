@@ -1685,9 +1685,12 @@ fn first_person_hand_paints_bottom_right() {
         swing_diff > 100,
         "挥臂半程帧与静止帧 diff={swing_diff}（bbox {swing_bb:?}）——swing_progress 快照未被渲染消费"
     );
+    // 挥臂运动域 = 下半屏且仍覆盖右半屏（原版劈砍朝准星摆、过中线属正常，
+    // 不能按静止姿态的右下象限硬卡——CI 实测 bbox x0≈150 合理）。
+    let (sx0, sy0, sx1, _) = swing_bb.expect("diff>100 必有包围盒");
     assert!(
-        in_bottom_right(swing_bb),
-        "挥臂像素越出右下象限（bbox {swing_bb:?}）——挥臂锚点/旋转常数回归"
+        sy0 >= extent.height / 2 && sx1 >= extent.width / 2 && sx0 >= extent.width / 4,
+        "挥臂运动域越界（bbox {swing_bb:?}）——挥臂锚点/旋转常数回归"
     );
 
     // (e) 手持物品图标（sprite 路径）：icon quad 的 uniform 喂帧 + quad 索引

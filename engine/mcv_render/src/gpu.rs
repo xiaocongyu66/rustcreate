@@ -2481,7 +2481,7 @@ impl Renderer {
         // renderItemInHand）。手持不被世界深度裁剪，而 HUD 又画在手持之上
         // （原版 gui 渲染序在 hand 之后）。
         if let Some(hand) = scene.hand {
-            self.draw_hand(&mut encoder, color, depth, &cam, hand);
+            self.draw_hand(&mut encoder, color, depth, cam, hand);
         }
 
         // HUD pass
@@ -2534,9 +2534,10 @@ impl Renderer {
         self.queue.submit([encoder.finish()]);
     }
 
-    /// 第一人称手持 pass：右臂盒体（player 管线右臂切片 + 独立 uniform 槽）
-    /// + 手持方块缩小立方体（terrain 管线直通）或物品图标 quad（hand 管线）。
-    /// 在 draw_frame 的世界 pass 与 HUD pass 之间被调用，自起**清深度**的
+    /// 第一人称手持 pass：右臂盒体（player 管线右臂切片 + 独立 uniform 槽）、
+    /// 手持方块缩小立方体（terrain 管线直通）或物品图标 quad（hand 管线）。
+    ///
+    /// 在 draw_frame 的世界 pass 与 HUD pass 之间被调用，自起清深度的
     /// 独立 render pass（26.1 GameRenderer.java:724-729）。
     fn draw_hand(
         &mut self,
