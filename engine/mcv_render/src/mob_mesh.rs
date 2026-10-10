@@ -1323,7 +1323,9 @@ mod tests {
     }
 
     /// 断言盒体正脸段（face-with-eyes，UV = [u+d, v+d, u+d+w, v+d+h]）：
-    /// 四角顶点必须落在 −z 面、UV 像素坐标落在给定矩形内。
+    /// 四角顶点必须落在 −z 面、UV 像素坐标落在给定矩形内。容差 0.14 px =
+    /// u8 量化的半 LSB（64/255/2 ≈ 0.126）：rect 边界角如 v=16 编码为
+    /// round(16·255/64)=64 → 回读 16.063。
     fn assert_face_rect(m: &MobMesh, k: usize, rect: [f32; 4]) {
         let r = head_vert_range(m, k);
         for v in &m.verts[r.start + 16..r.start + 20] {
@@ -1331,13 +1333,13 @@ mod tests {
             let u = v.uv[0] as f32 / 255.0 * MOB_TEX_PX as f32;
             let t = v.uv[1] as f32 / 255.0 * MOB_TEX_PX as f32;
             assert!(
-                u >= rect[0] - 1e-3 && u <= rect[2] + 1e-3,
+                u >= rect[0] - 0.14 && u <= rect[2] + 0.14,
                 "face u {u} not in {}..{}",
                 rect[0],
                 rect[2]
             );
             assert!(
-                t >= rect[1] - 1e-3 && t <= rect[3] + 1e-3,
+                t >= rect[1] - 0.14 && t <= rect[3] + 0.14,
                 "face t {t} not in {}..{}",
                 rect[1],
                 rect[3]
@@ -1413,9 +1415,10 @@ mod tests {
         let z = |p: usize| mm[p].transform_point3(Vec3::new(0.0, -0.75, 0.0)).z;
         assert!(z(4) * z(2) < 0.0, "右臂应与右腿反相");
         assert!(z(5) * z(3) < 0.0, "左臂应与左腿反相");
-        // 臂角/腿角 = 1/1.4（pivot z 同为 0，由尖端位移反解摆角核算）。
+        // 臂角/腿角 = 1/1.4（pivot z 同为 0，由尖端位移反解摆角核算；
+        // 部位序：2=右臂 3=左臂 4=右腿 5=左腿）。
         let ang = |zz: f32| (zz.abs() / 0.75).asin();
-        let (arm, leg) = (ang(z(4)), ang(z(2)));
+        let (leg, arm) = (ang(z(4)), ang(z(2)));
         assert!((arm * 1.4 - leg).abs() < 1e-4, "arm {arm} leg {leg}");
     }
 

@@ -78,14 +78,16 @@ fn hostile_head_uv_rects_match_java() {
         (MobModelKind::Creeper, [8.0, 8.0, 16.0, 16.0]),
         (MobModelKind::Spider, [40.0, 12.0, 48.0, 20.0]),
     ] {
-        // kind 首盒 = 头；正脸 = 部位内面 4（顶点 16..20）。
+        // kind 首盒 = 头；正脸 = 部位内面 4（顶点 16..20）。容差 0.14 px
+        // = u8 量化的半 LSB（64/255/2 ≈ 0.126）：rect 边界角如 v=16 编码
+        // 为 round(16·255/64)=64 → 回读 16.063。
         let base = m.slices[k.idx()].start as usize / 36 * 24;
         for v in &m.verts[base + 16..base + 20] {
             assert!(v.pos[2] < 0.0, "{k:?} 脸段须在 −z");
             let u = v.uv[0] as f32 / 255.0 * MOB_TEX_PX as f32;
             let t = v.uv[1] as f32 / 255.0 * MOB_TEX_PX as f32;
-            assert!(u >= rect[0] - 1e-3 && u <= rect[2] + 1e-3, "{k:?} u {u}");
-            assert!(t >= rect[1] - 1e-3 && t <= rect[3] + 1e-3, "{k:?} t {t}");
+            assert!(u >= rect[0] - 0.14 && u <= rect[2] + 0.14, "{k:?} u {u}");
+            assert!(t >= rect[1] - 0.14 && t <= rect[3] + 0.14, "{k:?} t {t}");
         }
     }
 }
@@ -99,7 +101,7 @@ fn hostile_models_have_positive_vert_counts() {
         MobModelKind::Creeper,
         MobModelKind::Spider,
     ] {
-        assert!(m.slices[k.idx()].len() > 0, "{k:?} 顶点数应 > 0");
+        assert!(!m.slices[k.idx()].is_empty(), "{k:?} 顶点数应 > 0");
     }
 }
 

@@ -186,33 +186,33 @@ fn four_hostile_mobs_paint_entity_pixels() {
 
     let base = render(&device, &queue, &mut renderer, &target, &chunk, &[]);
 
-    // 敌对四怪一字排开（各自贴图层 5..8）：僵尸/骷髅 1.95 高、苦力怕
-    // 1.625、蜘蛛 0.9——站上草皮，无遮挡。
+    // 敌对四怪沿视线排开（各自贴图层 5..8）：投影核算都在画面内
+    // （像素 x ≈ 97/143/198/265、各 20-32px 高），站上草皮无遮挡。
     let mobs = [
         instance(
             MobModelKind::Zombie,
-            Vec3::new(2.0, 100.0, 8.0),
+            Vec3::new(4.0, 100.0, 6.0),
             0.0,
             0.0,
             0.0,
         ),
         instance(
             MobModelKind::Skeleton,
-            Vec3::new(6.0, 100.0, 10.0),
+            Vec3::new(7.0, 100.0, 7.0),
             0.0,
             0.0,
             0.0,
         ),
         instance(
             MobModelKind::Creeper,
-            Vec3::new(10.0, 100.0, 12.0),
+            Vec3::new(10.0, 100.0, 8.0),
             0.0,
             0.0,
             0.0,
         ),
         instance(
             MobModelKind::Spider,
-            Vec3::new(14.0, 100.0, 14.0),
+            Vec3::new(13.0, 100.0, 9.0),
             0.0,
             0.0,
             0.0,
