@@ -13,7 +13,16 @@ C++ 删除后，Rust 移植仍与删除前 oracle 输出逐字节一致（防重
 
 输入规格唯一来源：`../golden/cases.rs`（seed 表/网格/落盘清单）。
 
+## v6 重锚（384 / min_y=-64 / 海平面 63 基线）
+
+C++ oracle 已删除，#77 的「与删除前 oracle 一致」职责随之终止。本目录现由
+**Rust legacy 自生成重锚**：黄金值 = v6 几何（16×16×384、y ∈ [-64,320)、
+海平面 63）下 legacy 内核的输出，语义 = 回归锁 —— 只保证「迁移后行为不再
+漂移」，不是正确性标准（26.1 门仍在 vanilla 后端 + tests/quality.rs）。
+重生成走 CI：`GOLDEN_UPDATE=1` 跑 `--test golden`（Linux x86_64 runner），
+输入仍严格取自 cases.rs。
+
 | 文件 | 格式 |
 |---|---|
 | `terrain_parity.tsv` | 400 行：`seed(016x) cx cz vox_hash(016x) hm_hash(016x)`（FNV-1a 64；体素按 u16 LE 字节流哈希） |
-| `terrain/terrain_s<seed>_c<cx>_<cz>.bin` | 4 个全量区块：65536×u16 体素（LE）+ 256×u8 高度图，共 131,328 B |
+| `terrain/terrain_s<seed>_c<cx>_<cz>.bin` | 4 个全量区块：98304×u16 体素（LE）+ 256×i16 绝对 y 高度图（LE），共 197,120 B |

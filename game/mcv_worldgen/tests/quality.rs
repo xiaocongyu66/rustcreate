@@ -1,6 +1,6 @@
 //! vanilla 后端质量统计断言 — 防「形似神不似」（任务板 #91 完成标准）：
 //! 1. 多样本群系占比各在 2%-35%（10 群系全部可达）；
-//! 2. 海陆比（地表低于海平面 96 的比例）25%-45%；
+//! 2. 海陆比（地表低于海平面（`mcv_core::SEA_LEVEL`，v6=63）的比例）25%-45%；
 //! 3. 洞穴空气占比 3%-12%；
 //! 4. 相邻列高度连续率 ≥99%（无断崖墙）；
 //! 5. 同 seed 同字节确定性。
@@ -8,7 +8,7 @@
 //! 采样口径：3D 指标用列/单元级函数直接采样（生成路径另有全区块确定性
 //! 测试锁字节），同 seed 下与分块生成同构、成本可控。
 
-use mcv_core::ChunkPos;
+use mcv_core::{ChunkPos, SEA_LEVEL};
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SEED: u64 = 0x7E_A20_0B1_u64;
@@ -81,7 +81,8 @@ fn biome_distribution_in_bands() {
     }
 }
 
-/// 2) 海陆比：地表 < 海平面 96 的列占比 25%-45%。
+/// 2) 海陆比：地表 < 海平面（v6 = 63，引 `SEA_LEVEL` 不钉字面量）的列占比
+/// 25%-45%。
 #[test]
 fn sea_land_ratio_in_bands() {
     let stride = 8_i32;
@@ -91,7 +92,7 @@ fn sea_land_ratio_in_bands() {
     for dz in -half..half {
         for dx in -half..half {
             let y = wg::surface_block_y(SEED, dx * stride, dz * stride);
-            if y < 96 {
+            if y < SEA_LEVEL {
                 sea += 1;
             }
             total += 1;
@@ -123,7 +124,10 @@ fn cave_air_in_bands() {
         let wx = (rng.below(1024) as i32) - 512;
         let wz = (rng.below(1024) as i32) - 512;
         let cs = orch.column_state(wx, wz);
-        let y = rng.below(80) as i32 + 8; // 地下主体带
+        // 地下主体带（v6 绝对 y）：旧 256 基准 y∈[8,88)（全部低于旧地表
+        // 最低点 96）；密度场以 mc 空间书写且 v6 恒等映射，取同一段
+        // mc 区间 [−52,68)（旧 [8,88) 经 y_mc=1.5y−64 的原像带）。
+        let y = rng.below(120) as i32 - 52;
         if y < cs.surface_ours && orch.density(&cs, wx, y, wz) <= 0.0 {
             air += 1;
         }

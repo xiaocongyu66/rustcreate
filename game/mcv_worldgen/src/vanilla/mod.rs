@@ -4,9 +4,11 @@
 //!
 //! 机制出处一律指向 26.1 反编译树（/root/mc-ref/src-26.1，只对齐机制与
 //! 常数，零代码搬运）；OpenSimplex2S 内核是唯一 vendored 例外（CC0-1.0）。
-//! 26.1 原生 y ∈ [-64, 320)（高 384）线性映射到本世界 y ∈ [0, 256)：
-//! y_mc = y_ours·1.5 − 64（`mc_y_to_ours` / `ours_y_to_mc` 集中换算）；
-//! 海平面 96、总高 256 为任务拍板基准。
+//! v6 几何升原版：本世界 y 即 26.1 原生 y ∈ [-64, 320)（高 384、海平面
+//! 63，`mcv_core::WORLD_MIN_Y`/`SEA_LEVEL` 唯一定义源），曲线锚点空间与
+//! 世界空间重合——`mc_y_to_ours`/`ours_y_to_mc` 退化为恒等映射（保留
+//! 函数壳，锚点表达式不引入任何世界常数，恢复「原生 63 归一」；旧
+//! 256 时代的 1.5× 压缩与 96 海平面重标随之作废）。
 
 pub mod biomes;
 pub mod climate;
@@ -16,22 +18,24 @@ pub mod terrain;
 
 pub use biomes::Biome;
 
-/// 世界高（自研 256）。
-pub const SY: i32 = 256;
-/// 海平面（自研 96；26.1 原生 63 → 归一位置 0.33，自研 96/256 = 0.375 保留
-/// bloomcraft 基准）。
-pub const SEA: i32 = 96;
+/// 世界高（v6 = 384，`mcv_core::CHUNK_SY` 唯一定义源）。
+pub const SY: i32 = mcv_core::CHUNK_SY as i32;
+/// 海平面（v6 = 原生 63 = `mcv_core::SEA_LEVEL`；旧 96 是 256 基准自选值，
+/// 其「96/256 = 0.375 vs 原生 0.33」重标随恒等映射恢复而作废）。
+pub const SEA: i32 = mcv_core::SEA_LEVEL;
+/// 世界竖直下界（v6 = -64）。
+pub const MIN_Y: i32 = mcv_core::WORLD_MIN_Y;
 
-/// MC y（曲线锚点空间）→ 自研 y：y_ours = (y_mc + 64)·256/384。
+/// MC y（曲线锚点空间）→ 本世界绝对 y。v6 起两空间重合，恒等映射。
 #[must_use]
 pub const fn mc_y_to_ours(mc: f64) -> f64 {
-    (mc + 64.0) * (2.0 / 3.0)
+    mc
 }
 
-/// 自研 y → MC y（样条/梯度锚点空间）：y_mc = y_ours·384/256 − 64。
+/// 本世界绝对 y → MC y（样条/梯度锚点空间）。恒等映射（见上）。
 #[must_use]
 pub const fn ours_y_to_mc(y: f64) -> f64 {
-    y * 1.5 - 64.0
+    y
 }
 
 /// peaksAndValleys 折叠（NoiseRouterData.peaksAndValleys：|r| = 2/3 处出
