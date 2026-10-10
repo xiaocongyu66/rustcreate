@@ -12,6 +12,7 @@ pub mod biomes;
 pub mod climate;
 pub mod noise;
 pub mod spline;
+pub mod terrain;
 
 /// 世界高（自研 256）。
 pub const SY: i32 = 256;
@@ -43,4 +44,30 @@ pub fn peaks_and_valleys(r: f64) -> f64 {
 pub fn squeeze(c: f64) -> f64 {
     let c = c.clamp(-1.0, 1.0);
     c / 2.0 - c * c * c / 24.0
+}
+
+/// 通道域盐：世界种子 ^ 通道码 → 终混合（自有派生，防通道同种子）。
+#[must_use]
+pub const fn channel_seed(world_seed: u64, domain: u64) -> u64 {
+    splitmix64(world_seed ^ domain)
+}
+
+/// splitmix64 终混合。
+#[must_use]
+pub const fn splitmix64(x: u64) -> u64 {
+    let x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    let x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    let x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^ (x >> 31)
+}
+
+/// [0, 1) 网格哈希（复用 legacy 内核同源结构）。
+#[must_use]
+pub fn hash01(seed: u64, x: i64, y: i64, z: i64) -> f32 {
+    let h = splitmix64(
+        seed ^ (x as u64).wrapping_mul(0x9E37_79B1)
+            ^ (y as u64).wrapping_mul(0x85EB_CA77)
+            ^ (z as u64).wrapping_mul(0xC2B2_AE3D),
+    );
+    ((h >> 40) as f32) * (1.0_f32 / 16_777_216.0)
 }
