@@ -217,34 +217,42 @@ fn fire_resistance_blocks_lava_damage() {
 
 /// hunger=0 的 80 tick 门开拍 → starve 1.0 走 hurtServer 完整管线
 /// （FoodData.java:64 `player.hurtServer(…starve(), 1.0F)`；难度封顶门
-/// Normal `health>1` :63。旧实现就地 `health -= 1.0` 绕过 i 帧门，
-/// 用 i 帧窗内的第二拍被门住来证伪）。
+/// Normal `health>1` :63。管线侧证 = hurt 结算副作用 invulnerableTime=20
+/// （LivingEntity.java:1206）与 lastHurt=1.0（:1204）——旧实现就地
+/// `health -= 1.0` 绕门，两者均不会置位）。
 #[test]
 fn starvation_routes_through_hurt_pipeline() {
     let mut rt = GameRuntime::new_headless(7, tmp_world("starve"), GameMode::Survival);
     wait_terrain(&mut rt, ChunkPos::new(0, 0));
     build_platform(&mut rt);
     finish_loading(&mut rt);
-    // 直落 hunger=0 且 tickTimer=79：下一拍 80 tick 门开
-    // （FoodData.java:61-62），封顶门 Normal health=20>1 放行。
     rt.player.hunger = 0.0;
     rt.player.saturation = 0.0;
-    rt.food_tick_timer = 79;
-    run_ticks(&mut rt, 1);
+    // FoodData 第三路 hunger≤0：tickTimer 1..80 → 第 80 拍门开
+    // （FoodData.java:61-62），封顶门 Normal health=20>1 放行 → 19.0。
+    run_ticks(&mut rt, 80);
     assert_eq!(
         rt.player.health, 19.0,
-        "饿死 1.0 走完整管线（FoodData.java:64），got {}",
+        "80 tick 门首拍饿死 1.0（FoodData.java:61-64），got {}",
         rt.player.health
     );
-    // 一拍后再开 80 tick 门：第一拍已置 invulnerableTime=20
-    // （LivingEntity.java:1206），窗内同额 starve 被 i 帧门整段忽略
-    // （:1196-1198 damage <= lastHurt → return false）→ 血不动。
-    // 旧直扣实现会掉到 18.0，此处即管线接线证伪点。
-    rt.food_tick_timer = 79;
-    run_ticks(&mut rt, 1);
+    // 管线侧证：完整 hurtServer 结算置 invulnerableTime=20 + lastHurt=1.0
+    // （LivingEntity.java:1206/:1204）——就地直扣两值均留 0，此处即接线
+    // 证伪点；次一 80 tick 拍（:1196 门早已过期）照常再掉 1 → 18.0。
     assert_eq!(
-        rt.player.health, 19.0,
-        "i 帧窗内饿死被 invulnerable_gate 门住（LivingEntity.java:1196），got {}",
+        rt.player.invulnerable, 20,
+        "饿死走完整管线 → invulnerableTime=20（LivingEntity.java:1206），got {}",
+        rt.player.invulnerable
+    );
+    assert_eq!(
+        rt.player.last_hurt, 1.0,
+        "饿死走完整管线 → lastHurt=1.0（LivingEntity.java:1204），got {}",
+        rt.player.last_hurt
+    );
+    run_ticks(&mut rt, 80);
+    assert_eq!(
+        rt.player.health, 18.0,
+        "第二个 80 tick 拍再掉 1（FoodData.java:61-64），got {}",
         rt.player.health
     );
 }
