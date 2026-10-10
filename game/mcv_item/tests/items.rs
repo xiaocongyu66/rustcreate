@@ -97,6 +97,53 @@ fn mending_two_per_xp() {
     assert_eq!(left, 980);
 }
 
+/// ENCHANTS 14 条对 26.1 `data/minecraft/enchantment/*.json` 的回归锁
+/// （min_cost/max_cost = base+per_level_above_first、weight、anvil_cost）。
+#[test]
+fn enchant_defs_match_261_json() {
+    // (name, weight, anvil, min base+per, max base+per) —— 逐条摘自 json。
+    let table: &[(&str, u32, u8, (u32, u32), (u32, u32))] = &[
+        ("protection", 10, 1, (1, 11), (12, 11)), // protection.json
+        ("feather_falling", 5, 2, (5, 6), (11, 6)), // feather_falling.json anvil=2
+        ("blast_protection", 2, 4, (5, 8), (13, 8)), // blast_protection.json 13+8/4
+        ("fire_protection", 5, 2, (10, 8), (18, 8)), // fire_protection.json 10+8/18+8/2
+        ("projectile_protection", 5, 2, (3, 6), (9, 6)), // projectile_protection.json 9+6/2
+        ("sharpness", 10, 1, (1, 11), (21, 11)),
+        ("smite", 5, 2, (5, 8), (25, 8)),
+        ("bane_of_arthropods", 5, 2, (5, 8), (25, 8)),
+        ("knockback", 5, 2, (5, 20), (55, 20)), // knockback.json max 55+20
+        ("unbreaking", 5, 2, (5, 8), (55, 8)),
+        ("mending", 2, 4, (25, 25), (75, 25)),
+        ("efficiency", 10, 1, (1, 10), (51, 10)),
+        ("fortune", 2, 4, (15, 9), (65, 9)), // fortune.json max 65+9
+        ("looting", 2, 4, (15, 9), (65, 9)), // looting.json max 65+9、anvil 4
+    ];
+    for (name, w, anvil, min, max) in table {
+        let d = enchant::ENCHANTS.iter().find(|e| e.name == *name).unwrap();
+        assert_eq!(d.weight, *w, "{name} weight");
+        assert_eq!(d.anvil_cost, *anvil, "{name} anvil_cost");
+        assert_eq!((d.min_cost.base, d.min_cost.per_level_above_first), *min, "{name} min");
+        assert_eq!((d.max_cost.base, d.max_cost.per_level_above_first), *max, "{name} max");
+    }
+}
+
+/// select 扰动乘性验证（EnchantmentHelper.java:560-561
+/// `cost + cost*(r1+r2-1)*0.15`）：rng 恒 0 → span=−0.15，输入 40 经
+/// +1 后 41 → round(41×0.85)=35；efficiency 窗口 L4=[31,81] 含 35、
+/// L5=[41,91] 不含 → 出效率 **4 级**。旧加性实现 cost≈41 → 出 5 级。
+/// seed=47 使加权首选取中 efficiency（候选序 protection10/blast2/fire5/
+/// sharp10/smite5/bane5/kb5/unb5/eff10… 累计 47 落 eff 段）。
+#[test]
+fn select_perturbation_is_multiplicative() {
+    let mut rng = || 0u32;
+    let out = enchant::select_enchantments(40, 14, 47, &[], &mut rng);
+    assert!(
+        out.contains(&(enchant::EFFICIENCY, 4)),
+        "乘性扰动后 cost=35 → efficiency L4；实得 {out:?}（旧加性会出 L5）"
+    );
+    assert!(!out.contains(&(enchant::EFFICIENCY, 5)));
+}
+
 #[test]
 fn slot_costs_valid() {
     let mut rng = lcg(11);
@@ -205,7 +252,76 @@ fn anvil_merge_and_costs() {
     // remaining = 10 + 20 + 250*12/100 = 60 → damage = 190
     assert_eq!(out.damage, 190);
     assert_eq!(res.cost, 2);
-    assert_eq!(res.repair_cost, 5); // 2*2+1
+    // 历史税基数 = max(继承税) = 0 → 0*2+1 = 1（操作价 2 **不入基数**；
+    // 旧实现 (2)*2+1=5 为 bug，AnvilMenu.java:255-264）
+    assert_eq!(res.repair_cost, 1);
+}
+
+/// 历史税：基数只吃 max(继承税)，连修线性倍增而非操作价滚雪球。
+#[test]
+fn anvil_history_tax_base_is_inherited_only() {
+    let mut a = ItemStack::new(IRON_SWORD_INDEX, 1);
+    a.damage = 200;
+    let mat = ItemStack::new(IRON_INGOT, 1); // 修 1 件 +1 级
+    // 第 1 修：继承税 0 → 显示价 1、新税 0*2+1 = 1
+    let r1 = anvil::combine(&a, &mat, None, 0, 0, 0);
+    assert_eq!(r1.cost, 1);
+    assert_eq!(r1.repair_cost, 1);
+    // 第 2 修（带税 1 的具）：显示价 1+1=2、新税 1*2+1 = 3
+    //（旧实现 (1+1)*2+1=5，操作价入基数的指数 bug）
+    let r2 = anvil::combine(&a, &mat, None, r1.repair_cost, 0, 0);
+    assert_eq!(r2.cost, 2);
+    assert_eq!(r2.repair_cost, 3);
+    // 第 3 修：新税 3*2+1 = 7
+    let r3 = anvil::combine(&a, &mat, None, r2.repair_cost, 0, 0);
+    assert_eq!(r3.repair_cost, 7);
+    // 基数 = max(继承税)：牺牲品税更高时取牺牲品（:255-258）
+    let r = anvil::combine(&a, &mat, None, 2, 9, 0);
+    assert_eq!(r.cost, 12); // 2+9+1
+    assert_eq!(r.repair_cost, 19); // 9*2+1
+}
+
+/// 纯改名不涨税（AnvilMenu.java:260 namingCost==price&&>0 → 不递增）。
+#[test]
+fn anvil_pure_rename_keeps_tax() {
+    let a = ItemStack::new(IRON_SWORD_INDEX, 1);
+    let empty = ItemStack::empty();
+    let r = anvil::combine(&a, &empty, Some("Excalibur"), 6, 0, 0);
+    assert_eq!(r.cost, 7); // 6 + 改名 1
+    assert_eq!(r.repair_cost, 6, "纯改名税原样继承");
+    // 改名 + 其他操作 = 涨价涨税（非纯改名）
+    let b = ItemStack::new(IRON_SWORD_INDEX, 1);
+    let r2 = anvil::combine(&a, &b, Some("Excalibur"), 6, 0, 0);
+    assert_eq!(r2.cost, 9); // 6 + 2(合并) + 1(改名)
+    assert_eq!(r2.repair_cost, 13); // 6*2+1
+}
+
+/// 修料映射 = tags/item/*_tool_materials.json（旧实现木具用煤炭、石具无门）。
+#[test]
+fn anvil_repair_materials_match_tags() {
+    use mcv_item::{COBBLESTONE, COBBLED_DEEPSLATE, ItemStack as IS};
+    let p = |id: u16| IS::new(id, 1);
+    // wooden → #planks（wooden_tool_materials.json）
+    assert!(p(PLANKS).is_repair_material_for(WOODEN_PICKAXE_INDEX));
+    assert!(!p(mcv_item::COAL).is_repair_material_for(WOODEN_PICKAXE_INDEX), "煤炭修木具为旧 bug");
+    // stone → cobblestone/cobbled_deepslate（stone_tool_materials.json，
+    // blackstone 未注册缺席）
+    assert!(p(COBBLESTONE).is_repair_material_for(STONE_PICKAXE_INDEX));
+    assert!(p(COBBLED_DEEPSLATE).is_repair_material_for(STONE_PICKAXE_INDEX));
+    assert!(!p(mcv_item::COBBLESTONE).is_repair_material_for(WOODEN_PICKAXE_INDEX));
+    // iron/diamond 同物
+    assert!(p(IRON_INGOT).is_repair_material_for(IRON_PICKAXE_INDEX));
+    assert!(!p(IRON_INGOT).is_repair_material_for(STONE_PICKAXE_INDEX));
+    // golden/netherite → gold_ingot/netherite_ingot（本次补注册）
+    let golden_sword = mcv_item::item_by_name("golden_sword").unwrap();
+    let netherite_pick = mcv_item::item_by_name("netherite_pickaxe").unwrap();
+    assert!(p(mcv_item::GOLD_INGOT).is_repair_material_for(golden_sword));
+    assert!(p(mcv_item::NETHERITE_INGOT).is_repair_material_for(netherite_pick));
+    // 非耐久物（iron_ore 同前缀陷阱）不放行
+    assert!(
+        !p(IRON_INGOT).is_repair_material_for(mcv_item::item_by_name("iron_ore").unwrap()),
+        "isDamageableItem 门（AnvilMenu.java:133）"
+    );
 }
 
 #[test]

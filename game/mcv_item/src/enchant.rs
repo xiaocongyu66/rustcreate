@@ -91,7 +91,8 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 11,
             per_level_above_first: 6,
         },
-        anvil_cost: 1,
+        // feather_falling.json: "anvil_cost": 2（旧值 1 过期）
+        anvil_cost: 2,
         table_allowed: true,
     },
     EnchantDef {
@@ -103,11 +104,12 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 5,
             per_level_above_first: 8,
         },
+        // blast_protection.json: max_cost 13+8、anvil_cost 4（旧 17/2 过期）
         max_cost: Cost {
-            base: 17,
+            base: 13,
             per_level_above_first: 8,
         },
-        anvil_cost: 2,
+        anvil_cost: 4,
         table_allowed: true,
     },
     EnchantDef {
@@ -115,15 +117,16 @@ pub static ENCHANTS: [EnchantDef; 14] = [
         name: "fire_protection",
         weight: 5,
         max_level: 4,
+        // fire_protection.json: min 10+8 / max 18+8 / anvil 2（旧 5/13/1 全套过期）
         min_cost: Cost {
-            base: 5,
+            base: 10,
             per_level_above_first: 8,
         },
         max_cost: Cost {
-            base: 13,
+            base: 18,
             per_level_above_first: 8,
         },
-        anvil_cost: 1,
+        anvil_cost: 2,
         table_allowed: true,
     },
     EnchantDef {
@@ -135,11 +138,12 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 3,
             per_level_above_first: 6,
         },
+        // projectile_protection.json: max_cost 9+6、anvil_cost 2（旧 15/1 过期）
         max_cost: Cost {
-            base: 15,
+            base: 9,
             per_level_above_first: 6,
         },
-        anvil_cost: 1,
+        anvil_cost: 2,
         table_allowed: true,
     },
     EnchantDef {
@@ -199,8 +203,9 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 5,
             per_level_above_first: 20,
         },
+        // knockback.json: max_cost 55+20（旧 25 过期 → table 高档 knockback 永不可出）
         max_cost: Cost {
-            base: 25,
+            base: 55,
             per_level_above_first: 20,
         },
         anvil_cost: 2,
@@ -263,8 +268,9 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 15,
             per_level_above_first: 9,
         },
+        // fortune.json: max_cost 65+9（旧 61 过期）
         max_cost: Cost {
-            base: 61,
+            base: 65,
             per_level_above_first: 9,
         },
         anvil_cost: 4,
@@ -279,11 +285,12 @@ pub static ENCHANTS: [EnchantDef; 14] = [
             base: 15,
             per_level_above_first: 9,
         },
+        // looting.json: max_cost 65+9、anvil_cost 4（旧 61/2 过期）
         max_cost: Cost {
-            base: 61,
+            base: 65,
             per_level_above_first: 9,
         },
-        anvil_cost: 2,
+        anvil_cost: 4,
         table_allowed: true,
     },
 ];
@@ -309,9 +316,14 @@ pub fn slot_costs(bookcases: u32, rng: &mut impl FnMut() -> u32) -> [Option<u32>
     ]
 }
 
-/// selectEnchantment (EnchantmentHelper.java:544-622):
+/// selectEnchantment (EnchantmentHelper.java:550-581):
 /// cost += 1 + rand(enchantable/4+1) + rand(enchantable/4+1);
-/// ±15% round perturbation; candidates = defs whose [min_cost(l), max_cost(l)]
+/// :560-561 原版扰动为**乘性**——`randomSpan = (nextFloat()+nextFloat()-1)*0.15`
+/// （∈[-0.15,+0.15]）后 `cost = clamp(round(cost + cost*randomSpan), 1, MAX)`，
+/// 即整体 ×0.85..1.15；旧实现 `cost += span*0.15` 是加性 ±0.15（取整后几乎
+/// 恒等），分布偏移，已改为乘性。（注：账本写的 "×0.75..1.0" 与 26.1 实读
+/// 不符，按 EnchantmentHelper.java:560-561 实读 ×0.85..1.15 落地。）
+/// candidates = defs whose [min_cost(l), max_cost(l)]
 /// window contains cost (top level down); weighted pick; loop while
 /// rand(50) <= cost, halving cost, removing exclusives.
 pub fn select_enchantments(
@@ -325,8 +337,11 @@ pub fn select_enchantments(
         + 1.0
         + (rng() % (u32::from(enchantable) / 4 + 1)) as f32
         + (rng() % (u32::from(enchantable) / 4 + 1)) as f32;
-    cost += (rng() as f32 / u32::MAX as f32 + rng() as f32 / u32::MAX as f32 - 1.0) * 0.15;
-    let mut cost = cost.round().max(1.0) as u32;
+    // EnchantmentHelper.java:560: span = (r1 + r2 - 1) * 0.15（三角分布）
+    let span = (rng() as f32 / u32::MAX as f32 + rng() as f32 / u32::MAX as f32 - 1.0) * 0.15;
+    // :561: cost + cost*span，round 后 clamp ≥1（乘性扰动，非加性）
+    cost = (cost + cost * span).round().max(1.0);
+    let mut cost = cost as u32;
 
     let mut taken_groups: Vec<u8> = existing.iter().map(|&id| exclusive_group(id)).collect();
     let mut out: Vec<(u16, u8)> = Vec::new();
