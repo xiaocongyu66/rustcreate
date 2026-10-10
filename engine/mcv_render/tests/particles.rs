@@ -60,7 +60,8 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
             usage: wgpu::BufferUsages::INDEX,
         }),
         opaque_range: 0..6,
-        water_range: 0..0,
+        // #80 合批：单块条目无水分段（旧 water_range: 0..0 的等价形态）。
+        water_parts: Vec::new(),
         aabb: (Vec3::new(0.0, y - 0.1, 0.0), Vec3::new(16.0, y + 0.1, 16.0)),
     }
 }

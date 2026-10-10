@@ -20,7 +20,10 @@ pub mod unifont;
 
 pub use camera::Camera;
 pub use cloud::{CloudSettings, Clouds};
-pub use gpu::{FrameUniforms, HudQuad, MobInstance, PlayerUniforms, RenderChunk, Renderer, Scene};
+pub use gpu::{
+    BatchingStats, FrameStats, FrameUniforms, HudQuad, MobInstance, PlayerUniforms, RenderChunk,
+    Renderer, Scene, WaterPart,
+};
 pub use hand::{HandItem, HandRender};
 pub use mob_mesh::{
     MAX_MOB_PARTS, MOB_KIND_COUNT, MOB_MAX_INSTANCES, MOB_PART_COUNTS, MOB_TEX_FILES,

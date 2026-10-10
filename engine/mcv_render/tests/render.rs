@@ -56,7 +56,8 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
             usage: wgpu::BufferUsages::INDEX,
         }),
         opaque_range: 0..6,
-        water_range: 0..0,
+        // #80 合批：单块条目无水分段（旧 water_range: 0..0 的等价形态）。
+        water_parts: Vec::new(),
         aabb: (Vec3::new(0.0, y - 0.1, 0.0), Vec3::new(16.0, y + 0.1, 16.0)),
     }
 }
@@ -619,7 +620,9 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
 #[test]
 fn water_pass_renders_uploaded_water_vertices() {
     let (device, queue, mut renderer) = setup();
-    let up = mcv_render::gpu::MeshUploader::new(device.clone());
+    // #80 起上传器持批记账（&mut），且上传经 flush 提交——生产序
+    // stream()（flush）→ draw_frame，测试对齐之（见下方 flush 调用）。
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
     // validation 范围：覆盖建缓冲（创建期映射写入）+ 两帧全部 pass。
     let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
 
@@ -841,7 +844,8 @@ fn gles_fallback_world_frame_smoke() {
     );
     let clouds = mcv_render::Clouds::new(&device, &queue);
     // 事故现场复跑：MeshUploader 创建期映射写入路径（GLES 曾在此 fatal）。
-    let up = mcv_render::gpu::MeshUploader::new(device.clone());
+    // #80 起上传器持批记账（&mut）。
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
     let y = 100.0f32;
     let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
         pos: p,
@@ -1721,4 +1725,254 @@ fn first_person_hand_paints_bottom_right() {
         scope_err.is_none(),
         "手持 pass 产生 validation error: {scope_err:?}——臂/立方体缓冲接线回归"
     );
+}
+
+/// #80 相邻区块合批（结构性）：空间相邻的同 pass 区块必须合并为更少的
+/// 绘制条目、一次 draw 画多个区块。三重断言：
+/// (a) 三个相邻块经 MeshUploader 只产出 1 个条目（批次 origin = 最小角、
+///     opaque 索引量为三块之和）；
+/// (b) 批次条目画出的地形与逐块条目基线逐像素一致（重定基只动顶点字节，
+///     世界坐标逐位不变——frustum_cull/草地测试同款绿份额断言兜底）；
+/// (c) draw_frame 统计 opaque_draws == 1（3 块 1 draw，收敛 3 倍）。
+#[test]
+fn adjacent_chunks_merge_into_one_draw_unit() {
+    let (device, queue, mut renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let y = 100.0f32;
+    let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer: mcv_core::tiles::GRASS_TOP,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2, // face_id +Y
+        pad: [0; 2],
+    };
+    let verts = [
+        mk([0.0, y, 0.0], [0, 0]),
+        mk([0.0, y, 16.0], [0, 4096]),
+        mk([16.0, y, 16.0], [4096, 4096]),
+        mk([16.0, y, 0.0], [4096, 0]),
+    ];
+    let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    let vb = bytemuck::cast_slice(&verts);
+    // 三个 x 向相邻块（局部顶点 0..16，原点 0/16/32）——mesher 输出即局部
+    // 坐标，重定基由上传器负责。
+    let _c0 = up.build_chunk([0.0, 0.0, 0.0], vb, &idx, None);
+    let _c1 = up.build_chunk([16.0, 0.0, 0.0], vb, &idx, None);
+    let _c2 = up.build_chunk([32.0, 0.0, 0.0], vb, &idx, None);
+
+    let entries = up.entries();
+    assert_eq!(
+        entries.len(),
+        1,
+        "三个相邻块必须合并为 1 个批次条目，实测 {}",
+        entries.len()
+    );
+    assert_eq!(entries[0].origin, [0.0, 0.0, 0.0], "批次 origin 必须是最小角");
+    assert_eq!(entries[0].opaque_range, 0..18, "批次索引量 = 三块之和");
+
+    // (b)+(c)：批次条目整帧渲染——绿份额与 draw 数。
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let camera = Camera {
+        pos: Vec3::new(24.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000); // noon
+    let scene = Scene {
+        camera: &camera,
+        time: 0.0,
+        day_factor: day,
+        fog_tint: [1.0, 1.0, 1.0],
+        fog_density_mult: 1.0,
+        sun_dir: sun,
+        moon_phase: 0,
+        width: 320.0,
+        height: 240.0,
+        chunks: up.entries(),
+        hud: &hud,
+        cloud: None,
+        player: None,
+        mobs: None,
+        overlay: None,
+        underwater: false,
+        particles: None,
+        hand: None,
+    };
+    renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+    let st = renderer.last_frame_stats();
+    assert_eq!(
+        st.opaque_draws, 1,
+        "三个相邻块合批后 opaque draw 必须是 1 次"
+    );
+    let mut enc = device.create_command_encoder(&Default::default());
+    target.enqueue_copy(&mut enc);
+    queue.submit([enc.finish()]);
+    let rgba = target.read_pixels(&device);
+    let (green, _) = sample_stats(&rgba, extent.width, extent.height);
+    assert!(
+        green > 0.2,
+        "批次条目渲染缺草地像素 green={green}——重定基/索引平移回归"
+    );
+}
+
+/// #80 重网格批次重建：批次内成员重传新网格后，批次条目必须用**新字节**
+/// 原位重建（同批次成员资格不变、条目数不变），画面随新贴图切换。
+#[test]
+fn batch_rebuild_uses_fresh_member_bytes() {
+    let (device, queue, mut renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let y = 100.0f32;
+    let mk = |layer: u16, p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2, // face_id +Y
+        pad: [0; 2],
+    };
+    let verts_for = |layer: u16| {
+        [
+            mk(layer, [0.0, y, 0.0], [0, 0]),
+            mk(layer, [0.0, y, 16.0], [0, 4096]),
+            mk(layer, [16.0, y, 16.0], [4096, 4096]),
+            mk(layer, [16.0, y, 0.0], [4096, 0]),
+        ]
+    };
+    let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let camera = Camera {
+        pos: Vec3::new(16.0, 110.0, 26.0),
+        yaw: 0.0,
+        pitch: -0.62,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+    };
+    let hud: Vec<HudQuad> = Vec::new();
+    let (sun, day) = mcv_render::sun_state(6000);
+
+    let frame_green = |renderer: &mut mcv_render::Renderer,
+                       chunks: &[RenderChunk]|
+     -> f64 {
+        let scene = Scene {
+            camera: &camera,
+            time: 0.0,
+            day_factor: day,
+            fog_tint: [1.0, 1.0, 1.0],
+            fog_density_mult: 1.0,
+            sun_dir: sun,
+            moon_phase: 0,
+            width: 320.0,
+            height: 240.0,
+            chunks,
+            hud: &hud,
+            cloud: None,
+            player: None,
+            mobs: None,
+            overlay: None,
+            underwater: false,
+            particles: None,
+            hand: None,
+        };
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        let mut enc = device.create_command_encoder(&Default::default());
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        let rgba = target.read_pixels(&device);
+        let (green, _) = sample_stats(&rgba, extent.width, extent.height);
+        green
+    };
+
+    // 两块相邻（x 0 与 16），先全草皮。
+    let _a = up.build_chunk(
+        [0.0, 0.0, 0.0],
+        bytemuck::cast_slice(&verts_for(mcv_core::tiles::GRASS_TOP)),
+        &idx,
+        None,
+    );
+    let _b = up.build_chunk(
+        [16.0, 0.0, 0.0],
+        bytemuck::cast_slice(&verts_for(mcv_core::tiles::GRASS_TOP)),
+        &idx,
+        None,
+    );
+    assert_eq!(up.entries().len(), 1, "两块必须合为一批");
+    let green_grass = frame_green(&mut renderer, up.entries());
+
+    // 重网格块 A：草 → 泥土。批次条目必须换新字节（成员资格与条目数不变）。
+    let _a2 = up.build_chunk(
+        [0.0, 0.0, 0.0],
+        bytemuck::cast_slice(&verts_for(mcv_core::tiles::DIRT)),
+        &idx,
+        None,
+    );
+    assert_eq!(up.entries().len(), 1, "重网格不得拆批");
+    let green_dirt = frame_green(&mut renderer, up.entries());
+    assert!(
+        green_dirt < green_grass * 0.5,
+        "重网格后画面必须切换到新贴图（草 green={green_grass} → 泥 green={green_dirt}）——批次重建用了陈旧字节"
+    );
+}
+
+/// #80 卸载成员：批次随成员卸载收缩/清批，画面不得残留已卸载区块的像素。
+#[test]
+fn unload_removes_member_from_batch() {
+    let (device, queue, mut renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone());
+    let y = 100.0f32;
+    let mk = |p: [f32; 3], uv: [u16; 2]| Tv {
+        pos: p,
+        uv,
+        layer: mcv_core::tiles::GRASS_TOP,
+        block_light: 0,
+        sky_light: 15,
+        ao: 3,
+        flags: 2,
+        pad: [0; 2],
+    };
+    let verts = [
+        mk([0.0, y, 0.0], [0, 0]),
+        mk([0.0, y, 16.0], [0, 4096]),
+        mk([16.0, y, 16.0], [4096, 4096]),
+        mk([16.0, y, 0.0], [4096, 0]),
+    ];
+    let idx: [u32; 6] = [0, 1, 2, 0, 2, 3];
+    let vb = bytemuck::cast_slice(&verts);
+    let _a = up.build_chunk([0.0, 0.0, 0.0], vb, &idx, None);
+    let _b = up.build_chunk([16.0, 0.0, 0.0], vb, &idx, None);
+    assert_eq!(up.entries().len(), 1, "两块合为一批");
+    assert_eq!(up.batching_stats().meshed_chunks, 2);
+
+    // 卸载块 B（x=16）：批次收缩为单块 A，画面只剩 A。
+    up.unload(mcv_core::ChunkPos::new(1, 0));
+    assert_eq!(up.entries().len(), 1, "批内仍有一块，批次保留");
+    assert_eq!(up.batching_stats().meshed_chunks, 1);
+    // 卸载块 A：批次清空。
+    up.unload(mcv_core::ChunkPos::new(0, 0));
+    assert_eq!(up.entries().len(), 0, "批空必须删批");
+
+    // 卸载不存在的区块 = no-op（不炸不建批）。
+    up.unload(mcv_core::ChunkPos::new(9, 9));
+    assert_eq!(up.entries().len(), 0);
 }

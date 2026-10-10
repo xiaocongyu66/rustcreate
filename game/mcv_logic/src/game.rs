@@ -59,8 +59,17 @@ impl GameMode {
 pub trait ChunkMesher: Send {
     /// `handles` = 3x3 neighbourhood, row-major (dz outer), center = [4].
     /// 返回引擎侧组装好的 [`RenderChunk`]（游戏层不触 wgpu，上传经
-    /// [`mcv_render::gpu::MeshUploader`]）。
+    /// [`mcv_render::gpu::MeshUploader`]）。#80 起网格字节由实现入池并
+    /// 参与相邻区块合批，绘制条目表由实现自持（[`Self::entries`]）。
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk>;
+
+    /// 区块卸载：释放该块网格与批次成员资格（#80 合批记账，默认 no-op）。
+    fn unload(&mut self, _pos: ChunkPos) {}
+
+    /// 当前绘制条目表（#80 合批后 = 批次条目；无头实现恒空表）。
+    fn entries(&self) -> &[RenderChunk] {
+        &[]
+    }
 }
 
 /// Real mesher: pure-Rust greedy mesh via mcv_mesher + GPU upload.
@@ -105,6 +114,14 @@ impl ChunkMesher for RustMesher {
             opaque.indices(),
             water.as_ref().map(|w| (w.vertex_data(), w.indices())),
         ))
+    }
+
+    fn unload(&mut self, pos: ChunkPos) {
+        self.uploader.unload(pos);
+    }
+
+    fn entries(&self) -> &[RenderChunk] {
+        self.uploader.entries()
     }
 }
 
@@ -466,10 +483,10 @@ pub struct GameRuntime {
     pub on_tick: bool,
     pub mesher: Box<dyn ChunkMesher>,
     pub save_dir: std::path::PathBuf,
-    render_chunks: Vec<RenderChunk>,
-    /// 已建网格区块的 origin 记账（与 `render_chunks` 严格同步增删）。
-    /// O(1) 判「这块是否已有网格」替代逐帧对全表做线性扫（旧实现每帧
-    /// O(loaded×meshed) 次浮点比对），并消除按 origin 浮点匹配的精度隐患。
+    /// 已建网格区块的记账（#80 起绘制条目表由 mesher 实现自持，游戏层只
+    /// 记「哪块已建网格」）。O(1) 判「这块是否已有网格」替代逐帧对全表做
+    /// 线性扫（旧实现每帧 O(loaded×meshed) 次浮点比对），并消除按 origin
+    /// 浮点匹配的精度隐患。
     meshed: HashSet<ChunkPos>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
@@ -824,7 +841,6 @@ impl GameRuntime {
             on_tick: false,
             mesher,
             save_dir,
-            render_chunks: Vec::new(),
             meshed: HashSet::new(),
             spawned: false,
             border_synced: HashMap::new(),
@@ -1651,11 +1667,11 @@ impl GameRuntime {
             self.chunks.remove(&c);
             self.border_synced.remove(&c);
             self.mesh_fail.remove(&c);
-            // 网格记账同步回收：render_chunks 里的 GPU 缓冲随条目 drop 释放，
-            // meshed 集合删键保证重进视野时会重建网格（保持两者严格同步）。
+            // 网格记账同步回收：mesher 实现释放该块的网格字节与批次成员
+            // 资格（GPU 缓冲随条目重建/清批 drop），meshed 集合删键保证重进
+            // 视野时会重建网格（保持两者严格同步）。
             self.meshed.remove(&c);
-            self.render_chunks
-                .retain(|r| r.origin[0] != 16.0 * c.x as f32 || r.origin[2] != 16.0 * c.z as f32);
+            self.mesher.unload(c);
             // 数据不立即落盘/丢弃：进复活缓存，存盘按帧预算推进（原版
             // saveChunksEagerly 时间片）；重进请求环时原位复活。
             let entry = (c, handle);
@@ -1953,21 +1969,12 @@ impl GameRuntime {
             return false;
         };
         self.mesh_fail.remove(&pos);
-        let origin = rc.origin;
         let idx_count = rc.opaque_range.end;
-        // 原位替换已存在的网格条目：push 到尾部会让整个 Vec 每帧重排，
-        // 渲染器的槽位分配（scene.chunks 下标）随之漂移，高渲染距离下
-        // 超过 max_chunks 的截断集也逐帧变化——画面呈块状翻动。原位
-        // 替换保持「首次建网格」的稳定顺序，重网格不再搬动其他条目。
-        match self
-            .render_chunks
-            .iter()
-            .position(|r| r.origin[0] == origin[0] && r.origin[2] == origin[2])
-        {
-            Some(slot) => self.render_chunks[slot] = rc,
-            None => self.render_chunks.push(rc),
-        }
-        // render_chunks 与 meshed 记账同步：弃旧、记新。
+        // #80 起网格字节已在 mesher 实现内入池并合批（条目表由实现自持、
+        // 原位重建不受重网格影响），游戏层只做 meshed 记账；rc 仅取索引量
+        // 入日志（合批后为所属批次总量，仅取证粒度差异，非行为变化），
+        // 条目值随后自然弃置。
+        // meshed 记账同步：记新。
         self.meshed.insert(pos);
         handle.clear_dirty(mcv_core::dirty::MESH);
         // 网格已建且经 MeshUploader 上传 GPU → 状态机终点
@@ -3974,8 +3981,9 @@ impl GameRuntime {
         })
     }
 
+    /// 当前绘制条目表（#80：合批批次条目，由 mesher 实现自持）。
     pub fn render_chunks(&self) -> &[RenderChunk] {
-        &self.render_chunks
+        self.mesher.entries()
     }
 
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），

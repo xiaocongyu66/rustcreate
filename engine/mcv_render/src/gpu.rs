@@ -40,34 +40,141 @@ pub struct FrameUniforms {
 
 const _: () = assert!(size_of::<FrameUniforms>() == 144);
 
-/// One draw per loaded chunk. Buffers are uploaded once per remesh.
+/// 水绘制分段（#80 合批）：批次内每个成员区块一段。半透明水必须保持
+/// 逐区块远→近绘制序（混合次序不可变），故合批只合并索引缓冲，绘制仍
+/// 逐段进行——`center` 与旧逐块排序键（chunk origin + (8,0,8)）逐值一致。
+#[derive(Clone)]
+pub struct WaterPart {
+    /// [`RenderChunk::water_index_buf`] 内的索引区间。
+    pub range: Range<u32>,
+    /// 成员区块水面中心（origin + (8,0,8)），远→近排序键。
+    pub center: [f32; 3],
+}
+
+/// 一个绘制条目：未合批时 = 单区块（origin 即区块原点、恰好 0/1 个
+/// [`WaterPart`]）；#80 合批后 = 空间相邻、同材质 pass 的区块批次
+/// （origin 为批次最小角、成员顶点已重定基到批次原点、water_parts 每
+/// 成员一段）。缓冲仍只在建网格/重建批次时上传。
 #[derive(Clone)]
 pub struct RenderChunk {
     pub origin: [f32; 3],
     pub vertex_buf: wgpu::Buffer,
     pub index_buf: wgpu::Buffer,
     pub opaque_range: Range<u32>,
-    /// Water geometry is meshed into its own index buffer (separate pass).
+    /// Water geometry is meshed into its own index buffer (separate pass);
+    /// 合批后为批次全体成员水索引的拼接缓冲，分段见 [`RenderChunk::water_parts`]。
     pub water_index_buf: Option<wgpu::Buffer>,
-    pub water_range: Range<u32>,
+    /// 水分段（每成员区块一段；无水 = 空表）。旧单值 `water_range` 是
+    /// 「恰一段」的退化形态，合批后必须按成员拆段保持逐块混合序。
+    pub water_parts: Vec<WaterPart>,
     pub aabb: (Vec3, Vec3),
+}
+
+/// 相邻区块合批（#80）的成员上限：区块数与合并字节双阈值。批次数上限
+/// 决定 draw 收敛比（RENDER_DIST=8 → 289 块 / 8 ≈ 40 批），字节上限决定
+/// 单块重网格触发整批重建的带宽放大上限。
+const MAX_BATCH_MEMBERS: usize = 8;
+const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
+
+/// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BatchingStats {
+    /// 池内已上传网格的区块数。
+    pub meshed_chunks: usize,
+    /// 绘制条目数（批次 + 不可合并单块）——opaque draw 数的上界。
+    pub draw_entries: usize,
+    /// 批次重建次数（新块并入/重网格/卸载都算一次）。
+    pub batch_rebuilds: u64,
+    /// 重建累计写出的顶点+索引字节数。
+    pub rebuild_bytes: u64,
+}
+
+/// 池内单块网格的 CPU 字节（合批重建的数据源）：opaque 顶点 + opaque 局部
+/// 索引 + 水顶点 + 水局部索引。索引一律保存区块局部（0 基）形态，进批次
+/// 时按成员顶点基址平移。
+struct PoolMesh {
+    vbytes: Vec<u8>,
+    opaque_vcount: u32,
+    opaque_idx: Vec<u32>,
+    water_vbytes: Vec<u8>,
+    water_idx: Vec<u32>,
+    /// origin 是否为 16 格网格点（区块原点 y 恒 0）。手工构造的测试原点
+    /// （非 16 倍数）永远单块，不做重定基。
+    mergeable: bool,
 }
 
 /// 网格上传器：游戏层只交出顶点/索引字节，拿回 [`RenderChunk`]。
 ///
-/// 这是引擎把 wgpu 挡在游戏层之外的唯一入口——C++ mesher 产出裸字节，
-/// 本结构负责建 GPU 缓冲；游戏层因此不 `use wgpu`。水几何经
+/// 这是引擎把 wgpu 挡在游戏层之外的唯一入口——mesher 产出裸字节，本结构
+/// 负责建 GPU 缓冲；游戏层因此不 `use wgpu`。水几何经
 /// [`MeshUploader::build_chunk`] 的 `water` 参数上传：水顶点拼在 opaque
 /// 顶点之后共用一个 vb、水索引独立成缓冲并整体偏移 opaque 顶点数（旧文档
 /// 「只上传独立索引缓冲」描述的是 H1 修复前缺水顶点的行为，已纠正）。
+///
+/// #80 起本结构同时持有相邻区块合批账本：每块网格字节入池，空间相邻、
+/// 材质 pass 相同的成员合并成批次条目（[`Self::entries`]），一次 draw 画
+/// 多个区块。条目 origin = 批次最小角，成员顶点在建批次时重定基（加
+/// chunk_origin − batch_origin，全为 16 的倍数，f32 精确）——着色器
+/// `world = uniform.origin + pos` 逐位不变。
 pub struct MeshUploader {
     device: wgpu::Device,
+    pool: std::collections::HashMap<(i32, i32), PoolMesh>,
+    /// 批次成员表，与 `entries` 按下标平行；条目重建原位替换，仅整体清空
+    /// 时才移除槽位（渲染端槽位分配依赖条目序稳定）。
+    batch_members: Vec<Vec<(i32, i32)>>,
+    entries: Vec<RenderChunk>,
+    stats: BatchingStats,
 }
 
 impl MeshUploader {
     /// 只需 device：网格经创建期映射视图写入，不占队列写带宽。
     pub fn new(device: wgpu::Device) -> Self {
-        Self { device }
+        Self {
+            device,
+            pool: std::collections::HashMap::new(),
+            batch_members: Vec::new(),
+            entries: Vec::new(),
+            stats: BatchingStats::default(),
+        }
+    }
+
+    /// 当前绘制条目表（批次 + 不可合并单块）。场景块表即此表——合批后
+    /// 一次 draw 对应一个条目。
+    pub fn entries(&self) -> &[RenderChunk] {
+        &self.entries
+    }
+
+    /// 合批结构性统计（HUD/日志用）。
+    pub fn batching_stats(&self) -> BatchingStats {
+        BatchingStats {
+            draw_entries: self.entries.len(),
+            ..self.stats
+        }
+    }
+
+    /// 区块卸载：释放该块网格字节并从所属批次移除成员；批空删批，否则
+    /// 原位重建（剩余成员顶点重定基到新批次最小角）。
+    pub fn unload(&mut self, pos: mcv_core::ChunkPos) {
+        let key = (pos.x, pos.z);
+        if self.pool.remove(&key).is_some() {
+            self.stats.meshed_chunks -= 1;
+        }
+        let Some(bi) = self
+            .batch_members
+            .iter()
+            .position(|m| m.contains(&key))
+        else {
+            return;
+        };
+        self.batch_members[bi].retain(|&k| k != key);
+        if self.batch_members[bi].is_empty() {
+            // 顺序保持的移除：后续条目槽位前移一次，与旧 per-chunk retain
+            // 的槽位漂移同级。
+            self.batch_members.remove(bi);
+            self.entries.remove(bi);
+        } else {
+            self.rebuild_batch(bi);
+        }
     }
 
     fn vertex_index(&self, v: &[u8], i: &[u32]) -> (wgpu::Buffer, wgpu::Buffer) {
@@ -106,42 +213,206 @@ impl MeshUploader {
         ib
     }
 
-    /// 由裸网格字节组装整块 [`RenderChunk`]（16×256×16 AABB，origin 传入）。
-    /// `water = Some((水顶点, 水索引))`：水顶点拼在 opaque 顶点之后共用一个
-    /// vb，水索引整体偏移 opaque 顶点数——water draw 绑同一个 vertex_buf。
-    /// 旧签名只收水索引、水顶点字节从未上传（`vertex_index(&[], wi)`），
+    /// 由裸网格字节上传一个区块并入池（#80）：水顶点拼在 opaque 顶点之后
+    /// 共用一个 vb、水索引整体偏移 opaque 顶点数——water draw 绑同一个
+    /// vertex_buf。旧签名只收水索引、水顶点字节从未上传（`vertex_index(&[], wi)`），
     /// draw 把基址 0 的水索引绑到 opaque 顶点上：GLES 越界 `glDrawElements`
     /// 直接 INVALID_OPERATION 静默跳过、桌面越界读画垃圾埋进地形——
     /// 水从接线第一天起从未被真正绘制（2026-10-10 真机审计 H1）。
+    ///
+    /// 返回该区块当前的绘制条目（合批后 = 所属批次条目）。重网格时成员
+    /// 资格不变，只重建所属批次；新块并入容量未满的邻接批次（固定方向序
+    /// 保证确定性），否则新建单块批次。origin 非 16 格网格点（手工测试
+    /// 原点）恒单块、不做重定基。
     pub fn build_chunk(
-        &self,
+        &mut self,
         origin: [f32; 3],
         vbytes: &[u8],
         ibytes: &[u32],
         water: Option<(&[u8], &[u32])>,
     ) -> RenderChunk {
-        let mut verts = Vec::with_capacity(vbytes.len() + water.map_or(0, |(wv, _)| wv.len()));
-        verts.extend_from_slice(vbytes);
-        let voff = (verts.len() / TERRAIN_STRIDE) as u32;
-        let water_len = water.map_or(0, |(_, wi)| wi.len());
-        let water_index_buf = water.map(|(wv, wi)| {
-            verts.extend_from_slice(wv);
-            let shifted: Vec<u32> = wi.iter().map(|ix| *ix + voff).collect();
-            self.index_buf(&shifted)
-        });
-        let (vertex_buf, index_buf) = self.vertex_index(&verts, ibytes);
-        RenderChunk {
-            origin,
-            vertex_buf,
-            index_buf,
-            opaque_range: 0..ibytes.len() as u32,
-            water_index_buf,
-            water_range: 0..water_len as u32,
-            aabb: (
-                Vec3::new(origin[0], 0.0, origin[2]),
-                Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),
-            ),
+        let key = (
+            (origin[0] / 16.0).round() as i32,
+            (origin[2] / 16.0).round() as i32,
+        );
+        let mergeable = origin[0] == 16.0 * key.0 as f32
+            && origin[2] == 16.0 * key.1 as f32
+            && origin[1] == 0.0
+            && vbytes.len() % TERRAIN_STRIDE == 0
+            && water.map_or(true, |(wv, _)| wv.len() % TERRAIN_STRIDE == 0);
+        let replaced = self.pool.insert(
+            key,
+            PoolMesh {
+                vbytes: vbytes.to_vec(),
+                opaque_vcount: (vbytes.len() / TERRAIN_STRIDE) as u32,
+                opaque_idx: ibytes.to_vec(),
+                water_vbytes: water.map_or(Vec::new(), |(wv, _)| wv.to_vec()),
+                water_idx: water.map_or(Vec::new(), |(_, wi)| wi.to_vec()),
+                mergeable,
+            },
+        )
+        .is_none();
+        if replaced {
+            self.stats.meshed_chunks += 1;
         }
+        if let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) {
+            // 重网格：批次成员资格不变，只重建本批次（#80 稳定批次要求）。
+            self.rebuild_batch(bi);
+        } else {
+            // 新块：按固定方向序找容量未满的邻接批次并入，否则新建单块批次。
+            let mut joined = None;
+            if mergeable {
+                for (dx, dz) in [(-1i32, 0i32), (1, 0), (0, -1), (0, 1)] {
+                    let nk = (key.0 + dx, key.1 + dz);
+                    let hit = self.batch_members.iter().position(|m| m.contains(&nk));
+                    if let Some(bi) = hit {
+                        if self.batch_joinable(bi, key) {
+                            self.batch_members[bi].push(key);
+                            joined = Some(bi);
+                            break;
+                        }
+                    }
+                }
+            }
+            let bi = match joined {
+                Some(bi) => bi,
+                None => {
+                    let members = vec![key];
+                    let (entry, bytes) = self.build_batch_entry(&members);
+                    self.stats.rebuild_bytes += bytes;
+                    self.batch_members.push(members);
+                    self.entries.push(entry);
+                    self.batch_members.len() - 1
+                }
+            };
+            self.rebuild_batch(bi);
+        }
+        self.entry_of(key).expect("刚入池的区块必有批次")
+    }
+
+    /// 批次是否还能再吞下一个成员（成员数与合并字节双阈值）。
+    fn batch_joinable(&self, bi: usize, key: (i32, i32)) -> bool {
+        let Some(mesh) = self.pool.get(&key) else {
+            return false;
+        };
+        if !mesh.mergeable {
+            return false;
+        }
+        let members = &self.batch_members[bi];
+        if members.len() >= MAX_BATCH_MEMBERS {
+            return false;
+        }
+        let mesh_bytes = |m: &PoolMesh| {
+            m.vbytes.len() + m.water_vbytes.len() + 4 * (m.opaque_idx.len() + m.water_idx.len())
+        };
+        let mut bytes = mesh_bytes(mesh);
+        for k in members {
+            bytes += self.pool.get(k).map_or(0, mesh_bytes);
+        }
+        bytes <= MAX_BATCH_BYTES
+    }
+
+    /// 键所属批次条目。
+    fn entry_of(&self, key: (i32, i32)) -> Option<RenderChunk> {
+        let bi = self.batch_members.iter().position(|m| m.contains(&key))?;
+        self.entries.get(bi).cloned()
+    }
+
+    /// 原位重建第 bi 个批次（成员表不变，数据源为池内最新字节）。
+    fn rebuild_batch(&mut self, bi: usize) {
+        self.stats.batch_rebuilds += 1;
+        let members = self.batch_members[bi].clone();
+        let (entry, bytes) = self.build_batch_entry(&members);
+        self.stats.rebuild_bytes += bytes;
+        self.entries[bi] = entry;
+    }
+
+    /// 由成员表组装批次条目：成员顶点重定基（pos += chunk_origin −
+    /// batch_origin，全为 16 的倍数 → f32 精确，着色器世界坐标逐位不变）、
+    /// 索引按成员顶点基址平移、水索引区间按成员拆段（保持逐块远→近混合序）。
+    /// 返回 (条目, 写出的顶点+索引字节数)。
+    fn build_batch_entry(&self, members: &[(i32, i32)]) -> (RenderChunk, u64) {
+        let min_cx = members.iter().map(|&(cx, _)| cx).min().expect("批次非空");
+        let min_cz = members.iter().map(|&(_, cz)| cz).min().expect("批次非空");
+        let batch_origin = [16.0 * min_cx as f32, 0.0, 16.0 * min_cz as f32];
+        let mut vbytes: Vec<u8> = Vec::new();
+        let mut opaque_idx: Vec<u32> = Vec::new();
+        let mut water_idx: Vec<u32> = Vec::new();
+        let mut water_parts: Vec<WaterPart> = Vec::new();
+        let mut vbase: u32 = 0;
+        let mut wibase: u32 = 0;
+        let mut aabb: Option<(Vec3, Vec3)> = None;
+        for &(cx, cz) in members {
+            let mesh = self.pool.get(&(cx, cz)).expect("批次成员必在池中");
+            let dx = ((cx - min_cx) * 16) as f32;
+            let dz = ((cz - min_cz) * 16) as f32;
+            let mut mv = mesh.vbytes.clone();
+            rebase_positions(&mut mv, dx, dz);
+            let mut wv = mesh.water_vbytes.clone();
+            rebase_positions(&mut wv, dx, dz);
+            for ix in &mesh.opaque_idx {
+                opaque_idx.push(ix + vbase);
+            }
+            if !mesh.water_idx.is_empty() {
+                let woff = vbase + mesh.opaque_vcount;
+                for ix in &mesh.water_idx {
+                    water_idx.push(ix + woff);
+                }
+                water_parts.push(WaterPart {
+                    range: wibase..wibase + mesh.water_idx.len() as u32,
+                    center: [16.0 * cx as f32 + 8.0, 0.0, 16.0 * cz as f32 + 8.0],
+                });
+                wibase += mesh.water_idx.len() as u32;
+            }
+            vbase += ((mv.len() + wv.len()) / TERRAIN_STRIDE) as u32;
+            vbytes.extend_from_slice(&mv);
+            vbytes.extend_from_slice(&wv);
+            let c_origin = Vec3::new(16.0 * cx as f32, 0.0, 16.0 * cz as f32);
+            let c_aabb = (
+                c_origin,
+                Vec3::new(c_origin.x + 16.0, 256.0, c_origin.z + 16.0),
+            );
+            aabb = Some(match aabb {
+                None => c_aabb,
+                Some((mn, mx)) => (mn.min(c_aabb.0), mx.max(c_aabb.1)),
+            });
+        }
+        let entry_bytes =
+            (vbytes.len() + 4 * (opaque_idx.len() + water_idx.len())) as u64;
+        let has_water = !water_parts.is_empty();
+        let water_index_buf = has_water.then(|| self.index_buf(&water_idx));
+        let (vertex_buf, index_buf) = self.vertex_index(&vbytes, &opaque_idx);
+        let (aabb_min, aabb_max) = aabb.unwrap_or((Vec3::ZERO, Vec3::ZERO));
+        (
+            RenderChunk {
+                origin: batch_origin,
+                vertex_buf,
+                index_buf,
+                opaque_range: 0..opaque_idx.len() as u32,
+                water_index_buf,
+                water_parts,
+                aabb: (aabb_min, aabb_max),
+            },
+            entry_bytes,
+        )
+    }
+}
+
+/// 顶点位置重定基：每 TERRAIN_STRIDE 字节的前 12 字节是 f32x3 pos，x/z 加
+/// 批次内偏移（y 不动——区块原点 y 恒 0）。逐字节读写避开 Vec<u8> 的对齐
+/// 假设；偏移为 16 的倍数、局部坐标为整数，f32 运算精确、世界坐标逐位
+/// 与逐块绘制一致。
+fn rebase_positions(v: &mut [u8], dx: f32, dz: f32) {
+    if dx == 0.0 && dz == 0.0 {
+        return;
+    }
+    for vtx in v.chunks_exact_mut(TERRAIN_STRIDE) {
+        let mut x = f32::from_le_bytes([vtx[0], vtx[1], vtx[2], vtx[3]]);
+        let mut z = f32::from_le_bytes([vtx[8], vtx[9], vtx[10], vtx[11]]);
+        x += dx;
+        z += dz;
+        vtx[0..4].copy_from_slice(&x.to_le_bytes());
+        vtx[8..12].copy_from_slice(&z.to_le_bytes());
     }
 }
 
@@ -339,9 +610,24 @@ pub struct Scene<'a> {
     pub hand: Option<crate::hand::HandRender>,
 }
 
+/// 帧绘制结构性统计（#80 可观测性）：合批前后 draw 数对比的代码级证据。
+/// 读取经 [`Renderer::last_frame_stats`]；不进 HUD（渲染像素测试对 HUD
+/// 区域敏感，仓内亦无 F3 通路）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct FrameStats {
+    /// 视锥剔除后的绘制条目数（合批 = 批次数，非区块数）。
+    pub visible_entries: u32,
+    /// 本帧 opaque draw_indexed 次数。
+    pub opaque_draws: u32,
+    /// 本帧 water draw_indexed 次数（逐成员分段，与逐块绘制同粒度）。
+    pub water_draws: u32,
+}
+
 pub struct Renderer {
     device: wgpu::Device,
     queue: wgpu::Queue,
+    /// 最近一帧的结构性统计（draw_frame 尾部写入）。
+    last_stats: FrameStats,
     terrain_pipeline: wgpu::RenderPipeline,
     water_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
@@ -2050,6 +2336,7 @@ impl Renderer {
             hand_terrain_ibuf,
             max_chunks,
             max_hud_quads,
+            last_stats: FrameStats::default(),
         }
     }
 
@@ -2245,6 +2532,9 @@ impl Renderer {
         depth: &wgpu::TextureView,
         scene: &Scene,
     ) {
+        // 结构性统计（#80 可观测性）：draw 数下降的代码级取证，
+        // [`Renderer::last_frame_stats`] 读取。
+        let mut stats = FrameStats::default();
         let cam = scene.camera;
         let eye = cam.pos + glam::Vec3::new(0.0, crate::EYE_HEIGHT, 0.0);
         let vp = cam.view_proj();
@@ -2314,6 +2604,7 @@ impl Renderer {
                 visible.push(rc);
             }
         }
+        stats.visible_entries = visible.len() as u32;
         if !visible.is_empty() {
             let mut origins = Vec::with_capacity(visible.len() * 64);
             for rc in &visible {
@@ -2384,6 +2675,7 @@ impl Renderer {
                 pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);
                 if !rc.opaque_range.is_empty() {
                     pass.draw_indexed(rc.opaque_range.clone(), 0, 0..1);
+                    stats.opaque_draws += 1;
                 }
             }
 
@@ -2453,26 +2745,36 @@ impl Renderer {
                 );
             }
 
-            // water: far to near
+            // water: far to near（#80 合批：批次条目的 water_parts 每成员区块
+            // 一段，仍逐段远→近绘制——半透明混合序与逐块绘制逐值同键
+            // （WaterPart.center = 成员 origin+(8,0,8)），只是索引缓冲换批次
+            // 拼接缓冲、origin uniform 用批次槽位（重定基后世界坐标逐位不变）。
             pass.set_pipeline(&self.water_pipeline);
-            let mut water: Vec<(f32, u32, &RenderChunk)> = visible
-                .iter()
-                .enumerate()
-                .filter(|(_, rc)| rc.water_index_buf.is_some() && !rc.water_range.is_empty())
-                .map(|(slot, rc)| {
-                    let c = Vec3::from(rc.origin) + Vec3::new(8.0, 0.0, 8.0);
-                    (c.distance_squared(eye), slot as u32, *rc)
-                })
-                .collect();
+            let mut water: Vec<(f32, u32, usize)> = Vec::new();
+            for (slot, rc) in visible.iter().enumerate() {
+                if rc.water_index_buf.is_none() {
+                    continue;
+                }
+                for (pi, part) in rc.water_parts.iter().enumerate() {
+                    if part.range.is_empty() {
+                        continue;
+                    }
+                    let c = Vec3::from(part.center);
+                    water.push((c.distance_squared(eye), slot as u32, pi));
+                }
+            }
             water.sort_by(|a, b| b.0.total_cmp(&a.0));
-            for (_, slot, rc) in water {
-                pass.set_bind_group(0, &self.frame_bind, &[slot * 256]);
+            for (_, slot, pi) in &water {
+                let rc = &visible[*slot as usize];
+                let part = &rc.water_parts[*pi];
+                pass.set_bind_group(0, &self.frame_bind, &[*slot * 256]);
                 pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
                 pass.set_index_buffer(
                     rc.water_index_buf.as_ref().unwrap().slice(..),
                     wgpu::IndexFormat::Uint32,
                 );
-                pass.draw_indexed(rc.water_range.clone(), 0, 0..1);
+                pass.draw_indexed(part.range.clone(), 0, 0..1);
+                stats.water_draws += 1;
             }
         }
 
@@ -2531,6 +2833,7 @@ impl Renderer {
             pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
         }
 
+        self.last_stats = stats;
         self.queue.submit([encoder.finish()]);
     }
 
@@ -2749,6 +3052,11 @@ impl Renderer {
 
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// 最近一帧的结构性统计（#80）：opaque/water draw 数与可见条目数。
+    pub fn last_frame_stats(&self) -> FrameStats {
+        self.last_stats
     }
 }
 
