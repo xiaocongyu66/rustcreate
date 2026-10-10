@@ -248,13 +248,17 @@ fn small_step_movement_no_flap_and_converges() {
     // —— 收敛段：停止移动。静止判定 = 环内全 Uploaded 且在册区块全部完成
     //    本地布光（成对边同步的全部输入就绪，尾波走完的前提）；此后 30 帧
     //    余量 + 60 帧零变更窗。
+    //    收敛预算 600→1200 帧（循环 1500→2500）：#91 vanilla 后端每区块
+    //    噪声成本约 ×2（NormalNoise 两层独立 fBm），本测又与其余 streaming
+    //    用例并行挤占 CI runner，环内 81 块全到 Uploaded 实测 ~900 帧——
+    //    本段断的是「能收敛 + 收敛后零漂移」，不是生成吞吐（吞吐归 #80）。
     let center = player_chunk(&rt);
     let mut quiescent_at: Option<u32> = None;
     let mut settled = 0u32;
     let mut frame = 0u32;
     let mut window: Vec<Vec<(i32, i32, u32, u32)>> = Vec::new();
     let mut light_at_window_start: Option<Vec<(i32, i32, Vec<u8>)>> = None;
-    for _ in 0..1500u32 {
+    for _ in 0..2500u32 {
         frame += 1;
         rt.stream();
         let all_lit = rt
@@ -285,7 +289,7 @@ fn small_step_movement_no_flap_and_converges() {
         std::thread::sleep(Duration::from_millis(1));
     }
     let at = quiescent_at.expect("停止移动后环内未全部到达 Uploaded（未收敛）");
-    assert!(at <= 600, "环内收敛过慢：静止后 {at} 帧才就绪");
+    assert!(at <= 1200, "环内收敛过慢：静止后 {at} 帧才就绪");
     assert_eq!(window.len(), 60, "未凑齐 60 帧零变更窗（未收敛）");
     let first = &window[0];
     assert!(
