@@ -1478,9 +1478,8 @@ mod tests {
         );
         assert_eq!(e.rend[i].tex_set, 1);
         assert!(
-            e.rend[i].layer >= sprites::SPLASH_BASE
-                && e.rend[i].layer < sprites::SPLASH_BASE + sprites::SPLASH_COUNT,
-            "雨纹理 = splash_0..3（rain.json 与 splash.json 同图集）"
+            e.rend[i].layer < sprites::SPLASH_BASE + sprites::SPLASH_COUNT,
+            "雨纹理 = splash_0..3（rain.json 与 splash.json 同图集；             SPLASH_BASE=0 下界恒真，clippy::absurd_extreme_comparisons 省）"
         );
         // 首 tick 上跳（yd ≥ 0.1 > gravity 0.06）。
         let y0 = e.y[i];
