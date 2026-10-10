@@ -247,3 +247,43 @@ fn soul_fire_deals_double_damage() {
         rt.player.health
     );
 }
+
+// ---------------------------------------------------------------------------
+// #95-3 窒息（MEDIUM）
+// ---------------------------------------------------------------------------
+
+/// 头埋实心方块 → 1.0/tick 走 hurt_player，i 帧门节流成 ~1/s
+/// （LivingEntity.java:405-406 in_wall；Entity.isInWall:2164-2182 眼盒求交）。
+#[test]
+fn suffocation_deals_1_per_second() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("suffocate"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    // 眼位 (8.3, 71.62, 8.5) 所在格 (8,71,8) 填石头。
+    set_block(&mut rt, 8, 71, 8, BlockId(1));
+    run_ticks(&mut rt, 1);
+    assert!(
+        (rt.player.health - 19.0).abs() < 1e-4,
+        "首拍 in_wall 1.0，got {}",
+        rt.player.health
+    );
+    // 20 tick 实际节奏：i 帧门放行两跳（t1、t11）→ 20−2=18。
+    run_ticks(&mut rt, 19);
+    assert!(
+        (rt.player.health - 18.0).abs() < 1e-4,
+        "窒息 ~1/s（i 帧实况 0.5s/跳），got {}",
+        rt.player.health
+    );
+}
+
+/// 头部格空 → 不窒息（对照）。
+#[test]
+fn no_suffocation_with_clear_head() {
+    let mut rt = GameRuntime::new_headless(7, tmp_world("suffocatectl"), GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    run_ticks(&mut rt, 40);
+    assert_eq!(rt.player.health, 20.0, "露天不窒息");
+}

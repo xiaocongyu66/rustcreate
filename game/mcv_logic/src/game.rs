@@ -2551,6 +2551,28 @@ impl GameRuntime {
                     };
                     self.hurt_fire(dmg, 0.1);
                 }
+                // 窒息（26.1 LivingEntity.baseTick:405-406 isInWall → inWall()
+                // 1.0F/tick，i 帧门自然节流 ~1/s；Entity.isInWall:2164-2182 =
+                // 眼位 0.8×width 窄盒（1e-6 高 → 仅眼位所在 y 层）与
+                // suffocating 方块求交；suffocating 默认判据 =
+                // blocksMotion && 满碰撞立方（BlockBehaviour.java:1004）→
+                // 本仓按 solid 全立方近似）。
+                let eye_suffocate = {
+                    let hw = mcv_game::Player::HALF[0] * 0.8;
+                    let mut hit = false;
+                    for bx in (eye.x - hw).floor() as i32..=(eye.x + hw).floor() as i32 {
+                        for bz in (eye.z - hw).floor() as i32..=(eye.z + hw).floor() as i32 {
+                            let d = view.block(BlockPos::new(bx, ec.y, bz)).def();
+                            hit |= d.solid
+                                && !d.liquid
+                                && mcv_core::Shape::from_u8(d.shape) == mcv_core::Shape::Cube;
+                        }
+                    }
+                    hit
+                };
+                if eye_suffocate {
+                    self.hurt_ex(1.0, None, 0.0, false);
+                }
             }
             // ---- 状态效果 tick（26.1 MobEffectInstance.tickServer:223-240，
             // 随 entityTick 每 game tick 一次；与 FoodData.tick 同拍）----
