@@ -1,6 +1,15 @@
-//! Terrain orchestration: drives the C++ terrain kernel per chunk and
-//! commits results into chunk handles. Pure-function entry point is
-//! testable; [`TerrainScheduler`] adds background execution.
+//! Terrain orchestration: drives the terrain kernel per chunk and commits
+//! results into chunk handles. Pure-function entry point is testable;
+//! [`TerrainScheduler`] adds background execution.
+//!
+//! Backend switch（任务板 #78 第一阶段：C++ 地形内核移植为纯 Rust）：
+//! 默认仍走 C++ oracle 路径（mcv_ffi → cpp/src/terrain.cpp，冻结基线）；
+//! `MCV_TERRAIN_BACKEND=rust` 切到纯 Rust 移植（src/rust_terrain.rs）。
+//! 与 mesher 开关同款模式；生产默认切换属后续任务。两路输出由
+//! tests/parity.rs 逐字节对拍锁定（对拍不过修 Rust 侧，禁改 cpp/**）。
+
+mod rust_noise;
+mod rust_terrain;
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
@@ -8,23 +17,79 @@ use std::sync::mpsc::{Receiver, Sender};
 use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
 use mcv_ffi::terrain_generate_raw;
 
+/// 地形生成后端。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TerrainBackend {
+    /// C++ oracle（mcv_ffi → cpp/src/terrain.cpp）。默认：本次只交付移植
+    /// + 对拍门禁，生产默认切换留后续任务。
+    Ffi,
+    /// 纯 Rust 移植（src/rust_terrain.rs）。
+    Rust,
+}
+
+impl TerrainBackend {
+    /// `MCV_TERRAIN_BACKEND=rust` → 纯 Rust；其余（含未设置）→ oracle。
+    pub fn from_env() -> Self {
+        Self::from_value(std::env::var("MCV_TERRAIN_BACKEND").ok().as_deref())
+    }
+
+    /// [`Self::from_env`] 的纯函数核（edition 2024 的 `set_var` 是 unsafe
+    /// 且与并行测试的 `getenv` 有数据竞争，故语义单测走这里，不动真实环境）。
+    fn from_value(v: Option<&str>) -> Self {
+        if v == Some("rust") {
+            Self::Rust
+        } else {
+            Self::Ffi
+        }
+    }
+}
+
+impl Default for TerrainBackend {
+    fn default() -> Self {
+        Self::from_env()
+    }
+}
+
 pub struct TerrainOutput {
     pub pos: ChunkPos,
     pub voxels: ChunkVoxels,
     pub heightmap: Box<[u8; 256]>,
 }
 
-/// Pure function: generate one chunk's voxels + heightmap.
+/// Pure function: generate one chunk's voxels + heightmap（按环境变量选后端）。
 pub fn generate_terrain(seed: u64, pos: ChunkPos) -> Result<TerrainOutput, i32> {
+    generate_terrain_with(TerrainBackend::from_env(), seed, pos)
+}
+
+/// 显式后端生成（对拍测试用，避免环境变量歧义；与
+/// `mcv_mesher::Mesher::with_backend` 同款）。
+pub fn generate_terrain_with(
+    backend: TerrainBackend,
+    seed: u64,
+    pos: ChunkPos,
+) -> Result<TerrainOutput, i32> {
     let mut voxels = ChunkVoxels::filled(mcv_core::BlockId(0));
     let mut heightmap = vec![0u8; 256];
-    terrain_generate_raw(
-        seed,
-        pos.x,
-        pos.z,
-        voxels.as_u16_slice_mut(),
-        &mut heightmap,
-    )?;
+    match backend {
+        TerrainBackend::Ffi => {
+            terrain_generate_raw(
+                seed,
+                pos.x,
+                pos.z,
+                voxels.as_u16_slice_mut(),
+                &mut heightmap,
+            )?;
+        }
+        TerrainBackend::Rust => {
+            rust_terrain::generate(
+                seed,
+                pos.x,
+                pos.z,
+                voxels.as_u16_slice_mut(),
+                &mut heightmap,
+            )?;
+        }
+    }
     Ok(TerrainOutput {
         pos,
         voxels,
@@ -109,9 +174,11 @@ pub enum GenResult {
 }
 
 /// Background terrain generation over a shared worker pool. Results arrive
-/// on [`Self::results`]; the caller commits them on the main thread.
+/// on [`Self::results`]; the caller commits them on the main thread. 后端在
+/// 构造时按 [`TerrainBackend::from_env`] 固定（后台线程反复读环境变量无益）。
 pub struct TerrainScheduler {
     seed: u64,
+    backend: TerrainBackend,
     pool: TaskPool,
     res_tx: Sender<GenResult>,
     res_rx: Receiver<GenResult>,
@@ -123,6 +190,7 @@ impl TerrainScheduler {
         let (tx, rx) = std::sync::mpsc::channel();
         Self {
             seed,
+            backend: TerrainBackend::from_env(),
             pool,
             res_tx: tx,
             res_rx: rx,
@@ -133,14 +201,39 @@ impl TerrainScheduler {
     pub fn request(&self, pos: ChunkPos) {
         let tx = self.res_tx.clone();
         let seed = self.seed;
+        let backend = self.backend;
         self.pool.spawn_lo(Box::new(move || {
             let _ = tx.send(GenResult::Terrain(
-                generate_terrain(seed, pos).map_err(|rc| (pos, rc)),
+                generate_terrain_with(backend, seed, pos).map_err(|rc| (pos, rc)),
             ));
         }));
     }
 
     pub fn results(&self) -> &Receiver<GenResult> {
         &self.res_rx
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TerrainBackend;
+
+    /// 后端开关语义锁：只有精确 "rust" 选 Rust；其余一切值（含未设置）回退
+    /// oracle（派单约束「默认仍走 oracle」）。纯函数核不触真实环境变量。
+    #[test]
+    fn backend_switch_maps_only_exact_rust_value() {
+        for (val, want) in [
+            (Some("rust"), TerrainBackend::Rust),
+            (Some("Rust"), TerrainBackend::Ffi),
+            (Some("ffi"), TerrainBackend::Ffi),
+            (Some(""), TerrainBackend::Ffi),
+            (None, TerrainBackend::Ffi),
+        ] {
+            assert_eq!(
+                TerrainBackend::from_value(val),
+                want,
+                "MCV_TERRAIN_BACKEND={val:?} 语义漂移"
+            );
+        }
     }
 }
