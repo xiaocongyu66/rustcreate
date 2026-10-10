@@ -274,8 +274,7 @@ static HUMANOID_BODY: MobBox = bx([-4.0, 0.0, -2.0], [8.0, 12.0, 4.0], [16.0, 16
 // 本身就比右臂内收 2px 再靠 pivot +5 外推，两臂不对称，不能共用右臂盒
 // （共用会让左臂世界 x∈[2,6] 压进躯干 [−4,4]，原版是 [4,8]）。
 static ZOMBIE_ARM: MobBox = bx([-3.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]);
-static ZOMBIE_ARM_LEFT: MobBox =
-    mirrored(bx([-1.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]));
+static ZOMBIE_ARM_LEFT: MobBox = mirrored(bx([-1.0, -2.0, -2.0], [4.0, 12.0, 4.0], [40.0, 16.0]));
 static ZOMBIE_LEG: MobBox = bx([-2.0, 0.0, -2.0], [4.0, 12.0, 4.0], [0.0, 16.0]);
 
 // ---- 骷髅（SkeletonModel.createBodyLayer = humanoid 骨架细四肢，64x32） ------
@@ -1149,7 +1148,11 @@ mod tests {
         // 协变 matrix3(yaw) = Ry(−yaw)·matrix3(0)，即部位自转与朝向解耦、
         // 整体像刚体绕 y 轴旋转。旧共轭式不满足（自转被 2·yaw 共轭）。
         let m3 = |m: &Mat4| {
-            glam::Mat3::from_cols(m.x_axis.truncate(), m.y_axis.truncate(), m.z_axis.truncate())
+            glam::Mat3::from_cols(
+                m.x_axis.truncate(),
+                m.y_axis.truncate(),
+                m.z_axis.truncate(),
+            )
         };
         let mk = |yaw: f32| {
             mob_model_matrices(
