@@ -610,13 +610,17 @@ fn a_diff_pixels(a: &[u8], b: &[u8]) -> (usize, Option<(u32, u32, u32, u32)>) {
 ///     必抓（lavapipe 有 robust buffer access 会静默补零画错位，由 (a)/(b)
 ///     兜底）。
 ///
-/// 阈值定标（非拍脑袋）：解码仓库内原版 water_still.png——16x512 条带、
-/// 调色板全灰度 165..216、alpha=180（fs_water 忽略 alpha、且明示水不染色
-///），水面片元 = 灰度×shade(1.0) 以 fog≈0.92 与雾色混合 → 屏上 ≈
-/// 166..215 的**中性微蓝灰**（b−r≈4）。派单设想的「蓝像素 b>r+30」谓词
-/// 对真实素材不成立（biome 水染色未接线是另一码事，不在本测试范围），
-/// 改用「亮中性灰」签名：min(rgb)>140 且 g≤r+12 且 |g−b|≤8——草地
-/// （g−r≈50+）、泥土（|g−b|≈30）、天空（g−r≈20+）均不落入。
+/// 阈值定标（非拍脑袋，随「白水面→水色」修复重标）：解码仓库内原版
+/// water_still.png——16x512 条带、调色板全灰度 165..216、alpha=180。
+/// fs_water 现乘生物群系水色常数 0x3F76E4（原版 FluidRenderer.java:88 逐
+/// 顶点 tint 语义，OverworldBiomes.java:28），alpha 回 tex.a（≈0.71，
+/// 塘底泥土半透出）。推算水面片元：lit=灰度×shade(1.0)×tint，与雾色
+/// (0.62,0.76,0.95) 按 fog≈0.89 混、再与塘底按 α=0.706 混 → 屏上 ≈
+/// **(75..90, 95..115, 140..165) 的蓝色**（b−r≈60..80）。旧「亮中性灰」
+/// 签名是白水面缺陷（水未染色）的写照，已按新正确值改为蓝水谓词：
+/// `b>120 && b−r>45 && g−r>10 && r<120`——草地（b<100）、泥土
+/// （b−r<0）、天空（r≈158>120）均不落入，断言语义不变：仍是
+/// 「水带里的像素必须具有水的颜色，且该签名不来自背景」。
 #[test]
 fn water_pass_renders_uploaded_water_vertices() {
     let (device, queue, mut renderer) = setup();
@@ -772,31 +776,32 @@ fn water_pass_renders_uploaded_water_vertices() {
         "水像素竖直位置越带（y {y0}..{y1}，应落在天空带 <60 与地面带 ≥120 之间）——索引偏移/基址契约回归时水会画到 opaque 顶点位（岸线投影带 112..163）"
     );
 
-    // 水面像素签名：投影水带框（x 90..230，y 84..118）内「亮中性灰」像素。
+    // 水面像素签名：投影水带框（x 90..230，y 84..118）内「蓝水色」像素
+    // （谓词推导见测试头部注释；0x3F76E4 tint 生效后 b−r≈60..80）。
     // 有水帧必须大量存在；无水帧同框只有草地/泥土/天空（均不落入谓词）。
-    let water_gray = |px: &[u8]| -> usize {
+    let water_blue = |px: &[u8]| -> usize {
         let mut n = 0usize;
         for y in 84..118u32 {
             for x in 90..230u32 {
                 let o = ((y * extent.width + x) * 4) as usize;
                 let (r, g, b) = (px[o], px[o + 1], px[o + 2]);
                 let (r, g, b) = (r as i32, g as i32, b as i32);
-                if r.min(g).min(b) > 140 && g <= r + 12 && (g - b).abs() <= 8 {
+                if b > 120 && b - r > 45 && g - r > 10 && r < 120 {
                     n += 1;
                 }
             }
         }
         n
     };
-    let wet_gray = water_gray(&wet_px);
-    let dry_gray = water_gray(&dry_px);
+    let wet_blue = water_blue(&wet_px);
+    let dry_blue = water_blue(&dry_px);
     assert!(
-        wet_gray > 800,
-        "水带缺少水面像素（预期 ~3.2k）：wet_gray={wet_gray}——water_still 层采样/水 pass 接线回归"
+        wet_blue > 800,
+        "水带缺少蓝水像素（预期 ~3.2k）：wet_blue={wet_blue}——water_still 层采样/水 tint（0x3F76E4）/水 pass 接线回归"
     );
     assert!(
-        dry_gray < 200,
-        "无水帧出现水面签名像素 {dry_gray}——背景误判（签名谓词失效）"
+        dry_blue < 200,
+        "无水帧出现蓝水签名像素 {dry_blue}——背景误判（签名谓词失效）"
     );
 }
 

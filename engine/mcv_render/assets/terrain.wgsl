@@ -7,6 +7,9 @@ struct FrameUniforms {
     view_proj: mat4x4<f32>,
     cam_pos_time: vec4<f32>,
     sun_dir_day: vec4<f32>,
+    // 雾参数（语义见 fog_factor/fog_color）：x = exp2 密度（水上）；
+    // y/z = 水下线性 start/end；w = 水下旗标（>0.5 → 线性雾 + 雾色切
+    // WATER_FOG_COLOR）。
     fog_params: vec4<f32>,
     // 生物群系染色基色（26.1 ColorResolver 机制）：xyz = plains 草/叶色
     // （sRGB 0..1，colormap 温度×湿度查表），tint_grass.w = 染色开关
@@ -41,9 +44,43 @@ fn light_curve(sky: f32, block: f32, day: f32) -> f32 {
     return 0.08 + 0.92 * max(sb, bb);
 }
 
+// 雾透过率。两种语义按水下旗标 fog.w 选路（gpu.rs draw_frame 填参）：
+// - fog.w ≤ 0.5：exp2 密度雾（常规大气，旧语义不变，density=0 → 无雾）；
+// - fog.w > 0.5：线性 start..end 雾，start/end 取 fog.y/fog.z —— 水下用
+//   原版端点 WATER_FOG_START/END_DISTANCE = −8/96
+//   （EnvironmentAttributes.java:36-41，WaterFogEnvironment.java:16-21
+//   直读该二值，无任何密度换算）。
 fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
+    if (fog.w > 0.5) {
+        return clamp((fog.z - dist) / (fog.z - fog.y), 0.0, 1.0);
+    }
     return exp2(-dist * fog.x);
 }
+
+// 雾色：水下 = 原版 WATER_FOG_COLOR 0xFF050533（EnvironmentAttributes.java:33-35，
+// WaterFogEnvironment.getBaseColor 直返该值；此前混天空蓝是「水下无水感」根因）；
+// 水上 = 既有 夜色↔地平线 昼夜混色。fog.w > 0.5 = 水下旗标。
+// 登记债：waterVision 提亮归一（FogRenderer.java:148-166）依赖玩家能力值，
+// 本仓无该通路，暂按 brightenFactor=0（不提亮）。
+const WATER_FOG_COLOR: vec3<f32> = vec3<f32>(5.0, 5.0, 51.0) / 255.0;
+
+fn fog_color(fog: vec4<f32>) -> vec3<f32> {
+    if (fog.w > 0.5) {
+        return WATER_FOG_COLOR;
+    }
+    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
+    return mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, frame.sun_dir_day.w);
+}
+
+// 水色（缺陷 1）：water_still.png 是灰度 tint 蒙版（实测均值 177,177,177），
+// 蓝色来自逐顶点乘生物群系水色：FluidStateModelSet.java:13-18 给水流体模型
+// 挂 BlockTintSources.water()（:129-139 → BiomeColors.getAverageWaterColor），
+// overworld 默认色 OverworldBiomes.java:28 NORMAL_WATER_COLOR=4159204=0x3F76E4；
+// FluidRenderer.java:88,169,205,307 把该色乘进每顶点。本仓无生物群系系统，
+// 按 overworld 默认常数在片元乘（顶点/片元乘序对平面水等价）。
+// 登记债：生物群系级水色变体 → mcv_core tint.rs 注册 water 层后改走
+// biome_tint(tint_lut[layer])（该文件不在本波红线内）。
+const WATER_TINT: vec3<f32> = vec3<f32>(63.0, 118.0, 228.0) / 255.0;
 
 // 生物群系染色（26.1 BlockColors / BlockTintSources 等价）：灰度遮罩贴图
 // × 生物群系颜色。colormap 族取 FrameUniforms 的 plains 基线色（素材缺失
@@ -84,7 +121,7 @@ struct VtxIn {
     @location(1) uv: vec2<u32>,
     @location(2) layer: u32,
     @location(3) lights: vec2<u32>,  // x = block light, y = sky light
-    @location(4) aoflags: vec2<u32>, // x = ao, y = flags (bit0-2 face, bit3 wave)
+    @location(4) aoflags: vec2<u32>, // x = ao, y = flags (bit0-2 face, bit3 水面顶面标识)
 };
 
 struct VtxOut {
@@ -126,11 +163,8 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
     // 按贴图层查 tint 类别并乘生物群系颜色（草顶/羊齿/树叶三族）。
     let tint = biome_tint(tint_lut[v.layer]);
     let fog = fog_factor(v.dist, frame.fog_params);
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
     let lit = tex.rgb * v.shade * tint;
-    let day = frame.sun_dir_day.w;
-    let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
-    return vec4<f32>(mix(fog_color, lit, fog), 1.0);
+    return vec4<f32>(mix(fog_color(frame.fog_params), lit, fog), 1.0);
 }
 
 // ---- mining crack overlay --------------------------------------------------
@@ -144,11 +178,8 @@ fn fs_crack(v: VtxOut) -> @location(0) vec4<f32> {
         discard;
     }
     let fog = fog_factor(v.dist, frame.fog_params);
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    let day = frame.sun_dir_day.w;
-    let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
     let lit = tex.rgb * v.shade;
-    return vec4<f32>(mix(fog_color, lit, fog), tex.a);
+    return vec4<f32>(mix(fog_color(frame.fog_params), lit, fog), tex.a);
 }
 
 // ---- block selection outline -----------------------------------------------
@@ -178,15 +209,16 @@ struct WaterOut {
     @location(3) dist: f32,
 };
 
+// 顶面静态：原版流体几何无任何 time/顶点位移输入——FluidRenderer.java:25
+// MAX_FLUID_HEIGHT=0.8888889，顶面高度只由邻居流体 getHeight 决定
+// （:410-423），平静水面是等高静态平面；动画只有 water_still 图集逐帧
+// （纹理帧动画为独立后续项）。旧 time-sin 顶点波（±0.05）系臆造，已删；
+// flags bit3 保留仅作顶面标识（下沉量 WATER_TOP_SINK 在 mesher 侧，
+// 归修复波 B）。
 @vertex
 fn vs_water(v: VtxIn) -> WaterOut {
     var out: WaterOut;
-    var world = chunk.origin.xyz + v.pos;
-    let is_surface = (v.aoflags.y & 0x8u) != 0u;
-    if (is_surface) {
-        let t = frame.cam_pos_time.w;
-        world.y += sin(t * 2.2 + world.x * 0.9 + world.z * 1.1) * 0.05;
-    }
+    let world = chunk.origin.xyz + v.pos;
     out.clip = frame.view_proj * vec4<f32>(world, 1.0);
     out.uv = vec2<f32>(v.uv) / 4096.0;
     out.layer = v.layer;
@@ -201,14 +233,15 @@ fn vs_water(v: VtxIn) -> WaterOut {
 
 @fragment
 fn fs_water(v: WaterOut) -> @location(0) vec4<f32> {
-    // 水不染色：26.1 起水贴图（water_still.png）自带颜色，原版仅方块
-    // 粒子/炼药锅走 water tint（BlockColors.java:38-39），不在本次范围。
     let tex = sample_terrain(v.uv, v.layer);
     let fog = fog_factor(v.dist, frame.fog_params);
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    let day = frame.sun_dir_day.w;
-    let fog_color = mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, day);
-    let lit = tex.rgb * v.shade;
-    let color = mix(fog_color, lit, fog);
-    return vec4<f32>(color, 0.72 * fog + 0.28);
+    // 旧注释「26.1 水不染色、贴图自带颜色」是对 BlockColors.java:38-39 的
+    // 误读——那两行只注册炼药锅/粒子色，流体网格染色走 FluidStateModelSet
+    // 的 tintSource 线（见 WATER_TINT 注释）。灰度蒙版 × 0x3F76E4 = 蓝。
+    let lit = tex.rgb * v.shade * WATER_TINT;
+    let color = mix(fog_color(frame.fog_params), lit, fog);
+    // alpha = 贴图 alpha（原版水不透明度语义：水色 ARGB=0xFF…，屏上
+    // alpha≈贴图 180/255≈0.71 常数；雾只作用于 rgb，不改不透明度）。
+    // 旧 0.72*fog+0.28（近处≈1.0 近不透明）系臆造，已回退。
+    return vec4<f32>(color, tex.a);
 }
