@@ -109,7 +109,10 @@ NONOPAQUE_NAME_WORDS = ("glass", "leaves", "ice", "slab", "pane", "trapdoor", "g
 
 # 形状分类（与 game/mcv_core/src/shape.rs::shape_of_name 逐字一致，三处同源，
 # 第三处是下面写出的 cpp/src/blocks_gen.inc 的 shape 字段）。值 = Shape 枚举：
-# 0 Cube, 1 Cross, 2 Torch, 3 Fence, 4 Slab, 5 Stairs。
+# 0 Cube, 1 Cross, 2 Torch, 3 Fence, 4 Slab, 5 Stairs, 6 Carpet, 7 Trapdoor,
+# 8 Pane, 9 Wall。6..9 渲染暂走全盒占位（C++ emit_shapes default / Rust
+# mcv_mesher 全盒路径），模板待 Rust 网格器 #77；碰撞/拾取几何真值在
+# engine/mcv_game/src/blockshapes.rs（本任务已落）。
 CROSS_PLANTS = {
     "flower_red", "flower_yellow", "allium", "azure_bluet", "blue_orchid",
     "cornflower", "lily_of_the_valley", "oxeye_daisy", "torchflower",
@@ -128,6 +131,14 @@ def shape_of_name(name):
         return 4
     if "stairs" in name:
         return 5
+    if "carpet" in name:
+        return 6
+    if "trapdoor" in name:
+        return 7
+    if "pane" in name:
+        return 8
+    if name.endswith("_wall"):
+        return 9
     if name in CROSS_PLANTS or name.endswith("sapling"):
         return 1
     if "torch" in name and "wall" not in name:
@@ -617,6 +628,9 @@ def main():
         "// mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。",
         "// cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何",
         "// （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。",
+        "// carpet/trapdoor/pane/wall（shape 6..9）渲染暂全盒占位，模板待 Rust",
+        "// 网格器 #77；碰撞/拾取几何已在 engine/mcv_game/src/blockshapes.rs 按",
+        "// 原版数值落地。",
         "#[allow(clippy::type_complexity)]",
         f"static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8); {total}] = [",
     ]
