@@ -3,9 +3,9 @@
 //! postProcess / slide）与 `net/minecraft/data/worldgen/TerrainProvider.java`
 //! 的样条常数；判定语义：最终 density <= 0 ⇒ 空气（NoiseRouter 式）。
 //!
-//! 坐标系：本世界 y ∈ [0, 256)、海平面 96（任务拍板）。曲线锚点以 MC 空间
-//! 书写（26.1 原生 y ∈ [-64, 320)），换算集中于 `ours_y_to_mc` /
-//! `mc_y_to_ours`（勿散落魔法数）。
+//! 坐标系（v6）：本世界 y ∈ [-64, 320)、海平面 63 —— 与 26.1 原生同域，
+//! 曲线锚点即世界 y（`ours_y_to_mc`/`mc_y_to_ours` 恒等，见 vanilla/mod.rs；
+//! 换算壳保留，勿散落魔法数）。
 //!
 //! 取舍（验收报告逐条说明）：
 //! - interpolated/blendDensity 的单元 8×4 插值不实现——段状高度带由气候
@@ -45,15 +45,22 @@ use crate::vanilla::climate::ClimateSampler;
 use crate::vanilla::noise::NormalNoise;
 use crate::vanilla::spline::{Builder, Coord, Spline};
 
-/// 世界高（自研 256）。
-pub const SY: i32 = 256;
-/// 海平面（自研 96）。
-pub const SEA: i32 = 96;
+/// 世界高（v6 = 384）。
+pub const SY: i32 = crate::vanilla::SY;
+/// 海平面（v6 = 原生 63）。
+pub const SEA: i32 = crate::vanilla::SEA;
+/// 世界竖直下界（v6 = -64）。
+pub const MIN_Y: i32 = crate::vanilla::MIN_Y;
 /// GLOBAL_OFFSET（NoiseRouterData.registerTerrainNoises）。
 const GLOBAL_OFFSET: f64 = -0.50375;
-/// 表面基准偏置：26.1 海平面 63（归一 0.33）线性重标到本基准海平面 96
-/// （归一 0.375）；配合内陆子样条档位，平原落点在 SEA+5 ~ SEA+12。
-const BACKBONE_BIAS: f64 = 0.2;
+/// 表面基准偏置（v6 原生归一，作用于 density 的 offset 通道——表面零点
+/// `surface_mc = 128 + 128·offset` 与实际 density 零跨界共用此值，不可拆）。
+/// 旧值 0.2 = 「26.1 海平面 63（归一 0.33）重标到自研 96（0.375）」的组合
+/// 常数；v6 恒等映射后按「海面样条档（spline ≈ −0.0713，旧基准下
+/// offset_sea = −0.375 = spline − 0.50375 + 0.2 反推）落 mc 63」重解：
+/// BIAS = 63−128)/128 − spline_sea + 0.50375 = 0.0671875。
+/// 平原落点 SEA+5 ~ SEA+12 由 tests/quality.rs 海陆带复核。
+const BACKBONE_BIAS: f64 = 0.0671875;
 /// 顶部开口渐隐带（对应 slide 顶封的简化）。
 pub const ENTRANCE_FADE: i32 = 14;
 /// noodle 关闭哨兵（rangeChoice 的「未雕刻」常量）。
@@ -491,7 +498,7 @@ impl Orchestrator {
         //（y_clamp 斜率 -1/128 格/密度单位）
         let surface_mc = (128.0 + 128.0 * offset).clamp(-64.0, 320.0);
         let surface_ours =
-            (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(4, SY - 10);
+            (crate::vanilla::mc_y_to_ours(surface_mc).round() as i32).clamp(MIN_Y + 4, SY - 10);
         // jaggedness 通道：noise(JAGGED, 1500.0, 0.0)（NoiseRouterData.java:99），
         // yScale=0 → 列常量，提升到列级（每体素省 32 次倍频求值，值逐位不变）。
         let jag_x = f64::from(block_x) * 1500.0;
@@ -639,7 +646,7 @@ pub fn generate(
     chunk_x: i32,
     chunk_z: i32,
     out_voxels: &mut [u16],
-    out_heightmap: &mut [u8],
+    out_heightmap: &mut [i16],
 ) -> Result<(), i32> {
     debug_assert!(out_voxels.len() >= mcv_core::CHUNK_VOL);
     debug_assert!(out_heightmap.len() >= 256);
@@ -654,12 +661,14 @@ pub fn generate(
             let cs = orch.column_state(wx, wz);
             let surface = cs.surface_ours;
             let beach = surface <= SEA + 1;
-            let snowy = surface > 142;
+            let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
             let top = surface.max(SEA);
 
-            for y in 0..=top {
+            for y in MIN_Y..=top {
                 let field = orch.density(&cs, wx, y, wz);
-                let id = if y == 0 || (y <= 2 && bedrock_noise(seed, wx, y, wz)) {
+                let id = if y == MIN_Y || (y <= MIN_Y + 4 && bedrock_noise(seed, wx, y, wz)) {
+                    // 基岩层 −64..−60：底层恒实心，其上 4 格 50% 噪声
+                    // （26.1 BedrockBlock 5 层规则；旧 256 基准为 0..2 三层）。
                     BEDROCK
                 } else if field <= 0.0 {
                     if y <= SEA { WATER } else { AIR }
@@ -676,10 +685,7 @@ pub fn generate(
                 } else {
                     STONE
                 };
-                let vx = cx as usize;
-                let vy = y as usize;
-                let vz = cz as usize;
-                out_voxels[(vy << 8) | (vz << 4) | vx] = id;
+                out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }
         }
     }

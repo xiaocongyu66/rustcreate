@@ -59,7 +59,8 @@ impl Default for TerrainBackend {
 pub struct TerrainOutput {
     pub pos: ChunkPos,
     pub voxels: ChunkVoxels,
-    pub heightmap: Box<[u8; 256]>,
+    /// 地表高度图，**绝对 y**（i16；全空列 = WORLD_MIN_Y 哨兵）。
+    pub heightmap: Box<[i16; 256]>,
 }
 
 /// Pure function: generate one chunk's voxels + heightmap（按环境变量选后端）。
@@ -74,7 +75,7 @@ pub fn generate_terrain_with(
     pos: ChunkPos,
 ) -> Result<TerrainOutput, i32> {
     let mut voxels = ChunkVoxels::filled(mcv_core::BlockId(0));
-    let mut heightmap = vec![0u8; 256];
+    let mut heightmap = vec![mcv_core::WORLD_MIN_Y; 256];
     match backend {
         TerrainBackend::Legacy => {
             rust_terrain::generate(
@@ -139,19 +140,19 @@ pub fn generate_into(handle: &Arc<ChunkHandle>, seed: u64) -> Result<(), i32> {
 /// (light-penetrating blocks — torch/glass/plates/… — must not raise the
 /// gameplay surface; opaque/attenuating blocks do). The generator never
 /// emits such blocks, so C++ output and this function stay identical.
-/// The "column fully open ⇒ 1" convention is kept verbatim (audit §已核实
-/// 12). Lighting does NOT read this array (source columns are
+/// v6 几何：值 = **绝对 y**（i16），扫描域 [WORLD_MIN_Y, WORLD_MAX_Y)；
+/// 全空列 = `WORLD_MIN_Y` 哨兵（旧 256 基准的「全开 ⇒ 1」约定随坐标域
+/// 一并作废）。Lighting does NOT read this array (source columns are
 /// voxel-derived, see `mcv_light::init`).
-pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
-    let mut hm = Box::new([0u8; 256]);
+pub fn recompute_heightmap(voxels: &[u16]) -> Box<[i16; 256]> {
+    let mut hm = Box::new([mcv_core::WORLD_MIN_Y as i16; 256]);
     for z in 0..16usize {
         for x in 0..16usize {
-            let mut y = 255usize;
-            let mut found = false;
-            while y > 0 {
+            let mut found = None;
+            for y in (mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).rev() {
                 // 掩掉状态位（bit12-15，半砖/楼梯朝向）：按基础方块查表，
                 // 否则带状态体素越界误判未注册=全挡。
-                let id = (voxels[(y << 8) | (z << 4) | x]) & mcv_core::ID_MASK;
+                let id = (voxels[mcv_core::vidx(x, y, z)]) & mcv_core::ID_MASK;
                 // 跳过集：damp==0（全透光：空气/花/玻璃/火把…）或流体。
                 // 不计流体是自研地表基线（出生点取水下地表）；对照原版：
                 // MOTION_BLOCKING 计流体（Heightmap.java:151），不计流体的是
@@ -161,15 +162,17 @@ pub fn recompute_heightmap(voxels: &[u16]) -> Box<[u8; 256]> {
                 let damp = mcv_core::OPACITY.get(id as usize).copied().unwrap_or(15);
                 let liquid = mcv_core::BLOCKS.get(id as usize).is_some_and(|b| b.liquid);
                 if damp != 0 && !liquid {
-                    found = true;
+                    found = Some(y);
                     break;
                 }
-                y -= 1;
             }
-            // 饱和钳制（任务板 #60 / coords 审计 P2 并案）：y=255 遮光时
-            // y+1=256 在 u8 上 debug panic / release 绕回 0——heightmap
-            // 语义 =「首个非遮光格 y」，无解时钳到列顶 255。
-            hm[(z << 4) | x] = if found { (y + 1).min(255) as u8 } else { 1 };
+            // heightmap 语义 =「首个非遮光格绝对 y」；y=WORLD_MAX_Y-1 遮光
+            // 时钳到列顶（任务板 #60 饱和钳制的 384 版——i16 虽不绕回，
+            // 「+1 出界」仍不是合法地表槽位）。
+            hm[(z << 4) | x] = match found {
+                Some(y) => (y + 1).min(mcv_core::WORLD_MAX_Y - 1) as i16,
+                None => mcv_core::WORLD_MIN_Y as i16,
+            };
         }
     }
     hm

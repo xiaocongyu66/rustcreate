@@ -8,7 +8,7 @@
 //! 被静默改靶（vanilla v1 管线无装饰 pass，`trees_and_grass_present` 等按
 //! 构造不可达）——vanilla 的统计质量门在 tests/quality.rs，两套互不替代。
 
-use mcv_core::{BlockId, CHUNK_VOL, ChunkPos};
+use mcv_core::{BlockId, CHUNK_VOL, ChunkPos, WORLD_MAX_Y, WORLD_MIN_Y};
 use mcv_worldgen::{TerrainBackend, TerrainOutput, generate_terrain_with};
 
 /// 与旧 `generate_terrain(seed, pos)` 同形，但显式选 legacy 后端（见文件头）。
@@ -29,8 +29,8 @@ const SNOW_GRASS: u16 = 11;
 const FLOWER_RED: u16 = 12;
 const FLOWER_YELLOW: u16 = 13;
 
-fn vidx(x: usize, y: usize, z: usize) -> usize {
-    (y << 8) | (z << 4) | x
+fn vidx(x: usize, y: i32, z: usize) -> usize {
+    mcv_core::vidx(x, y, z)
 }
 
 fn voxels_of(t: &mcv_worldgen::TerrainOutput) -> &[u16] {
@@ -58,15 +58,18 @@ fn heightmap_matches_topmost_blocking() {
     let vox = voxels_of(&t);
     for z in 0..16usize {
         for x in 0..16usize {
-            let mut top = 0usize;
-            for y in (0..256).rev() {
+            let mut top = WORLD_MIN_Y;
+            for y in (WORLD_MIN_Y..WORLD_MAX_Y).rev() {
                 let id = vox[vidx(x, y, z)];
                 if id != AIR && id != WATER && id != FLOWER_RED && id != FLOWER_YELLOW {
                     top = y;
                     break;
                 }
             }
-            assert_eq!(t.heightmap[(z << 4) | x] as usize, top + 1);
+            assert_eq!(
+                t.heightmap[(z << 4) | x],
+                (top + 1).min(WORLD_MAX_Y - 1) as i16
+            );
         }
     }
 }
@@ -83,8 +86,9 @@ fn bedrock_floor_and_sea_water() {
         for cz in -6..=6 {
             let t = gen_legacy(7, ChunkPos::new(cx, cz)).expect("gen");
             let vox = voxels_of(&t);
-            assert_eq!(vox[vidx(0, 0, 0)], BEDROCK);
-            assert_eq!(vox[vidx(15, 0, 15)], BEDROCK);
+            // 基岩地板 = 世界底行（v6 -64）。
+            assert_eq!(vox[vidx(0, WORLD_MIN_Y, 0)], BEDROCK);
+            assert_eq!(vox[vidx(15, WORLD_MIN_Y, 15)], BEDROCK);
             if vox.contains(&WATER) {
                 saw_water = true;
             }
@@ -107,8 +111,8 @@ fn cave_rate_in_band() {
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
-                    let surface = t.heightmap[(z << 4) | x] as usize - 1;
-                    for y in 8..surface.saturating_sub(4) {
+                    let surface = t.heightmap[(z << 4) | x] as i32 - 1;
+                    for y in WORLD_MIN_Y + 8..(surface - 4).max(WORLD_MIN_Y + 8) {
                         match vox[vidx(x, y, z)] {
                             AIR => cave += 1,
                             STONE | DIRT => solid += 1,
@@ -127,8 +131,8 @@ fn cave_rate_in_band() {
 }
 
 /// 地面表层块：从柱顶向下跳过空气/水/树/花后的第一个实心块。
-fn ground_surface(vox: &[u16], x: usize, z: usize) -> (u16, usize) {
-    for y in (0..256usize).rev() {
+fn ground_surface(vox: &[u16], x: usize, z: usize) -> (u16, i32) {
+    for y in (WORLD_MIN_Y..WORLD_MAX_Y).rev() {
         let id = vox[vidx(x, y, z)];
         if id != AIR
             && id != WATER
@@ -150,8 +154,8 @@ fn height_distribution_spans_band() {
     // 窗口 ±8（256 格 = 大陆度一个完整波长，可步行尺度上限），保证窗口
     // 内至少经历一次盆带起伏；跨度 ≥24 可捕获“通道波长退化→全常数”回归
     // （全常数时跨度只剩细节 ±3 ≈ 6）。
-    let mut min = usize::MAX;
-    let mut max = 0usize;
+    let mut min = i32::MAX;
+    let mut max = i32::MIN;
     for cx in -8..=8 {
         for cz in -8..=8 {
             let t = gen_legacy(3, ChunkPos::new(cx, cz)).expect("gen");
@@ -166,8 +170,16 @@ fn height_distribution_spans_band() {
         }
     }
     assert!(max - min >= 24, "height span {}-{} too flat", min, max);
-    assert!(min > 10, "lowest column y={min} hits the bedrock band");
-    assert!(max < 220, "highest column y={max} beyond ridge band");
+    // 基岩带 −64..−60 外沿 +10 缓冲（旧 256 基准的 min>10 等价）。
+    assert!(
+        min > WORLD_MIN_Y + 10,
+        "lowest column y={min} hits the bedrock band"
+    );
+    // 山脊上界 = 旧 220（海平面 96 上 124）随 SEA=63 平移。
+    assert!(
+        max < mcv_core::SEA_LEVEL + 124,
+        "highest column y={max} beyond ridge band"
+    );
 }
 
 #[test]
@@ -263,8 +275,8 @@ fn beach_sand_below_sea_level() {
             let vox = voxels_of(&t);
             for z in 0..16usize {
                 for x in 0..16usize {
-                    let hm = t.heightmap[(z << 4) | x] as usize - 1;
-                    if hm > 2 && vox[vidx(x, hm, z)] == SAND {
+                    let hm = t.heightmap[(z << 4) | x] as i32 - 1;
+                    if hm > WORLD_MIN_Y + 2 && vox[vidx(x, hm, z)] == SAND {
                         found = true;
                         break 'outer;
                     }
@@ -281,5 +293,5 @@ fn ffi_registry_ids_match() {
     assert_eq!(BlockId(1).def().name, "stone");
     assert_eq!(BlockId(3).def().name, "grass");
     assert_eq!(BlockId(10).def().name, "bedrock");
-    assert_eq!(CHUNK_VOL, 65536);
+    assert_eq!(CHUNK_VOL, 98304);
 }

@@ -4,8 +4,11 @@
 //! 机制：三层噪声高度图（大陆度/侵蚀度/山脊 + 锯齿细节）+ 双阈值洞穴
 //! （意面管道 + 奶酪大洞）+ 跨区块确定性树投影 + 遮光高度图。公共入口
 //! [`generate`] 与 C ABI `mcv_terrain_generate`（cpp/include/mcv.h:43-44）
-//! 同语义：填充 65536 个 u16 方块 id（布局 `(y<<8)|(z<<4)|x`）+ 256 项
-//! u8 高度图（索引 `(z<<4)|x`，值 = 最高遮光格 y + 1）。
+//! 同语义 + v6 几何升原版的基线：填充 98304 个 u16 方块 id（布局
+//! `((y-WORLD_MIN_Y)<<8)|(z<<4)|x`，y 为绝对世界 y ∈ [-64,320)）+ 256 项
+//! i16 高度图（索引 `(z<<4)|x`，值 = 最高遮光格**绝对 y** + 1，全空列 =
+//! `WORLD_MIN_Y` 哨兵）。海平面 96 → 原生 63、世界高 256 → 384（金矿脉/
+//! 洞穴/树线等竖直常数一律改为「海平面/世界底的相对偏移」，逐条注释）。
 //!
 //! 位一致纪律见 [`crate::rust_noise`] 模块注释；对拍由
 //! `tests/golden.rs` 以黄金数据（#77 删除前从该 oracle 落盘）逐字节
@@ -14,10 +17,19 @@
 
 use crate::rust_noise::{fbm2, fbm2_w, fbm3, fbm3_w, hash01, peaks_valleys};
 
-/// 世界高（terrain.cpp:20）。
-const SY: i32 = 256;
-/// 海平面（terrain.cpp:21）。
-const SEA: i32 = 96;
+/// 世界高（terrain.cpp:20；v6 = 384，唯一定义源 `mcv_core::CHUNK_SY`）。
+const SY: i32 = mcv_core::CHUNK_SY as i32;
+/// 世界竖直下界（v6 = -64）。
+const MIN_Y: i32 = mcv_core::WORLD_MIN_Y;
+/// 海平面（terrain.cpp:21；v6 起取原生 63 = `mcv_core::SEA_LEVEL`，
+/// 旧 96 是 bloomcraft 256 基准自选值）。
+const SEA: i32 = mcv_core::SEA_LEVEL;
+/// 洞穴奶酪分界的深度基准：旧世界 y<40（= 海平面下 56、旧世界底上 40）。
+const CHEESE_DEEP_Y: i32 = MIN_Y + 40;
+/// 雪线（旧 y>142 = 海平面上 46）。
+const SNOW_Y: i32 = SEA + 46;
+/// 树线顶（旧 y≤148 = 海平面上 52）。
+const TREE_MAX_Y: i32 = SEA + 52;
 
 // Block ids mirror mcv_core BLOCKS order（terrain.cpp:24-35）。
 const AIR: u16 = 0;
@@ -52,7 +64,8 @@ const AMP_CHEESE: [f32; 5] = [0.5, 1.0, 2.0, 1.0, 2.0];
 // ---- 洞穴阈值（terrain.cpp:57-65）----
 const SPAG_THICK_MIN: f32 = 0.065;
 const SPAG_THICK_DEEP: f32 = 0.023; // = 0.088 − 0.065，深处更宽
-const SPAG_DEEP_REF_Y: f32 = 40.0; // 深度基准
+const SPAG_DEEP_REF_Y: f32 = (MIN_Y + 40) as f32; // 深度基准（世界底上 40）
+const SPAG_DEEP_SPAN: f32 = 40.0; // deep 归一分母（旧式 /40 的显式化）
 const CHEESE_THRESH: f32 = 0.60;
 const CHEESE_THRESH_SHALLOW: f32 = 0.66;
 const ENTRANCE_FADE: i32 = 14; // 洞口渐隐带厚度
@@ -70,9 +83,11 @@ const SEED_TREE: u64 = 0x7EE5_7EE5_7EE5_7EE5;
 const SEED_FLOWER: u64 = 0xF10B_F10B_F10B_F10B;
 const SEED_MISC: u64 = 0x0D00_D00D_0D00_D00D;
 
-/// 体素索引（terrain.cpp:79-82）：`(y<<8) | (z<<4) | x`。
-fn vidx(x: usize, y: usize, z: usize) -> usize {
-    (y << 8) | (z << 4) | x
+/// 体素索引（terrain.cpp:79-82 的 v6 版）：`((y-MIN_Y)<<8) | (z<<4) | x`，
+/// 入参 y 为**绝对**世界 y（委托 `mcv_core::vidx`，界内断言单一来源）。
+#[inline]
+fn vidx(x: usize, y: i32, z: usize) -> usize {
+    mcv_core::vidx(x, y, z)
 }
 
 /// 欧几里得向下取整除（terrain.cpp:84-90）：C++ 截断除 + 符号修正。
@@ -129,7 +144,8 @@ fn forest_mask(seed: u64, wx: f32, wz: f32) -> f32 {
 /// 双阈值洞穴判定（terrain.cpp:144-200）：意面管道（两路噪声取 max、
 /// |n| < 厚度带）+ 奶酪大洞；洞口随深度渐隐；海底水密。
 fn carve_cave(seed: u64, x: i32, y: i32, z: i32, surface: i32, ocean: bool) -> bool {
-    if y <= 2 || y > surface {
+    // 基岩层（世界底 +0..+4）不雕。
+    if y <= MIN_Y + 4 || y > surface {
         return false;
     }
     if ocean && y > SEA - 6 {
@@ -152,7 +168,7 @@ fn carve_cave(seed: u64, x: i32, y: i32, z: i32, surface: i32, ocean: bool) -> b
         2,
     ) * 2.0
         - 1.0;
-    let deep = ((SPAG_DEEP_REF_Y - y as f32) / SPAG_DEEP_REF_Y).clamp(0.0, 1.0);
+    let deep = ((SPAG_DEEP_REF_Y - y as f32) / SPAG_DEEP_SPAN).clamp(0.0, 1.0);
     let thick = SPAG_THICK_MIN + SPAG_THICK_DEEP * deep;
     let m = a.abs().max(b.abs());
     let tunnel = m < thick;
@@ -165,7 +181,7 @@ fn carve_cave(seed: u64, x: i32, y: i32, z: i32, surface: i32, ocean: bool) -> b
         &AMP_CHEESE,
     ) * 2.0
         - 1.0;
-    let cavern = c > if y < 40 {
+    let cavern = c > if y < CHEESE_DEEP_Y {
         CHEESE_THRESH
     } else {
         CHEESE_THRESH_SHALLOW
@@ -208,7 +224,7 @@ fn tree_in_cell(seed: u64, cell_x: i32, cell_z: i32) -> Option<TreeInfo> {
     let wx = cell_x.wrapping_mul(5) + (jx * 5.0) as i32;
     let wz = cell_z.wrapping_mul(5) + (jz * 5.0) as i32;
     let sy = base_height(seed, wx as f32, wz as f32) as i32;
-    if sy <= SEA || sy > 148 {
+    if sy <= SEA || sy > TREE_MAX_Y {
         return None; // 滩涂/水面/雪峰不长树
     }
     let density = 0.010 + forest_mask(seed, wx as f32, wz as f32) * 0.045;
@@ -229,7 +245,7 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
     let top = t.base_y + t.height;
     for dy in -2..=1 {
         let y = top + dy;
-        if !(0..SY).contains(&y) {
+        if !((MIN_Y)..SY).contains(&y) {
             continue;
         }
         let r: i32 = if dy <= -1 { 2 } else { 1 };
@@ -255,7 +271,7 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
                 if !(0..16).contains(&lx) || !(0..16).contains(&lz) {
                     continue;
                 }
-                let cell = &mut voxels[vidx(lx as usize, y as usize, lz as usize)];
+                let cell = &mut voxels[vidx(lx as usize, y, lz as usize)];
                 if *cell == AIR {
                     *cell = LEAVES;
                 }
@@ -266,8 +282,8 @@ fn stamp_tree(seed: u64, voxels: &mut [u16], t: &TreeInfo, base_x: i32, base_z: 
     let tz = t.z - base_z;
     if (0..16).contains(&tx) && (0..16).contains(&tz) {
         let mut y = t.base_y + 1;
-        while y <= top && y < SY {
-            voxels[vidx(tx as usize, y as usize, tz as usize)] = LOG;
+        while (MIN_Y..SY).contains(&y) && y <= top {
+            voxels[vidx(tx as usize, y, tz as usize)] = LOG;
             y += 1;
         }
     }
@@ -285,7 +301,7 @@ pub fn generate(
     chunk_x: i32,
     chunk_z: i32,
     out_voxels: &mut [u16],
-    out_heightmap: &mut [u8],
+    out_heightmap: &mut [i16],
 ) -> Result<(), i32> {
     debug_assert!(out_voxels.len() >= mcv_core::CHUNK_VOL);
     debug_assert!(out_heightmap.len() >= 256);
@@ -298,17 +314,20 @@ pub fn generate(
         for x in 0..16_i32 {
             let wx = base_x.wrapping_add(x);
             let wz = base_z.wrapping_add(z);
-            let surface = (base_height(seed, wx as f32, wz as f32) as i32).clamp(4, SY - 10);
+            let surface =
+                (base_height(seed, wx as f32, wz as f32) as i32).clamp(MIN_Y + 4, SY - 10);
             let ocean = surface <= SEA;
             let beach = surface <= SEA + 1;
-            let snowy = surface > 142;
+            let snowy = surface > SNOW_Y;
             let top = surface.max(SEA);
 
-            for y in 0..=top {
-                let id = if y == 0
-                    || (y <= 2
+            for y in MIN_Y..=top {
+                let id = if y == MIN_Y
+                    || (y <= MIN_Y + 4
                         && hash01(seed ^ SEED_MISC, i64::from(wx), i64::from(y), i64::from(wz))
                             < 0.5)
+                // 基岩层 −64..−60（5 层：底恒实心 + 4 层 50% 噪声，
+                // 26.1 BedrockBlock；旧 256 基准为 0..2 三层）。
                 {
                     BEDROCK
                 } else if y > surface {
@@ -336,17 +355,17 @@ pub fn generate(
                 } else {
                     id
                 };
-                out_voxels[vidx(x as usize, y as usize, z as usize)] = id;
+                out_voxels[vidx(x as usize, y, z as usize)] = id;
             }
 
             // 完好草柱上撒花（terrain.cpp:326-333）。
-            if out_voxels[vidx(x as usize, surface as usize, z as usize)] == GRASS
+            if out_voxels[vidx(x as usize, surface, z as usize)] == GRASS
                 && surface + 1 < SY
-                && out_voxels[vidx(x as usize, (surface + 1) as usize, z as usize)] == AIR
+                && out_voxels[vidx(x as usize, surface + 1, z as usize)] == AIR
             {
                 let f = hash01(seed ^ SEED_FLOWER, i64::from(wx), 7, i64::from(wz));
                 if f < 0.006 {
-                    out_voxels[vidx(x as usize, (surface + 1) as usize, z as usize)] =
+                    out_voxels[vidx(x as usize, surface + 1, z as usize)] =
                         if f < 0.003 { FLOWER_RED } else { FLOWER_YELLOW };
                 }
             }
@@ -367,19 +386,23 @@ pub fn generate(
         }
     }
 
-    // Pass 3（terrain.cpp:355-367）：高度图 = 最高遮光格 y + 1（空气/水/
-    // 花不遮直射天光，树叶遮以便树荫）；全开柱 y 归零后取 1。
+    // Pass 3（terrain.cpp:355-367）：高度图 = 最高遮光格**绝对 y** + 1
+    // （空气/水/花不遮直射天光，树叶遮以便树荫）；全开柱取 WORLD_MIN_Y
+    // 哨兵（v6：i16 域无 256 绕回问题，钳顶到 WORLD_MAX_Y-1）。
     for z in 0..16_usize {
         for x in 0..16_usize {
-            let mut y = SY - 1;
-            while y > 0 {
-                let id = out_voxels[vidx(x, y as usize, z)];
+            let mut found = None;
+            for y in (MIN_Y..SY).rev() {
+                let id = out_voxels[vidx(x, y, z)];
                 if id != AIR && id != WATER && id != FLOWER_RED && id != FLOWER_YELLOW {
+                    found = Some(y);
                     break;
                 }
-                y -= 1;
             }
-            out_heightmap[(z << 4) | x] = (y + 1) as u8;
+            out_heightmap[(z << 4) | x] = match found {
+                Some(y) => (y + 1).min(mcv_core::WORLD_MAX_Y - 1) as i16,
+                None => mcv_core::WORLD_MIN_Y as i16,
+            };
         }
     }
 
