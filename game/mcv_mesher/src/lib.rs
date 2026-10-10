@@ -1,12 +1,10 @@
 //! Meshing orchestration: feeds 3x3 neighbourhoods to the mesher and owns
 //! mesh buffer handles.
 //!
-//! Backend switch (纯 Rust 移植，见 src/mesher.rs）：默认走 Rust 网格器；
-//! `MCV_MESHER_BACKEND=ffi` 回退 C++ oracle 路径（mcv_ffi/mcv_mesh_build，
-//! C++ 在本阶段仍是对拍预言机，删除属后续任务）。两路输出逐字节对拍锁定
-//! （tests/parity.rs），生产消费方（mcv_logic）无感切换。
-
-pub use mcv_ffi::CxxMeshBuffer;
+//! 网格构建全走纯 Rust 路径（src/mesher.rs，任务板 #76 移植）；任务板 #77
+//! 删除 C++ oracle 路径（原 mcv_ffi/mcv_mesh_build + mempool 池句柄）后，
+//! 回归防线是 tests/golden.rs 对黄金数据（删除前 frozen oracle 输出落盘）
+//! 逐字节对拍。生产消费方（mcv_logic）只经由 [`MeshData`] 的读取接口消费。
 
 mod mesher;
 
@@ -21,105 +19,36 @@ pub struct Slot<'a> {
 }
 
 /// Mesh pass selector for [`Mesher::build`].
-pub const MESH_OPAQUE: u32 = mcv_ffi::MESH_OPAQUE;
-pub const MESH_WATER: u32 = mcv_ffi::MESH_WATER;
+pub const MESH_OPAQUE: u32 = 0;
+pub const MESH_WATER: u32 = 1;
 
-/// 网格器后端。
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Backend {
-    /// 纯 Rust 网格器（src/mesher.rs，生产路径）。
-    Rust,
-    /// C++ oracle 路径（mcv_ffi → cpp/src/mesher.cpp，对拍/回退用）。
-    Ffi,
-}
+/// 入参校验失败（沿删除前 mcv_ffi::err::BAD_ARG 的错误码语义）。
+const BAD_ARG: i32 = -6;
 
-impl Backend {
-    /// `MCV_MESHER_BACKEND=ffi` → C++ oracle；其余（含未设置）→ Rust。
-    pub fn from_env() -> Self {
-        if std::env::var("MCV_MESHER_BACKEND").as_deref() == Ok("ffi") {
-            Self::Ffi
-        } else {
-            Self::Rust
-        }
-    }
-}
-
-impl Default for Backend {
-    fn default() -> Self {
-        Self::from_env()
-    }
-}
-
-/// 网格构建产物：C++ 池句柄或 Rust 自有缓冲。两种变体对外暴露同一读取
-/// 接口（mcv_logic 的 ChunkMesher 只经由这些方法消费，见 game.rs:92-101）。
-pub enum MeshBuffer {
-    Pool(CxxMeshBuffer),
-    Owned(MeshData),
-}
-
-impl MeshBuffer {
-    /// 顶点字节（24 B 步长交错，见 mesher.rs 模块注释）。
-    pub fn vertex_data(&self) -> &[u8] {
-        match self {
-            Self::Pool(b) => b.vertex_data(),
-            Self::Owned(m) => &m.vertices,
-        }
-    }
-
-    /// 索引（u32，外视 CCW）。
-    pub fn indices(&self) -> &[u32] {
-        match self {
-            Self::Pool(b) => b.indices(),
-            Self::Owned(m) => &m.indices,
-        }
-    }
-
-    /// (顶点数, 索引数)。
-    pub fn counts(&self) -> (u32, u32) {
-        match self {
-            Self::Pool(b) => b.counts(),
-            Self::Owned(m) => (
-                (m.vertices.len() / mesher::VERTEX_STRIDE) as u32,
-                m.indices.len() as u32,
-            ),
-        }
-    }
-}
-
-/// Owns the C++ pool (FFI 后端用；Rust 后端不触池，保留创建以维持既有
-/// 构造语义) and drives [`Mesher::build`] calls.
-pub struct Mesher {
-    pool: mcv_ffi::MemPool,
-    backend: Backend,
-}
+/// Drives [`mesher::build_mesh`] calls over chunk neighbourhoods. 任务板
+/// #77 前本类型持有 C++ mempool 句柄并按 `MCV_MESHER_BACKEND` 选路；纯
+/// Rust 路径自有缓冲，预算/环境变量开关一并拆除。
+#[derive(Clone, Copy, Default)]
+pub struct Mesher;
 
 impl Mesher {
-    /// Creates the underlying pool with the given live-byte budget. 后端按
-    /// `Backend::from_env()` 选择（默认 Rust）。
-    pub fn new(budget_bytes: u64) -> Option<Self> {
-        Self::with_backend(budget_bytes, Backend::from_env())
-    }
-
-    /// 显式后端构造（对拍测试用，避免环境变量歧义）。
-    pub fn with_backend(budget_bytes: u64, backend: Backend) -> Option<Self> {
-        Some(Self {
-            pool: mcv_ffi::MemPool::new(budget_bytes)?,
-            backend,
-        })
+    /// Creates the mesher.
+    pub fn new() -> Self {
+        Self
     }
 
     /// Builds a mesh for the center chunk (neighbourhood index 4). The
     /// neighbourhood is row-major dz-outer/dx-inner, index
-    /// `(dz+1)*3 + (dx+1)`; `None` = not loaded，两侧一致按不透明边界处理
-    /// （mesher.cpp:139-168 block_at / tests/parity.rs 覆盖）。`kind`:
-    /// 0 = opaque, 1 = water。
+    /// `(dz+1)*3 + (dx+1)`; `None` = not loaded，按不透明边界处理
+    /// （mesher.rs BARRIER 哨兵）。`kind`: [`MESH_OPAQUE`] = 0,
+    /// [`MESH_WATER`] = 1；其余值 `Err(BAD_ARG)`。
     pub fn build(
         &self,
         neighborhood: &[Option<Slot<'_>>; 9],
         kind: u32,
-    ) -> Result<MeshBuffer, i32> {
+    ) -> Result<MeshData, i32> {
         if kind > 1 {
-            return Err(mcv_ffi::err::BAD_ARG);
+            return Err(BAD_ARG);
         }
         let mut voxels: [Option<&[u16]>; 9] = [None; 9];
         let mut lights: [Option<&[u8]>; 9] = [None; 9];
@@ -131,13 +60,6 @@ impl Mesher {
                 lights[i] = Some(s.light);
             }
         }
-        match self.backend {
-            Backend::Rust => Ok(MeshBuffer::Owned(mesher::build_mesh(
-                &voxels, &lights, kind,
-            ))),
-            Backend::Ffi => Ok(MeshBuffer::Pool(mcv_ffi::mesh_build_raw(
-                &voxels, &lights, kind, &self.pool,
-            )?)),
-        }
+        Ok(mesher::build_mesh(&voxels, &lights, kind))
     }
 }

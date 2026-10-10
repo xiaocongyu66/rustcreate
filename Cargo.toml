@@ -13,7 +13,6 @@ mcv_core = { path = "game/mcv_core" }
 mcv_assets = { path = "engine/mcv_assets" }
 mcv_app = { path = "game/mcv_app" }
 mcv_logic = { path = "game/mcv_logic" }
-mcv_ffi = { path = "game/mcv_ffi" }
 mcv_worldgen = { path = "game/mcv_worldgen" }
 mcv_light = { path = "game/mcv_light" }
 mcv_mesher = { path = "game/mcv_mesher" }
@@ -38,7 +37,6 @@ env_logger = "0.11"
 # mcv_audio 解析原版 sounds.json(事件名音效表)必需。
 serde_json = "1"
 image = "0.25"
-cc = "1"
 
 [profile.release]
 opt-level = 3

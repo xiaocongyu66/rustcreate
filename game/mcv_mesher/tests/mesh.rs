@@ -1,7 +1,7 @@
 //! Synthetic-data tests for the C++ greedy mesher via `Mesher`.
 //! All light arrays are filled with 0xF0 (sky 15, block 0).
 
-use mcv_mesher::{MeshBuffer, Mesher, Slot};
+use mcv_mesher::{MeshData, Mesher, Slot};
 
 const VOL: usize = 65536;
 
@@ -58,7 +58,7 @@ struct Vtx {
 
 #[allow(clippy::almost_complete_range)]
 #[allow(unknown_lints, clippy::manual_chunks)]
-fn decode(buf: &MeshBuffer) -> Vec<Vtx> {
+fn decode(buf: &MeshData) -> Vec<Vtx> {
     buf.vertex_data()
         .chunks(24)
         .map(|b| {
@@ -84,7 +84,7 @@ fn decode(buf: &MeshBuffer) -> Vec<Vtx> {
 /// u16 溢出环绕=拉伸。原版烘焙：每面吃满 sprite 满幅（FaceBakery.java:26-35/166）。
 #[test]
 fn uv_spans_full_tile_per_block() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 8, 8, 8, 3); // grass block floating in air
@@ -108,7 +108,7 @@ fn uv_spans_full_tile_per_block() {
 /// （真机 round 2「马赛克拉伸」签名）。
 #[test]
 fn greedy_merged_face_uv_spans_multiple_tiles() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 8, 8, 8, 3);
@@ -133,7 +133,7 @@ fn greedy_merged_face_uv_spans_multiple_tiles() {
 /// 增，真机草裙全部倒挂（round 2）。数据走真 mesher，非手写 quad。
 #[test]
 fn side_face_uv_v0_at_top_edge() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 8, 8, 8, 3);
@@ -162,7 +162,7 @@ fn side_face_uv_v0_at_top_edge() {
 
 #[test]
 fn single_block_six_faces() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 8, 8, 8, 3); // grass block floating in air
@@ -186,12 +186,13 @@ fn single_block_six_faces() {
 
 #[test]
 fn block_table_tex_parity_with_mcv_core() {
-    // 生成表（cpp/src/blocks_gen.inc）与 mcv_core::BLOCKS 必须逐 id 一致：
+    // 生成表黄金件（tests/golden/blocks_gen.inc，删除 cpp/ 前的快照）与
+    // mcv_core::BLOCKS 必须逐 id 一致：
     // 对每个 id 悬空放一块，不透明 pass 按 shape 模板出几何、逐面 tile 层
     // 相同。水走水 pass 除外。全空气环境下各形状顶点数：Cube/单根 Fence/
     // 单块 Slab/Torch 细柱 = 6 面；Cross = 2 条双面 quad；Stairs = 两盒
     // 12 面（不做盒间剔除，宁多勿漏）。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     // 生成表 geom=false 的隐形方块（屏障/光源/空气族/结构空位/气泡柱）：原版
@@ -237,7 +238,7 @@ fn block_table_tex_parity_with_mcv_core() {
 
 #[test]
 fn greedy_merges_row_of_four() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     // solid dirt floor at y=7 so the row's -Y faces are culled
@@ -283,7 +284,7 @@ fn ao_l_shape_corner_values() {
     //     corner=(2,1,0) air -> 3-(0+1+0) = 2
     //   corner (x=1,z=2): mirrored -> 2
     //   corner (x=2,z=2): all three air -> 3
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     for x in 0..16 {
@@ -311,7 +312,7 @@ fn ao_l_shape_corner_values() {
 
 #[test]
 fn water_mesh_rules() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
 
     // Single water block: 6 faces (all neighbours air).
@@ -365,7 +366,7 @@ fn water_mesh_rules() {
 
 #[test]
 fn null_neighbour_is_opaque_boundary() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 15, 8, 8, 1); // stone flush against the +X chunk border
 
@@ -387,7 +388,7 @@ fn shape_templates_structural_invariants() {
     // 每种非立方形状：中心 (8,8,8) 悬浮于全空气 3x3x3 世界。断言：有几何、
     // 两次 build 逐字节相等（确定性替代黄金逐顶点）、索引不越界、顶点全部
     // 落在方块 AABB 内、光照采到邻空气格 sky=15。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     for (name, lo, hi) in [
         ("flower_red", [8.0f32, 8.0, 8.0], [9.0, 9.0, 9.0]),
@@ -424,7 +425,7 @@ fn shape_templates_structural_invariants() {
 fn cross_plant_two_double_sided_quads() {
     // 十字植物：2 条对角 quad ×（正反索引各 6）= 8 顶点 / 24 索引；
     // flags 全部 +Y 面档、ao 恒 3、贴图用方块 tile 层、顶点落在对角线上。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let flower = id_of("flower_red");
     let mut c = chunk(0, 0xF0);
@@ -451,7 +452,7 @@ fn cross_plant_two_double_sided_quads() {
 fn slab_half_boxes_and_exposed_mid_face() {
     // 下半砖（state 0）y∈[8,8.5]：5 外面 + y=0.5 中层面（永远暴露）= 6 面；
     // 上半砖（state 1）y∈[8.5,9] 同 6 面；上下叠放不合并，各自 6 面。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let slab = id_of("oak_slab");
     let tiles = mcv_core::BLOCKS[slab as usize].tiles;
@@ -500,7 +501,7 @@ fn stairs_facing_and_top_flip() {
     // （game.rs::placement_tests::stairs_facing_follows_vanilla）→ 本用例
     // facing=1 分支 → 踏步在 -Z 半格（踏步在玩家面前，可拾级而上）。
     // bit2=top（点底面放置，StairBlock.java:104 DOWN→TOP）上下翻转。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let stairs = id_of("oak_stairs");
     for facing in 0u16..4 {
@@ -538,7 +539,7 @@ fn stairs_facing_and_top_flip() {
 #[test]
 fn fence_post_and_arms() {
     // 单根：仅立柱 6 面；相邻同 id：两根各出立柱+相向臂；邻格异种不连接。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let fence = id_of("oak_fence");
 
@@ -611,7 +612,7 @@ fn fence_post_and_arms() {
 #[test]
 fn torch_thin_column() {
     // 火把：细立柱盒 x/z 0.4..0.6、y 0..0.625，6 面含顶面（y=8.625）。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let torch = id_of("torch");
     let mut c = chunk(0, 0xF0);
@@ -636,7 +637,7 @@ fn torch_thin_column() {
 fn shape_faces_cull_against_opaque_neighbours() {
     // 形状面剔除与 Cube 同判据：下半砖放在整片石头地板上，-Y 面被剔除
     // → 5 面 20 顶点；y=0.5 中层面（+Y）仍然暴露。
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let slab = id_of("oak_slab");
     let mut c = chunk(0, 0xF0);
@@ -674,7 +675,7 @@ fn shape_faces_cull_against_opaque_neighbours() {
 /// 浮在空气中：每个水面 quad 都要出（贪心合并后 ≤24），顶点必须 >0。
 #[test]
 fn water_pass_emits_vertices() {
-    let mesher = Mesher::new(1 << 20).unwrap();
+    let mesher = Mesher::new();
     let side = chunk(0, 0xF0);
     let mut c = chunk(0, 0xF0);
     let water = id_of("water");

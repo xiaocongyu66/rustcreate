@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Export the NDK cross toolchain for the cc crate (aarch64-linux-android).
-# Must be `source`d. Consumes ANDROID_NDK_HOME or ANDROID_NDK_ROOT.
+# Export the NDK cross linker for the aarch64-linux-android Rust target
+# (任务板 #77 起 C++/cc 层已删除，无需 CXX/AR/C++ 标准库导出；NDK clang
+# 仍承担交叉链接)。Must be `source`d. Consumes ANDROID_NDK_HOME or
+# ANDROID_NDK_ROOT.
 set -euo pipefail
 
 NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_ROOT:-}}"
@@ -16,12 +18,6 @@ if [ ! -x "$TOOLBIN/aarch64-linux-android26-clang" ]; then
 fi
 
 export CC_aarch64_linux_android="$TOOLBIN/aarch64-linux-android26-clang"
-export CXX_aarch64_linux_android="$TOOLBIN/aarch64-linux-android26-clang++"
-export AR_aarch64_linux_android="$TOOLBIN/llvm-ar"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$TOOLBIN/aarch64-linux-android26-clang"
-# cc crate: C++ standard library for the android target; both spellings for
-# compatibility across cc versions.
-export CXXSTLD_aarch64_linux_android="c++_static"
-export CXXSTDLIB_aarch64_linux_android="c++_static"
 
 echo "NDK toolchain ready: $NDK"

@@ -330,8 +330,9 @@ fn attribute_hotspots_match_java() {
         assert!(d.solid, "{n} 有碰撞");
         assert!(!d.opaque, "{n} noOcclusion → opaque=false");
     }
-    // 隐形方块在 C++ kBlocks 里 geom=false（对照生成表行内注释锁定）。
-    let cpp = include_str!("../../../cpp/src/blocks_gen.inc");
+    // 隐形方块在生成表黄金件（#77 删除 cpp/ 前的 cpp/src/blocks_gen.inc
+    // 逐字节快照）里 geom=false（对照行内注释锁定）。
+    let golden = include_str!("../../mcv_mesher/tests/golden/blocks_gen.inc");
     for n in [
         "barrier",
         "light",
@@ -340,10 +341,10 @@ fn attribute_hotspots_match_java() {
         "structure_void",
         "bubble_column",
     ] {
-        let line = cpp
+        let line = golden
             .lines()
             .find(|l| l.trim_end().ends_with(&format!("// {n}")))
-            .unwrap_or_else(|| panic!("C++ kBlocks 缺行：{n}"));
+            .unwrap_or_else(|| panic!("生成表缺行：{n}"));
         let geom_true = line.contains(", true, {");
         assert!(
             !geom_true,

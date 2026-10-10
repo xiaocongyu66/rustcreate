@@ -11,7 +11,6 @@ log.workspace = true
 glam.workspace = true
 bytemuck.workspace = true
 mcv_core.workspace = true
-mcv_ffi.workspace = true
 mcv_worldgen.workspace = true
 mcv_light.workspace = true
 mcv_mesher.workspace = true

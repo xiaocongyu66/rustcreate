@@ -12,7 +12,7 @@
 // tintindex 生物群系染色（草顶/羊齿/树叶三族）已实现：渲染侧按 tile 层查
 // mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。
 // cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何
-// （cpp/src/mesher.cpp emit_shapes）；其余 kind=1 仍整盒占位、六面给代表贴图。
+// （网格器 shape 模板路径，Rust 侧 mcv_mesher）；其余 kind=1 仍整盒占位、六面给代表贴图。
 // carpet/trapdoor/pane/wall（shape 6..9）渲染暂全盒占位，模板待 Rust
 // 网格器 #77；碰撞/拾取几何已在 engine/mcv_game/src/blockshapes.rs 按
 // 原版数值落地。

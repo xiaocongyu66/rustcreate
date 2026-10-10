@@ -1,9 +1,11 @@
-// @generated 快照：cpp/src/blocks_gen.inc 的 geom 列相对
-// `solid || liquid || shape != 0` 规则的例外名单（kind==1 非立方模型、
-// 无形状模板 → C++ 侧仍出占位整盒几何，ci/gen-blocks.py cpp_geom 的
-// `kind == 1` 分支）。gen-blocks.py 的 kind 来自素材模型解析，无法从
-// 名字推导，故静态快照；重生成方块表后若漂移，由 tests/parity.rs 的
-// rust_geom_rule_matches_cpp_generated_table 逐 id 对照 C++ 表报错。
+// @generated 快照：生成表黄金件（game/mcv_mesher/tests/golden/
+// blocks_gen.inc，#77 删除 cpp/ 前的 cpp/src/blocks_gen.inc 逐字节快照）
+// 的 geom 列相对 `solid || liquid || shape != 0` 规则的例外名单
+// （kind==1 非立方模型、无形状模板 → oracle 侧仍出占位整盒几何，
+// ci/gen-blocks.py cpp_geom 的 `kind == 1` 分支）。gen-blocks.py 的
+// kind 来自素材模型解析，无法从名字推导，故静态快照；重生成方块表后
+// 若漂移，由 tests/golden.rs 的 rust_geom_rule_matches_golden_generated_table
+// 逐 id 对照黄金表报错。
 pub(crate) const PLACEHOLDER_NONCUBE: &[&str] = &[
     "acacia_button",
     "acacia_hanging_sign",

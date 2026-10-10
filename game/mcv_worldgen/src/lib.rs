@@ -3,11 +3,12 @@
 //! [`TerrainScheduler`] adds background execution.
 //!
 //! Backend switch（任务板 #91 地形 2.0）：`MCV_TERRAIN_BACKEND` 取值
-//! `legacy`（value noise + fBm 四通道回归基线，src/rust_terrain.rs）或
-//! `vanilla`（26.1 机制 clean-room 编排管线，src/vanilla/）。未设置 →
-//! 新默认 `vanilla`；其余任何值回退 frozen oracle（mcv_ffi →
-//! cpp/src/terrain.cpp，冻结基线）。legacy 路输出仍由 tests/parity.rs
-//! 对 oracle 逐字节对拍锁定（对拍不过修 Rust 侧，禁改 cpp/**）。
+//! `vanilla`（26.1 机制 clean-room 编排管线，src/vanilla/，未设置时的新
+//! 默认）或 `legacy`（value noise + fBm 四通道回归基线，src/rust_terrain.rs）。
+//! 任务板 #77 拆除 C++ frozen oracle（原 mcv_ffi → cpp/src/terrain.cpp）后，
+//! 旧 "rust" 值与其余一切取值统一回退 legacy——legacy 是 oracle 的逐位
+//! Rust 移植，其输出由 tests/golden.rs 对黄金数据（删除前 oracle 落盘）
+//! 逐字节回归锁定。
 
 pub mod os2s;
 pub mod vanilla;
@@ -19,13 +20,10 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
 use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
-use mcv_ffi::terrain_generate_raw;
 
 /// 地形生成后端。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TerrainBackend {
-    /// frozen oracle（mcv_ffi → cpp/src/terrain.cpp）。parity 对拍锚。
-    Ffi,
     /// legacy：value noise + fBm 四通道（回归基线，src/rust_terrain.rs）。
     Legacy,
     /// vanilla：26.1 机制 clean-room 编排管线（新默认，src/vanilla/）。
@@ -33,9 +31,9 @@ pub enum TerrainBackend {
 }
 
 impl TerrainBackend {
-    /// `MCV_TERRAIN_BACKEND=legacy|vanilla`；未设置 → 新默认 vanilla；
-    /// 旧 "rust" 值兼容映射到 legacy；其余任何值回退 frozen oracle
-    ///（派单纪律：只扩展取值，不静默改旧语义）。
+    /// `MCV_TERRAIN_BACKEND=vanilla|legacy`；未设置 → 新默认 vanilla；
+    /// 旧 "rust" 值与其余一切取值回退 legacy（#77 前 oracle 充当冻结
+    /// 基线，现由逐位移植的 legacy + 黄金数据承担同一职责）。
     pub fn from_env() -> Self {
         Self::from_value(std::env::var("MCV_TERRAIN_BACKEND").ok().as_deref())
     }
@@ -44,18 +42,10 @@ impl TerrainBackend {
     /// 且与并行测试的 `getenv` 有数据竞争，故语义单测走这里，不动真实环境）。
     fn from_value(v: Option<&str>) -> Self {
         match v {
-            Some("legacy") => Self::Legacy,
+            Some("vanilla") => Self::Vanilla,
             None => Self::Vanilla,
-            Some("vanilla") | Some("rust") => Self::from_named(v.unwrap_or("")),
-            Some(_) => Self::Ffi,
-        }
-    }
-
-    fn from_named(v: &str) -> Self {
-        if v == "vanilla" {
-            Self::Vanilla
-        } else {
-            Self::Legacy
+            // "legacy"、旧 "rust" 以及其余一切取值 → 冻结基线。
+            Some(_) => Self::Legacy,
         }
     }
 }
@@ -77,8 +67,7 @@ pub fn generate_terrain(seed: u64, pos: ChunkPos) -> Result<TerrainOutput, i32> 
     generate_terrain_with(TerrainBackend::from_env(), seed, pos)
 }
 
-/// 显式后端生成（对拍测试用，避免环境变量歧义；与
-/// `mcv_mesher::Mesher::with_backend` 同款）。
+/// 显式后端生成（测试/调度器用，避免环境变量歧义）。
 pub fn generate_terrain_with(
     backend: TerrainBackend,
     seed: u64,
@@ -87,15 +76,6 @@ pub fn generate_terrain_with(
     let mut voxels = ChunkVoxels::filled(mcv_core::BlockId(0));
     let mut heightmap = vec![0u8; 256];
     match backend {
-        TerrainBackend::Ffi => {
-            terrain_generate_raw(
-                seed,
-                pos.x,
-                pos.z,
-                voxels.as_u16_slice_mut(),
-                &mut heightmap,
-            )?;
-        }
         TerrainBackend::Legacy => {
             rust_terrain::generate(
                 seed,
@@ -139,9 +119,10 @@ pub fn generate_into(handle: &Arc<ChunkHandle>, seed: u64) -> Result<(), i32> {
 }
 
 /// Rebuilds the heightmap from voxel data (saves don't store it). This is
-/// the single Rust-side producer; the terrain kernel's pass 3
-/// (`cpp/src/terrain.cpp`, exclusion = air/water/flowers) and this function
-/// agree on every block the generator emits: the skip set here is
+/// the single Rust-side producer; the retired terrain kernel's pass 3
+/// (cpp/src/terrain.cpp，黄金数据锚定的冻结基线，exclusion =
+/// air/water/flowers) and this function agree on every block the generator
+/// emits: the skip set here is
 /// "lightDampening == 0 (air/flowers/glass/…) **or** liquid (water/lava)".
 /// Skipping fluids is *our* documented gameplay baseline (spawn surface
 /// under sea water, matching the terrain kernel): vanilla 26.1
@@ -243,18 +224,18 @@ impl TerrainScheduler {
 mod tests {
     use super::TerrainBackend;
 
-    /// 后端开关语义锁：精确 "legacy"/"vanilla" 各选其后端；未设置 → 新默认
-    /// vanilla；旧 "rust" 值兼容映射到 legacy；其余一切回 oracle。
-    /// 纯函数核不触真实环境变量。
+    /// 后端开关语义锁：精确 "vanilla" 选 vanilla、未设置 → 新默认 vanilla；
+    /// "legacy"、旧 "rust" 与其余一切取值回冻结基线 legacy（#77 前 oracle
+    /// 承担该角色，删除后由逐位移植 + 黄金数据承担）。纯函数核不触真实环境。
     #[test]
     fn backend_switch_semantics() {
         for (val, want) in [
             (Some("legacy"), TerrainBackend::Legacy),
             (Some("vanilla"), TerrainBackend::Vanilla),
             (Some("rust"), TerrainBackend::Legacy),
-            (Some("Rust"), TerrainBackend::Ffi),
-            (Some("ffi"), TerrainBackend::Ffi),
-            (Some(""), TerrainBackend::Ffi),
+            (Some("Rust"), TerrainBackend::Legacy),
+            (Some("ffi"), TerrainBackend::Legacy),
+            (Some(""), TerrainBackend::Legacy),
             (None, TerrainBackend::Vanilla),
         ] {
             assert_eq!(

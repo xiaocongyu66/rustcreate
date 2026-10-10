@@ -1460,14 +1460,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mcv_ffi"
-version = "0.1.0"
-dependencies = [
- "cc",
- "mcv_core",
-]
-
-[[package]]
 name = "mcv_game"
 version = "0.1.0"
 dependencies = [
@@ -1501,7 +1493,6 @@ dependencies = [
  "mcv_core",
  "mcv_ecs",
  "mcv_entity",
- "mcv_ffi",
  "mcv_game",
  "mcv_item",
  "mcv_light",
@@ -1517,7 +1508,6 @@ name = "mcv_mesher"
 version = "0.1.0"
 dependencies = [
  "mcv_core",
- "mcv_ffi",
 ]
 
 [[package]]
@@ -1565,7 +1555,6 @@ name = "mcv_worldgen"
 version = "0.1.0"
 dependencies = [
  "mcv_core",
- "mcv_ffi",
 ]
 
 [[package]]

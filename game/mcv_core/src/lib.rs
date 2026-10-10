@@ -401,7 +401,7 @@ impl BlockId {
 ///
 /// 内存预算（u16 加宽后）：体素 128 KiB/区块 + 光照 64 KiB + 高度图 256 B。
 /// 视距 8（17×17 = 289 区块）≈ 289 × 192 KiB ≈ 54 MiB 体素+光照常驻。
-/// mesh 池（CxxMesher 256 MiB）只存网格不存体素，预算不变。
+/// 网格缓冲（mcv_mesher，纯 Rust 自有缓冲）只存网格不存体素，预算不变。
 pub struct ChunkVoxels(pub Box<[BlockId; CHUNK_VOL]>);
 
 /// Chunk light storage: low nibble = block light, high nibble = sky light.

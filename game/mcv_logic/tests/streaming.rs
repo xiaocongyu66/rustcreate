@@ -11,7 +11,7 @@
 //!
 //! 无头路径约定：`new_headless` 用 NullMesher（不产出网格、不推进
 //! Uploaded），测试用 [`emulate_upload`] 按生产同款门槛（3×3 邻域均
-//! ≥LightLocalReady）手工推进状态机，等价真机 CxxMesher+MeshUploader 的
+//! ≥LightLocalReady）手工推进状态机，等价真机 RustMesher+MeshUploader 的
 //! 建网格+上传（game.rs remesh 循环注释所述「由测试手工 advance_to」同款）。
 
 use std::collections::{HashMap, HashSet};

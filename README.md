@@ -1,6 +1,6 @@
 # rustcreate
 
-Minecraft 类体素沙盒，自研引擎重写：**wgpu 30 引擎核心 + Rust 主体 + C++17 热路径**。
+Minecraft 类体素沙盒，自研引擎重写：**wgpu 30 引擎核心 + 纯 Rust 全栈**（任务板 #77 起 C++17 热路径已整体拆除）。
 
 分层原则：**引擎提供能力，游戏提供规则**。`engine/` 不知道方块/物品/MC 语义，
 `game/` 不直接使用 wgpu / winit；依赖只允许 game → engine，反向由编译期阻断。
@@ -19,22 +19,13 @@ Minecraft 类体素沙盒，自研引擎重写：**wgpu 30 引擎核心 + Rust �
 | 语言 | crate | 职责 |
 |---|---|---|
 | Rust | `game/mcv_core` | 区块布局(16x256x16)、方块注册表、任务池 |
-| Rust+cc | `game/mcv_ffi` | 唯一 C ABI：repr(C) 镜像、静态断言、RAII 内存契约 |
-| Rust | `game/mcv_worldgen` | 地形编排（调 C++ terrain） |
+| Rust | `game/mcv_worldgen` | 地形编排（legacy 冻结基线 + vanilla 26.1 管线） |
 | Rust | `game/mcv_light` | 双通道 BFS（sky/block）、removal、跨区块同步 |
-| Rust | `game/mcv_mesher` | 网格化编排（调 C++ mesher）+ 缓冲句柄 |
+| Rust | `game/mcv_mesher` | 网格化编排 + 网格缓冲（纯 Rust 贪心网格器） |
 | Rust | `game/mcv_entity` / `game/mcv_item` | 生物 AI、战斗、掉落；物品与快捷栏 |
 | Rust | `game/mcv_logic` | 游戏运行时编排：区块流式调度、玩家、实体、HUD 装配 |
 | Rust | `game/mcv_app` | 平台壳：winit 0.30 窗口/输入/surface + 菜单 UI + 触屏 |
 | Rust | `game/mcv_desktop` | 桌面入口 `mcv` 二进制 |
-
-## C++17 热路径 `cpp/`
-
-| 语言 | 文件 | 职责 |
-|---|---|---|
-| **C++17** | `cpp/src/terrain.cpp` | 三层噪声、双阈值 3D 洞穴、树投影 |
-| **C++17** | `cpp/src/mesher.cpp` | 贪心网格化 + 逐顶点 AO + 顶点打包（wgpu 直读） |
-| Rust+C++ | `cpp/src/mempool.cpp` | 尺寸分级 freelist 池 + canary，Rust RAII Drop 归还 |
 
 ## 云端构建（无本地工具链要求）
 

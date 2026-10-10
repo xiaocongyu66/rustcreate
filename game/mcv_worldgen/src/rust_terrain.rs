@@ -1,4 +1,5 @@
-//! 纯 Rust 地形内核——`cpp/src/terrain.cpp`（冻结 oracle）的逐位移植。
+//! 纯 Rust 地形内核——`cpp/src/terrain.cpp`（frozen oracle，任务板 #77
+//! 已删除）的逐位移植，本文件是被黄金数据锚定的冻结基线。
 //!
 //! 机制：三层噪声高度图（大陆度/侵蚀度/山脊 + 锯齿细节）+ 双阈值洞穴
 //! （意面管道 + 奶酪大洞）+ 跨区块确定性树投影 + 遮光高度图。公共入口
@@ -7,8 +8,9 @@
 //! u8 高度图（索引 `(z<<4)|x`，值 = 最高遮光格 y + 1）。
 //!
 //! 位一致纪律见 [`crate::rust_noise`] 模块注释；对拍由
-//! `tests/parity.rs` 以 C++ oracle 为基准逐字节锁定（不过修本侧，
-//! 禁改 cpp/**）。出处标注 `terrain.cpp:行号`。
+//! `tests/golden.rs` 以黄金数据（#77 删除前从该 oracle 落盘）逐字节
+//! 回归锁定——**回归锁，非正确性标准**（黄金值是旧近似语义，26.1 权威
+//! 门在 vanilla 后端 + tests/quality.rs）。出处标注 `terrain.cpp:行号`。
 
 use crate::rust_noise::{fbm2, fbm2_w, fbm3, fbm3_w, hash01, peaks_valleys};
 

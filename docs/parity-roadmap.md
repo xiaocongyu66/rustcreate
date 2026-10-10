@@ -8,7 +8,7 @@
 
 | 参照包（文件数） | 机制主题 | 引擎落点 | 状态 |
 |---|---|---|---|
-| world/level/levelgen (425) | 噪声列/密度函数/洞穴/树/装饰物 | mcv_worldgen + cpp/terrain | 🔨 波1-B 常数校准；Rust 地形内核已落地（rust_terrain/rust_noise，oracle 对拍锁定，默认切换待任务板） |
+| world/level/levelgen (425) | 噪声列/密度函数/洞穴/树/装饰物 | mcv_worldgen | 🔨 波1-B 常数校准；Rust 地形内核已落地（rust_terrain/rust_noise，黄金数据回归锁，vanilla 已切默认） |
 | world/level/chunk (54) | 区块分段存储、heightmap、section 序列化 | mcv_core Chunk + mcv_save | 🔨 波1-E |
 | world/level/lighting (15) | 天光柱/衰减/发光表/removal 队列 | mcv_light | 🔨 波1-C |
 | world/level/block (461) | 方块属性（硬度/爆炸抗性/发光/遮挡/tick） | mcv_core BLOCKS | 🔨 波1-E |
@@ -30,7 +30,7 @@
 
 | 参照 (client/renderer 682) | 主题 | 落点 | 状态 |
 |---|---|---|---|
-| 区块网格/烘焙 | 贪心+AO+面明暗 | mcv_mesher/cpp | ✅ |
+| 区块网格/烘焙 | 贪心+AO+面明暗 | mcv_mesher | ✅ |
 | fog/sky/光照曲线 | 雾、昼夜、gamma | mcv_render | ✅ 基础；🔨 曲线常数核对（波2） |
 | CloudRenderer | 体素云层 | mcv_render 新 pass | ⬜ 波2 |
 | entity/PlayerRenderer | 六盒体玩家模型+行走动画、steve/alex 皮肤 | mcv_render + mcv_game | ⬜ 波2（任务 #12） |

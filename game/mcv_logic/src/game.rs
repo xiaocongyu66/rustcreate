@@ -63,22 +63,22 @@ pub trait ChunkMesher: Send {
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk>;
 }
 
-/// Real mesher: C++ greedy mesh via mcv_mesher + GPU upload.
-pub struct CxxMesher {
+/// Real mesher: pure-Rust greedy mesh via mcv_mesher + GPU upload.
+pub struct RustMesher {
     mesher: mcv_mesher::Mesher,
     uploader: mcv_render::gpu::MeshUploader,
 }
 
-impl CxxMesher {
-    pub fn new(budget: u64, uploader: mcv_render::gpu::MeshUploader) -> Self {
+impl RustMesher {
+    pub fn new(uploader: mcv_render::gpu::MeshUploader) -> Self {
         Self {
-            mesher: mcv_mesher::Mesher::new(budget).expect("mesh pool"),
+            mesher: mcv_mesher::Mesher::new(),
             uploader,
         }
     }
 }
 
-impl ChunkMesher for CxxMesher {
+impl ChunkMesher for RustMesher {
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
         // Copy the 9 neighbourhoods out (locks taken one at a time).
         let mut voxels = vec![0u16; 9 * 65536];
@@ -790,7 +790,7 @@ impl GameRuntime {
     ) -> Self {
         Self::assemble(
             seed,
-            Box::new(CxxMesher::new(256 << 20, uploader)),
+            Box::new(RustMesher::new(uploader)),
             save_dir,
             mode,
         )

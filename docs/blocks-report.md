@@ -6,7 +6,7 @@
 - 产物：
   - `game/mcv_core/src/blocks_gen.inc.rs` —— `GEN_BLOCKS: [(&str, bool,bool,bool, u8, [u16;6], f32, u8); 1171]`
   - `game/mcv_core/tiles_manifest.json` —— tile 层索引（按贴图名字典序）→ 文件名 + 虚拟路径
-  - `cpp/src/blocks_gen.inc` —— C++ mesher kBlocks 同步行
+  - `game/mcv_mesher/tests/golden/blocks_gen.inc` —— 生成表黄金件（#77 删除 cpp/ 前的 kBlocks 同步行逐字节快照，geom 表锁数据源）
   - `game/mcv_core/tests/vanilla_blocks_gen.inc` —— 官方注册表名字清单（覆盖率测试数据源）
 - 贴图**不拷贝**：运行时从 `assets/minecraft/textures/block/` 按 manifest 虚拟路径加载（主控指令，
   不访问 Mojang CDN；沙箱内 Mojang CDN 亦实测整体 404）。

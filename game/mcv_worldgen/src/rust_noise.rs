@@ -1,4 +1,5 @@
-//! 纯 Rust 噪声层——`cpp/src/noise.h`（冻结 oracle）的逐位移植。
+//! 纯 Rust 噪声层——`cpp/src/noise.h`（frozen oracle，任务板 #77 已删除）
+//! 的逐位移植，本文件是被黄金数据锚定的冻结基线。
 //!
 //! 位一致三原则（与 mesher 移植同纪律，任务板 #78 第一阶段）：
 //! 1. 全部浮点保持 f32 单精度，且与 C++ 逐调用点相同的运算序与结合序——
@@ -10,7 +11,8 @@
 //!
 //! 位级锚点（splitmix64 已知答案 + f32 位模式向量）锁在本模块 `#[cfg(test)]`；
 //! 向量由独立 IEEE 单精度逐运算仿真复算生成（与 C++ 同序），全链路正确性
-//! 由 tests/parity.rs 的 C++ oracle 逐字节对拍兜底。出处标注 `noise.h:行号`
+//! 由 tests/golden.rs 的黄金数据（删除前 oracle 落盘）回归锁兜底。
+//! 出处标注 `noise.h:行号`
 //! （引用出处 ≠ 复制表达，docs/porting-conventions.md §1/§3）。
 
 /// splitmix64 终混合（noise.h:22-27）。

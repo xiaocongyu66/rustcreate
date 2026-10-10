@@ -1,8 +1,9 @@
-//! Terrain kernel behavior tests against the C++ implementation.
+//! Terrain kernel behavior tests against the legacy implementation.
 //!
-//! 后端显式钉在 `Legacy`（C++ oracle 的 Rust 镜像，tests/parity.rs 已把它与
-//! FFI 路径逐字节对拍锁定）：本文件断言的是 legacy 内核行为（NOTES-terrain
-//! 的常数体系、树木/花装饰、洞穴带），历史上一律跑在该后端上。#91 把
+//! 后端显式钉在 `Legacy`（已删除 C++ oracle 的逐位 Rust 镜像，tests/
+//! golden.rs 以黄金数据把它与删除前 oracle 输出回归锁定）：本文件断言的
+//! 是 legacy 内核行为（NOTES-terrain 的常数体系、树木/花装饰、洞穴带），
+//! 历史上一律跑在该后端上。#91 把
 //! `generate_terrain` 的缺省后端切到 vanilla 后，这些用例若继续走缺省就会
 //! 被静默改靶（vanilla v1 管线无装饰 pass，`trees_and_grass_present` 等按
 //! 构造不可达）——vanilla 的统计质量门在 tests/quality.rs，两套互不替代。

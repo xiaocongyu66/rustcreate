@@ -1,9 +1,12 @@
-//! Pure-Rust 体素网格器——`cpp/src/mesher.cpp` 的机制移植（oracle）。
+//! Pure-Rust 体素网格器——`cpp/src/mesher.cpp` 的机制移植（frozen oracle，
+//! 任务板 #77 已删除；本文件是被黄金数据锚定的冻结基线）。
 //!
 //! 各函数注释以 `mesher.cpp:行号` 标注机制出处（引用出处≠复制表达，
 //! docs/porting-conventions.md §1/§3：控制流与命名是本仓库自有表达）。
 //! 输出是渲染 ABI（24 B 交错顶点 + u32 索引，mesher.cpp:11-13,105-115），
-//! 与 C++ 路径逐字节对拍锁定（tests/parity.rs；对拍不过修本侧，禁改 C++）。
+//! 与黄金数据逐字节回归锁定（tests/golden.rs；**回归锁，非正确性标准**——
+//! 黄金值是删除前 oracle 的旧近似输出，26.1 权威门在 vanilla 后端 +
+//! tests/quality.rs）。
 //!
 //! 顶点布局（24 B）：pos f32x3 | uv u16x2 | tex_layer u16 | block_light u8 |
 //! sky_light u8 | ao u8 | flags u8（bit0-2 面档，bit3 水顶波动）| pad 2B；
@@ -62,9 +65,10 @@ const RAIL_MIN: f32 = 0.375; // 臂梁 y 0.375..0.5625
 const RAIL_MAX: f32 = 0.5625;
 
 /// 方块信息（mesher.cpp:68-75 BlockInfo）：opaque/liquid/geom/tiles/shape。
-/// 数据吃 mcv_core::BLOCKS 生成表（与 C++ kBlocks 同一次 gen-blocks.py 生成，
-/// mesher.cpp:77-82），geom 是 C++ 表独有字段，按 cpp_geom 规则推导
-/// （见 [`block_geom`]）并受 tests/parity.rs 逐 id 对照 C++ 表锁定。
+/// 数据吃 mcv_core::BLOCKS 生成表（与已删除的 C++ kBlocks 同一次
+/// gen-blocks.py 生成，mesher.cpp:77-82），geom 是 C++ 表独有字段，按
+/// cpp_geom 规则推导（见 [`block_geom`]）并受 tests/golden.rs 逐 id 对照
+/// 黄金生成表锁定。
 #[derive(Clone, Copy)]
 pub(crate) struct Info {
     pub opaque: bool,
@@ -314,7 +318,8 @@ fn same_key(a: &Cell, b: &Cell) -> bool {
 }
 
 /// 网格器输出（mesher.cpp:105-115 QuadVertex 平铺）：顶点 24B 步长、索引
-/// u32。空网格保持 (0,0) 计数（池容量协商是 C++ 路径的池细节，不属 ABI）。
+/// u32。空网格保持 (0,0) 计数（任务板 #77 前的池容量协商是 C++ 路径的池
+/// 细节，随池一并拆除）。
 #[derive(Default)]
 pub struct MeshData {
     pub vertices: Vec<u8>,
@@ -322,6 +327,24 @@ pub struct MeshData {
 }
 
 impl MeshData {
+    /// 顶点字节（24 B 步长交错）。
+    pub fn vertex_data(&self) -> &[u8] {
+        &self.vertices
+    }
+
+    /// 索引（u32，外视 CCW）。
+    pub fn indices(&self) -> &[u32] {
+        &self.indices
+    }
+
+    /// (顶点数, 索引数)。
+    pub fn counts(&self) -> (u32, u32) {
+        (
+            (self.vertices.len() / VERTEX_STRIDE) as u32,
+            self.indices.len() as u32,
+        )
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn push_vertex(
         &mut self,
