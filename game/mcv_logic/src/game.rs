@@ -3249,9 +3249,9 @@ impl GameRuntime {
         }
     }
 
-    /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落（26.1：掉落需要
-    /// 正确工具，`hasCorrectToolForDrops` 门控）+ break 音效。挖掘进度完成
-    /// 与创造秒破共用。
+    /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落/耐久/exhaustion
+    /// （26.1 destroyBlock 三段拆门：掉落与记账走 `hasCorrectToolForDrops`，
+    /// 耐久走 `mineBlock` 独立段）+ break 音效。挖掘进度完成与创造秒破共用。
     fn destroy_block(&mut self, target: BlockPos) {
         // y 出界拒绝（同 interact 放置；防 local() 绕回删到同列另一端）。
         if !(0..256).contains(&target.y) {
@@ -3289,14 +3289,15 @@ impl GameRuntime {
         // 生存掉落需正确工具（错误工具能磨掉但不掉东西）。创造秒破不留
         // 掉落物（26.1 give 进创造背包，此处背包未做 → 直接消失）。
         if self.mode != GameMode::Creative {
-            // 每破坏一方块 exhaustion 0.005（Block.playerDestroy，
-            // Block.java:478 causeFoodExhaustion(0.005F)；创造经
-            // abilities.invulnerable 门豁免，Player.java:1561-1567）。
-            self.player.exhaustion = (self.player.exhaustion + EXHAUSTION_MINE).min(EXHAUSTION_MAX);
             let held = self.held_stack();
-            if mcv_item::mining::has_correct_tool(old, held.as_ref())
-                && let Some(drop) = mcv_item::drop_for_block(old)
-            {
+            // 掉落门 hasCorrectToolForDrops（ServerPlayerGameMode.java:295
+            // canDestroy）：门内才走 playerDestroy——exhaustion 0.005 与
+            // 掉落同门记账（Block.java:469-479 causeFoodExhaustion(0.005F)），
+            // 错误工具磨掉方块两者皆无；创造经 abilities.invulnerable 门豁免
+            //（Player.java:1561-1567）。
+            if mcv_item::mining::has_correct_tool(old, held.as_ref()) {
+                self.player.exhaustion =
+                    (self.player.exhaustion + EXHAUSTION_MINE).min(EXHAUSTION_MAX);
                 // 生成点：方块中心 ±0.25 随机三轴、y 再 −0.125（26.1
                 // Block.popResource，Block.java:410-418）；pickup_delay 走
                 // 默认 10 tick（Block.java:436-444，非 0 贴手）。
@@ -3307,14 +3308,39 @@ impl GameRuntime {
                     target.y as f32 + 0.5 + j(&mut rng) - 0.125,
                     target.z as f32 + 0.5 + j(&mut rng),
                 );
-                mcv_entity::spawn_item_drop(
-                    &mut self.mobs_app.world,
-                    c,
-                    drop.item,
-                    drop.count,
-                    mcv_entity::PICKUP_DELAY,
-                    &mut rng,
-                );
+                for drop in mcv_item::drops_for_block(old, &mut rng) {
+                    mcv_entity::spawn_item_drop(
+                        &mut self.mobs_app.world,
+                        c,
+                        drop.item,
+                        drop.count,
+                        mcv_entity::PICKUP_DELAY,
+                        &mut rng,
+                    );
+                }
+            }
+            // 耐久段（ServerPlayerGameMode.java:296 itemStack.mineBlock →
+            // Item.java:257-268）：带 Tool 组件的手持物（镐/斧/锹 1、剑 2）对
+            // destroySpeed != 0 的方块每次成功挖掘扣 1，与掉落门**解耦**——
+            // 木镐挖钻石矿不掉落但照样耗；硬度 0（花草）不扣。耐久耗尽即销毁
+            // （ItemStack.java:466-468 applyDamage → shrink(1)），清槽 +
+            // random.break 同攻击段（:2987-2999）。
+            let cost = mcv_item::mining::mine_durability_cost(old, held.as_ref());
+            if cost > 0 {
+                let broke = self
+                    .hotbar
+                    .selected_mut(self.player.sel_slot)
+                    .hurt(cost, &mut || 0);
+                if broke {
+                    self.hotbar.slots[self.player.sel_slot % 9] = mcv_item::ItemStack::empty();
+                    let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+                    self.audio.play_event(
+                        "random.break",
+                        [eye.x, eye.y, eye.z],
+                        [eye.x, eye.y, eye.z],
+                        1.0,
+                    );
+                }
             }
         }
         if let Some(group) = block_group(old.0) {

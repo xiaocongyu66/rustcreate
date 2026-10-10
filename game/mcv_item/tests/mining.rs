@@ -5,8 +5,9 @@
 use mcv_core::BlockId;
 use mcv_item::mining::{block_mining, destroy_speed, has_correct_tool, progress_per_tick};
 use mcv_item::{
-    DIAMOND_PICKAXE_INDEX, IRON_PICKAXE_INDEX, ItemStack, STONE_PICKAXE_INDEX, ToolKind,
-    WOODEN_AXE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX, mining,
+    DIAMOND_PICKAXE_INDEX, IRON, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemKind, ItemStack,
+    STONE_PICKAXE_INDEX, ToolKind, WOODEN_AXE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX,
+    mining,
 };
 
 fn tool(id: u16) -> Option<ItemStack> {
@@ -89,6 +90,57 @@ fn tier_gate_on_ore_drops() {
         tool(WOODEN_PICKAXE_INDEX).as_ref()
     ));
     assert!(!has_correct_tool(COAL_ORE, None));
+    // 矿石族全量对齐 26.1 needs_*_tool tag（数据表见 mcv_core::tool）：
+    // 铁/铜/青金 = 石镐级（needs_stone_tool），金/红石/钻石/绿宝石 = 铁镐级
+    //（needs_iron_tool）；深板岩矿同层（Blocks.java ofLegacyCopy 继承门 +
+    // tag 显式列名）。表驱动逐行：
+    let stone_pick = tool(STONE_PICKAXE_INDEX);
+    let iron_pick = tool(IRON_PICKAXE_INDEX);
+    // (矿石方块 id, 深板岩变体 id, 层级)
+    let ore_table: &[(u16, u16, u8)] = &[
+        (217, 347, 1), // coal_ore / deepslate_coal_ore
+        (484, 352, 2), // iron_ore / deepslate_iron_ore
+        (241, 348, 2), // copper_ore / deepslate_copper_ore
+        (513, 353, 2), // lapis_ore / deepslate_lapis_ore
+        (425, 351, 4), // gold_ore / deepslate_gold_ore
+        (877, 354, 4), // redstone_ore / deepslate_redstone_ore
+        (361, 349, 4), // diamond_ore / deepslate_diamond_ore
+        (376, 350, 4), // emerald_ore / deepslate_emerald_ore
+    ];
+    for (ore, ds, tier) in ore_table {
+        let want_pick = |t: u8| match t {
+            1 => WOODEN_PICKAXE_INDEX,
+            2 => STONE_PICKAXE_INDEX,
+            _ => IRON_PICKAXE_INDEX,
+        };
+        assert!(
+            has_correct_tool(BlockId(*ore), tool(want_pick(*tier)).as_ref()),
+            "{} 层级门",
+            mcv_core::BLOCKS[*ore as usize].name
+        );
+        assert!(
+            !has_correct_tool(BlockId(*ore), None),
+            "{} 徒手非正确工具（26.1 徒手挖矿不掉）",
+            mcv_core::BLOCKS[*ore as usize].name
+        );
+        assert!(
+            !has_correct_tool(BlockId(*ds), None),
+            "{} 深板岩矿徒手非正确工具",
+            mcv_core::BLOCKS[*ds as usize].name
+        );
+        assert!(
+            has_correct_tool(
+                BlockId(*ds),
+                if *tier <= 2 {
+                    stone_pick.as_ref()
+                } else {
+                    iron_pick.as_ref()
+                }
+            ),
+            "{} 深板岩矿层级门",
+            mcv_core::BLOCKS[*ds as usize].name
+        );
+    }
     // 层级不足仍慢速可破（/100），且速度按种类匹配吃镐速（26.1：层级只管
     // 掉落正确性，不管速度）——木镐挖铁矿 = 2/3/100 → 150 tick。
     let p = progress_per_tick(IRON_ORE, tool(WOODEN_PICKAXE_INDEX).as_ref());
@@ -111,10 +163,53 @@ fn bedrock_never_and_flowers_instant() {
 
 #[test]
 fn unregistered_blocks_are_hand_mineable_plain() {
-    // 未注册进挖掘表的方块：徒手正确、无工具速度（宁缺勿错）。
+    // 不在工具表/速度族的方块：徒手正确、无工具速度（宁缺勿错）。
     assert!(!has_correct_tool(COBBLE, None), "圆石要镐");
-    let bm = block_mining(BlockId(485));
+    let bm = block_mining(BlockId(419)); // glass：无掉落门、无速度族
     assert!(bm.need.is_none() && bm.speed_tool.is_none());
     assert_eq!(block_mining(STONE).speed_tool, Some(ToolKind::Pickaxe));
     assert_eq!(mining::mining_tier(mcv_item::COPPER), 3);
+}
+
+/// 耐久消耗对齐 26.1 `Item.mineBlock`（Item.java:257-268，任务板 #90）：
+/// 带 Tool 组件手持物镐/斧/锹 1、剑 2（ToolMaterial.applyToolProperties /
+/// applySwordProperties 的 damagePerBlock）；无 Tool 组件（空手/方块物品/
+/// 木棍）0；硬度 0（花草，destroySpeed == 0）不扣；**与掉落门解耦**——
+/// 错误工具挖不动掉落但照样耗（ServerPlayerGameMode.java:296 无条件执行）。
+#[test]
+fn mine_durability_matches_item_mine_block() {
+    use mcv_item::mining::{mine_damage, mine_durability_cost};
+    let pick = ItemStack::new(IRON_PICKAXE_INDEX, 1);
+    let sword = ItemStack::new(IRON_SWORD_INDEX, 1);
+    assert_eq!(mine_durability_cost(STONE, Some(&pick)), 1, "镐每次 1");
+    assert_eq!(mine_durability_cost(STONE, Some(&sword)), 2, "剑每次 2");
+    // 无 Tool 组件 → 0。
+    assert_eq!(mine_durability_cost(STONE, None), 0, "徒手不耗");
+    let block_item = ItemStack::new(27, 1); // cobblestone 方块物品
+    assert_eq!(mine_durability_cost(STONE, Some(&block_item)), 0);
+    let stick = ItemStack::new(mcv_item::STICK, 1);
+    assert_eq!(mine_durability_cost(STONE, Some(&stick)), 0);
+    // 硬度 0（花）：destroySpeed == 0 → 不扣。
+    assert_eq!(mine_durability_cost(FLOWER, Some(&pick)), 0);
+    // 解耦：木镐挖钻石矿（不掉落）照样耗 1。
+    assert_eq!(
+        mine_durability_cost(DIAMOND_ORE, Some(&ItemStack::new(13, 1))),
+        1
+    );
+    // damagePerBlock 原值对账。
+    assert_eq!(mine_damage(ItemKind::Pickaxe(IRON)), 1);
+    assert_eq!(mine_damage(ItemKind::Sword(IRON)), 2);
+}
+
+/// 耐久耗尽销毁：每次成功挖掘 damage 1，累计到 max_damage → `hurt` 返回
+/// true，调用方清槽（26.1 `applyDamage` → `shrink(1)`，ItemStack.java:466-468）。
+#[test]
+fn tool_breaks_when_durability_exhausted_by_mining() {
+    let mut wooden = ItemStack::new(WOODEN_PICKAXE_INDEX, 1); // 木镐耐久 59
+    let mut rng = || 0u32;
+    for i in 0..59 {
+        assert!(!wooden.hurt(1, &mut rng), "第 {} 次挖掘不该坏", i + 1);
+    }
+    assert_eq!(wooden.damage, 59);
+    assert!(wooden.hurt(1, &mut rng), "第 60 次 damage≥max → 工具销毁");
 }
