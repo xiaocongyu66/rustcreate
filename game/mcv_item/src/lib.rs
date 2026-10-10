@@ -114,7 +114,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 58] = [
+pub static ITEMS: [ItemDef; 59] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
