@@ -48,8 +48,8 @@ pub fn squeeze(c: f64) -> f64 {
 
 /// 通道域盐：世界种子 ^ 通道码 → 终混合（自有派生，防通道同种子）。
 #[must_use]
-pub const fn channel_seed(world_seed: u64, domain: u64) -> u64 {
-    splitmix64(world_seed ^ domain)
+pub const fn channel_seed(world_seed: u64, domain: u64) -> i64 {
+    splitmix64(world_seed ^ domain) as i64
 }
 
 /// splitmix64 终混合。
@@ -70,4 +70,36 @@ pub fn hash01(seed: u64, x: i64, y: i64, z: i64) -> f32 {
             ^ (z as u64).wrapping_mul(0xC2B2_AE3D),
     );
     ((h >> 40) as f32) * (1.0_f32 / 16_777_216.0)
+}
+
+/// 一列地表的方块 y（用于统计测试；生成路径见 `terrain::generate`）。
+#[must_use]
+pub fn surface_block_y(world_seed: u64, block_x: i32, block_z: i32) -> i32 {
+    terrain::Orchestrator::new(world_seed)
+        .column_state(block_x, block_z)
+        .surface_ours
+}
+
+/// 一列的 MultiNoise 群系（地表参数点，depth = 0）。
+#[must_use]
+pub fn biome_at(world_seed: u64, block_x: i32, block_z: i32) -> biomes::Biome {
+    let sample = climate::ClimateSampler::new(world_seed).sample(block_x, block_z);
+    let t = biomes::TargetPoint {
+        temperature: (sample.temperature * biomes::Q as f64) as i64,
+        humidity: (sample.humidity * biomes::Q as f64) as i64,
+        continentalness: (sample.continents * biomes::Q as f64) as i64,
+        erosion: (sample.erosion * biomes::Q as f64) as i64,
+        depth: 0,
+        weirdness: (sample.ridges * biomes::Q as f64) as i64,
+    };
+    static POINT_TABLE: std::sync::OnceLock<Vec<(biomes::ParameterPoint, biomes::Biome)>> =
+        std::sync::OnceLock::new();
+    let table = POINT_TABLE.get_or_init(biome_point_list);
+    biomes::pick_biome(table, &t)
+}
+
+/// 群系点表（缓存包装）。
+#[must_use]
+pub fn biome_point_list() -> Vec<(biomes::ParameterPoint, biomes::Biome)> {
+    biomes::biome_point_table()
 }

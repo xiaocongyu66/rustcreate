@@ -377,7 +377,7 @@ fn spaghetti_rarity_2d(rarity_factor: f64) -> f64 {
 /// CaveEntrances 函数（NoiseRouterData.entrances）：洞口/意面雕刻带。
 /// 入参 (bx, y_mc, bz)；返回 entrances 值（< 0 ⇒ 雕空）。
 pub fn entrances_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = world_seed ^ 0x0CAFE_0001_u64;
+    let s = (world_seed ^ 0x0CAFE_0001_u64) as i64;
     // spaghetti3DRarityModulator = noise(SPAGHETTI_3D_RARITY, 2.0, 1.0)
     let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x11, bx * 2.0, y_mc, bz * 2.0) as f64;
     let rarity = spaghetti_rarity_3d(rarity_mod);
@@ -405,7 +405,7 @@ pub fn entrances_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
 
 /// Underground 函数（NoiseRouterData.spaghetti2D）：层状意面雕刻带。
 pub fn spaghetti2d_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
-    let s = world_seed ^ 0x0CAFE_0002_u64;
+    let s = (world_seed ^ 0x0CAFE_0002_u64) as i64;
     // spaghetti2DRarityModulator = noise(SPAGHETTI_2D_MODULATOR, 2.0, 1.0)
     let rarity_mod = smooth::noise3_ImproveXZ(s ^ 0x31, bx * 2.0, y_mc, bz * 2.0) as f64;
     let rarity = spaghetti_rarity_2d(rarity_mod);
@@ -432,7 +432,7 @@ pub fn spaghetti2d_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64) -> f64 {
 
 /// UnderGround 奶酪函数（NoiseRouterData.underground）：奶酪大洞雕刻带。
 pub fn underground_value(world_seed: u64, bx: f64, y_mc: f64, bz: f64, sloped_cheese: f64) -> f64 {
-    let s = world_seed ^ 0x0CAFE_0003_u64;
+    let s = (world_seed ^ 0x0CAFE_0003_u64) as i64;
     // layer = noise(CAVE_LAYER, 8.0)
     let layer = smooth::noise3_ImproveXZ(s ^ 0x41, bx * 8.0, y_mc * 8.0, bz * 8.0) as f64;
     let layerized = 4.0 * layer * layer;
