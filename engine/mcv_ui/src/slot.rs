@@ -164,6 +164,11 @@ pub fn quickcraft_place_count(n: u32, qc_type: u8, carried_count: u32, item_max:
     }
 }
 
+/// quickMove 路由表类型：分组 → 候选目标区间段表 `[(start, end, backwards)]`
+/// （见 [`ContainerScreen::router`] 字段文档；类型别名亦为过 clippy
+/// type_complexity）。
+pub type QuickMoveRouter = Box<dyn Fn(u16) -> Vec<(usize, usize, bool)>>;
+
 /// 容器界面状态机（屏幕侧状态 + 菜单镜像一体；单机语义下镜像即权威，
 /// 游戏层打开时 `set_items` 灌入、关闭时读回；中途事件用
 /// `take_cmds`/`take_drops` 消费）。
@@ -186,7 +191,7 @@ pub struct ContainerScreen {
     /// 「上一段 moveItemStackTo 失败才试下一段」链（CraftingMenu.java:118-127
     /// 网格→主↔热栏两段、InventoryMenu.java:114-136 装备→主↔热栏），
     /// 本实现逐段尝试、首个改变即停——各段区间互斥时语义等价。
-    router: Box<dyn Fn(u16) -> Vec<(usize, usize, bool)>>,
+    router: QuickMoveRouter,
     // ---- 屏幕侧交互状态（AbstractContainerScreen.java:49-67 对应）----
     /// isQuickCrafting（拖拽进行中）。
     is_quickcrafting: bool,
@@ -211,7 +216,7 @@ impl ContainerScreen {
         panel: Rect,
         slots: Vec<SlotDef>,
         max_stack: fn(u32) -> u32,
-        router: Box<dyn Fn(u16) -> Vec<(usize, usize, bool)>>,
+        router: QuickMoveRouter,
     ) -> Self {
         let items = vec![StackRef::default(); slots.len()];
         Self {
