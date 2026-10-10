@@ -82,8 +82,8 @@ fn assert_indices_eq(a: &[u32], b: &[u32], ctx: &str) {
 /// 同输入跑两侧后端，逐字节断言顶点 + 索引，返回 (顶点数, 索引数) 供
 /// 附加断言。
 fn build_both(slots: &[Option<Slot<'_>>; 9], kind: u32, ctx: &str) -> (u32, u32) {
-    let ffi = Mesher::with_backend(1 << 20, Backend::Ffi).unwrap();
-    let rust = Mesher::with_backend(1 << 20, Backend::Rust).unwrap();
+    let ffi = Mesher::with_backend(256 << 20, Backend::Ffi).unwrap();
+    let rust = Mesher::with_backend(256 << 20, Backend::Rust).unwrap();
     let a = ffi.build(slots, kind).expect("ffi build");
     let b = rust.build(slots, kind).expect("rust build");
     assert_eq!(
@@ -385,7 +385,7 @@ fn bounds_semantics_shared_by_both_backends() {
     // / None 邻给出同一几何。scene_bounds 已对拍；这里补 Rust 侧的关键
     // 不变量，防两侧同错。
     let c = scene_bounds();
-    let rust = Mesher::with_backend(1 << 20, Backend::Rust).unwrap();
+    let rust = Mesher::with_backend(256 << 20, Backend::Rust).unwrap();
     let buf = rust.build(&only_center(&c), MESH_OPAQUE).unwrap();
     // y=0 层无 -Y 面（y<0 哨兵剔除）：查 flags bit0-2 != 3 且 pos.y == 0。
     let mut ny_at_y0 = 0;
@@ -555,7 +555,7 @@ fn perf_chunk() -> Chunk {
 fn rust_mesher_perf_single_chunk() {
     let c = perf_chunk();
     let slots = only_center(&c);
-    let rust = Mesher::with_backend(1 << 20, Backend::Rust).unwrap();
+    let rust = Mesher::with_backend(256 << 20, Backend::Rust).unwrap();
 
     // 预热（页/分支缓存）后取 5 次均值：opaque+water 一整个区块。
     let _ = rust.build(&slots, MESH_OPAQUE).unwrap();
@@ -569,7 +569,7 @@ fn rust_mesher_perf_single_chunk() {
     let per_ms = t0.elapsed().as_secs_f64() * 1000.0 / f64::from(N);
 
     // 对照组：C++ oracle 同输入耗时（信息性打印，便于回归感知）。
-    let ffi = Mesher::with_backend(1 << 20, Backend::Ffi).unwrap();
+    let ffi = Mesher::with_backend(256 << 20, Backend::Ffi).unwrap();
     let _ = ffi.build(&slots, MESH_OPAQUE).unwrap();
     let t1 = std::time::Instant::now();
     for _ in 0..N {
