@@ -668,3 +668,34 @@ fn shape_faces_cull_against_opaque_neighbours() {
         "中层面（+Y）仍暴露"
     );
 }
+
+/// 水 pass 回归（2026-10-10 真机「水不可见」审计 H1 配套）：水体必须产出
+/// 非空顶点+索引（游戏层曾只传索引丢弃顶点，水从未上传 GPU）。2×2×2 水
+/// 浮在空气中：每个水面 quad 都要出（贪心合并后 ≤24），顶点必须 >0。
+#[test]
+fn water_pass_emits_vertices() {
+    let mesher = Mesher::new(1 << 20).unwrap();
+    let side = chunk(0, 0xF0);
+    let mut c = chunk(0, 0xF0);
+    let water = id_of("water");
+    for x in 8..10 {
+        for y in 8..10 {
+            for z in 8..10 {
+                put(&mut c.0, x, y, z, water);
+            }
+        }
+    }
+    let buf = mesher
+        .build(&full9(&c, &side), mcv_mesher::MESH_WATER)
+        .unwrap();
+    let (nv, ni) = buf.counts();
+    assert!(
+        nv > 0 && ni > 0,
+        "water pass must emit geometry, got ({nv},{ni})"
+    );
+    assert_eq!(
+        ni,
+        nv / 4 * 6,
+        "water indices must be quads of the emitted verts"
+    );
+}

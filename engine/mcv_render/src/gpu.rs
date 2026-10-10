@@ -80,6 +80,11 @@ impl MeshUploader {
             view.slice(0..v.len()).copy_from_slice(v);
         }
         vb.unmap();
+        let ib = self.index_buf(i);
+        (vb, ib)
+    }
+
+    fn index_buf(&self, i: &[u32]) -> wgpu::Buffer {
         let ib = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("chunk-ib"),
             size: (i.len() as u64 * 4).next_multiple_of(4).max(4),
@@ -92,26 +97,40 @@ impl MeshUploader {
             view.slice(0..ib_bytes.len()).copy_from_slice(ib_bytes);
         }
         ib.unmap();
-        (vb, ib)
+        ib
     }
 
     /// 由裸网格字节组装整块 [`RenderChunk`]（16×256×16 AABB，origin 传入）。
+    /// `water = Some((水顶点, 水索引))`：水顶点拼在 opaque 顶点之后共用一个
+    /// vb，水索引整体偏移 opaque 顶点数——water draw 绑同一个 vertex_buf。
+    /// 旧签名只收水索引、水顶点字节从未上传（`vertex_index(&[], wi)`），
+    /// draw 把基址 0 的水索引绑到 opaque 顶点上：GLES 越界 `glDrawElements`
+    /// 直接 INVALID_OPERATION 静默跳过、桌面越界读画垃圾埋进地形——
+    /// 水从接线第一天起从未被真正绘制（2026-10-10 真机审计 H1）。
     pub fn build_chunk(
         &self,
         origin: [f32; 3],
         vbytes: &[u8],
         ibytes: &[u32],
-        water_ibytes: Option<&[u32]>,
+        water: Option<(&[u8], &[u32])>,
     ) -> RenderChunk {
-        let (vertex_buf, index_buf) = self.vertex_index(vbytes, ibytes);
-        let water_index_buf = water_ibytes.map(|wi| self.vertex_index(&[], wi).1);
+        let mut verts = Vec::with_capacity(vbytes.len() + water.map_or(0, |(wv, _)| wv.len()));
+        verts.extend_from_slice(vbytes);
+        let voff = (verts.len() / TERRAIN_STRIDE) as u32;
+        let water_len = water.map_or(0, |(_, wi)| wi.len());
+        let water_index_buf = water.map(|(wv, wi)| {
+            verts.extend_from_slice(wv);
+            let shifted: Vec<u32> = wi.iter().map(|ix| *ix + voff).collect();
+            self.index_buf(&shifted)
+        });
+        let (vertex_buf, index_buf) = self.vertex_index(&verts, ibytes);
         RenderChunk {
             origin,
             vertex_buf,
             index_buf,
             opaque_range: 0..ibytes.len() as u32,
             water_index_buf,
-            water_range: 0..water_ibytes.map_or(0, <[u32]>::len) as u32,
+            water_range: 0..water_len as u32,
             aabb: (
                 Vec3::new(origin[0], 0.0, origin[2]),
                 Vec3::new(origin[0] + 16.0, 256.0, origin[2] + 16.0),

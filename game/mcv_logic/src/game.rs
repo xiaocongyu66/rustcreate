@@ -91,13 +91,14 @@ impl ChunkMesher for CxxMesher {
         });
         let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
         let water = self.mesher.build(&slots, mcv_mesher::MESH_WATER).ok();
-        // 裸字节交给引擎上传；水的索引缓冲复用 opaque 顶点缓冲（既有语义）。
+        // 裸字节交给引擎上传；水顶点+索引都传（build_chunk 拼接共用 vb 并
+        // 偏移索引——只传索引会让水索引绑到 opaque 顶点上，GLES 静默跳 draw）。
         let origin = [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32];
         Some(self.uploader.build_chunk(
             origin,
             opaque.vertex_data(),
             opaque.indices(),
-            water.as_ref().map(|w| w.indices()),
+            water.as_ref().map(|w| (w.vertex_data(), w.indices())),
         ))
     }
 }

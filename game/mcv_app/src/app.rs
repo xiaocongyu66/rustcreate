@@ -1888,6 +1888,11 @@ impl AppState {
                 memory_hints: wgpu::MemoryHints::default(),
                 trace: wgpu::Trace::Off,
             }))?;
+        // 验证错误必须进日志：本次「水从未被绘制」事故的掩盖因素就是
+        // GLES 越界 draw 被静默吞掉、全仓零痕迹（2026-10-10 审计 H1）。
+        device.on_uncaptured_error(std::sync::Arc::new(|err: wgpu::Error| {
+            log::error!("wgpu uncaptured error: {err}");
+        }));
         let caps = surface.get_capabilities(&adapter);
         let size = window.inner_size();
         let max_extent = device.limits().max_texture_dimension_2d;
