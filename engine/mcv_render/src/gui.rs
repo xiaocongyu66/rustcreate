@@ -256,6 +256,18 @@ impl SpriteSheet {
             .map(|(_, x, y, w, h)| (*x, *y, *w, *h))
     }
 
+    /// 精灵在表内的 uv 角矩形 ((u0,v0),(u1,v1)，0..1 表空间)。
+    /// 第一人称手持物品图标用（hand pass 直接采 sprite 表纹理）。
+    pub fn sprite_uv(&self, name: &str) -> Option<([f32; 2], [f32; 2])> {
+        let (rx, ry, rw, rh) = self.rect(name)?;
+        let w = self.w as f32;
+        let h = self.h as f32;
+        Some((
+            [rx as f32 / w, ry as f32 / h],
+            [(rx + rw) as f32 / w, (ry + rh) as f32 / h],
+        ))
+    }
+
     fn uv_px(&self, x: f32, y: f32, w: f32, h: f32) -> [[f32; 2]; 2] {
         [
             [x / self.w as f32, y / self.h as f32],

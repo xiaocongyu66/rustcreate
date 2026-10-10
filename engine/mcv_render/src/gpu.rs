@@ -19,6 +19,10 @@ use mcv_core::atlas;
 pub const TERRAIN_STRIDE: usize = 24;
 pub const HUD_STRIDE: usize = 28;
 
+// 手持快照经 gpu 模块命名空间再暴露（game 层 `mcv_render::gpu::HandItem` 约定）。
+pub use crate::hand::HandItem;
+pub use crate::hand::HandRender;
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct FrameUniforms {
@@ -329,6 +333,10 @@ pub struct Scene<'a> {
     /// 粒子引擎：(池, 帧内 tick 进度 partialTickTime 0..1)；None 不画
     /// （crack overlay 后、水前，26.1 translucent 序）。
     pub particles: Option<(&'a ParticleEngine, f32)>,
+    /// 第一人称手持渲染（右臂 + 手持物 + 挥臂）：世界 pass 之后**清深度**
+    /// 独立 pass（26.1 GameRenderer.java:724-729 clearDepth → renderItemInHand）。
+    /// 第三人称/加载态/死亡态传 None 不画。
+    pub hand: Option<crate::hand::HandRender>,
 }
 
 pub struct Renderer {
@@ -357,6 +365,8 @@ pub struct Renderer {
     player_ibuf: wgpu::Buffer,
     player_bind: wgpu::BindGroup,
     player_sampler: wgpu::Sampler,
+    /// 玩家索引切片（第一人称手持 pass 只画右臂切片用）。
+    player_index_slices: [[Range<u32>; PART_COUNT]; SKIN_LAYERS as usize],
     skins_loaded: bool,
     /// 生物管线：复用 player 管线（同顶点格式/同 uniform 布局），只换贴图
     /// 数组 bind group + 独立顶点/索引缓冲。uniform 按 `MOB_MAX_INSTANCES`
@@ -384,6 +394,14 @@ pub struct Renderer {
     /// 粒子渲染（独立小 draw；纹理/管线在 ParticleRenderer 内）。
     particles: ParticleRenderer,
     particle_bind: wgpu::BindGroup,
+    /// 第一人称手持：物品图标小管线（顶点布局复用 player）+ 手持方块
+    /// 立方体缓冲（每帧覆写，CrackVertex 布局直通 terrain 管线）。
+    hand_icon_pipeline: wgpu::RenderPipeline,
+    hand_uniform: wgpu::Buffer,
+    hand_bind: wgpu::BindGroup,
+    gui_view: wgpu::TextureView,
+    hand_terrain_vbuf: wgpu::Buffer,
+    hand_terrain_ibuf: wgpu::Buffer,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -1677,6 +1695,7 @@ impl Renderer {
             cache: None,
         });
         let mesh = player_mesh::build_player_mesh();
+        let player_index_slices = mesh.slices.clone();
         let player_uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("player-uniforms"),
             size: size_of::<PlayerUniforms>() as u64,
@@ -1744,6 +1763,130 @@ impl Renderer {
                     resource: wgpu::BindingResource::Sampler(&player_sampler),
                 },
             ],
+        });
+
+        // ---- first-person hand icon pipeline ----------------------------
+        // 世界 pass 之后清深度的独立小 pass 用（26.1 renderItemInHand 时机）。
+        // 顶点布局复用 player（pos f32x3 + uv unorm8x2 + meta u32x2）。
+        let hand_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("hand-icon"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../assets/hand.wgsl").into()),
+        });
+        let hand_bind_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("hand-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let hand_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hand-pipeline-layout"),
+            bind_group_layouts: &[Some(&hand_bind_layout)],
+            immediate_size: 0,
+        });
+        let hand_icon_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("hand-icon"),
+            layout: Some(&hand_layout),
+            vertex: wgpu::VertexState {
+                module: &hand_mod,
+                entry_point: Some("vs_hand_icon"),
+                compilation_options: Default::default(),
+                buffers: &[Some(player_vertex_layout())],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &hand_mod,
+                entry_point: Some("fs_hand_icon"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: color_format,
+                    blend: None, // cutout：shader 内 alpha discard
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: wgpu::PrimitiveState {
+                // 单 quad 双面（挥臂转向后不凭角序赌朝向）。
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            }),
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let hand_uniform = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hand-uniform"),
+            size: 64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let hand_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("hand-sampler"),
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+        let hand_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hand-bind"),
+            layout: &hand_bind_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: hand_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&gui_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&hand_sampler),
+                },
+            ],
+        });
+        // 手持方块立方体：CrackVertex 布局（terrain 管线直通），每帧覆写。
+        let hand_terrain_vbuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hand-terrain-vbuf"),
+            size: (TERRAIN_STRIDE * 24) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let hand_terrain_ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hand-terrain-ibuf"),
+            size: (4 * 36) as u64,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         // ---- mob pipeline：复用 player 管线，只换贴图数组 + 独立缓冲 ------
@@ -1854,6 +1997,7 @@ impl Renderer {
             player_ibuf,
             player_bind,
             player_sampler,
+            player_index_slices,
             skins_loaded: false,
             mob_uniform,
             mob_vbuf,
@@ -1885,6 +2029,12 @@ impl Renderer {
             tint_foliage,
             particles,
             particle_bind,
+            hand_icon_pipeline,
+            hand_uniform,
+            hand_bind,
+            gui_view,
+            hand_terrain_vbuf,
+            hand_terrain_ibuf,
             max_chunks,
             max_hud_quads,
         }
@@ -2360,6 +2510,190 @@ impl Renderer {
             pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
         }
 
+        self.queue.submit([encoder.finish()]);
+
+        // 第一人称手持 pass：世界（含 HUD）之后独立提交，**清深度**再画
+        // （26.1 GameRenderer.java:724-729：clearDepthTexture → renderItemInHand）。
+        // 手持部件之间保留自身遮挡（臂/方块深度互测），但不被世界深度裁剪。
+        if let Some(hand) = scene.hand {
+            self.draw_hand(color, depth, cam, hand);
+        }
+    }
+
+    /// 第一人称手持 pass：右臂盒体（player 管线右臂切片）+ 手持方块
+    /// 缩小立方体（terrain 管线直通）或物品图标 quad（hand 管线）。
+    fn draw_hand(
+        &mut self,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        cam: &Camera,
+        hand: crate::hand::HandRender,
+    ) {
+        let swing = hand.swing.clamp(0.0, 1.0);
+        // (a) 手臂：player_uniform 槽位 4（右臂切片 meta.y=4）写挥臂矩阵。
+        //     世界 pass 已提交，此处覆写只影响本 pass，下一帧重写。
+        let mut models = [glam::Mat4::IDENTITY; PART_COUNT];
+        models[crate::player_mesh::P_R_ARM] = crate::hand::hand_arm_matrix(cam, swing);
+        if self.skins_loaded {
+            let mut mu = PlayerUniforms {
+                view_proj: cam.view_proj().to_cols_array_2d(),
+                models: [[[0f32; 4]; 4]; PART_COUNT],
+            };
+            for (m, dst) in models.iter().zip(mu.models.iter_mut()) {
+                *dst = m.to_cols_array_2d();
+            }
+            self.queue
+                .write_buffer(&self.player_uniform, 0, bytemuck::bytes_of(&mu));
+        }
+
+        // (b) 手持方块立方体顶点（世界空间，origin 槽置零直通 terrain）。
+        let mut cube: Option<(Vec<CrackVertex>, Vec<u32>)> = None;
+        if let HandItem::Block(bid) = hand.item
+            && let Some(def) = mcv_core::BLOCKS.get(bid as usize)
+        {
+            let rot = crate::hand::hand_block_rotation(cam, swing);
+            let center = crate::hand::hand_block_center(swing);
+            let mut verts = Vec::with_capacity(24);
+            let mut idx = Vec::with_capacity(36);
+            let (r, u, b) = crate::hand::camera_basis(cam);
+            let basis = glam::Mat4::from_cols(
+                r.extend(0.0),
+                u.extend(0.0),
+                b.extend(0.0),
+                glam::Vec3::ZERO.extend(1.0),
+            );
+            let eye = cam.pos + glam::Vec3::new(0.0, crate::EYE_HEIGHT, 0.0);
+            for (f, face) in FACE_QUAD.iter().enumerate() {
+                let base = verts.len() as u32;
+                for (c, p) in face.iter().enumerate() {
+                    // 单位立方体角 → 立方局部（−0.5..0.5）×缩放 → 旋转 →
+                    // 视空间中心 → 世界。
+                    let local = (glam::Vec3::from(*p) - glam::Vec3::splat(0.5)) * BLOCK_SCALE;
+                    let view = (rot * local.extend(1.0)).truncate() + center;
+                    let world = eye + basis.transform_point3(view);
+                    verts.push(CrackVertex {
+                        pos: world.to_array(),
+                        uv: FACE_UV[c],
+                        layer: def.tiles[f],
+                        block_light: 15,
+                        sky_light: 15,
+                        ao: 3,
+                        flags: f as u8,
+                        pad: [0; 2],
+                    });
+                }
+                idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+            }
+            cube = Some((verts, idx));
+        }
+
+        // (c) 物品图标 quad（GUI 精灵表；素材缺失降级只画手臂）。
+        let mut icon: Option<[PlayerVertex; 4]> = None;
+        if let HandItem::Sprite(name) = hand.item
+            && let Some(sheet) = self.gui.as_ref()
+            && let Some((uv0, uv1)) = sheet.sprite_uv(name)
+        {
+            let (pts, mut uvs) = crate::hand::hand_icon_quad(cam, swing);
+            let map = |uv: [f32; 2], (uv0, uv1): ([f32; 2], [f32; 2])| {
+                if (uv[0], uv[1]) == (0.0, 0.0) {
+                    uv0
+                } else if (uv[0], uv[1]) == (1.0, 0.0) {
+                    [uv1[0], uv0[1]]
+                } else if (uv[0], uv[1]) == (1.0, 1.0) {
+                    uv1
+                } else {
+                    [uv0[0], uv1[1]]
+                }
+            };
+            for uv in uvs.iter_mut() {
+                *uv = map(*uv, (uv0, uv1));
+            }
+            icon = Some(std::array::from_fn(|k| PlayerVertex {
+                pos: pts[k].to_array(),
+                uv: [(uvs[k][0] * 255.0) as u8, (uvs[k][1] * 255.0) as u8],
+                _pad: [0; 2],
+                meta: [0u32, 0u32],
+            }));
+        }
+
+        if cube.is_none() && icon.is_none() && !self.skins_loaded {
+            return;
+        }
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("hand"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("hand"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: color,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+
+            // 臂（皮肤切片 0=steve；挥臂矩阵已写 player_uniform）。
+            if self.skins_loaded {
+                let slice = self.player_index_slices[0][crate::player_mesh::P_R_ARM].clone();
+                pass.set_pipeline(&self.player_pipeline);
+                pass.set_bind_group(0, &self.player_bind, &[0]);
+                pass.set_vertex_buffer(0, self.player_vbuf.slice(..));
+                pass.set_index_buffer(self.player_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(slice, 0, 0..1);
+            }
+
+            // 手持方块（origin 槽置零 + terrain 管线；不透明语义写深度）。
+            if let Some((verts, idx)) = cube {
+                self.queue
+                    .write_buffer(&self.hand_terrain_vbuf, 0, bytemuck::cast_slice(&verts));
+                self.queue
+                    .write_buffer(&self.hand_terrain_ibuf, 0, bytemuck::cast_slice(&idx));
+                // origin 动态槽复用 overlay pad（世界 pass 已提交，覆写安全）。
+                let off = self.max_chunks * 256;
+                self.queue
+                    .write_buffer(&self.origins_buf, off, bytemuck::cast_slice(&[0.0f32; 4]));
+                pass.set_pipeline(&self.terrain_pipeline);
+                pass.set_bind_group(0, &self.frame_bind, &[off]);
+                pass.set_vertex_buffer(0, self.hand_terrain_vbuf.slice(..));
+                pass.set_index_buffer(self.hand_terrain_ibuf.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..36, 0, 0..1);
+            }
+
+            // 物品图标（不写深度；复用 vbuf 前 4 顶点与 ibuf 前 6 索引）。
+            if let Some(verts) = icon {
+                self.queue
+                    .write_buffer(&self.hand_terrain_vbuf, 0, bytemuck::bytes_of(&verts));
+                pass.set_pipeline(&self.hand_icon_pipeline);
+                pass.set_bind_group(0, &self.hand_bind, &[]);
+                pass.set_vertex_buffer(
+                    0,
+                    self.hand_terrain_vbuf.slice(..(4 * PLAYER_STRIDE) as u64),
+                );
+                pass.set_index_buffer(
+                    self.hand_terrain_ibuf.slice(..36),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed(0..6, 0, 0..1);
+            }
+        }
         self.queue.submit([encoder.finish()]);
     }
 
