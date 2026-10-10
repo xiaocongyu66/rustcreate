@@ -1137,7 +1137,7 @@ client/renderer/chunk/CompileTaskDynamicQueue.java,adapt,exempt,
 client/renderer/chunk/CompiledSectionMesh.java,adapt,exempt,
 client/renderer/chunk/RenderRegionCache.java,adapt,exempt,
 client/renderer/chunk/RenderSectionRegion.java,adapt,exempt,
-client/renderer/chunk/SectionCompiler.java,adapt,exempt,
+client/renderer/chunk/SectionCompiler.java,adapt,ported,game/mcv_mesher/src/mesher.rs
 client/renderer/chunk/SectionCopy.java,adapt,exempt,
 client/renderer/chunk/SectionMesh.java,adapt,exempt,
 client/renderer/chunk/SectionRenderDispatcher.java,adapt,exempt,
