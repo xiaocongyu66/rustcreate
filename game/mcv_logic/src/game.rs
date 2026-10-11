@@ -421,6 +421,17 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
         let (Some(from), Some(to)) = (chunks.get(&pos), chunks.get(&npos)) else {
             continue;
         };
+        // 129-L/L4（129-C §1 漏洞 A）：from 侧未完成本地布光（读盘块
+        // TerrainReady game.rs:2316 / 生成块 commit 后等 init 席位
+        // :2082-2106，光数组全零）时，extract_edge 抽出全零边，REMOVE 相
+        // 按 `s > n+1` 把已亮块边界格清零成黑带（待邻块 init 才自愈）。
+        // 原版跨 section decrease 波携带编辑前波前等级，从不拿
+        // 「未初始化=0」当波前（BlockLightEngine.java:91-105）。与 to 侧
+        // 门同语义跳过：两端就绪后由 border_synced 成对标记 + 成对同步
+        //（:2121-2157）双向补收。
+        if (from.stage() as u8) < (Stage::LightLocalReady as u8) {
+            continue;
+        }
         if (to.stage() as u8) < (Stage::LightLocalReady as u8) {
             // 未初始化邻块：其 init 会本地播种，就绪时由 border_synced 的
             // 成对同步补收这条边。
