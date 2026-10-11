@@ -7,3 +7,8 @@ license.workspace = true
 [dependencies]
 mcv_core.workspace = true
 glam.workspace = true
+
+# M 波 #138：#62 对拍全表扩展（渲染 AABB==拾取 AABB）需要真网格器产出
+# 渲染几何——纯测试依赖（mcv_mesher 只依赖 mcv_core，无反向边）。
+[dev-dependencies]
+mcv_mesher.workspace = true

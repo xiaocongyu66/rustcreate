@@ -1,59 +1,52 @@
 //! 非立方形状方块的状态相关 AABB（物理碰撞箱与射线拾取箱）。
 //!
-//! 数值全部取自 26.1 反编译源码（`Block.java:163-202` 的 px→格换算：
-//! `box(a..b) = [a/16, b/16]`，`column(w, y0, y1)` = x/z 居中 `w` 宽）：
-//! - 半砖：`SlabBlock.java:35-36` `column(16,0,8)` / `column(16,8,16)`，
-//!   碰撞=形状（`getShape` 未分离碰撞版）。
-//! - 楼梯（直段）：`StairBlock.java:37-38,74-89`——整格宽半高底座
-//!   `column(16,0,8)` + 踏步半盒 `box(0,8,0,8,16,8)`；facing=NORTH 时
-//!   上半占 -Z 半格，即**踏步（整高侧）位于 FACING 朝向侧**，碰撞=形状。
-//! - 栅栏：`CrossCollisionBlock.java:36-47,52-68` + `FenceBlock.java:37,41`
-//!   `super(4,16,4,16,24)`——柱 `column(4,0,24)`（x/z 6..10px，碰撞高 1.5
-//!   防跳）；拾取形状（outline）柱/臂高 16px（1.0）；连接臂
-//!   `boxZ(4, 0, h, 0, 8)`：沿臂向从格边到中心（0..0.5）、横断面与柱同宽、
-//!   碰撞同样计入（防从两柱间穿过）。
-//! - 火把：`BaseTorchBlock.java:16` 拾取 outline `column(4,0,10)`
-//!   （x/z 6..10px、y 0..10px）；无碰撞（Blocks.java torch 为 noCollision，
-//!   `getShape` 仅是拾取/遮挡形状）。
-//! - 十字花草：无碰撞（Blocks.java:587/750/765 noCollision → 碰撞空，
-//!   `BlockBehaviour.java:333-334`）。拾取轮廓原版**非**整格：花
-//!   `column(6,0,10)`（`FlowerBlock.java:24`）、短草 `column(12,0,13)`
-//!   （`TallGrassBlock.java:17`；整格 `Shapes.block()` 仅是未覆写方的
-//!   默认 `BlockBehaviour.java:329-331`）。本引擎按整格出盒
-//!   KNOWN-DIVERGENCE：网格器把十字渲染为整格对角 quad
-//!   （`cpp/src/mesher.cpp` `emit_cross`），拾取盒与引擎自身视觉一致
-//!   优先于贴原版细轮廓（单一 Cross 形状位也容纳不下花/草两种尺寸）。
+//! **几何常数唯一数据源 = `mcv_core::shape::template_boxes`**（M 波 #138 起；
+//! 渲染=拾取=碰撞同源，26.1 引注逐形状在该表 match 臂内）。数值全部取自
+//! 26.1 反编译源码（`Block.java:163-202` 的 px→格换算：
+//! `box(a..b) = [a/16, b/16]`，`column(w, y0, y1)` = x/z 居中 `w` 宽；
+//! `Shapes.rotateHorizontal:399-420` 参数名 `north` = 基准朝向 → 贴边形
+//! 统一「slab 位于 FACING 对侧边」）。本文件保留形状语义与 divergences：
 //!
-//! - 地毯：`CarpetBlock.java:17` `SHAPE = column(16, 0, 1)` → 全宽
-//!   1/16 薄盒（y 0..0.0625），碰撞=拾取；模型
-//!   `models/block/carpet.json` 元素 [0,0,0]→[16,1,16] 同值。
-//! - 活板门（关态）：`TrapDoorBlock.java:48`
-//!   `boxZ(16, 13, 16)`=box(0,13,0,16,16,16) 上态；下态 y 0..3px
-//!   （模型 `template_trapdoor_bottom/_top` 3px 薄板）。状态 bit2=1 上态
-//!   （与楼梯 top 位同位）；关态平板几何与 facing 无关。open 开态
-//!   （绕铰链竖转）无状态位承载——登记遗留。
-//! - 玻璃板：`StainedGlassPaneBlock extends IronBarsBlock`，
-//!   `IronBarsBlock.java:29-31` `super(2, 16, 2, 16, 16)`
-//!   （CrossCollisionBlock）→ 柱 `column(2,0,16)`（x/z 7..9px）、臂
-//!   `boxZ(2,0,16,0,8)`（格边→中心、断面同柱宽）；碰撞=拾取（高均 1.0，
-//!   无栅栏式 1.5 抬高）。模型 `template_glass_pane_post/_side`
-//!   （柱/臂 x 7..9、臂 z 0..7）。
-//! - 墙：`WallBlock.java:66-74`——拾取 `makeShapes(16, 14)`：柱
-//!   `column(8,0,16)`（x/z 4..12px）+ 低臂 `boxZ(6,0,14,0,11)`（x/z
-//!   5..11px、臂自格边至 11px、高 14px）；碰撞 `makeShapes(24, 24)`：
-//!   柱/臂全抬到 24px（1.5，防跳，与栅栏同语义）。模型
-//!   `template_wall_post` [4,0,4]→[12,16,12]、`template_wall_side`
-//!   [5,0,0]→[11,14,8]。本引擎无 height_state/side 三态（none/low/
-//!   tall）状态位——恒出柱+低臂，tall 叠墙登记遗留。
+//! - 半砖：`SlabBlock.java:35-36`，碰撞=形状。
+//! - 楼梯：`StairBlock.java:37-38,74-89`——踏步（整高侧）位于 FACING
+//!   朝向侧，碰撞=形状。
+//! - 栅栏：`CrossCollisionBlock.java:36-47,52-68` + `FenceBlock.java:37,41`
+//!   ——碰撞柱/臂 24px（1.5 防跳）、拾取 outline 16px（1.0）；臂按连接
+//!   判定延至格边，碰撞同样计入。
+//! - 火把：`BaseTorchBlock.java:16` outline `column(4,0,10)`；无碰撞。
+//! - 十字花草：无碰撞；拾取轮廓按**整格**出盒（原版花 column(6,0,10)/
+//!   短草 column(12,0,13) 的细轮廓与单一 Cross 形状位不兼容——与引擎
+//!   自身整格对角 quad 视觉一致优先，KNOWN-DIVERGENCE，#62 既定）。
+//!
+//! - 地毯：`CarpetBlock.java:17` `column(16,0,1)`，碰撞=拾取；moss_carpet
+//!   悬边 draped 态登记遗留。
+//! - 活板门（M 波 4 态）：关下/关上/开（竖板贴 FACING 对侧边），
+//!   `TrapDoorBlock.java:48-60`；POWERED/WATERLOGGED 无状态位，登记遗留。
+//! - 玻璃板：`IronBarsBlock.java:29-31`（CrossCollisionBlock）柱/臂，
+//!   碰撞=拾取（无栅栏式 1.5 抬高）。
+//! - 墙：`WallBlock.java:66-74`——拾取柱 16px + low 臂 14px；碰撞柱/臂
+//!   24px。tall 叠墙三态无状态位，登记遗留。
+//! - 柵栏门（M 波）：outline `FenceGateBlock.java:39-44` cube(16,16,4)、
+//!   碰撞 `column(16,4,0,24)`（open 空，:56-62）；in_wall outline −3px。
+//! - 门（M 波）：`DoorBlock.java:47-55` 3px 板贴 FACING 对侧边；open 绕
+//!   hinge（LEFT→CW / RIGHT→CCW）；outline=collision。HALF（上/下半）
+//!   不影响形状（getShape 无 half 分支）——half 只影响贴图/逻辑，登记债。
+//! - 按钮（M 波）：`ButtonBlock.java:70-79` 6×4×2px 贴附小盒（地面/
+//!   天花板/墙面）；无碰撞。POWERED（按下 1px 厚）无状态位余量，登记债。
+//! - 压力板（M 波）：`BasePressurePlateBlock.java:26-27` column(14,0,1)、
+//!   pressed 0.5px；无碰撞。
+//! - 梯子（M 波）：`LadderBlock.java:29,43` 3px 板贴 FACING 对侧边。
+//!   原版无碰撞（noCollission）；gen 表 solid=true + shapes_table
+//!   「solid ⇒ 非空碰撞盒」不变量 → 碰撞=拾取薄板，KNOWN-DIVERGENCE
+//!  （原版实体可嵌入梯格）。
+//! - 雪层（M 波）：`SnowLayerBlock.java:28,47-55` 高度=层数×2px。原版
+//!   碰撞=SHAPES[layer-1]（低一层、1 层时空形）；gen 表 solid=true +
+//!   shapes_table 不变量 → 碰撞=outline 高，KNOWN-DIVERGENCE（原版 1 层
+//!   雪可踩穿）。
 //!
 //! 楼梯 facing 编码（0=+Z 1=-Z 2=+X 3=-X）与 C++ 网格器
 //! `emit_stairs`、`mcv_core::BlockId::state` 注释同一约定；几何含义
 //! （踏步在朝向侧）按上表 StairBlock 源码核对。
-//!
-//! KNOWN-DIVERGENCE（渲染侧）：carpet/trapdoor/pane/wall（Shape 6..9）
-//! 的**渲染**暂为全盒占位（C++ `emit_shapes` default 分支 / Rust
-//! mcv_mesher 全盒路径），薄盒/柱臂模板待 Rust 网格器（#77）按本文件
-//! 数值落地；碰撞/拾取先行按原版几何，保证物理与交互正确。
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, Shape, shape::shape};
@@ -134,18 +127,14 @@ pub fn wall_connects(nb: BlockId) -> bool {
 }
 
 /// 同类臂连接判据（栅栏/板/墙共用）：同族形状 → 连；否则
-/// “实体不透明整立方”近似原版 sturdy。`fence_connects` 的
-/// KNOWN-DIVERGENCE 清单（无 tag、无例外名单）同样适用。
+/// “实体不透明整立方”近似原版 sturdy。M 波 #138 起谓词唯一出处是
+/// `mcv_core::shape::connects`（mesher 渲染臂同一函数，渲染臂与碰撞臂
+/// 一致性由构造保证）；本包装保留 BlockId 入参与既有公开 API。
+/// `fence_connects` 的 KNOWN-DIVERGENCE 清单（无 tag、无例外名单，
+/// 另注：柵栏门原版可与栅栏互连 `FenceBlock.connectsTo` gate 分支，
+/// 同族近似不识别）同样适用。
 fn connects_family(nb: BlockId, family: Shape) -> bool {
-    if nb.id() == 0 {
-        return false;
-    }
-    let sh = shape(nb.id());
-    if sh == family {
-        return true;
-    }
-    let d = nb.def();
-    d.solid && d.opaque && !d.liquid && sh == Shape::Cube
+    mcv_core::shape::connects(nb.id(), family)
 }
 
 /// `world` 在 `p` 处方块的**碰撞**盒（世界坐标），返回写入 `out` 的盒数。
@@ -162,9 +151,10 @@ pub fn pick_boxes(world: &dyn VoxelAccess, p: BlockPos, out: &mut ShapeBoxes) ->
     push_boxes(world.block(p), world, p, RayTarget::Pick, out)
 }
 
-/// 按 `mode` 发射 `id`（位于 `p`）的盒，返回数量。栅栏臂按四邻即时判定
-/// （栅栏连接位不存 nibble，与网格器同样的邻格重算法，规则见
-/// [`fence_connects`]）。
+/// 按 `mode` 发射 `id`（位于 `p`）的盒，返回数量。几何唯一数据源 =
+/// `mcv_core::shape::template_boxes`（M 波 #138；本函数按 mode 选用途，
+/// 柱臂族再按邻格连接判定裁剪臂——栅栏连接位不存 nibble，与网格器同样
+/// 的邻格重算法，规则见 [`fence_connects`]）。
 pub fn push_boxes(
     id: BlockId,
     world: &dyn VoxelAccess,
@@ -184,6 +174,11 @@ pub fn push_boxes(
             }
         };
     }
+    let use_ = if mode == RayTarget::Collide {
+        mcv_core::shape::BoxUse::Collision
+    } else {
+        mcv_core::shape::BoxUse::Outline
+    };
     match sh {
         Shape::Cube => {
             // 固体整格碰撞；拾取同样整格。非固体立方体（空气/水/未注册）
@@ -192,114 +187,46 @@ pub fn push_boxes(
                 add!(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
             }
         }
-        Shape::Cross => {
-            // 原版：outline=整格（可挖可选），碰撞=无（noCollision）。
-            if mode == RayTarget::Pick {
-                add!(0.0, 0.0, 0.0, 1.0, 1.0, 1.0);
+        Shape::Fence | Shape::Pane | Shape::Wall => {
+            // 柱臂族：boxes[0]=柱（恒发射）、boxes[1..5]=四向臂
+            //（表臂序 +X -X +Z -Z，与 mcv_core ARM_DIRS 同一顺序）。
+            // 栅栏：碰撞柱/臂 1.5 防跳、outline 1.0（CrossCollisionBlock
+            // .java:45-46）；板无抬高；墙 outline low 臂 0.875、碰撞 1.5。
+            let (boxes, count) = mcv_core::shape::template_boxes(sh, 0, use_);
+            if count > 0 {
+                let b = &boxes[0];
+                add!(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
             }
-        }
-        Shape::Torch => {
-            // BaseTorchBlock.java:16 outline column(4,0,10)；无碰撞。
-            if mode == RayTarget::Pick {
-                add!(0.375, 0.0, 0.375, 0.625, 0.625, 0.625);
-            }
-        }
-        Shape::Slab => {
-            // SlabBlock.java:35-36：bit0=1 上半（y 0.5..1）。
-            let y0 = if (st & 1) != 0 { 0.5 } else { 0.0 };
-            add!(0.0, y0, 0.0, 1.0, y0 + 0.5, 1.0);
-        }
-        Shape::Stairs => {
-            // StairBlock.java:37-38：底座全宽半高 + 踏步（朝向侧半格、
-            // 另半高）。bit2=1（上半）上下翻转。facing 0=+Z 1=-Z 2=+X 3=-X。
-            let flipped = (st & 4) != 0;
-            let (by0, sy0) = if flipped { (0.5, 0.0) } else { (0.0, 0.5) };
-            add!(0.0, by0, 0.0, 1.0, by0 + 0.5, 1.0);
-            match st & 3 {
-                0 => add!(0.0, sy0, 0.5, 1.0, sy0 + 0.5, 1.0),
-                1 => add!(0.0, sy0, 0.0, 1.0, sy0 + 0.5, 0.5),
-                2 => add!(0.5, sy0, 0.0, 1.0, sy0 + 0.5, 1.0),
-                _ => add!(0.0, sy0, 0.0, 0.5, sy0 + 0.5, 1.0),
-            }
-        }
-        Shape::Fence => {
-            // CrossCollisionBlock.java:45-46：碰撞柱高 24px（1.5，防跳），
-            // 拾取 outline 柱/臂高 16px（1.0）；臂按连接判定延至格边。
-            let h = if mode == RayTarget::Collide { 1.5 } else { 1.0 };
-            add!(0.375, 0.0, 0.375, 0.625, h, 0.625);
-            // (dx, dz, 臂盒)——臂沿 (dx,dz) 方向从格边到中心、断面对齐柱。
-            const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-            const ARMS: [(f32, f32, f32, f32); 4] = [
-                (0.5, 0.375, 1.0, 0.625), // +X：x 0.5..1，z 对齐柱
-                (0.0, 0.375, 0.5, 0.625), // -X
-                (0.375, 0.5, 0.625, 1.0), // +Z：z 0.5..1，x 对齐柱
-                (0.375, 0.0, 0.625, 0.5), // -Z
-            ];
-            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
-                if !fence_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
-                    continue;
+            for (i, b) in boxes
+                .iter()
+                .enumerate()
+                .skip(1)
+                .take(count.saturating_sub(1))
+            {
+                let (dx, dz) = match i {
+                    1 => (1, 0),
+                    2 => (-1, 0),
+                    3 => (0, 1),
+                    _ => (0, -1),
+                };
+                let nb = world.block(BlockPos::new(p.x + dx, p.y, p.z + dz));
+                let connected = match sh {
+                    Shape::Fence => fence_connects(nb),
+                    Shape::Pane => pane_connects(nb),
+                    _ => wall_connects(nb),
+                };
+                if connected {
+                    add!(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
                 }
-                add!(x0, 0.0, z0, x1, h, z1);
             }
         }
-        Shape::Carpet => {
-            // CarpetBlock.java:17 column(16,0,1)：全宽 1/16 薄盒，碰撞=拾取。
-            // moss_carpet（MossyCarpetBlock makeShapes：BASE 态同为
-            // boxZ(16,0,1)）取 BASE 几何；悬边 draped 态登记遗留。
-            add!(0.0, 0.0, 0.0, 1.0, 0.0625, 1.0);
-        }
-        Shape::Trapdoor => {
-            // 关态平板（TrapDoorBlock.java:48 + template_trapdoor_*）：
-            // bit2=1 上态 y 13..16px，否则下态 y 0..3px。facing/open 位
-            // 未启用（开态登记遗留），关态几何与 facing 无关。
-            let (y0, y1) = if (st & 4) != 0 {
-                (0.8125, 1.0)
-            } else {
-                (0.0, 0.1875)
-            };
-            add!(0.0, y0, 0.0, 1.0, y1, 1.0);
-        }
-        Shape::Pane => {
-            // IronBarsBlock（CrossCollisionBlock 子类，super(2,16,2,16,16)）：
-            // 柱 column(2,0,16)、臂 boxZ(2,0,16,0,8) 格边→中心；碰撞=拾取。
-            add!(0.4375, 0.0, 0.4375, 0.5625, 1.0, 0.5625);
-            const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-            const ARMS: [(f32, f32, f32, f32); 4] = [
-                (0.5, 0.4375, 1.0, 0.5625), // +X：x 0.5..1，z 断面 7..9px
-                (0.0, 0.4375, 0.5, 0.5625), // -X
-                (0.4375, 0.5, 0.5625, 1.0), // +Z
-                (0.4375, 0.0, 0.5625, 0.5), // -Z
-            ];
-            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
-                if !pane_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
-                    continue;
-                }
-                add!(x0, 0.0, z0, x1, 1.0, z1);
-            }
-        }
-        Shape::Wall => {
-            // WallBlock.java:66-74：拾取 post column(8,0,16) + low 臂
-            // boxZ(6,0,14,0,11)；碰撞 post/臂均抬高到 24px（1.5，防跳，
-            // 与栅栏同语义）。臂断面 6px（0.3125..0.6875）、自格边伸入
-            // 11px（越过中心与对侧臂/柱搭接）。
-            let (hp, ha) = if mode == RayTarget::Collide {
-                (1.5f32, 1.5f32)
-            } else {
-                (1.0, 0.875)
-            };
-            add!(0.25, 0.0, 0.25, 0.75, hp, 0.75);
-            const DIRS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-            const ARMS: [(f32, f32, f32, f32); 4] = [
-                (0.3125, 0.3125, 1.0, 0.6875), // +X：x 0.3125..1
-                (0.0, 0.3125, 0.6875, 0.6875), // -X
-                (0.3125, 0.3125, 0.6875, 1.0), // +Z：z 0.3125..1
-                (0.3125, 0.0, 0.6875, 0.6875), // -Z
-            ];
-            for (&(dx, dz), &(x0, z0, x1, z1)) in DIRS.iter().zip(&ARMS) {
-                if !wall_connects(world.block(BlockPos::new(p.x + dx, p.y, p.z + dz))) {
-                    continue;
-                }
-                add!(x0, 0.0, z0, x1, ha, z1);
+        // 其余形状（cross/torch/slab/stairs/carpet/trapdoor/柵栏门/门/
+        // 按钮/压力板/梯子/雪层）：模板表直出。碰撞恒空的形状（火把/
+        // 按钮/压力板，原版 noCollision）在 Collision 用途下表给 0 盒。
+        _ => {
+            let (boxes, count) = mcv_core::shape::template_boxes(sh, st, use_);
+            for b in boxes.iter().take(count) {
+                add!(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1);
             }
         }
     }

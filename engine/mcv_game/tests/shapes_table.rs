@@ -294,3 +294,162 @@ fn collision_at(
 ) -> usize {
     push_boxes(w.block(p), w, p, RayTarget::Collide, out)
 }
+
+// ---------------------------------------------------------------------------
+// M 波 #138：#62 对拍全表扩展——渲染 AABB == 拾取/碰撞 AABB。
+// 几何唯一数据源 mcv_core::shape::template_boxes：网格器（Outline）与
+// blockshapes（Pick/Collision）吃同一张表，本测试逐 id 锁接线，防任何
+// 一侧改用本地常数漂移。豁免清单见测试内注释（均有 file:line 依据）。
+// ---------------------------------------------------------------------------
+
+use mcv_mesher::{MESH_OPAQUE, Mesher, Slot};
+
+/// 孤立单块 opaque 网格的顶点包围盒（None=无几何）。
+fn render_bbox(id: u16, state: u16) -> Option<[f32; 6]> {
+    const VOL: usize = mcv_core::CHUNK_VOL;
+    let air: Box<[u16; VOL]> = Box::new([0; VOL]);
+    let light: Box<[u8; VOL]> = Box::new([0xF0; VOL]);
+    let mut vox: Box<[u16; VOL]> = Box::new([0; VOL]);
+    vox[mcv_core::vidx(8, 8, 8)] = id | (state << 12);
+    let slots = std::array::from_fn(|k| {
+        if k == 4 {
+            Some(Slot {
+                voxels: &vox[..],
+                light: &light[..],
+            })
+        } else {
+            Some(Slot {
+                voxels: &air[..],
+                light: &light[..],
+            })
+        }
+    });
+    let buf = Mesher::new().build(&slots, MESH_OPAQUE).expect("mesh");
+    let mut bb: Option<[f32; 6]> = None;
+    for v in buf.vertex_data().chunks(24) {
+        let f = |o: usize| f32::from_le_bytes([v[o], v[o + 1], v[o + 2], v[o + 3]]);
+        let (x, y, z) = (f(0), f(4), f(8));
+        bb = Some(match bb {
+            None => [x, y, z, x, y, z],
+            Some([x0, y0, z0, x1, y1, z1]) => [
+                x0.min(x),
+                y0.min(y),
+                z0.min(z),
+                x1.max(x),
+                y1.max(y),
+                z1.max(z),
+            ],
+        });
+    }
+    bb
+}
+
+/// 拾取/碰撞盒并集包围盒（None=无盒）。
+fn shape_bbox(w: &dyn VoxelAccess, id: u16, mode: RayTarget) -> Option<[f32; 6]> {
+    let mut out = [EMPTY_AABB; MAX_SHAPE_BOXES];
+    let n = push_boxes(BlockId(id), w, BlockPos::new(0, 0, 0), mode, &mut out);
+    let mut bb: Option<[f32; 6]> = None;
+    for b in &out[..n] {
+        bb = Some(match bb {
+            None => [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z],
+            Some([x0, y0, z0, x1, y1, z1]) => [
+                x0.min(b.min.x),
+                y0.min(b.min.y),
+                z0.min(b.min.z),
+                x1.max(b.max.x),
+                y1.max(b.max.y),
+                z1.max(b.max.z),
+            ],
+        });
+    }
+    bb
+}
+
+fn assert_bbox_eq(id: u16, name: &str, what: &str, r: Option<[f32; 6]>, s: Option<[f32; 6]>) {
+    match (r, s) {
+        (None, None) => {}
+        (Some(a), Some(b)) => {
+            for axis in 0..3 {
+                assert_eq!(
+                    a[axis], b[axis],
+                    "{name} {what} 轴 {axis} min 漂移：渲染 {:?} vs 形状 {:?}",
+                    a, b
+                );
+                assert_eq!(
+                    a[axis + 3],
+                    b[axis + 3],
+                    "{name} {what} 轴 {axis} max 漂移：渲染 {:?} vs 形状 {:?}",
+                    a,
+                    b
+                );
+            }
+        }
+        (r, s) => panic!("{name} {what}: 渲染盒 {r:?} 与形状盒 {s:?} 一边为空——模板表两侧不一致"),
+    }
+}
+
+/// 全表对拍（默认态）：每个「有几何且有拾取对应」的注册 id——
+/// mesher 渲染顶点包围盒 == blockshapes 拾取盒包围盒。
+/// 豁免：非固体 Cube（signs/rails/花草占位族——渲染全盒、原版本无对应
+/// 拾取形，模板债不在本对拍内）；Torch（渲染 0.4..0.6 柱是黄金冻结的
+/// C++ 近似，outline=column(4,0,10)=0.375..0.625，BaseTorchBlock.java:16）。
+#[test]
+fn render_aabb_matches_pick_aabb_for_every_block() {
+    let w = EmptyWorld;
+    let mut checked = 0usize;
+    for (i, def) in mcv_core::BLOCKS.iter().enumerate() {
+        let sh = Shape::from_u8(def.shape);
+        if sh == Shape::Cube && !def.solid {
+            continue; // 空气/水/隐形/占位族：无拾取对应（见测试头注释）
+        }
+        if sh == Shape::Torch {
+            continue; // 黄金冻结渲染近似，记名豁免
+        }
+        let r = render_bbox(i as u16, 0);
+        let s = shape_bbox(&w, i as u16, RayTarget::Pick);
+        assert_bbox_eq(i as u16, def.name, "pick", r, s);
+        checked += 1;
+    }
+    assert!(
+        checked > 950,
+        "对拍覆盖 {checked} 个 id——全 1171 表扣除非固体 Cube 占位族（194）\
+         与火把（4）应剩 ~973 全覆盖"
+    );
+}
+
+/// 状态扫描对拍：状态相关形状全 16 态渲染 AABB == 拾取 AABB；
+/// 碰撞侧对「碰撞=outline」的形状（半砖/楼梯/地毯/活板门/门/梯子/雪层）
+/// 同样对拍——柵栏门碰撞抬到 24px（FenceGateBlock.java:44-46 column(16,4,
+/// 0,24)，outline 16px）、栅栏/墙碰撞抬 1.5 防跳（CrossCollisionBlock
+/// .java:45 / WallBlock makeShapes(24,24)）、火把/按钮/压力板无碰撞，
+/// 均不在碰撞对拍内（各自数值由上方专项用例与模板表值锚锁定）。
+#[test]
+fn render_aabb_matches_shapes_across_states() {
+    let w = EmptyWorld;
+    let sweep: [(&str, bool); 9] = [
+        ("oak_slab", true),
+        ("oak_stairs", true),
+        ("red_carpet", true),
+        ("oak_trapdoor", true),
+        ("oak_fence_gate", false),
+        ("oak_door", true),
+        ("oak_button", false),
+        ("oak_pressure_plate", false),
+        ("snow", true),
+    ];
+    for (name, collision_parity) in sweep {
+        let id = by_name(name).expect("{name} 在表");
+        for state in 0..16u16 {
+            let raw = id | (state << 12);
+            let r = render_bbox(id, state);
+            let s_pick = shape_bbox(&w, raw, RayTarget::Pick);
+            assert_bbox_eq(id, name, "pick", r, s_pick);
+            // 柵栏门 open 态碰撞为空形是原版语义（FenceGateBlock.java:56-62
+            // getCollisionShape → empty），不与 outline 对拍。
+            if collision_parity && !(name == "oak_fence_gate" && state & 4 != 0) {
+                let s_col = shape_bbox(&w, raw, RayTarget::Collide);
+                assert_bbox_eq(id, name, "collide", r, s_col);
+            }
+        }
+    }
+}
