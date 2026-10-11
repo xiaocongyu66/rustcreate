@@ -1,0 +1,38 @@
+# 临时 job（129-L/L3：水面取光+遮挡裁剪改顶点字节的黄金重锚通道，刀 1
+# 04af692 先例）：触发=push 到 feat/water-light-fix 且提交信息含
+# `[golden-update]` 标记（三条件守卫：on.push.branches 限 feat 分支 +
+# marker 过滤 + 步内 GOLDEN_UPDATE=1 环境开关）。GOLDEN_UPDATE=1 跑
+# worldgen/mesher 两个 golden 测试重写黄金件，整体打成 artifact；本机
+# `gh run download` 落盘提交后本文件即删。无标记的 push 该 job 直接跳过，
+# 不影响常规三 job。
+name: golden-update
+on:
+  push:
+    branches: ["feat/water-light-fix"]
+
+jobs:
+  regen:
+    if: contains(github.event.head_commit.message, '[golden-update]')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ALSA dev headers (tinyaudio Linux backend)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Regen worldgen golden
+        env:
+          GOLDEN_UPDATE: "1"
+        run: cargo test --locked -p mcv_worldgen --test golden
+      - name: Regen mesher golden
+        env:
+          GOLDEN_UPDATE: "1"
+        run: cargo test --locked -p mcv_mesher --test golden
+      - uses: actions/upload-artifact@v4
+        with:
+          name: golden-v6
+          path: |
+            game/mcv_worldgen/tests/golden/terrain_parity.tsv
+            game/mcv_worldgen/tests/golden/terrain/
+            game/mcv_mesher/tests/golden/mesh_random_batch.tsv
+            game/mcv_mesher/tests/golden/mesh_scenes/
