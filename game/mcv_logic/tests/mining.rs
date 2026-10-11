@@ -285,9 +285,10 @@ fn destroy_ticks_advance_and_reset() {
         MineTick::Idle
     );
     assert_eq!(m.destroy_ticks, 0);
-    // 挖穿：归零（:281 destroyTicks = 0.0F）。进度 0.2/tick：4 tick 后 0.9，
-    // 第 5 tick 到 1.1 破坏并清零。
-    for i in 1..=4u32 {
+    // 挖穿：归零（:281 destroyTicks = 0.0F）。START 当 tick 已计入 1 份进度
+    // （progress = 0.2，上方 target_switch 同款时序），再 3 个续挖 tick 到
+    // 0.8，第 4 个续挖 tick 恰 1.0 破坏并清零。
+    for i in 1..=3u32 {
         assert_eq!(
             m.continue_tick(Some(MineHit {
                 pos: b,

@@ -109,6 +109,7 @@ impl SoundLoader {
 
     /// 通用触发:选变体 → 增益预乘变体音量 → 解析素材并产出命令。
     /// `throttle=true` 时启用同变体路径最小间隔;`pitch_mult` 乘到变体音高上。
+    #[allow(clippy::too_many_arguments)] // 触发参数天然多（事件+增益+节流+循环+音高乘子）
     fn trigger(
         &mut self,
         event: &str,
