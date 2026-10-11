@@ -1432,19 +1432,43 @@ impl GameRuntime {
         })
     }
 
-    /// 出生点邻域（玩家所在区块为中心、半径 [`Self::load_radius`]）的
-    /// 加载门就绪统计（刀 3b 解耦点①）：`(已就绪数, 总数)`。就绪 =
-    /// **status ≥ Surface**（worldgen commit / 读盘完成——世界生成完成度，
-    /// 原版 LevelLoadTracker 等服务器侧区块就绪的映射；status 由
-    /// advance_status_by_level 按票级别派生维护）。网格/上传（stage
-    /// Uploaded）**另判**——见 [`Self::loading_progress_parts`]（显示指标，
-    /// 不再挡进世界）。
+    /// 出生投放窗（世界出生区块 (0,0) 为中心、半径 [`Self::load_radius`]，
+    /// 与 [`Self::spawn_window_ready`] 同源同半径）的加载门就绪统计
+    /// （刀 3b 解耦点①）：`(已就绪数, 总数)`。就绪 = **status ≥ Surface**
+    /// （worldgen commit / 读盘完成——世界生成完成度，原版 LevelLoadTracker
+    /// 等服务器侧区块就绪的映射；status 由 advance_status_by_level 按票
+    /// 级别派生维护）。网格/上传（stage Uploaded）**另判**——见
+    /// [`Self::loading_progress_parts`]（显示指标，不再挡进世界）。
+    ///
+    /// 窗口锚点（原版取证 LevelLoadTracker/PrepareSpawnTask）：26.1 在
+    /// spawn finder 定位完成后才以出生位为中心发玩家区块批次——
+    /// PrepareSpawnTask.java:135-143 `addTicketAndLoadWithRadius(
+    /// TicketType.PLAYER_SPAWN, spawnChunk, 3)` + `updateFocus(spawnChunk)`
+    /// （setInitialSpawn :491 首标 focus 同点），门批次锚在**出生点**上，
+    /// 而非玩家实时位。本仓投放落点可合法偏离 (0,0)（setInitialSpawn
+    /// :504-521 区块螺旋先到先得；vanilla density 内核换代后种子
+    /// 20261010 出生区块全海洋、落点在 (1,0)）：门若跟随已投放的玩家位
+    /// 会漂进请求环外（(4,z) 列从未生成），49 格永不齐 → 加载门死锁
+    /// （run 38164228251 load_gate 红的根因）。故出生入口加载（新世界/
+    /// 重生重投放）恒锚世界出生区块 (0,0)：`spawned` 仅由投放路径置位
+    /// （load_meta 恢复存档位故意保持 false，见其注释），pos==ZERO 为
+    /// 待投放哨兵（此时玩家位恰在 (0,0)，口径不变）。存档位恢复
+    /// （pos≠ZERO 且 !spawned，无投放）不属出生入口，仍锚玩家实时位
+    /// （原版 join 后批次围绕玩家，PlayerChunkSender）。登记裁剪债：
+    /// 原版 LOAD_PLAYER_CHUNKS 批次锚**最终**出生位（finder 结果，可距
+    /// 采样 spawnChunk 至 5 区块），本仓恒锚 (0,0)——投放落点保证落在
+    /// 搜索窗（半径 3 = 门半径）内、其自身区块恒被门窗口覆盖，进世界后
+    /// 流式按玩家位续载（sim 环 rd+1 ⊇ 落点邻域），仅门开时点差数块。
     pub fn load_gate_parts(&self) -> (usize, usize) {
         let r = self.load_radius();
-        let center = ChunkPos::new(
-            (self.player.pos.x / 16.0).floor() as i32,
-            (self.player.pos.z / 16.0).floor() as i32,
-        );
+        let center = if self.spawned || self.player.pos == Vec3::ZERO {
+            ChunkPos::new(0, 0)
+        } else {
+            ChunkPos::new(
+                (self.player.pos.x / 16.0).floor() as i32,
+                (self.player.pos.z / 16.0).floor() as i32,
+            )
+        };
         let mut ready = 0usize;
         let total = ((2 * r + 1) * (2 * r + 1)) as usize;
         for dx in -r..=r {
