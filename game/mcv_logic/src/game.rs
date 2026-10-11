@@ -4368,7 +4368,7 @@ impl GameRuntime {
     /// `getBackwardsInterpolatedWalkDistance`（bID = −(walkDist + Δ·t)——
     /// 注意 walkDist 本身不做 o→cur 插值，原版直接取当前值加外推差）。
     pub fn hand_bob(&self) -> (f32, f32) {
-        let f = self.tick_frac;
+        let f = self.tick_frac as f32; // tick_frac 内部 f64（20 Hz 累加器）
         let bob = self.bob_o + (self.bob - self.bob_o) * f;
         let wd = self.walk_dist + (self.walk_dist - self.walk_dist_o) * f;
         (bob, -wd)
@@ -6568,6 +6568,8 @@ mod tests {
         // 走一 tick：位移 0.216 格进 walk_dist、速度幅度进 bob。
         rt.player.pos.x += 4.317 / 20.0;
         rt.fixed_step(1.0 / 20.0);
+        // 半 tick 的渲染插值余量（整 tick 后 tick_frac=0，hand_bob 读 o 值）。
+        rt.fixed_step(1.0 / 60.0);
         let (b, bid) = rt.hand_bob();
         assert!(
             b > 0.0,
