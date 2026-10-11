@@ -8,9 +8,18 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// 重跑生成器后读取产物（测试同时验证脚本可复现，产物入库且与源同步）。
-fn items_table_text() -> String {
+/// OnceLock：多个测试并发跑同一 test binary，脚本 write_text 截断文件的
+/// 瞬间另一线程读到空表会假红（CI run 38156491631 实锤）——生成+同步断言
+/// 全程只执行一次。
+fn items_table_text() -> &'static str {
+    static TABLE: OnceLock<String> = OnceLock::new();
+    TABLE.get_or_init(items_table_regenerated)
+}
+
+fn items_table_regenerated() -> String {
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let root = manifest
         .parent()
