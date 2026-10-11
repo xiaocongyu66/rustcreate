@@ -11,6 +11,7 @@
 //! 逐字节回归锁定。
 
 pub mod os2s;
+pub mod trees;
 pub mod vanilla;
 
 mod rust_noise;
