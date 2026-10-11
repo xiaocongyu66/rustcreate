@@ -858,7 +858,23 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                             continue;
                         }
 
-                        let (sky, blk) = light_at(n, nx, ny, nz);
+                        // 129-L/L1：流体面取光按原版语义——FluidRenderer.java
+                        // :430-432 `getLightCoords = max(自身格, 上格)`；:168
+                        // 顶面与 :234 侧面（水平循环外一次采样，**不采水平
+                        // 邻格**）经此；:204 底面 = getLightCoords(pos.below())
+                        // = max(下格, 自身)。修复前采对面格：贴石面采实心
+                        // 内部光恒 0 = 黑水皮（129-C §5 首要根因）。
+                        let (sky, blk) = if water_pass {
+                            let (s0, b0) = light_at(n, x, y, z);
+                            let (s1, b1) = if face == FACE_NY {
+                                light_at(n, nx, ny, nz)
+                            } else {
+                                light_at(n, x, y + 1, z)
+                            };
+                            (s0.max(s1), b0.max(b1))
+                        } else {
+                            light_at(n, nx, ny, nz)
+                        };
                         let mut c = Cell {
                             id,
                             tex: info_of(id).tiles[face],
