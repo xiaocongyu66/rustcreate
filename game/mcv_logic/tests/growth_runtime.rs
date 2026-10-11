@@ -70,16 +70,18 @@ fn build_flat(rt: &mut GameRuntime) {
     h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
 }
 
-/// 出生区块压实 + 玩家落到 (2.5, 65, 8.5) + 5×5 邻域顶到 Uploaded（生长
-/// 域 Chebyshev ±2 全覆盖），步进到游玩态（tests/movement.rs::enter_playing
-/// 模式，域扩到 5×5）。
+/// 出生区块压实 + 玩家落到 (2.5, 65, 8.5) + 7×7 邻域顶到 Uploaded（加载门
+/// 半径 = `load_radius` = min(render_dist,3) = 3：49 块 status ≥ Surface 才
+/// 开门，且加载态 fixed_step 不补流——movement.rs::enter_playing 同款；
+/// 生长域 Chebyshev ±2 是其子集）。5×5 过窄会让 24 块环外永不就绪、门
+/// 20 tick 预算内不开（CI run 38178069865 四红根因，fixture 假设过窄）。
 fn enter_playing(rt: &mut GameRuntime) {
     wait_terrain(rt, ChunkPos::new(0, 0));
     build_flat(rt);
     rt.player.pos = Vec3::new(2.5, 65.0, 8.5);
     rt.player.vel = Vec3::ZERO;
-    for dx in -2i32..=2 {
-        for dz in -2i32..=2 {
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
             let pos = ChunkPos::new(dx, dz);
             rt.chunks
                 .entry(pos)
@@ -89,8 +91,8 @@ fn enter_playing(rt: &mut GameRuntime) {
         }
     }
     // 邻域块光照同款填天空（域内所有块都要过亮度门）。
-    for dx in -2i32..=2 {
-        for dz in -2i32..=2 {
+    for dx in -3i32..=3 {
+        for dz in -3i32..=3 {
             if let Some(h) = rt.chunks.get(&ChunkPos::new(dx, dz)) {
                 let mut l = h.light.write().unwrap();
                 for v in l.iter_mut() {

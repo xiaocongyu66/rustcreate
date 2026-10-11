@@ -473,6 +473,7 @@ pub fn tree_write_gate(slot: TreeSlot, current: BlockId) -> bool {
 /// - age=7：1×`wheat` + `wheat_seeds` 0..3（binomial n=3、p=4/7，三次独立
 ///   伯努利，消耗序 = 模块 doc loot 语义）；
 /// - age<7：1×`wheat_seeds`（alternatives 第二分支）。
+///
 /// `rng` = 全局掉落流（`game.rs::spawn_rng` 同源，与既有
 /// `drops_for_block` 同一消耗点续流）。
 pub fn harvest_drops(id: BlockId, rng: &mut dyn FnMut() -> u32) -> Vec<(&'static str, u8)> {

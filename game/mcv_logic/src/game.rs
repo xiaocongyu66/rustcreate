@@ -3602,24 +3602,6 @@ impl GameRuntime {
         }
     }
 
-    /// NaturalSpawner-lite（预算密度为既有 KNOWN-DIVERGENCE M-3）：每 20
-    /// tick 抽 2 个已点亮区块，每块 3 组 × ≤4 步游走。审计接线点：
-    /// - 候选 y 在 [0, surface] 均匀随机（NaturalSpawner.java:343-349
-    ///   getRandomPosWithin `randomBetweenInclusive(minY, surface+1)`——
-    ///   洞穴是主怪源，旧版只刷地表 y；审计 N-2）。
-    /// - 亮度三段门 `spawner::is_dark_enough`（Monster.java:78-91）：gate1
-    ///   **原始天光** vs rand(32)；gate2 方块光 > 0 拒（overworld limit=0）；
-    ///   gate3 `max(sky − skyDarken, block)` ≤ rand(8)（LevelReader.java:167
-    ///   -175 + Level.java:736）——旧版 `sky.min(4)` 三道门共用 + gate3 恒
-    ///   拒的通道错误已修（审计 M-2）。
-    /// - 被动走独立通道（Animal.java:111-120）：脚下草地 + `raw(pos,0) > 8`
-    ///   （与敌对暗度门互不复用）+ CREATURE cap 10——旧白天分支恒要求
-    ///   surface>130 的死分支已删（审计 N-4）。
-    /// - 组内成批（NaturalSpawner.java:197-200 `min + next(1+max−min)`）：
-    ///   组类型首只固定，逐只复检；组大小数值在生物群系 spawner JSON（未
-    ///   随反编译提取）→ 用库默认 1..=4，KNOWN-DIVERGENCE（审计 N-3）。
-    /// - 落地 y = 候选格本身（`mob.snapTo(xx, yStart, zz)`，:211；旧版
-    ///   surface+1 悬空 1 格，审计 M-4）。
     /// 生长 tick（#146，fixed_step 每 on_tick 调用一次）：树苗→树 +
     /// 作物 age 推进。决策面全部在 [`crate::growth`]（纯函数，引注见该
     /// 模块头注）；本方法只做三件事——ticking 域圈定、扫描、结算写入。
@@ -3690,7 +3672,6 @@ impl GameRuntime {
             &|p| view.block(p),
             &light,
         );
-        drop(view);
         for (pos, g) in decisions {
             match g {
                 crate::growth::Growth::None => {}
@@ -3787,6 +3768,24 @@ impl GameRuntime {
         self.mesh_priority = Some(base_chunk);
     }
 
+    /// NaturalSpawner-lite（预算密度为既有 KNOWN-DIVERGENCE M-3）：每 20
+    /// tick 抽 2 个已点亮区块，每块 3 组 × ≤4 步游走。审计接线点：
+    /// - 候选 y 在 [0, surface] 均匀随机（NaturalSpawner.java:343-349
+    ///   getRandomPosWithin `randomBetweenInclusive(minY, surface+1)`——
+    ///   洞穴是主怪源，旧版只刷地表 y；审计 N-2）。
+    /// - 亮度三段门 `spawner::is_dark_enough`（Monster.java:78-91）：gate1
+    ///   **原始天光** vs rand(32)；gate2 方块光 > 0 拒（overworld limit=0）；
+    ///   gate3 `max(sky − skyDarken, block)` ≤ rand(8)（LevelReader.java:167
+    ///   -175 + Level.java:736）——旧版 `sky.min(4)` 三道门共用 + gate3 恒
+    ///   拒的通道错误已修（审计 M-2）。
+    /// - 被动走独立通道（Animal.java:111-120）：脚下草地 + `raw(pos,0) > 8`
+    ///   （与敌对暗度门互不复用）+ CREATURE cap 10——旧白天分支恒要求
+    ///   surface>130 的死分支已删（审计 N-4）。
+    /// - 组内成批（NaturalSpawner.java:197-200 `min + next(1+max−min)`）：
+    ///   组类型首只固定，逐只复检；组大小数值在生物群系 spawner JSON（未
+    ///   随反编译提取）→ 用库默认 1..=4，KNOWN-DIVERGENCE（审计 N-3）。
+    /// - 落地 y = 候选格本身（`mob.snapTo(xx, yStart, zz)`，:211；旧版
+    ///   surface+1 悬空 1 格，审计 M-4）。
     /// - 种类池补 spider（审计 M-5；权重 JSON 未提取 → 均匀，
     ///   KNOWN-DIVERGENCE）。
     fn try_natural_spawn(&mut self) {
