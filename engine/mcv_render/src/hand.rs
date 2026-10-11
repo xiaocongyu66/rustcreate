@@ -91,34 +91,48 @@ fn to_world(cam: &Camera, local: Mat4) -> Mat4 {
     Mat4::from_translation(eye) * basis * local
 }
 
-/// 原版空手右臂静止矩阵链（视空间），26.1 `ItemInHandRenderer.renderPlayerArm`
-/// :267-281（右臂 invert=1、attack=0、inverseArmHeight=0 时的常数项）+
-/// `AvatarRenderer.renderHand` :263 `rightArm.zRot = 0.1` +
-/// `ModelPart.translateAndRotate`（ModelPart.java:163-168：pivot/16 平移）。
+/// 原版空手右臂矩阵链（视空间），26.1 `ItemInHandRenderer.renderPlayerArm`
+/// :267-281（右臂 invert=1、attack=a、inverseArmHeight=h=0——本仓无换持
+/// 下放动画，裁剪债登记）+ `AvatarRenderer.renderHand` :263
+/// `rightArm.zRot = 0.1` + `ModelPart.translateAndRotate`
+/// （ModelPart.java:163-168：pivot/16 平移）。
 ///
 /// 逐段（视空间 x 右 / y 上 / z 朝观者，与原版 poseStack 同向）：
-/// 1. `T(0.64000005, −0.6, −0.71999997)`——臂锚基点（:270）；
+/// 1. `T(−0.3·sin(√aπ)+0.64000005, 0.4·sin(√a·2π)−0.6, −0.4·sin(aπ)
+///    −0.71999997)`——臂锚基点 + **臂专用**挥臂位移（:267-270；幅度
+///    (−0.3,0.4,−0.4)，与物品的 (−0.4,0.2,−0.2) swingArm:618-620 分离）；
 /// 2. `Ry(45°)`（:271）；
-/// 3. `T(−1, 3.6, 3.5)`——把 pivot 推到视点上方 3.6、身后 3.5、左 1
+/// 3. `Ry(70°·sin(√aπ))`、`Rz(−20°·sin(a²π))`——臂抡动/侧倾（:274-275，
+///    物品路径是 :332-340 的另一组角）；
+/// 4. `T(−1, 3.6, 3.5)`——把 pivot 推到视点上方 3.6、身后 3.5、左 1
 ///    （:277，肩关节由此出画）；
-/// 4. `Rz(120°)·Rx(200°)·Ry(−135°)`（:278-280）；
-/// 5. `T(5.6, 0, 0)`（:281）；
-/// 6. `T(−5·PX, 2·PX, 0)·Rz(0.1)`——rightArm `PartPose.offset(−5,2,0)`
+/// 5. `Rz(120°)·Rx(200°)·Ry(−135°)`（:278-280）；
+/// 6. `T(5.6, 0, 0)`（:281）；
+/// 7. `T(−5·PX, 2·PX, 0)·Rz(0.1)`——rightArm `PartPose.offset(−5,2,0)`
 ///    的 pivot/16 平移 + renderHand 的 zRot（HumanoidModel.java:101 /
 ///    AvatarRenderer.java:263）；
-/// 7. `from_scale(NEG_ONE)`——本仓 mesh 顶点 = 原版 raw 模型坐标取负
+/// 8. `from_scale(NEG_ONE)`——本仓 mesh 顶点 = 原版 raw 模型坐标取负
 ///    （player_mesh.rs:21 `local=(−px,−py,−pz)·PX`），先把 mesh 局部翻回
 ///    raw 帧再走原版链。NEG_ONE 翻转三角面绕序：手 pass 两条管线
 ///    （player/hand_icon）均 `cull_mode: None`（gpu.rs player 管线注释
 ///    同源），无需改 FrontFace/cull。
 ///
-/// 效果（本机全链复算，16:9、hud 70°）：肩端 pivot 视空间 ≈(0.50,−0.82,−0.66)
-/// → NDC y≈−1.8 屏外；手端 4 角 NDC x∈[0.41,0.72]、y∈[−0.72,−0.41] 屏内
-/// 右下——「肩在屏外、前臂斜穿入右下角」，与原版一致。
-pub fn arm_view_matrix() -> Mat4 {
+/// 效果（本机全链复算，16:9、hud 70°）：a=0 时肩端 pivot 视空间
+/// ≈(0.50,−0.82,−0.66) → NDC y≈−1.8 屏外；手端 4 角 NDC x∈[0.41,0.72]、
+/// y∈[−0.72,−0.41] 屏内右下——「肩在屏外、前臂斜穿入右下角」；a=1 全部
+/// 正弦回零精确归位。
+pub fn arm_view_matrix(a: f32) -> Mat4 {
     let d = |deg: f32| deg.to_radians();
-    Mat4::from_translation(Vec3::new(0.64000005, -0.6, -0.71999997))
+    let s = a.sqrt();
+    // :267-269 臂专用挥臂位移（xSwing/ySwing/zSwingPosition）。
+    let x_sw = -0.3 * (s * PI).sin();
+    let y_sw = 0.4 * (s * 2.0 * PI).sin();
+    let z_sw = -0.4 * (a * PI).sin();
+    Mat4::from_translation(Vec3::new(x_sw + 0.64000005, y_sw - 0.6, z_sw - 0.71999997))
         * Mat4::from_rotation_y(d(45.0))
+        // :274-275 臂抡动/侧倾（ySwing/zSwingRotation，invert=1）。
+        * Mat4::from_rotation_y(d(70.0) * (s * PI).sin())
+        * Mat4::from_rotation_z(-d(20.0) * (a * a * PI).sin())
         * Mat4::from_translation(Vec3::new(-1.0, 3.6, 3.5))
         * Mat4::from_rotation_z(d(120.0))
         * Mat4::from_rotation_x(d(200.0))
@@ -131,17 +145,11 @@ pub fn arm_view_matrix() -> Mat4 {
 
 /// 第一人称右臂模型矩阵（player 管线第 4 部位 = 右臂盒体切片）。
 ///
-/// 静止（swing=0）= 原版 renderPlayerArm 矩阵链（[`arm_view_matrix`]）。
-/// 挥臂 = 臂随挥臂位移整体移动 + 绕视右轴劈砍（暂沿 [`swing_translate`]
-/// / [`swing_tilt`] 物品幅度组合；原版臂专用幅度 (−0.3,0.4,−0.4) 与
-/// rotY(70°·sin√aπ)/rotZ(−20°·sin a²π)（ItemInHandRenderer.java:267-275）
-/// 在挥臂曲线刀接入）。
+/// renderPlayerArm 矩阵链全项（[`arm_view_matrix`]，含臂专用挥动项）；
+/// [`swing_translate`]/[`swing_tilt`] 物品幅度只留给手持方块/物品图标路径
+/// （renderArmWithItem :447-451 的 isEmpty 分支两不相干）。
 pub fn hand_arm_matrix(cam: &Camera, swing: f32) -> Mat4 {
-    let tilt = Mat4::from_axis_angle(camera_basis(cam).0, swing_tilt(swing));
-    to_world(
-        cam,
-        Mat4::from_translation(swing_translate(swing)) * tilt * arm_view_matrix(),
-    )
+    to_world(cam, arm_view_matrix(swing))
 }
 
 /// 手持方块中心（视空间）：物品锚点 + 原版 cube 显示抬升（3/16）+ 挥臂位移。
