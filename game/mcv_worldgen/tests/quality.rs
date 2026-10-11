@@ -175,6 +175,31 @@ fn plains_share_in_band() {
     );
 }
 
+/// 7) jaggedness 0.65 点第 4 标量 = 0.0（地形保真波 T3，1 字符修）：
+///    TerrainProvider.java:61 `overworldJaggedness` 的 farInlandMiddle=0.65 点是
+///    `buildErosionJaggednessSpline(…, 1.0F, 1.0F, 1.0F, 0.0F, …)`——高侵蚀带
+///    山脊中段锯齿恒 0（第 4 标量 = RidgesFolded=1.0 端点的 atHigh）。
+///    旧码抄录漂移为 (1,1,1,1)，高侵蚀带高原顶部意外获得锯齿而过碎。
+///    探针：continents=0.65 × erosion=-0.6（落入 erosion_jaggedness 的
+///    [-0.78,-0.5775] 段 = ridge_jaggedness(1.0, 第4参)）× ridges_folded=0.45
+///    （pnv(0.4)=0.2 与 pnv(0.5666…)=0.7 的中段节点）：第 4 参 0 ⇒ 节点值 0；
+///    第 4 参 1 ⇒ weirdness_jaggedness(1.0) ≈ 0.465。
+#[test]
+fn jaggedness_far_inland_high_erosion_middle_is_zero() {
+    let jag = wg::terrain::overworld_jaggedness_spline();
+    let c = wg::spline::Climate {
+        continents: 0.65,
+        erosion: -0.6,
+        ridges: 0.0,
+        ridges_folded: 0.45,
+    };
+    let v = jag.eval(&c);
+    assert!(
+        v.abs() < 1e-9,
+        "0.65 点高侵蚀带山脊中段锯齿应为 0（TerrainProvider.java:61 第 4 标量 0.0），实得 {v}"
+    );
+}
+
 /// 3) 洞穴空气占比：地下随机单元中空气占比 3%-12%。
 ///
 /// 一度实测 18.39% 越上界——裁决为**修生成器**（非放松本带）：src/vanilla/
