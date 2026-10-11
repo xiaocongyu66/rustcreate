@@ -52,7 +52,7 @@ const CORE_SPRITES: [(&str, &str, u32, u32); 16] = [
 /// 与核心表不同:缺文件只跳过该条(sprite_full 返回 None,调用方回退),
 /// 不拖垮整表。Block 类物品不走此表——用方块图集 tile 面。
 /// lapis 原版贴图叫 lapis_lazuli.png,条目名保持物品名。
-const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
+const ITEM_SPRITES: [(&str, &str, u32, u32); 29] = [
     ("stick", "item/stick.png", 16, 16),
     ("coal", "item/coal.png", 16, 16),
     ("iron_ingot", "item/iron_ingot.png", 16, 16),
@@ -79,6 +79,11 @@ const ITEM_SPRITES: [(&str, &str, u32, u32); 26] = [
     ("iron_shovel", "item/iron_shovel.png", 16, 16),
     ("diamond_shovel", "item/diamond_shovel.png", 16, 16),
     ("wooden_shovel", "item/wooden_shovel.png", 16, 16),
+    // #137 W 波木族+蜂窝追加：Material 物品无方块图集 tile 可借，走本表
+    // （名字 = mcv_item::ItemDef.name；贴图名 = jar 内 item/*.png）。
+    ("honeycomb", "item/honeycomb.png", 16, 16),
+    ("honey_bottle", "item/honey_bottle.png", 16, 16),
+    ("glass_bottle", "item/glass_bottle.png", 16, 16),
 ];
 
 /// 其他 best-effort 精灵(缺文件只跳过该条,不拖垮整表)。
