@@ -638,6 +638,11 @@ pub struct GameRuntime {
     /// 进食账本（Some=按住进食中；状态机 [`mcv_item::food::step_eating`]，
     /// 启动沿在 interact 的食物分支、松开/换手即取消）。
     eat_hold: Option<mcv_item::food::Eating>,
+    /// 熔炉屏会话（Some=(会话炉方块位, FurnaceScreen)；interact 命中
+    /// furnace 开/关，fixed_step on_tick 驱动烧炼，见
+    /// [`GameRuntime::toggle_furnace_screen`]）。单会话：本仓无方块实体
+    /// 存储，炉内容不可持久（关屏即归还，守恒纪律审计 #52）。
+    pub furnace: Option<(BlockPos, crate::ui::FurnaceScreen)>,
     /// 右键重触发延迟（tick，原版 `Minecraft.rightClickDelay = 4`；完食后
     /// 按住右键由此节流连吃，空手/非食物不受影响）。
     eat_cooldown: u32,
@@ -977,6 +982,7 @@ impl GameRuntime {
             particles: mcv_render::particles::ParticleEngine::new(),
             bow_hold: None,
             eat_hold: None,
+            furnace: None,
             eat_cooldown: 0,
             hardcore_death: false,
             render_dist: RENDER_DIST,
@@ -2562,6 +2568,11 @@ impl GameRuntime {
             self.time_ticks += n; // 26.1 ServerClockManager 每 tick +1
             // 天气推进（ServerLevel.advanceWeatherCycle:694-755）。
             self.weather.tick(&mut spawn_rng());
+            // 熔炉会话推进（26.1 TickingBlockEntity 每 tick 一次；单人开屏
+            // 服务端不停——Screen 非 null 不停服）。n>1 补齐跨步亏欠。
+            if let Some((_, f)) = &mut self.furnace {
+                f.tick(n as u32);
+            }
             // 粒子推进（26.1 ParticleEngine.tick 每 game tick 一次；
             // 世界回调仅借 chunks，与 &mut particles 字段互斥无冲突）。
             let pw = ParticleRt {
@@ -4002,6 +4013,14 @@ impl GameRuntime {
             self.destroy_block(hit);
             return;
         }
+        // 熔炉方块 use（26.1 startUseItem 方块 use 优先 → AbstractFurnaceBlock
+        // useWithoutItem 开 FurnaceMenu）：命中 furnace → 开/关熔炉屏，不落
+        // 放置（手持方块右键炉 = 开炉，与工作台 app 层拦截同先例）。
+        let hit_id = view.block(hit).0;
+        if hit_id == self.furnace_block() {
+            self.toggle_furnace_screen(hit);
+            return;
+        }
         let target = BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2]);
         // y 出界拒绝（coords 审计 P2：界外索引绕回同列另一端——显示≠
         // 真实）；原版 build 高度界外不可放置/破坏。v6：界门走绝对域。
@@ -4104,6 +4123,62 @@ impl GameRuntime {
             .unwrap_or(252) as u16
     }
 
+    /// 熔炉方块 id（同款按注册名查；查不到回退 blocks_gen 实号 417）。
+    fn furnace_block(&self) -> u16 {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "furnace")
+            .unwrap_or(417) as u16
+    }
+
+    /// 熔炉屏开/关（26.1 startUseItem 方块 use 优先 → AbstractFurnaceBlock
+    /// useWithoutItem 打开 FurnaceMenu）。已开会话 = 关闭归还；未开 = 开新屏。
+    /// 单会话：对第二台炉右键先归还第一台的内容（本仓炉内容不可持久，
+    /// 见 [`GameRuntime::close_furnace_session`] 债注）。
+    fn toggle_furnace_screen(&mut self, at: BlockPos) {
+        if self.furnace.is_some() {
+            self.close_furnace_session();
+            return;
+        }
+        self.furnace = Some((at, crate::ui::FurnaceScreen::new()));
+    }
+
+    /// 关熔炉屏（vanilla `removed` 语义 + 守恒纪律）：光标先背包后掉落
+    /// （ACM:588-596 dropOrPlaceInInventory）；容器槽（输入/燃料/产物）原版
+    /// 留在方块实体（removed 不清炉内容）——本仓无方块实体存储、存档面无
+    /// 炉内容落点，持久 = 重载静默吞物，故关屏即取回：走 CM:96-99
+    /// clearContainer 同款世界掉落通道（审计 #52 禁静默吞物）。债登记
+    /// HANDOFF-FURNACE.md（方块实体波接持久化后改回原版语义）。
+    fn close_furnace_session(&mut self) {
+        let Some((_, f)) = self.furnace.take() else {
+            return;
+        };
+        let (cursor, drops) = f.close_to_world();
+        let mut spills: Vec<mcv_item::ItemStack> = Vec::new();
+        if let Some(st) = cursor {
+            if let Some(rest) = self.hotbar.add(self.player.sel_slot, st) {
+                spills.push(rest);
+            }
+        }
+        spills.extend(drops);
+        if !spills.is_empty() {
+            crate::ui::drop_container_items(self, &spills);
+        }
+    }
+
+    /// 熔炉产物取出→背包：入栏走 Hotbar::add 既有拾取通道（game.rs
+    /// 「give 路径唯一」），满栏余量走 [`crate::ui::drop_container_items`]
+    /// 世界掉落。返回是否取到。
+    pub fn furnace_take_result(&mut self) -> bool {
+        let Some(st) = self.furnace.as_mut().and_then(|(_, f)| f.take_result()) else {
+            return false;
+        };
+        if let Some(rest) = self.hotbar.add(self.player.sel_slot, st) {
+            crate::ui::drop_container_items(self, &[rest]);
+        }
+        true
+    }
+
     /// `Player.canEat`（Player.java:1581-1582）的本仓并入式：
     /// invulnerable（创造）|| canAlwaysEat || needsFood（hunger < 20）。
     fn can_eat_now(&self, food: &mcv_item::food::FoodProperties) -> bool {
@@ -4119,10 +4194,10 @@ impl GameRuntime {
         if self.dead || self.eat_cooldown > 0 {
             return false;
         }
-        // 方块 use 优先（26.1 startUseItem 先试 block use）：工作台在档。
+        // 方块 use 优先（26.1 startUseItem 先试 block use）：工作台/熔炉在档。
         if self
             .look_block()
-            .is_some_and(|(_, id)| id == self.crafting_table())
+            .is_some_and(|(_, id)| id == self.crafting_table() || id == self.furnace_block())
         {
             return false;
         }
@@ -4206,6 +4281,12 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap()[idx] = BlockId(0);
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        // 熔炉会话兜底（vanilla 炉毁经 BaseContainerBlockEntity.preRemoveSide
+        // Effects/Containers.dropContents 落内容）：会话炉方块被毁即关屏归还，
+        // 禁会话悬空成吞物黑洞（守恒硬约束，审计 #52）。
+        if self.furnace.as_ref().is_some_and(|(pos, _)| *pos == target) {
+            self.close_furnace_session();
+        }
         // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
         // heightmap 维护（26.1 destroy → checkBlock）。边派发入队延后，
         // 编辑源块当帧优先重建（审计 A1/A2/F2/F3）。

@@ -4,7 +4,9 @@
 //! 拖拽/Q 丢弃/面板外丢弃)由 engine/mcv_ui 的 ContainerScreen
 //! (AbstractContainerMenu.doClick 高保真移植)裁决,app 层喂事件、每次
 //! 交互后回写本网格/光标/背包(click_slot 系语义保留作兼容/回退路径)。
-//! [`CreativePicker`] 是创造模式物品选择页。
+//! [`CreativePicker`] 是创造模式物品选择页。[`FurnaceScreen`] 是熔炉屏
+//! 状态机(输入/燃料/产物槽 + 26.1 AbstractFurnaceBlockEntity.serverTick
+//! 直译的烧炼 tick,见该结构体文档)。
 //! 物品守恒是硬约束:关屏归还 carried(先背包后 drop 余量,ACM:588-596)
 //! + 网格(**掉世界**,CM:96-99),见 `close_to_world` + [`drop_container_items`]。
 
@@ -203,6 +205,310 @@ impl CraftScreen {
             cursor,
             self.grid.into_iter().filter(|s| !s.is_empty()).collect(),
         )
+    }
+}
+
+/// 燃烧时长表（tick）。26.1 `FuelValues.vanillaBurnTimes`（FuelValues.java:
+/// 42-110）按本仓已注册物品收编；baseUnit=200（:38-40），逐项引注：
+/// coal/charcoal = baseUnit×8 = 1600（:47-48）；LOGS tag = ×3/2 = 300（:49）；
+/// PLANKS tag = 300（:51）；WOODEN_STAIRS = 300（:53）；WOODEN_SLABS =
+/// ×3/4 = 150（:55）；WOODEN_TRAPDOORS = 300（:57）；WOODEN_PRESSURE_PLATES
+/// = 300（:58）；WOODEN_FENCES = 300（:60）；FENCE_GATES = 300（:61）；
+/// WOODEN_DOORS = baseUnit = 200（:83）；BOW = 300（:72）；WOODEN_SHOVEL /
+/// SWORD / SPEAR / HOE / AXE / PICKAXE = 200（:77-82）；SAPLINGS = ×1/2 =
+/// 100（:88）；WOODEN_BUTTONS = 100（:86）；CHEST/CRAFTING_TABLE = 300
+/// （:67/:69）。未收编物品（lava_bucket/coal_block/blaze_rod/charcoal 等
+/// 未注册，缺口见 ci/recipes-gap.md）与本表外物品 = 0（非燃料，
+/// FuelValues.isFuel containsKey 语义，FuelValues.java:26-28）。
+/// 空堆调用方必须先 is_empty 短路（空堆 item=0 与 STICK 同号，见
+/// [`FurnaceScreen::tick`] 的闸门次序）。
+pub fn burn_duration(item: u16) -> u32 {
+    use mcv_item::{
+        ACACIA_DOOR, ACACIA_FENCE, ACACIA_LOG, ACACIA_PLANKS, BIRCH_DOOR, BIRCH_FENCE, BIRCH_LOG,
+        BIRCH_PLANKS, BOW, CHEST, COAL, CRAFTING_TABLE, DARK_OAK_BUTTON, DARK_OAK_DOOR,
+        DARK_OAK_FENCE, DARK_OAK_FENCE_GATE, DARK_OAK_LOG, DARK_OAK_PLANKS,
+        DARK_OAK_PRESSURE_PLATE, DARK_OAK_SAPLING, DARK_OAK_SLAB, DARK_OAK_STAIRS,
+        DARK_OAK_TRAPDOOR, JUNGLE_DOOR, JUNGLE_FENCE, JUNGLE_LOG, JUNGLE_PLANKS, LOG, OAK_BUTTON,
+        OAK_DOOR, OAK_FENCE, OAK_FENCE_GATE, OAK_PRESSURE_PLATE, OAK_SAPLING, OAK_SLAB, OAK_STAIRS,
+        OAK_TRAPDOOR, PLANKS, SPRUCE_DOOR, SPRUCE_FENCE, SPRUCE_LOG, SPRUCE_PLANKS, STICK,
+        WOODEN_AXE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX, WOODEN_SWORD_INDEX,
+    };
+    match item {
+        COAL => 1600,
+        STICK => 100,
+        BOW => 300,
+        PLANKS | SPRUCE_PLANKS | BIRCH_PLANKS | JUNGLE_PLANKS | ACACIA_PLANKS | DARK_OAK_PLANKS => {
+            300
+        }
+        LOG | BIRCH_LOG | SPRUCE_LOG | JUNGLE_LOG | ACACIA_LOG | DARK_OAK_LOG => 300,
+        OAK_SAPLING..=DARK_OAK_SAPLING => 100,
+        OAK_STAIRS..=DARK_OAK_STAIRS => 300,
+        OAK_SLAB..=DARK_OAK_SLAB => 150,
+        OAK_FENCE | SPRUCE_FENCE | BIRCH_FENCE | JUNGLE_FENCE | ACACIA_FENCE | DARK_OAK_FENCE => {
+            300
+        }
+        OAK_FENCE_GATE..=DARK_OAK_FENCE_GATE => 300,
+        OAK_DOOR | SPRUCE_DOOR | BIRCH_DOOR | JUNGLE_DOOR | ACACIA_DOOR | DARK_OAK_DOOR => 200,
+        OAK_TRAPDOOR..=DARK_OAK_TRAPDOOR => 300,
+        OAK_BUTTON..=DARK_OAK_BUTTON => 100,
+        OAK_PRESSURE_PLATE..=DARK_OAK_PRESSURE_PLATE => 300,
+        WOODEN_SWORD_INDEX | WOODEN_PICKAXE_INDEX | WOODEN_AXE_INDEX | WOODEN_SHOVEL_INDEX => 200,
+        CRAFTING_TABLE | CHEST => 300,
+        _ => 0,
+    }
+}
+
+/// 熔炉界面纯状态机（无渲染、可无头测试）。布局对齐 26.1 AbstractFurnaceMenu：
+/// 槽 0 input / 1 fuel / 2 result（AM:26-28,75-77），背包段/结果槽 UI 坐标
+/// 归渲染波（债：HUD 未画，见 HANDOFF-FURNACE.md）。烧炼节奏 =
+/// `AbstractFurnaceBlockEntity.serverTick` 直译（AFBE:139-207）：每 tick 先
+/// 递减 litTimeRemaining（:143-150）、lit 耗尽当帧可再抽燃料续燃（:163-173）、
+/// CookTime 200 tick/件（BURN_TIME_STANDARD，:54）、结果未取且满/异品时
+/// canBurn 门挡烧并把 cook 清零（:187-189）、离火 cook 按 BURN_COOL_SPEED=2
+/// 退坡（:55,194-196）、换输入品 cook 归零（setItem，:292-302）。
+/// 槽点击复用 [`click_slot`]（与 CraftScreen 同一判据族）；守恒硬约束同
+/// CraftScreen：`close_to_world` 把光标与全部槽位交还调用方分别入栏/落地，
+/// 禁静默吞物（审计 #52）。
+#[derive(Clone, Debug)]
+pub struct FurnaceScreen {
+    /// 槽 0（AFBE:43）。
+    pub input: ItemStack,
+    /// 槽 1（AFBE:44）。只认 [`burn_duration`] 表内物品
+    /// （FurnaceFuelSlot.mayPlace = isFuel，FurnaceFuelSlot.java:17-19）。
+    pub fuel: ItemStack,
+    /// 槽 2（AFBE:45）。只取不放（FurnaceResultSlot.mayPlace=false，
+    /// FurnaceResultSlot.java:24-27）。
+    pub result: ItemStack,
+    /// 光标手持堆（鼠标抓着走；与 CraftScreen.cursor 同语义）。
+    pub cursor: ItemStack,
+    /// litTimeRemaining（AFBE:62）。
+    pub lit_time: u32,
+    /// litTotalTime（AFBE:63）= 抽入燃料的 burnDuration（:165-167）。
+    pub lit_total: u32,
+    /// cookingTimer（AFBE:64）。
+    pub cook_time: u32,
+    /// cookingTotalTime（AFBE:65）：输入换品置配方时长（无配方 orElse 200，
+    /// :252-255），烧完一件重置为配方时长（:179）。
+    pub cook_total: u32,
+}
+
+/// BURN_TIME_STANDARD（AFBE:54）：smelting 配方 cookingtime 全表 200
+/// （ci/gen-recipes.py 普查 + recipes_gen.inc.rs 逐条 cook_time: 200）。
+pub const COOK_TIME_STANDARD: u32 = 200;
+
+/// BURN_COOL_SPEED（AFBE:55）：离火每 tick cook 退坡量（:194-196）。
+pub const COOL_SPEED: u32 = 2;
+
+/// isSameItemSameComponents 的本仓投影（数量不计入；空堆 item=0 与 STICK
+/// 同号，故两侧都要求非空——vanilla 空 vs 非空恒 false，AFBE:294）。
+fn same_stack(a: &ItemStack, b: &ItemStack) -> bool {
+    !a.is_empty()
+        && !b.is_empty()
+        && a.item == b.item
+        && a.damage == b.damage
+        && a.enchants == b.enchants
+}
+
+/// 是否燃料（FuelValues.isFuel，FuelValues.java:26-28；空堆非燃料）。
+fn is_fuel(item: u16) -> bool {
+    burn_duration(item) > 0
+}
+
+impl FurnaceScreen {
+    pub fn new() -> Self {
+        Self {
+            input: ItemStack::empty(),
+            fuel: ItemStack::empty(),
+            result: ItemStack::empty(),
+            cursor: ItemStack::empty(),
+            lit_time: 0,
+            lit_total: 0,
+            cook_time: 0,
+            cook_total: 0,
+        }
+    }
+
+    /// `Container.setItem(0)`（AFBE:292-302）：写入 + limitSize + 品变时
+    /// cookingTotalTime=getTotalCookTime（无配方 orElse 200，:252-255）、
+    /// cookingTimer=0。同品补量（数量变化）不重置（isSameItemSameComponents）。
+    fn set_input(&mut self, st: ItemStack) {
+        let old = self.input.clone();
+        let mut st = st;
+        if !st.is_empty() {
+            // limitSize（AFBE:296）：数量钳到物品堆叠上限。
+            st.count = st.count.min(Hotbar::max_stack(st.item));
+        }
+        let same = same_stack(&old, &st);
+        self.input = st;
+        if !same {
+            self.cook_total = mcv_item::crafting::find_cooking(self.input.item)
+                .map(|r| r.cook_time as u32)
+                .unwrap_or(COOK_TIME_STANDARD);
+            self.cook_time = 0;
+        }
+    }
+
+    /// 点击输入槽（槽 0 是普通 Slot——AM:76，任意物品可入；不匹配只是
+    /// 不烧，AFBE:190-192 cook 清零）。左/右键语义见 [`click_slot`]。
+    pub fn click_input(&mut self, left: bool) {
+        let mut next = self.input.clone();
+        click_slot(&mut next, &mut self.cursor, left);
+        self.set_input(next);
+    }
+
+    /// 点击燃料槽。光标有非燃料 = 无操作（mayPlace=isFuel，
+    /// FurnaceFuelSlot.java:17-19；异品交换同被 mayPlace 门挡，ACM PICKUP
+    /// 链 only-mayPlace 分支可换）；取料不受限。
+    pub fn click_fuel(&mut self, left: bool) {
+        if !self.cursor.is_empty() && !is_fuel(self.cursor.item) {
+            return;
+        }
+        click_slot(&mut self.fuel, &mut self.cursor, left);
+    }
+
+    /// 取出结果槽整堆（`FurnaceResultSlot` 只取不放，FurnaceResultSlot.java:
+    /// 24-27；空光标单击取全堆的合成语义）。返回 None = 无物可取；取到
+    /// 即计一件成品账（vanilla removeCount→checkTakeAchievements，
+    /// :29-49——经验/成就面归后续波）。调用方走 Hotbar::add 既有拾取通道
+    /// （game.rs:2738「give 路径唯一」），满栏余量走世界掉落。
+    pub fn take_result(&mut self) -> Option<ItemStack> {
+        if self.result.is_empty() {
+            return None;
+        }
+        Some(std::mem::replace(&mut self.result, ItemStack::empty()))
+    }
+
+    /// canBurn（AFBE:218-231）：结果空 = 可烧；异品 = 不可；同品按物品
+    /// 堆叠上限计余量（容器 64 ⊇ 物品上限，min 恒为物品上限）。
+    fn can_burn(&self, result: (u16, u8)) -> bool {
+        if self.result.is_empty() {
+            return true;
+        }
+        if self.result.item != result.0 {
+            return false;
+        }
+        self.result.count as u32 + result.1 as u32 <= Hotbar::max_stack(result.0) as u32
+    }
+
+    /// `AbstractFurnaceBlockEntity.serverTick` 单 tick 直译（AFBE:139-207）。
+    /// `ticks` = 本步跨过的 20 Hz tick 数（n>1 补齐跨步亏欠）。
+    pub fn tick(&mut self, ticks: u32) {
+        for _ in 0..ticks {
+            // lit 递减先行（AFBE:143-150）。
+            let was_lit = self.lit_time > 0;
+            if was_lit {
+                self.lit_time -= 1;
+            }
+            let mut is_lit = self.lit_time > 0;
+
+            let has_ingredient = !self.input.is_empty();
+            let has_fuel = !self.fuel.is_empty();
+            if is_lit || (has_fuel && has_ingredient) {
+                if has_ingredient {
+                    // quickCheck.getRecipeFor（AFBE:158-159）→ smelt_result
+                    // 的底层表（crafting.rs:657-659 同一 find_cooking；
+                    // cook_time 须随配方走，不新增 mcv_item API）。
+                    let recipe = mcv_item::crafting::find_cooking(self.input.item);
+                    if let Some(r) = recipe {
+                        let burn_result = r.result;
+                        if self.can_burn(burn_result) {
+                            if !is_lit {
+                                // getBurnDuration（AFBE:165）；空堆必 0——
+                                // item=0 与 STICK 同号，闸门先于查表。
+                                let new_lit = if self.fuel.is_empty() {
+                                    0
+                                } else {
+                                    burn_duration(self.fuel.item)
+                                };
+                                self.lit_time = new_lit;
+                                self.lit_total = new_lit;
+                                if new_lit > 0 {
+                                    // consumeFuel（AFBE:209-216；本仓物品
+                                    // 无 crafting remainder，余桶分支不存在）。
+                                    self.fuel.count -= 1;
+                                    if self.fuel.count == 0 {
+                                        self.fuel = ItemStack::empty();
+                                    }
+                                    is_lit = true;
+                                }
+                            }
+                            if is_lit {
+                                self.cook_time += 1;
+                                if self.cook_time == self.cook_total {
+                                    self.cook_time = 0;
+                                    self.cook_total = r.cook_time as u32;
+                                    // burn（AFBE:233-246）：结果并堆、输入 −1。
+                                    if self.result.is_empty() {
+                                        self.result = ItemStack::new(burn_result.0, burn_result.1);
+                                    } else {
+                                        self.result.count += burn_result.1;
+                                    }
+                                    self.input.count -= 1;
+                                    if self.input.count == 0 {
+                                        self.input = ItemStack::empty();
+                                    }
+                                }
+                            } else {
+                                self.cook_time = 0;
+                            }
+                        } else {
+                            self.cook_time = 0;
+                        }
+                    } else {
+                        self.cook_time = 0;
+                    }
+                } else {
+                    self.cook_time = 0;
+                }
+            } else if self.cook_time > 0 {
+                // 离火退坡（AFBE:194-196）。
+                self.cook_time = self
+                    .cook_time
+                    .saturating_sub(COOL_SPEED)
+                    .min(self.cook_total);
+            }
+        }
+    }
+
+    /// AbstractFurnaceMenu.isLit（AM:166-168）。
+    pub fn is_lit(&self) -> bool {
+        self.lit_time > 0
+    }
+
+    /// getBurnProgress（AM:152-158）：箭头 0..1；total/current 有一为 0 = 0。
+    pub fn cook_progress(&self) -> f32 {
+        if self.cook_total != 0 && self.cook_time != 0 {
+            (self.cook_time as f32 / self.cook_total as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        }
+    }
+
+    /// getLitProgress（AM:160-166）：火焰 0..1；litTotalTime==0 按 200 计。
+    pub fn lit_progress(&self) -> f32 {
+        let total = if self.lit_total == 0 {
+            COOK_TIME_STANDARD
+        } else {
+            self.lit_total
+        };
+        (self.lit_time as f32 / total as f32).clamp(0.0, 1.0)
+    }
+
+    /// 关界面两路拆分（同 CraftScreen::close_to_world）：光标归调用方
+    /// 先背包后掉落（ACM:588-596），容器槽归落地清单。本仓无方块实体
+    /// 存储，原版「炉内容留在炉里」（AFBE removed 不清容器）不可持久——
+    /// 关屏即取回，守恒硬约束优先（审计 #52），债登记 HANDOFF-FURNACE.md。
+    pub fn close_to_world(self) -> (Option<ItemStack>, Vec<ItemStack>) {
+        let cursor = if self.cursor.is_empty() {
+            None
+        } else {
+            Some(self.cursor)
+        };
+        let drops: Vec<ItemStack> = [self.input, self.fuel, self.result]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        (cursor, drops)
     }
 }
 
