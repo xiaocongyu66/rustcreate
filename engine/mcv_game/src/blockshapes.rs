@@ -38,7 +38,7 @@
 //! - 梯子（M 波）：`LadderBlock.java:29,43` 3px 板贴 FACING 对侧边。
 //!   原版无碰撞（noCollission）；gen 表 solid=true + shapes_table
 //!   「solid ⇒ 非空碰撞盒」不变量 → 碰撞=拾取薄板，KNOWN-DIVERGENCE
-//!  （原版实体可嵌入梯格）。
+//!   （原版实体可嵌入梯格）。
 //! - 雪层（M 波）：`SnowLayerBlock.java:28,47-55` 高度=层数×2px。原版
 //!   碰撞=SHAPES[layer-1]（低一层、1 层时空形）；gen 表 solid=true +
 //!   shapes_table 不变量 → 碰撞=outline 高，KNOWN-DIVERGENCE（原版 1 层

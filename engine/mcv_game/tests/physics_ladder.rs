@@ -48,10 +48,12 @@ impl TestWorld {
         }
     }
 
-    /// x=2 处立一面梯子（贴 +X 侧想象墙；碰撞满格 KNOWN-DIVERGENCE，
-    /// 见 physics.rs LADDER_PROBE 注）。
+    /// x=2 处立一面梯子。M 波 #138 起梯子碰撞=贴面薄板（3px 板贴 FACING
+    /// 对侧边，blockshapes 吃 mcv_core::shape::template_boxes）；状态
+    /// facing=+X（2）→ 薄板贴格 -X 边（世界 x 2.0..2.1875），即玩家推
+    /// +X 撞薄板面（原版语义：梯子必有支撑墙，此处以薄板充当碰撞面）。
     fn ladder_column(&mut self, y0: i32, h: i32) {
-        let id = ladder_id();
+        let id = ladder_id() | (2 << 12);
         for y in y0..y0 + h {
             self.set(2, y, 0, id);
         }

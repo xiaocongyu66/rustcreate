@@ -25,10 +25,11 @@ use crate::consts;
 const MAX_SUBSTEP: f32 = 0.5;
 /// 钳位到方块面时保留的间隙（米）。
 const SKIN: f32 = 1e-4;
-/// 梯子攀附探测外扩（米）：本仓梯子按生成表仍是**满格碰撞**（形状分类
-/// 无梯子细板，KNOWN-DIVERGENCE：原版 LadderBlock 是贴面薄板、实体可嵌入
-/// 梯子格；本仓实体最多贴面 SKIN≈1e-4），故「AABB 与梯子格相交」放宽为
-/// 「AABB 外扩本量后与梯子格相交」= 贴上梯子即视为 onClimbable。
+/// 梯子攀附探测外扩（米）：梯子碰撞=贴面薄板（M 波 #138 起 blockshapes
+/// 吃 template_boxes 的 3px 板；原版 LadderBlock 无碰撞、实体可嵌入梯子
+/// 格——本仓 gen 表 solid=true 给薄碰撞，实体最多贴面 SKIN≈1e-4），故
+/// 「AABB 与梯子格相交」放宽为「AABB 外扩本量后与梯子格相交」= 贴上
+/// 梯子即视为 onClimbable。
 const LADDER_PROBE: f32 = 1e-3;
 
 /// 轴对齐包围盒（世界坐标，米）。
@@ -231,7 +232,7 @@ pub fn move_box(
 /// 玩家是否处于可攀附状态（原版 `LivingEntity.onClimbable` :1689-1713，
 /// 实查：谓词 = 身处格的方块态属 CLIMBABLE 标签，梯子是唯一注册者）。
 /// 观测量 = 玩家 AABB 外扩 [`LADDER_PROBE`] 后与任意梯子格严格相交
-/// （原版为嵌入梯子格；本仓梯子满格碰撞贴面即达，见 LADDER_PROBE 注）。
+/// （原版为嵌入梯子格；本仓梯子薄板碰撞贴面即达，见 LADDER_PROBE 注）。
 pub fn on_climbable(world: &dyn VoxelAccess, aabb: &Aabb) -> bool {
     let p = Aabb {
         min: Vec3::new(
