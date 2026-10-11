@@ -69,7 +69,7 @@ acacia_branching_debt**。
 
 ## TREES-2 树投影接线（#139 树接线波）的池化模型裁剪
 
-vanilla 后端 pass 2（`vanilla/tree_pass.rs`）把 [`place_tree`] 接进
+vanilla 后端 pass 2（`vanilla/tree_pass.rs`）把 `place_tree` 接进
 `generate()`：5×5 树池世界坐标纯函数 + 群系密度门。密度换算自 26.1
 placed feature 的 per-chunk 尝试数（E[count]/10.24，见模块头注），随
 池化模型固有六项偏差：
