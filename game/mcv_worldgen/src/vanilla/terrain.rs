@@ -630,6 +630,19 @@ impl Orchestrator {
         // postProcess = squeeze(0.64·slide)，与 noodle(关闭=64) 取 min
         squeeze(0.64 * v).min(NOODLE_OFF)
     }
+
+    /// 测试出口：base_3d 通道在 density() 同坐标约定下的原始值（破面输入）。
+    /// 地形保真波 T4 红测试（quality.rs base_3d_channel_*）统计该通道的
+    /// σ 与相邻块 |Δ| p90；T4 接入 BlendedNoise 时乘子 (x·2, y·0.75, z·2)
+    /// 随迁入 BlendedNoise 内部（BlendedNoise.java:64-65 xz/yMultiplier），
+    /// 本出口坐标约定不变。
+    #[must_use]
+    pub fn base_3d_sample(&self, block_x: i32, block_y: i32, block_z: i32) -> f64 {
+        let bx = f64::from(block_x);
+        let bz = f64::from(block_z);
+        let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
+        self.base_3d.get_value(bx * 2.0, y_mc * 0.75, bz * 2.0)
+    }
 }
 
 fn squeeze(c: f64) -> f64 {

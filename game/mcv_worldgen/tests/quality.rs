@@ -200,6 +200,90 @@ fn jaggedness_far_inland_high_erosion_middle_is_zero() {
     );
 }
 
+/// base_3d 通道采样 helper（地形保真波 T4 红测试）：2 个分离 256×256 区域
+/// （(0,0) 与 (4096,-4096)），σ 用 step-4 网格 × y∈{58,63,68,74}（平原窗
+/// 地表带）；差分用 128 连续块 × z 行 × y∈{63,68}。坐标经
+/// `Orchestrator::base_3d_sample`（density() 同约定：破面输入原样）。
+struct Base3dSample {
+    sigma: f64,
+    delta_p90: f64,
+}
+
+fn sample_base_3d(orch: &wg::terrain::Orchestrator, ox: i32, oz: i32) -> Base3dSample {
+    // σ：step-4 网格 64×64 × 4 层 y。
+    let mut sum = 0.0_f64;
+    let mut sum2 = 0.0_f64;
+    let mut n = 0_usize;
+    for y in [58_i32, 63, 68, 74] {
+        for iz in 0..64_i32 {
+            for ix in 0..64_i32 {
+                let v = orch.base_3d_sample(ox + ix * 4, y, oz + iz * 4);
+                sum += v;
+                sum2 += v * v;
+                n += 1;
+            }
+        }
+    }
+    let mean = sum / f64::from(n as u32);
+    let var = (sum2 / f64::from(n as u32) - mean * mean).max(0.0);
+    // 相邻块 |Δ|：128 连续块 × 8 行 z（step 8）× 2 层 y。
+    let mut deltas = Vec::with_capacity(4096);
+    for y in [63_i32, 68] {
+        for iz in 0..8_i32 {
+            for ix in 0..128_i32 {
+                let a = orch.base_3d_sample(ox + ix, y, oz + iz * 8);
+                let b = orch.base_3d_sample(ox + ix + 1, y, oz + iz * 8);
+                deltas.push((a - b).abs());
+            }
+        }
+    }
+    deltas.sort_by(|p, q| p.partial_cmp(q).unwrap_or(std::cmp::Ordering::Equal));
+    let p90 = deltas[deltas.len() * 90 / 100];
+    Base3dSample {
+        sigma: var.sqrt(),
+        delta_p90: p90,
+    }
+}
+
+/// 8) base_3d 通道 σ 带 [0.05, 0.25]（地形保真波 T4 红相位，两区域都须带内）。
+///
+/// 原版 base_3d = BlendedNoise 三栈限位混合（NoiseRouterData.java:87 注册，
+/// BlendedNoise.java:105-148 compute），地表带 σ≈0.13、波长 ≥60 格
+///（/root/audit/_sim3.py 忠实移植复算）；旧 fork 自建
+/// NormalNoise(-7,[1,1,1]) @ (x·2, y·0.75, z·2) σ≈0.26-0.34 —— 高频强起伏
+/// 击穿 quality::plains_share 的 std≤2.0 门（0.062<0.10 的主杠杆）。
+/// 绿 = BlendedNoise 接入后 σ 回 [0.05,0.25]（红相位实测见 CI 日志）。
+#[test]
+fn base_3d_channel_sigma_in_band() {
+    let orch = wg::terrain::Orchestrator::new(SEED);
+    for (ox, oz) in [(0_i32, 0_i32), (4096, -4096)] {
+        let s = sample_base_3d(&orch, ox, oz);
+        assert!(
+            (0.05..=0.25).contains(&s.sigma),
+            "base_3d 通道 σ {:.4} 越带 [0.05,0.25]（区域 ({ox},{oz})）",
+            s.sigma
+        );
+    }
+}
+
+/// 9) base_3d 相邻块差分：|Δ| p90 ≤ 0.05（两区域都须带内）。
+///
+/// 原版 BlendedNoise λ≥60 格 ⇒ 块间变化细（_sim3.py 复算 p90≈0.02）；
+/// fork λ 16-64 格 ⇒ p90≈0.09-0.15 红。同 [`base_3d_channel_sigma_in_band`]
+/// 的证据链。
+#[test]
+fn base_3d_channel_adjacent_delta_p90() {
+    let orch = wg::terrain::Orchestrator::new(SEED);
+    for (ox, oz) in [(0_i32, 0_i32), (4096, -4096)] {
+        let s = sample_base_3d(&orch, ox, oz);
+        assert!(
+            s.delta_p90 <= 0.05,
+            "base_3d 相邻块 |Δ| p90 {:.4} > 0.05（区域 ({ox},{oz})）",
+            s.delta_p90
+        );
+    }
+}
+
 /// 3) 洞穴空气占比：地下随机单元中空气占比 3%-12%。
 ///
 /// 一度实测 18.39% 越上界——裁决为**修生成器**（非放松本带）：src/vanilla/
