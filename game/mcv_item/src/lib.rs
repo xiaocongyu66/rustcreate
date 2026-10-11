@@ -823,7 +823,7 @@ pub const HONEYCOMB_BLOCK: u16 = 146;
 pub const HONEY_BLOCK: u16 = 147;
 pub const BEEHIVE: u16 = 148;
 pub const BEE_NEST: u16 = 149;
-pub const CRAFTING_TABLE_ITEM: u16 = 150;
+pub const CRAFTING_TABLE: u16 = 150;
 pub const CHEST: u16 = 151;
 
 // tool registry indices for recipes/tests
