@@ -75,7 +75,9 @@ fn items_table_covers_modern_names() {
 #[test]
 fn items_table_skips_legacy_names() {
     let t = items_table_text();
-    for legacy in ["(\"log\",", "(\"planks\",", "(\"leaves\",", "(\"grass\","] {
+    // grass 是官方键（block.minecraft.grass="Grass"/"草"，26.1 保留旧名），
+    // 不在 legacy 名之列；log/planks/leaves 无官方 key，运行时回退注册名。
+    for legacy in ["(\"log\",", "(\"planks\",", "(\"leaves\","] {
         assert!(
             !t.contains(legacy),
             "legacy 名 {legacy} 不该有官方 key 行（运行时回退注册名）"
