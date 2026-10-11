@@ -871,24 +871,48 @@ impl SpriteSheet {
         if loaded.len() - panels_before < PANEL_SPRITES.len() {
             log::warn!("gui: container panels missing, craft screen uses fallback");
         }
-        // 竖排:宽度取最大(256),总高向上取整到 2 的幂
-        let sheet_w = loaded.iter().map(|(_, _, w, _)| *w).max().unwrap_or(0);
-        let total_h: u32 = loaded.iter().map(|(_, _, _, h)| *h).sum();
+        // 竖排折列：单列高上限 2048（wgpu Limits::downlevel_defaults 的
+        // max_texture_dimension_2d，设备创建同限，mcv_app/src/app.rs:2605）——
+        // 物品图标 355 条后单列总高 6318>2048，create_texture('gui-sprites')
+        // 会 validation panic（CI render-headless 实测），超出列高即折入下一
+        // 列；列宽恒取最大精灵宽，消费方按 entries 的 (x,y) 矩形取 uv，与单
+        // 列布局无关。表高取最高列向上取整到 2 的幂。
+        const SHEET_COL_H: u32 = 2048;
+        let col_w = loaded.iter().map(|(_, _, w, _)| *w).max().unwrap_or(0);
+        // 预扫：按下方 blit 同一条装箱规则数列数、取最高列
+        let mut cols = 1u32;
+        let mut col_h = 0u32;
+        let mut max_col_h = 0u32;
+        for (_, _, _, h) in &loaded {
+            if col_h + h > SHEET_COL_H {
+                max_col_h = max_col_h.max(col_h);
+                cols += 1;
+                col_h = 0;
+            }
+            col_h += h;
+        }
+        let max_col_h = max_col_h.max(col_h);
         let mut sheet_h = 32u32;
-        while sheet_h < total_h {
+        while sheet_h < max_col_h {
             sheet_h *= 2;
         }
+        let sheet_w = col_w * cols;
         let mut rgba = vec![0u8; (sheet_w * sheet_h * 4) as usize];
         let mut entries = Vec::with_capacity(loaded.len());
+        let mut x = 0u32;
         let mut y = 0u32;
         for (name, buf, w, h) in loaded {
+            if y + h > SHEET_COL_H {
+                x += col_w;
+                y = 0;
+            }
             for row in 0..h {
                 let s = ((row * w * 4) as usize)..(((row + 1) * w * 4) as usize);
-                let d =
-                    (((y + row) * sheet_w * 4) as usize)..(((y + row) * sheet_w + w) * 4) as usize;
+                let d = (((y + row) * sheet_w + x) * 4) as usize
+                    ..(((y + row) * sheet_w + x + w) * 4) as usize;
                 rgba[d].copy_from_slice(&buf[s]);
             }
-            entries.push((name, 0, y, w, h));
+            entries.push((name, x, y, w, h));
             y += h;
         }
         log::info!("gui: MC sprite sheet {sheet_w}x{sheet_h} loaded");
