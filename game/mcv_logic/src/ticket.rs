@@ -74,7 +74,9 @@ pub enum TicketType {
 }
 
 /// 票存储：pos → [(票种, 级别)]。多票取 min = 原版 min-ticket 语义。
-#[derive(Default)]
+/// Clone 供固定步快照进 [`MobServices`]（实体门按所在块查模拟票级别，
+/// DistanceManager.java:136-138 的消费侧形态；表恒小，克隆为计数级成本）。
+#[derive(Clone, Default)]
 pub struct TicketTable {
     tickets: HashMap<ChunkPos, Vec<(TicketType, u8)>>,
 }

@@ -14,9 +14,43 @@ use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
 use mcv_ecs::{App, SysCtx};
 use mcv_entity::{MobArrow, MobId, MobKind, MobPath, MobTicks, PhysBody, spawn_mob};
 use mcv_logic::game::{
-    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, PlayerArrowHitMob, arrow_system,
-    mob_ai_system,
+    MobArrowHit, MobExplosionHit, MobMeleeHit, MobServices, PlayerArrowHitMob, RENDER_DIST,
+    arrow_system, mob_ai_system,
 };
+use mcv_logic::ticket::{ENTITY_TICKING_LEVEL, TicketTable, TicketType};
+
+/// 运行时模拟半径：sim_dist = rd + 1（game.rs `sim_dist`，请求环含 +1
+/// 支撑环）。harness 票表按它镜像运行时每帧重建的玩家票。
+const SIM_DIST: i32 = RENDER_DIST + 1;
+
+/// 镜像 `GameRuntime::refresh_player_tickets`：玩家块单锚
+/// PLAYER_SIMULATION（级别 max(0, 31 − sim_dist)，DistanceManager.java
+/// :133-135）+ PLAYER_LOADING 方环（级别 31，:276/:319-321）。实体门
+/// （mob/arrow）按所在块查模拟视图级别 ≤ ENTITY_TICKING——环内 tick、
+/// 环外冻结（ServerLevel.java:418-419）；环外仍跑 checkDespawn（:417-419
+/// 的 despawn 检查在环门之前）。
+fn player_tickets(player: Vec3) -> TicketTable {
+    let pc = ChunkPos::new(
+        (player.x / 16.0).floor() as i32,
+        (player.z / 16.0).floor() as i32,
+    );
+    let mut t = TicketTable::new();
+    t.add_ticket(
+        pc,
+        TicketType::PlayerSimulation,
+        (ENTITY_TICKING_LEVEL - SIM_DIST).max(0) as u8,
+    );
+    for dx in -SIM_DIST..=SIM_DIST {
+        for dz in -SIM_DIST..=SIM_DIST {
+            t.add_ticket(
+                ChunkPos::new(pc.x + dx, pc.z + dz),
+                TicketType::PlayerLoading,
+                ENTITY_TICKING_LEVEL as u8,
+            );
+        }
+    }
+    t
+}
 
 /// 单区块世界：x,z ∈ [0,16)，y<64 实心石、64 以上空气。
 /// `lit=true` 时光照表 sky=15/block=0（露天白天代理）；否则全 0（室内代理）。
@@ -103,6 +137,8 @@ fn step_as(
         sky_darken: 0,
         difficulty,
         creative,
+        // 实体门输入：与运行时同构的玩家票快照（refresh_player_tickets 镜像）。
+        tickets: player_tickets(player),
     });
     let mut ctx = SysCtx {
         world,
@@ -170,9 +206,10 @@ fn near_mob_survives_despawn_band() {
     // 本用例只验消散距离账本，不验走位：把怪钉在出生格。fix/stream-collision
     // 后 WorldView 未加载列=空气（26.1 Level.java:361-363），LOS 不再被
     // 「未加载=石」代理挡住——僵尸会隔着未加载区锁定 50 格外的玩家并追击，
-    // ~79 tick 越出唯一已加载区块，被模拟环门冻结（26.1 ServerLevel.java:419
-    // 区块未就绪实体不 tick，checkDespawn 同样停在 frozen 门内，
-    // ServerLevel.java:415）→ idle 账本停摆、近距清零断言失真。钉住即与
+    // ~79 tick 越出唯一已加载区块，被模拟环门冻结（26.1 ServerLevel.java
+    // :418-419 环外实体不 tick，serverAiStep 不跑 → noActionTime 不增，
+    // Mob.java:683；环门外 checkDespawn 照跑，:417-419，但 idle 停摆使
+    // 600-tick 随机移除门不可达）→ 位置与 idle 账本都会失真。钉住即与
     // 用例意图（纯账本节拍）一致且免于 fast_rand 进程级序列的并行扰动。
     let pin = |app: &mut App| {
         if let Some(b) = app.world.write::<PhysBody>().get_mut(e) {
@@ -479,9 +516,9 @@ fn pathfinds_around_two_high_wall() {
 fn peaceful_despawns_hostiles() {
     let mut app = harness();
     let chunks = air_chunk_map();
-    // 摆在唯一已加载区块内：和平清怪走 checkDespawn（tickProcessing 内部，
-    // 模拟区外实体本就不 tick——26.1 ServerLevel.java:419，实体门同样豁免
-    // 不得在此之外）。
+    // 摆在唯一已加载区块内：和平清怪走 checkDespawn（Mob.java:656-658；
+    // 26.1 ServerLevel.java:417-419 的 despawn 检查在模拟环门之前——环外
+    // 照跑，环门只封 tick 本体）。
     spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(12.0, 64.0, 12.0));
     step_as(
         &mut app,

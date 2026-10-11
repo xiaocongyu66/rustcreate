@@ -2689,6 +2689,8 @@ impl GameRuntime {
                 ticks_step: n.min(u32::MAX as u64) as u32,
                 difficulty: self.difficulty.id(),
                 creative: self.mode == GameMode::Creative,
+                // 实体门输入：模拟票级别视图快照（DistanceManager.java:136-138）。
+                tickets: self.tickets.clone(),
             });
             // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
@@ -5017,6 +5019,12 @@ pub struct MobServices {
     /// 玩家创造态快照：创造玩家不被索敌（LivingEntity.java:928
     /// canBeSeenAsEnemy 的本仓等价门，审计 N-5）。
     pub creative: bool,
+    /// 票表快照（[`TicketTable`]）：实体门按实体所在块查
+    /// `level_of_type(PlayerSimulation)` ≤ ENTITY_TICKING——原版
+    /// `inEntityTickingRange`（DistanceManager.java:136-138）的消费侧
+    /// 镜像。票表每帧从玩家锚点全量重建（refresh_player_tickets），此处
+    /// 克隆为固定步快照（表恒小，与 chunks 的 Arc 克隆同量级）。
+    pub tickets: TicketTable,
 }
 
 /// 近战命中事件（信号）：AI 系统发射，GameRuntime 在固定步末 drain 后结算
@@ -5106,22 +5114,57 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let p_eye = svc.player_pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
     let mut rng = || fast_rand();
     phys.for_each(|e, body| {
-        // 模拟环门（26.1 ServerLevel.java:419：实体仅当所在区块
-        // inEntityTickingRange = DistanceManager.java:136-138 票级别
-        // ≤ENTITY_TICKING 才 tick，模拟区外=冻结不动，从不查询未加载
-        // 列）。旧实现靠「未加载=石」代理，怪会在隐形石面上行走坠落；
-        // 世界视图未加载已改空气，这里显式冻结保持原版语义。谓词取
-        // stage 证据位（刀 4a 仅重接玩家物理门 status≥Full，mob 门本波
-        // 逻辑不动，债登记：收口到票级别谓词见 ticket::is_entity_ticking）。
+        // 实体 tick 双门（26.1 ServerLevel.java:418-419 逐条镜像）：
+        // 1) 模拟环：`inEntityTickingRange`（DistanceManager.java:136-138）
+        //    = PLAYER_SIMULATION 票级别视图 ≤ ENTITY_TICKING（谓词收口到
+        //    ticket::is_entity_ticking，实体环 = 距玩家锚点 Chebyshev
+        //    ≤ sim_dist）——模拟距离外实体完全不 tick（不 AI、不位移，
+        //    invulnerableTime 递减也在 tick 内，LivingEntity.java:452-453），
+        //    且**不删除不卸载**（冻结≠消失，回环即恢复）；
+        // 2) 已载：所在区块 stage ≥ TerrainReady（entityManager
+        //    .canPositionTick 的证据位等价）——世界视图未载改空气，环内
+        //    未就绪块上的怪会隐形石面坠落（旧实现症状）。
+        // 环外/未载仍跑 checkDespawn（ServerLevel.java:417-419：despawn
+        // 检查在环门**之前**，Mob.java:655-679——和平 discard、>128² 立即
+        // 移除、<32² 清 noActionTime；环外不跑 serverAiStep，noActionTime
+        // 不增，Mob.java:683 在 tick 内）。
         let own = ChunkPos::new(
             (body.pos.x / 16.0).floor() as i32,
             (body.pos.z / 16.0).floor() as i32,
         );
-        if !svc
+        let sim_ticking = ticket::is_entity_ticking(
+            svc.tickets.level_of_type(TicketType::PlayerSimulation, own) as i32,
+        );
+        let loaded = svc
             .chunks
             .get(&own)
-            .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
-        {
+            .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8));
+        if !sim_ticking || !loaded {
+            if svc.on_tick {
+                let Some(&MobKind(id)) = kind.get(e) else {
+                    return;
+                };
+                let def = *id.def();
+                // 和平清怪在 checkDespawn（Mob.java:656-658），环外照跑。
+                if svc.difficulty == 0 && def.hostile {
+                    commands.despawn(e);
+                    return;
+                }
+                if let Some(tk) = ticks.get_mut(e) {
+                    let d2 = (svc.player_pos - body.pos).length_squared();
+                    if d2 < (spawner::NO_DESPAWN_DIST * spawner::NO_DESPAWN_DIST) as f32 {
+                        tk.idle_ticks = 0; // Mob.java:672-673 近距清账
+                    } else if spawner::should_despawn(
+                        d2,
+                        tk.idle_ticks,
+                        spawner::DESPAWN_DIST,
+                        spawner::NO_DESPAWN_DIST,
+                        &mut rng,
+                    ) {
+                        commands.despawn(e);
+                    }
+                }
+            }
             return;
         }
         let tk = match ticks.get_mut(e) {
@@ -5470,6 +5513,24 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
     let kinds = world.read::<MobKind>();
     let mut arrows = world.write::<MobArrow>();
     arrows.for_each(|e, a| {
+        // 实体 tick 双门（同 mob_ai：ServerLevel.java:419 对 entityTickList
+        // 全部实体生效——AbstractArrow 也不例外）：模拟环外/所在区块未载
+        // 的箭矢滞空冻结（不推进、不命中、寿命不耗），无 checkDespawn
+        // 分支（箭非 Mob）。
+        let own = ChunkPos::new(
+            (a.pos.x / 16.0).floor() as i32,
+            (a.pos.z / 16.0).floor() as i32,
+        );
+        let sim_ticking = ticket::is_entity_ticking(
+            svc.tickets.level_of_type(TicketType::PlayerSimulation, own) as i32,
+        );
+        let loaded = svc
+            .chunks
+            .get(&own)
+            .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8));
+        if !sim_ticking || !loaded {
+            return;
+        }
         a.vel.y -= 0.05; // 重力 0.05/tick²
         let step = a.vel / 8.0;
         let mut dead = false;
