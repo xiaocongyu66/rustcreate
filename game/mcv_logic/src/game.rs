@@ -1564,6 +1564,13 @@ impl GameRuntime {
         if delayed_ok || timeout {
             self.phase = GamePhase::Playing;
             self.load_ready_at = None;
+            // 行走 bob 基准重置：加载期的出生投放位移不进 walkDist
+            // （原版玩家 join 后才开始 tick 计量，本仓加载期也在 tick）。
+            self.walk_dist = 0.0;
+            self.walk_dist_o = 0.0;
+            self.bob = 0.0;
+            self.bob_o = 0.0;
+            self.bob_prev_pos = self.player.pos;
         }
     }
 
@@ -2532,21 +2539,26 @@ impl GameRuntime {
             // 门 = onGround && !dying && !swimming（本仓无游泳态，登记
             // KNOWN-DIVERGENCE；rideTick resetBob :70-73 无骑乘）；
             // ClientAvatarState.java:76-78 bobO=bob、bob += (tBob−bob)·0.4。
-            self.walk_dist_o = self.walk_dist;
-            self.bob_o = self.bob;
-            let moved = self.player.pos - self.bob_prev_pos;
-            self.walk_dist += (moved.x * moved.x + moved.z * moved.z).sqrt() * 0.6;
-            self.bob_prev_pos = self.player.pos;
-            let t_bob = if self.player.on_ground && !self.dead {
-                (self.player.vel.x * self.player.vel.x + self.player.vel.z * self.player.vel.z)
-                    .sqrt()
-                    / 20.0
-            } else {
-                0.0
-            };
-            // vel 是 m/s，原版 deltaMovement 是格/tick：/20 换算（满速走
-            // 4.317/20 = 0.216 ≥ 0.1 → 封顶）。
-            self.bob += (t_bob.min(0.1) - self.bob) * 0.4;
+            // 只在游玩态累计：加载期出生投放的位移不进 walkDist（原版玩家
+            // join 后才 tick 计量，本仓加载期也在 tick——转入 Playing 时
+            // 由 update_load_gate 重置基准）。
+            if self.phase == GamePhase::Playing {
+                self.walk_dist_o = self.walk_dist;
+                self.bob_o = self.bob;
+                let moved = self.player.pos - self.bob_prev_pos;
+                self.walk_dist += (moved.x * moved.x + moved.z * moved.z).sqrt() * 0.6;
+                self.bob_prev_pos = self.player.pos;
+                let t_bob = if self.player.on_ground && !self.dead {
+                    (self.player.vel.x * self.player.vel.x + self.player.vel.z * self.player.vel.z)
+                        .sqrt()
+                        / 20.0
+                } else {
+                    0.0
+                };
+                // vel 是 m/s，原版 deltaMovement 是格/tick：/20 换算（满速走
+                // 4.317/20 = 0.216 ≥ 0.1 → 封顶）。
+                self.bob += (t_bob.min(0.1) - self.bob) * 0.4;
+            }
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
