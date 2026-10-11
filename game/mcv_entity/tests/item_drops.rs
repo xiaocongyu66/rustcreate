@@ -410,3 +410,49 @@ fn merge_respects_distance() {
     assert_eq!(app.world.component_count::<ItemDrop>(), 2, "1 格外不合");
     assert_eq!(app.world.get_ref::<ItemDrop>(a).unwrap().count, 10);
 }
+
+/// #150 掉落物渲染快照通路：collect_item_drop_snaps 只读收集——视距球距
+/// 剔除 + 字段透传（pos/item/count/age/phase），不触碰 World 状态。
+#[test]
+fn collect_item_drop_snaps_filters_by_radius_and_carries_fields() {
+    let mut app = setup(NO_PLAYER);
+    let mut rng = lcg(21);
+    let inside = spawn_item_drop(
+        &mut app.world,
+        Vec3::new(3.0, 64.0, 3.0),
+        27, // cobblestone
+        5,
+        250,
+        &mut rng,
+    );
+    let _outside = spawn_item_drop(
+        &mut app.world,
+        Vec3::new(500.0, 64.0, 500.0),
+        0, // stick
+        1,
+        250,
+        &mut rng,
+    );
+    // 眼位 (0,64,0)、视距 64：只收得近处一枚。
+    let snaps = mcv_entity::collect_item_drop_snaps(&app.world, Some((Vec3::ZERO, 64.0)));
+    assert_eq!(snaps.len(), 1, "视距外的掉落物不进渲染快照");
+    let s = snaps[0];
+    assert_eq!(s.pos, Vec3::new(3.0, 64.0, 3.0));
+    assert_eq!(s.item, 27);
+    assert_eq!(s.count, 5);
+    assert_eq!(s.age_steps, 0);
+    // 相位 ∈ [0, 2π)（bobOffs 替身域）。
+    assert!(
+        (0.0..std::f32::consts::TAU).contains(&s.phase),
+        "phase 越域: {}",
+        s.phase
+    );
+    // 无视图参 = 全量收集（两枚都出）。
+    assert_eq!(
+        mcv_entity::collect_item_drop_snaps(&app.world, None).len(),
+        2
+    );
+    // 快照是纯读：World 里组件原样（count/age 未被改）。
+    assert_eq!(app.world.get_ref::<ItemDrop>(inside).unwrap().count, 5);
+    assert_eq!(app.world.get_ref::<ItemDrop>(inside).unwrap().age, 0);
+}

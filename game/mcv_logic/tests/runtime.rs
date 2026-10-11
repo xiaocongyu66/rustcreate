@@ -333,3 +333,90 @@ fn reach_constants_survival_creative() {
     );
     assert!(overlay_at(GameMode::Creative, 0.1), "创造 4.6 < 5.0 命中");
 }
+
+/// #150 刀 1：掉落物渲染快照通路——ECS ItemDrop → `item_drops()` 快照
+/// （同源图标解析 item_icon + 所在格光照 + tick 相位），渲染端
+/// `Scene.drops` 的数据供给行为锁。
+#[test]
+fn item_drops_snapshot_feeds_render_batch() {
+    let dir = tmp_world("dropsnap");
+    let mut rt = GameRuntime::new_headless(20261009, dir, GameMode::Survival);
+    wait_terrain(&mut rt, ChunkPos::new(0, 0));
+    build_platform(&mut rt);
+    finish_loading(&mut rt);
+    assert!(rt.item_drops().is_empty(), "无掉落物时渲染快照必须为空");
+    let mut rng = || 20261012u32;
+    // 玩家脚边一枚圆石（方块物品）+ 一枚木棍（材料物品），带拾取延迟防
+    // 步进后被吸走入栏。
+    mcv_entity::spawn_item_drop(
+        &mut rt.mobs_app.world,
+        Vec3::new(8.3, 70.0, 8.5),
+        mcv_item::COBBLESTONE,
+        3,
+        mcv_entity::PICKUP_DELAY,
+        &mut rng,
+    );
+    mcv_entity::spawn_item_drop(
+        &mut rt.mobs_app.world,
+        Vec3::new(7.5, 70.0, 8.5),
+        mcv_item::STICK,
+        1,
+        mcv_entity::PICKUP_DELAY,
+        &mut rng,
+    );
+    let snaps = rt.item_drops();
+    assert_eq!(snaps.len(), 2, "两枚掉落物都应进快照");
+    // 图标同源：圆石 → Block(9)，木棍 → Sprite("stick")（item_icon 分支）。
+    assert!(
+        snaps
+            .iter()
+            .any(|s| s.icon == mcv_render::gpu::HandItem::Block(9)),
+        "方块物品图标 = 方块 id: {:?}",
+        snaps.iter().map(|s| s.icon).collect::<Vec<_>>()
+    );
+    assert!(
+        snaps
+            .iter()
+            .any(|s| s.icon == mcv_render::gpu::HandItem::Sprite("stick")),
+        "材料物品图标 = 精灵名: {:?}",
+        snaps.iter().map(|s| s.icon).collect::<Vec<_>>()
+    );
+    // 光照：快照携带的光照 = game 层 light_at(掉落物盒中心格)——直接对照
+    // 区块 light 缓冲 nibble（低 4 位 block、高 4 位 sky，与 mesher 同约），
+    // 锁住「取的是掉落物所在格」的供给关系（具体值依赖流式光照就绪态）。
+    let h = rt.chunks.get(&ChunkPos::new(0, 0)).unwrap().clone();
+    for s in &snaps {
+        let cell = mcv_core::BlockPos::new(
+            s.pos[0].floor() as i32,
+            (s.pos[1] + 0.125).floor() as i32,
+            s.pos[2].floor() as i32,
+        );
+        let [lx, _, lz] = cell.local();
+        let v = h.light.read().unwrap()[mcv_core::vidx(lx, cell.y, lz)];
+        assert_eq!(
+            s.light,
+            [v & 0xF, v >> 4],
+            "掉落物快照光照 = 所在格 nibble: {s:?}"
+        );
+    }
+    // 步进后年龄以 tick 计（≥1 步 / STEPS_PER_TICK，含 partialTick 位）。
+    for _ in 0..3 {
+        rt.fixed_step(1.0 / 60.0);
+    }
+    let aged = rt.item_drops();
+    assert_eq!(aged.len(), 2, "拾取延迟内不掉不出快照");
+    for s in &aged {
+        assert!(s.age_ticks > 0.0, "步进后 age_ticks 必须推进: {s:?}");
+        assert!(s.pos[1] >= 70.0 - 0.01, "掉落物已落地平台顶（y≈70）：{s:?}");
+    }
+    // 视距裁剪（渲染距离 ×16 = 128）：远处的掉落物不进快照。
+    mcv_entity::spawn_item_drop(
+        &mut rt.mobs_app.world,
+        Vec3::new(500.0, 70.0, 500.0),
+        mcv_item::COBBLESTONE,
+        1,
+        mcv_entity::PICKUP_DELAY,
+        &mut rng,
+    );
+    assert_eq!(rt.item_drops().len(), 2, "视距外掉落物被渲染收集器剔除");
+}
