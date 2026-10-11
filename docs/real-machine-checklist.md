@@ -8,11 +8,11 @@ PASS/FAIL + 取证（截图/日志行/视频）。基线 = 刀 1-4 交付机（f
 ## 1. 进世界内存：≤ 基线 + 20%
 
 - [ ] 冷启动 → 创建新世界 → 进世界加载完成，记录加载完成时刻 RSS
-      （`adb shell dumpsys meminfo <pkg> | grep TOTAL`，或 procrss 常驻
-      采样）。对比基线同口径值，增幅 ≤20%。
+      （`adb shell dumpsys meminfo <pkg> | grep TOTAL`，或
+      `/proc/<pid>/smaps_rollup` 常驻采样）。对比基线同口径值，增幅 ≤20%。
 - [ ] 网格域期望：render-stats 行 `resident_kb` 稳定后 ≈ CI 实测同量级
-      （合成 19²=361 块 ~15 MiB；真实地形树冠/洞穴更大，量级突增即记账
-      异常，回看 `BatchingStats` 口径）。
+      （合成 19²=361 块实测 48.34 MiB，run 38114958737；真实地形树冠/
+      洞穴更大，量级突增即记账异常，回看 `BatchingStats` 口径）。
 
 ## 2. 持续跨块 5 分钟：无隐形墙 / 无冻结
 
