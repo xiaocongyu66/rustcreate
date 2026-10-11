@@ -225,7 +225,7 @@ pub fn srgb_lerp(a: f32, p0: Vec3, p1: Vec3) -> Vec3 {
 /// `mixFactor = 1 − clampedLerp(skyFogEnd/32, 0.25, 1)^0.25`。
 /// vd=8 → mixFactor = 1 − 0.25^0.25 ≈ 0.2929（审计 A Q4 口径）。
 pub fn sky_fog_mix_factor(rd_chunks: f32) -> f32 {
-    let sky_fog_end = (512.0 / 16.0).min(rd_chunks.max(0.0));
+    let sky_fog_end = (512.0_f32 / 16.0).min(rd_chunks.max(0.0));
     let clamped = (sky_fog_end / 32.0).clamp(0.25, 1.0);
     1.0 - clamped.powf(0.25)
 }
@@ -266,7 +266,7 @@ mod tests {
         let (dawn_c, dawn_a) = sunrise_sunset(71);
         assert!((dawn_a - 0.373).abs() < 0.01);
         assert!(
-            dawn_c.r > 0.9 && dawn_c.g > 0.5 && dawn_c.b < 0.3,
+            dawn_c.x > 0.9 && dawn_c.y > 0.5 && dawn_c.z < 0.3,
             "晨橙 {dawn_c}"
         );
         // 夜里（14192..21807）全程不可见。

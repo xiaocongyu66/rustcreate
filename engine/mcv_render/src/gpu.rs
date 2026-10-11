@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 
 use crate::camera::Camera;
 use crate::celestial;
+use crate::env_color;
 use crate::font;
 use crate::frustum::Frustum;
 use crate::gui::SpriteSheet;
@@ -47,7 +48,9 @@ pub struct FrameUniforms {
     pub light_tint: [f32; 4],
 }
 
-const _: () = assert!(size_of::<FrameUniforms>() == 192);
+// 64B mat4 + 7×vec4（fog_params 四距离 + tint×2 + fog_color + light_tint）
+// = 176B，与 assets/terrain.wgsl FrameUniforms 逐字段同构。
+const _: () = assert!(size_of::<FrameUniforms>() == 176);
 
 /// 水绘制分段（#80 合批）：批次内每个成员区块一段。半透明水必须保持
 /// 逐区块远→近绘制序（混合次序不可变），故合批只合并索引缓冲，绘制仍
