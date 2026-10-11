@@ -813,3 +813,118 @@ fn water_pass_emits_vertices() {
         "water indices must be quads of the emitted verts"
     );
 }
+
+// ---------------------------------------------------------------------------
+// M 波 #138：形状模板全表（template_boxes 单一数据源；6..9 真模板 +
+// 10..15 新档替换全盒占位）。刀2 红：全盒占位下薄盒断言必红。
+// ---------------------------------------------------------------------------
+
+/// 薄盒模板逐形状锚：孤立单块 6 面 (24,36)，顶点全部落在原版模板盒内。
+#[test]
+fn m_wave_thin_templates_replace_full_box_placeholders() {
+    let mesher = Mesher::new();
+    let side = chunk(0, 0xF0);
+    let cases: &[(&str, u16, [f32; 3], [f32; 3])] = &[
+        // 地毯：CarpetBlock.java:17 column(16,0,1)。
+        ("red_carpet", 0, [8.0, 8.0, 8.0], [9.0, 8.0625, 9.0]),
+        // 活板门：关下 3px / 关上 y 13..16px / 开（facing=-Z → 竖板贴 +Z 边）。
+        ("oak_trapdoor", 0, [8.0, 8.0, 8.0], [9.0, 8.1875, 9.0]),
+        ("oak_trapdoor", 4, [8.0, 8.8125, 8.0], [9.0, 9.0, 9.0]),
+        ("oak_trapdoor", 0b1001, [8.0, 8.0, 8.8125], [9.0, 9.0, 9.0]),
+        // 柵栏门：±Z 朝向 → 4px 板横跨 X；±X 朝向 → 板横跨 Z。
+        ("oak_fence_gate", 0, [8.0, 8.0, 8.375], [9.0, 9.0, 8.625]),
+        ("oak_fence_gate", 2, [8.375, 8.0, 8.0], [8.625, 9.0, 9.0]),
+        // 门：关门 3px 板贴 FACING 对侧边（0=+Z → -Z 边）。
+        ("oak_door", 0, [8.0, 8.0, 8.0], [9.0, 9.0, 8.1875]),
+        // 梯子：3px 板贴 FACING 对侧边（2=+X → -X 边）。
+        ("ladder", 2, [8.0, 8.0, 8.0], [8.1875, 9.0, 9.0]),
+        // 按钮：地面 6×2×4px 小盒。
+        (
+            "oak_button",
+            0,
+            [8.3125, 8.0, 8.375],
+            [8.6875, 8.125, 8.625],
+        ),
+        // 压力板：14×1×14px。
+        (
+            "stone_pressure_plate",
+            0,
+            [8.0625, 8.0, 8.0625],
+            [8.9375, 8.0625, 8.9375],
+        ),
+        // 雪层：1 层 2px / 7 层 14px。
+        ("snow", 0, [8.0, 8.0, 8.0], [9.0, 8.125, 9.0]),
+        ("snow", 6, [8.0, 8.0, 8.0], [9.0, 8.875, 9.0]),
+    ];
+    for (name, state, lo, hi) in cases {
+        let id = id_of(name);
+        let mut c = chunk(0, 0xF0);
+        put(&mut c.0, 8, 8, 8, id | (state << 12));
+        let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+        assert_eq!(
+            buf.counts(),
+            (24, 36),
+            "{name} state {state}: 单盒模板 6 面"
+        );
+        for v in decode(&buf) {
+            for axis in 0..3 {
+                assert!(
+                    (lo[axis]..=hi[axis]).contains(&v.pos[axis]),
+                    "{name} state {state}: 顶点 {:?} 越出模板盒 {lo:?}..{hi:?}（全盒占位未换模板？）",
+                    v.pos
+                );
+            }
+        }
+    }
+}
+
+/// 玻璃板/墙：孤立仅柱（x/z 7..9 / 4..12px）；同族相邻出臂、臂触格边。
+#[test]
+fn pane_and_wall_post_with_connected_arms() {
+    let mesher = Mesher::new();
+    let side = chunk(0, 0xF0);
+    let pane = id_of("glass_pane");
+    let wall = id_of("cobblestone_wall");
+
+    // 板：孤立柱。
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, pane);
+    let buf = mesher.build(&full9(&c, &side), 0).unwrap();
+    assert_eq!(buf.counts(), (24, 36), "孤立板仅柱 6 面");
+    for v in decode(&buf) {
+        assert!((8.4375..=8.5625).contains(&v.pos[0]), "柱 x = {}", v.pos[0]);
+        assert!((8.4375..=8.5625).contains(&v.pos[2]), "柱 z = {}", v.pos[2]);
+        assert!((8.0..=9.0).contains(&v.pos[1]));
+    }
+    // 板：+X 同族 → 柱+臂，臂触格边 x=9.0。
+    let mut c2 = chunk(0, 0xF0);
+    put(&mut c2.0, 8, 8, 8, pane);
+    put(&mut c2.0, 9, 8, 8, pane);
+    let buf2 = mesher.build(&full9(&c2, &side), 0).unwrap();
+    assert_eq!(buf2.counts(), (96, 144), "两板各柱+臂（盒间共面不剔）");
+    assert!(
+        decode(&buf2).iter().any(|v| v.pos[0] == 9.0),
+        "板臂应触格边 x=9.0"
+    );
+
+    // 墙：孤立柱 x/z 4..12px。
+    let mut c3 = chunk(0, 0xF0);
+    put(&mut c3.0, 8, 8, 8, wall);
+    let buf3 = mesher.build(&full9(&c3, &side), 0).unwrap();
+    assert_eq!(buf3.counts(), (24, 36), "孤立墙仅柱 6 面");
+    for v in decode(&buf3) {
+        assert!((8.25..=8.75).contains(&v.pos[0]), "墙柱 x = {}", v.pos[0]);
+    }
+    // 墙：+X 同族 → 柱+低臂（outline 14px），臂自 +X 格边伸入 11px。
+    let mut c4 = chunk(0, 0xF0);
+    put(&mut c4.0, 8, 8, 8, wall);
+    put(&mut c4.0, 9, 8, 8, wall);
+    let buf4 = mesher.build(&full9(&c4, &side), 0).unwrap();
+    assert_eq!(buf4.counts(), (96, 144), "两墙各柱+臂");
+    let verts = decode(&buf4);
+    assert!(verts.iter().any(|v| v.pos[0] == 9.0), "墙臂应触格边 x=9.0");
+    assert!(
+        verts.iter().any(|v| v.pos[0] == 9.0 && v.pos[1] == 8.875),
+        "墙臂 outline 高 14px（0.875）"
+    );
+}

@@ -2158,3 +2158,268 @@ fn staging_upload_flush_contract() {
         "空 flush 不得重复提交拷贝"
     );
 }
+
+// ---------------------------------------------------------------------------
+// M 波 #138：木族样本列像素断言——真实 mcv_mesher 产线网格（柵栏门/门/
+// 活板门/柵栏/原木柱/树叶）上 GPU 渲染：
+// (a) 木色系像素占比（log 树皮 / 木板族 tile，r>g>b 暖棕）> 门限；
+// (b) 树叶绿系像素出现在地平线上方（leaves tile + 生物群系 tint；
+//     地面草皮在地平线下方，带上方的绿只能来自树叶列）；
+// (c) 薄板签名：柵栏门格换整块木板后帧差 > 门限——4px 薄板上下透出
+//     背景，全盒占位则两场景几何逐位相同（差分恒 0 → 占位未换模板红）。
+#[test]
+fn wood_family_samples_render_thin_templates() {
+    let (device, queue, mut renderer) = setup();
+    let mut up = mcv_render::gpu::MeshUploader::new(device.clone(), queue.clone());
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+
+    let id_of = |name: &str| {
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == name)
+            .unwrap_or_else(|| panic!("{name} 不在注册表")) as u16
+    };
+    let (grass, log, planks) = (id_of("grass"), id_of("log"), id_of("planks"));
+    let (gate, door, trapdoor) = (
+        id_of("oak_fence_gate"),
+        id_of("oak_door"),
+        id_of("oak_trapdoor"),
+    );
+    let (fence, leaves) = (id_of("oak_fence"), id_of("leaves"));
+
+    // 木族样本场景：草地 y=100，样本列 z=8，y=101 起（状态 nibble 进高位）。
+    let build_voxels = |gate_id: u16| -> Box<[u16; mcv_core::CHUNK_VOL]> {
+        let mut v = Box::new([0u16; mcv_core::CHUNK_VOL]);
+        let mut put = |x: usize, y: i32, z: usize, id: u16| {
+            v[mcv_core::vidx(x, y, z)] = id;
+        };
+        for x in 0..16usize {
+            for z in 0..16usize {
+                put(x, 100, z, grass);
+            }
+        }
+        for y in 101..104 {
+            put(2, y, 8, log); // 原木柱（木色主源）
+        }
+        put(5, 101, 8, gate_id); // 柵栏门（(c) 的差分主角）
+        put(5, 102, 8, 0);
+        for y in 101..103 {
+            put(7, y, 8, door); // 门（下半+上半）
+        }
+        put(9, 101, 8, trapdoor); // 活板门（关下态薄板）
+        for y in 101..103 {
+            put(11, y, 8, fence);
+            put(12, y, 8, fence); // 柵栏对（互连臂）
+        }
+        put(14, 101, 8, leaves); // 树叶簇（绿系主源）
+        put(14, 102, 8, leaves);
+        put(14, 103, 8, leaves);
+        put(13, 102, 8, leaves);
+        put(15, 102, 8, leaves);
+        v
+    };
+
+    let air: Box<[u16; mcv_core::CHUNK_VOL]> = Box::new([0; mcv_core::CHUNK_VOL]);
+    let light: Box<[u8; mcv_core::CHUNK_VOL]> = Box::new([0xF0; mcv_core::CHUNK_VOL]);
+    let mesh = |vox: &Box<[u16; mcv_core::CHUNK_VOL]>| {
+        let slots = [
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &vox[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+            Some(mcv_mesher::Slot {
+                voxels: &air[..],
+                light: &light[..],
+            }),
+        ];
+        mcv_mesher::Mesher::new()
+            .build(&slots, mcv_mesher::MESH_OPAQUE)
+            .expect("wood scene mesh")
+    };
+
+    let gate_thin = mesh(&build_voxels(gate));
+    let gate_full = mesh(&build_voxels(planks));
+    let no_leaves = {
+        // 树叶簇 → 空气：(b) 的差分主角。
+        let mut v = build_voxels(gate);
+        for (x, y) in [
+            (14usize, 101i32),
+            (14, 102),
+            (14, 103),
+            (13, 102),
+            (15, 102),
+        ] {
+            v[mcv_core::vidx(x, y, 8)] = 0;
+        }
+        mesh(&v)
+    };
+    let chunk_thin = up.build_chunk([0.0; 3], gate_thin.vertex_data(), gate_thin.indices(), None);
+    let chunk_full = up.build_chunk([0.0; 3], gate_full.vertex_data(), gate_full.indices(), None);
+    let chunk_noleaf = up.build_chunk([0.0; 3], no_leaves.vertex_data(), no_leaves.indices(), None);
+    up.flush();
+
+    let camera = Camera {
+        pos: Vec3::new(8.0, 106.0, 16.0),
+        yaw: 0.0,
+        pitch: -0.46,
+        fov_y: 1.2,
+        aspect: 320.0 / 240.0,
+        near: 0.1,
+        far: 256.0,
+        bob: glam::Mat4::IDENTITY,
+    };
+    fn frame(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        renderer: &mut mcv_render::Renderer,
+        target: &OffscreenTarget,
+        chunk: &RenderChunk,
+        camera: &Camera,
+    ) -> Vec<u8> {
+        let (sun, day) = mcv_render::sun_state(6000); // noon
+        let hud: Vec<HudQuad> = Vec::new();
+        let scene = Scene {
+            camera,
+            time: 0.0,
+            day_factor: day,
+            fog_tint: [1.0, 1.0, 1.0],
+            fog_env: [0.0, 1024.0],
+            fog_rd_end: 1024.0,
+            water_vision: 0.0,
+            sun_dir: sun,
+            moon_phase: 0,
+            width: 320.0,
+            height: 240.0,
+            chunks: std::slice::from_ref(chunk),
+            hud: &hud,
+            cloud: None,
+            player: None,
+            mobs: None,
+            overlay: None,
+            underwater: false,
+            particles: None,
+            hand: None,
+        };
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
+        target.enqueue_copy(&mut enc);
+        queue.submit([enc.finish()]);
+        target.read_pixels(device)
+    }
+
+    let thin_px = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk_thin,
+        &camera,
+    );
+    let full_px = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk_full,
+        &camera,
+    );
+    let noleaf_px = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk_noleaf,
+        &camera,
+    );
+
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &thin_px);
+        let _ = std::fs::write(
+            std::path::Path::new(&dir).join("wood-family-samples.png"),
+            png,
+        );
+    }
+
+    // (a) 木色系占比：暖棕（r>g>b、r−b 明显）像素须成片存在。
+    let mut wood = 0u64;
+    for o in (0..thin_px.len()).step_by(4) {
+        let (r, g, b) = (
+            thin_px[o] as i32,
+            thin_px[o + 1] as i32,
+            thin_px[o + 2] as i32,
+        );
+        if r > g && g > b && r - b > 20 && r > 50 {
+            wood += 1;
+        }
+    }
+    assert!(
+        wood > 300,
+        "木色像素缺失（{wood}px）：log/木板族样本列未画出或贴图接线回归"
+    );
+
+    // (b) 树叶绿系：地平线上方（草皮不可达区）的绿像素须来自树叶簇。
+    let mut leaf_band = 0u64;
+    for y in 0..78u32 {
+        for x in 0..extent.width {
+            let o = ((y * extent.width + x) * 4) as usize;
+            let (r, g, b) = (
+                thin_px[o] as i32,
+                thin_px[o + 1] as i32,
+                thin_px[o + 2] as i32,
+            );
+            if g > r + 5 && g > b + 5 {
+                leaf_band += 1;
+            }
+        }
+    }
+    assert!(
+        leaf_band > 40,
+        "地平线上方树叶绿像素缺失（{leaf_band}px）：leaves 列未画出或 tint 断裂"
+    );
+    let (leaf_diff, _) = a_diff_pixels(&thin_px, &noleaf_px);
+    assert!(
+        leaf_diff > 300,
+        "树叶簇差分像素缺失（{leaf_diff}）：树叶列对帧无贡献"
+    );
+
+    // (c) 薄板签名：柵栏门（4px 板）vs 同格整块木板——薄板上下透出背景。
+    let (gate_diff, bbox) = a_diff_pixels(&thin_px, &full_px);
+    assert!(
+        gate_diff > 80,
+        "柵栏门薄板签名缺失（差分 {gate_diff}px，bbox {bbox:?}）：\
+         门模板未生效（全盒占位与整块木板逐位同帧）"
+    );
+}
