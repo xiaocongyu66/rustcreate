@@ -84,10 +84,11 @@ impl Rng for TreesRng {
     fn next_int(&mut self, bound: u32) -> u32 {
         assert!(bound >= 1, "nextInt bound must be positive");
         // Lemire 乘高位缩减 + 拒绝采样（与 XoroshiroRandomSource.java:54-77
-        // 的 unbiased-bucket 思路同构；31 位抽取面）。
+        // 的 unbiased-bucket 思路同构；32 位抽取面——乘高位法上限
+        // ⌊(2^32−1)·bound/2^32⌋ 必须能达 bound−1，31 位面会缺最高值）。
         let threshold = ((1u64 << 32) % u64::from(bound)) as u32;
         loop {
-            let bits = self.next_u64() >> 33;
+            let bits = self.next_u64() >> 32;
             let m = bits * u64::from(bound);
             if (m as u32) >= threshold {
                 return (m >> 32) as u32;
@@ -183,6 +184,7 @@ impl Pos {
 struct Scribe<'a, S: BlockSetter> {
     setter: &'a mut S,
     log_id: u16,
+    leaf_id: u16,
     logs: HashSet<(i32, i32, i32)>,
 }
 
@@ -194,6 +196,106 @@ impl<S: BlockSetter> Scribe<'_, S> {
 
     fn place_dirt(&mut self, p: Pos) {
         self.setter.set(p.x, p.y, p.z, ids::DIRT);
+    }
+
+    /// `FoliagePlacer.tryPlaceLeaf`（FoliagePlacer.java:153-172）的树足迹内
+    /// 语义：validTreePos 门只挡本树原木（世界级碰撞=接线方职责）。
+    fn place_leaf(&mut self, p: Pos) {
+        if !self.logs.contains(&(p.x, p.y, p.z)) {
+            self.setter.set(p.x, p.y, p.z, self.leaf_id);
+        }
+    }
+}
+
+/// 冠层族（各 foliage placer 的 `shouldSkipLocation` 判别键）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Canopy {
+    Blob,
+    Spruce,
+    Acacia,
+    DarkOak,
+}
+
+/// `FoliagePlacer.shouldSkipLocationSigned`（FoliagePlacer.java:77-91）：先
+/// 按 doubleTrunk 折出 2x2 柱心的 minDx/minDz，再进各族 `shouldSkipLocation`；
+/// DarkOak 的宽行在折算前还有一层原 dx/dz 极角判别
+/// （DarkOakFoliagePlacer.java:56-63）。RNG 消耗点仅 Blob 切角硬币（每角
+/// 一次 nextInt(2)，`||` 左操作数恒评估，与原版短路序一致）。
+fn should_skip<R: Rng>(
+    rng: &mut R,
+    canopy: Canopy,
+    dx: i32,
+    dz: i32,
+    y: i32,
+    radius: i32,
+    double_trunk: bool,
+) -> bool {
+    match canopy {
+        Canopy::Blob => {
+            // BlobFoliagePlacer.java:56-61：角位随机收缩，附着行（y==0）恒切。
+            let (mdx, mdz) = (dx.abs(), dz.abs());
+            mdx == radius && mdz == radius && (rng.next_int(2) == 0 || y == 0)
+        }
+        Canopy::Spruce => {
+            // SpruceFoliagePlacer.java:63-68：裙摆轮生的角恒切（r>0）。
+            let (mdx, mdz) = (dx.abs(), dz.abs());
+            mdx == radius && mdz == radius && radius > 0
+        }
+        Canopy::Acacia => {
+            // AcaciaFoliagePlacer.java:48-50：平顶层只切 |dx|>1 且 |dz|>1
+            // 的角（保留十字臂），其余层切角。
+            let (mdx, mdz) = (dx.abs(), dz.abs());
+            if y == 0 {
+                (mdx > 1 || mdz > 1) && mdx != 0 && mdz != 0
+            } else {
+                mdx == radius && mdz == radius && radius > 0
+            }
+        }
+        Canopy::DarkOak => {
+            // DarkOakFoliagePlacer.java:56-63：y==0 宽行对 doubleTrunk 的
+            // 极角（原 dx/dz，minDx 折算之前）先切。
+            if y == 0
+                && double_trunk
+                && (dx == -radius || dx >= radius)
+                && (dz == -radius || dz >= radius)
+            {
+                return true;
+            }
+            let (mdx, mdz) = if double_trunk {
+                (dx.abs().min((dx - 1).abs()), dz.abs().min((dz - 1).abs()))
+            } else {
+                (dx.abs(), dz.abs())
+            };
+            if y == -1 && !double_trunk {
+                // :65-67 枝冠下层的角。
+                return mdx == radius && mdz == radius;
+            }
+            // :68 y==1 层向单角收（圆柱冠上沿），其余层不切。
+            y == 1 && mdx + mdz > radius * 2 - 2
+        }
+    }
+}
+
+/// `FoliagePlacer.placeLeavesRow`（FoliagePlacer.java:93-113）：dx/dz 方形
+/// 遍历（doubleTrunk 时 +X/+Z 各多一列），Signed 跳过门 + 树足迹
+/// validTreePos 门。
+fn place_leaves_row<R: Rng, S: BlockSetter>(
+    rng: &mut R,
+    scribe: &mut Scribe<S>,
+    canopy: Canopy,
+    origin: Pos,
+    radius: i32,
+    y: i32,
+    double_trunk: bool,
+) {
+    let span = i32::from(double_trunk);
+    for dx in -radius..=(radius + span) {
+        for dz in -radius..=(radius + span) {
+            if should_skip(rng, canopy, dx, dz, y, radius, double_trunk) {
+                continue;
+            }
+            scribe.place_leaf(origin.offset(dx, y, dz));
+        }
     }
 }
 
@@ -220,13 +322,14 @@ fn trunk_straight<S: BlockSetter>(scribe: &mut Scribe<S>, origin: Pos, h: i32) {
 
 /// `DarkOakTrunkPlacer.placeTrunk`（DarkOakTrunkPlacer.java:33-96）：2x2
 /// 打底与立柱、随机倾斜（leanHeight :45 / leanSteps :46）、外圈 1/3 概率
-/// 下垂枝干（长 2..4，:75-80）。
+/// 下垂枝干（长 2..4，:75-80）。返回冠附着点序列（主 doubleTrunk=true 在
+/// 前、枝冠 false 在后，序=原版 attachments 表序）。
 fn trunk_dark_oak<R: Rng, S: BlockSetter>(
     rng: &mut R,
     scribe: &mut Scribe<S>,
     origin: Pos,
     h: i32,
-) {
+) -> Vec<(Pos, bool)> {
     let below = origin.offset(0, -1, 0);
     scribe.place_dirt(below); // :35-38 below / east / south / south.east()
     scribe.place_dirt(below.offset(1, 0, 0));
@@ -250,30 +353,41 @@ fn trunk_dark_oak<R: Rng, S: BlockSetter>(
         scribe.place_log(p.offset(0, 0, 1)); // south
         scribe.place_log(p.offset(1, 0, 1)); // east.south()
     }
-    // :71 主冠附着点 (tx, ey, tz)（doubleTrunk=true，冠层刀用）。
+    // :71 主冠附着点 (tx, ey, tz)（doubleTrunk=true）。
+    let mut attachments = vec![(Pos::new(tx, ey, tz), true)];
     // :73-85 外圈枝干：4x4 外环 12 格各 1/3 概率，柱长 nextInt(3)+2。
+    let outer = |v: i32| !(0..=1).contains(&v);
     for ox in -1..=2 {
         for oz in -1..=2 {
-            let outer = |v: i32| !(0..=1).contains(&v);
             if (outer(ox) || outer(oz)) && rng.next_int(3) == 0 {
                 let length = rng.next_int(3) as i32 + 2; // :76 → 2..4
                 for by in 0..length {
                     scribe.place_log(Pos::new(origin.x + ox, ey - by - 1, origin.z + oz));
                 }
                 // :82 枝干冠附着点 (x+ox, ey, z+oz)（doubleTrunk=false）。
+                attachments.push((Pos::new(origin.x + ox, ey, origin.z + oz), false));
             }
         }
     }
+    attachments
 }
 
 /// `ForkingTrunkPlacer.placeTrunk`（ForkingTrunkPlacer.java:34-88）：主杆
-/// 随机倾斜 + 反向斜枝（每步 y+1、xz±1 的竖杆序列，非对角连杆）。
-fn trunk_forking<R: Rng, S: BlockSetter>(rng: &mut R, scribe: &mut Scribe<S>, origin: Pos, h: i32) {
+/// 随机倾斜 + 反向斜枝（每步 y+1、xz±1 的竖杆序列，非对角连杆）。返回冠
+/// 附着点序列（主 radiusOffset=1、枝 0，序=原版 attachments 表序）。
+fn trunk_forking<R: Rng, S: BlockSetter>(
+    rng: &mut R,
+    scribe: &mut Scribe<S>,
+    origin: Pos,
+    h: i32,
+) -> Vec<(Pos, i32)> {
     scribe.place_dirt(origin.offset(0, -1, 0)); // :36
     let (ldx, ldz) = LEAN_DIRS[rng.next_int(4) as usize]; // :38
     let lean_height = h - rng.next_int(4) as i32 - 1; // :41
     let mut lean_steps = 3i32 - rng.next_int(3) as i32; // :42 → 1..3
     let (mut tx, mut tz) = (origin.x, origin.z);
+    let mut attachments = Vec::new();
+    let mut ey: Option<i32> = None;
     for yo in 0..h {
         if yo >= lean_height && lean_steps > 0 {
             tx += ldx; // :50-54
@@ -282,23 +396,35 @@ fn trunk_forking<R: Rng, S: BlockSetter>(rng: &mut R, scribe: &mut Scribe<S>, or
         }
         // :52-54 原版 placeLog 成功才记冠点 ey——本仓无读面恒成功。
         scribe.place_log(Pos::new(tx, origin.y + yo, tz));
+        ey = Some(origin.y + yo + 1);
+    }
+    if let Some(ey) = ey {
+        // :62 主冠附着点，radiusOffset=1。
+        attachments.push((Pos::new(tx, ey, tz), 1));
     }
     let (bdx, bdz) = LEAN_DIRS[rng.next_int(4) as usize]; // :66 枝干方向
     if (bdx, bdz) != (ldx, ldz) {
         let branch_pos = lean_height - rng.next_int(2) as i32 - 1; // :69
         let mut branch_steps = 1i32 + rng.next_int(3) as i32; // :70 → 1..3
         let (mut bx, mut bz) = (origin.x, origin.z);
+        let mut ey2: Option<i32> = None;
         let mut yo = branch_pos;
         while yo < h && branch_steps > 0 {
             if yo >= 1 {
                 bx += bdx;
                 bz += bdz;
                 scribe.place_log(Pos::new(bx, origin.y + yo, bz));
+                ey2 = Some(origin.y + yo + 1);
             }
             branch_steps -= 1;
             yo += 1;
         }
+        if let Some(ey2) = ey2 {
+            // :87 枝冠附着点，radiusOffset=0。
+            attachments.push((Pos::new(bx, ey2, bz), 0));
+        }
     }
+    attachments
 }
 
 /// oak/birch/jungle：`createStraightBlobTree`（TJ:123-131）——直杆 +
@@ -310,39 +436,107 @@ fn blob_tree<R: Rng, S: BlockSetter>(
     scribe: &mut Scribe<S>,
     origin: Pos,
     spec: (i32, i32, i32),
+    radius: i32,
 ) {
     let h = sample_trunk_height(rng, spec);
+    // 冠参数均 ConstantInt（radius/offset 不消耗流，ConstantInt.java:19-21）；
+    // foliageHeight = height = 3（BlobFoliagePlacer.java:51-53）。
     trunk_straight(scribe, origin, h);
-    // 绿刀：BlobFoliagePlacer.createFoliage（BlobFoliagePlacer.java:44-53）——
-    // yo = 0..-3 逐层 currentRadius = max(leafRadius - 1 - yo/2, 0)。
+    // BlobFoliagePlacer.createFoliage（:44-53）：附着点 = origin.above(h)
+    // （StraightTrunkPlacer.java:42）、radiusOffset=0、单干；yo 从 0 到
+    // -foliageHeight，半径 = max(leafRadius - 1 - yo/2, 0)（Java/Rust 同为
+    // 向零截断，-3/2 = -1）。
+    let attachment = origin.offset(0, h, 0);
+    for i in 0..=3 {
+        let yo = -i;
+        let r = (radius - 1 - yo / 2).max(0);
+        place_leaves_row(rng, scribe, Canopy::Blob, attachment, r, yo, false);
+    }
 }
 
 /// spruce：TJ:433-441——`StraightTrunkPlacer(5,2,1)` +
 /// `SpruceFoliagePlacer(U(2,3), U(0,2), U(1,2))` 双层裙摆与尖顶。
 fn spruce_tree<R: Rng, S: BlockSetter>(rng: &mut R, scribe: &mut Scribe<S>, origin: Pos) {
     let h = sample_trunk_height(rng, (5, 2, 1));
+    // 冠采样序（TreeFeature.java:67-69 → FoliagePlacer.java:44-46）：
+    // foliageHeight 的 trunk_height=U(1,2) → leafRadius=U(2,3) → placeTrunk
+    // → offset=U(0,2) → createFoliage 内 currentRadius=nextInt(2)。
+    let trunk_provider = 1 + rng.next_int(2) as i32; // U(1,2).sample
+    let foliage_height = (h - trunk_provider).max(4); // SpruceFoliagePlacer.java:58-60
+    let leaf_radius = 2 + rng.next_int(2) as i32; // U(2,3).sample
     trunk_straight(scribe, origin, h);
-    // 绿刀：SpruceFoliagePlacer.createFoliage（SpruceFoliagePlacer.java:38-56）
-    // ——轮生半径 0/1 起步、reset 后 minRadius=1、maxRadius 逐层爬到 leafRadius。
+    let offset = rng.next_int(3) as i32; // U(0,2).sample
+    // SpruceFoliagePlacer.createFoliage（:38-56）：附着点 = origin.above(h)、
+    // radiusOffset=0；轮生半径从 nextInt(2) 起步，撞到 maxRadius 就 reset 到
+    // minRadius（首次 0、之后 1），maxRadius 逐层 +1 爬到 leafRadius 封顶
+    // ——交替 0/1/2… 的双层裙摆。
+    let attachment = origin.offset(0, h, 0);
+    let mut current_radius = rng.next_int(2) as i32;
+    let mut max_radius = 1i32;
+    let mut min_radius = 0i32;
+    let mut yo = offset;
+    while yo >= -foliage_height {
+        place_leaves_row(
+            rng,
+            scribe,
+            Canopy::Spruce,
+            attachment,
+            current_radius,
+            yo,
+            false,
+        );
+        if current_radius >= max_radius {
+            current_radius = min_radius;
+            min_radius = 1;
+            max_radius = (max_radius + 1).min(leaf_radius);
+        } else {
+            current_radius += 1;
+        }
+        yo -= 1;
+    }
 }
 
 /// acacia：TJ:417-425——`ForkingTrunkPlacer(5,2,2)` +
 /// `AcaciaFoliagePlacer(CI(2), CI(0))` 平顶+十字臂。分支结构已全文移植，
-/// 无 acacia_branching_debt（绿刀冠层落位后收口）。
+/// 无 acacia_branching_debt。
 fn acacia_tree<R: Rng, S: BlockSetter>(rng: &mut R, scribe: &mut Scribe<S>, origin: Pos) {
     let h = sample_trunk_height(rng, (5, 2, 2));
-    trunk_forking(rng, scribe, origin, h);
-    // 绿刀：AcaciaFoliagePlacer.createFoliage（AcaciaFoliagePlacer.java:33-54）
-    // ——主冠 radiusOffset=1、枝冠 0；行 (-1, r+ro) / (0, r-1) / (0, r+ro-1)。
+    // r/offset 均 ConstantInt（不消耗流）；foliageHeight 恒 0
+    // （AcaciaFoliagePlacer.java:43-45）。
+    let attachments = trunk_forking(rng, scribe, origin, h);
+    // AcaciaFoliagePlacer.createFoliage（:33-54）：主冠 radiusOffset=1、
+    // 枝冠 0；行 (-1, r+ro) / (0, r-1) / (0, r+ro-1)，附着点 = pos.above(0)。
+    for (pos, radius_offset) in &attachments {
+        let (pos, ro) = (*pos, *radius_offset);
+        place_leaves_row(rng, scribe, Canopy::Acacia, pos, 2 + ro, -1, false);
+        place_leaves_row(rng, scribe, Canopy::Acacia, pos, 1, 0, false);
+        place_leaves_row(rng, scribe, Canopy::Acacia, pos, 1 + ro, 0, false);
+    }
 }
 
 /// dark oak：TJ:139-147——`DarkOakTrunkPlacer(6,2,1)` +
 /// `DarkOakFoliagePlacer(CI(0), CI(0))` 圆柱冠（2x2 三层 + 50% 顶盖）。
 fn dark_oak_tree<R: Rng, S: BlockSetter>(rng: &mut R, scribe: &mut Scribe<S>, origin: Pos) {
     let h = sample_trunk_height(rng, (6, 2, 1));
-    trunk_dark_oak(rng, scribe, origin, h);
-    // 绿刀：DarkOakFoliagePlacer.createFoliage（DarkOakFoliagePlacer.java:33-52）
-    // ——主冠 (-1,r+2)/(0,r+3)/(+1,r+2)/50%(+2,r)；枝冠 (-1,r+2)/(0,r+1)。
+    // r/offset 均 ConstantInt（不消耗流）。
+    let attachments = trunk_dark_oak(rng, scribe, origin, h);
+    // DarkOakFoliagePlacer.createFoliage（:33-52）：主冠（doubleTrunk=true）
+    // (-1,r+2)/(0,r+3)/(+1,r+2)/50% 顶盖 (+2,r)；枝冠 (-1,r+2)/(0,r+1)；
+    // 附着点 = pos.above(0)。
+    for (pos, double_trunk) in &attachments {
+        let (pos, dt) = (*pos, *double_trunk);
+        if dt {
+            place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 2, -1, true);
+            place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 3, 0, true);
+            place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 2, 1, true);
+            if rng.next_bool() {
+                place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 0, 2, true);
+            }
+        } else {
+            place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 2, -1, false);
+            place_leaves_row(rng, scribe, Canopy::DarkOak, pos, 1, 0, false);
+        }
+    }
 }
 
 /// 种一棵树。`base_y` = 树基格（原版 Feature.origin / 苗位）的**世界绝对 y**；
@@ -357,16 +551,18 @@ pub fn place_tree<R: Rng>(
     setter: &mut impl BlockSetter,
 ) {
     let origin = Pos::new(x, base_y, z);
+    let (log_id, leaf_id) = kind.log_leaf_ids();
     let mut scribe = Scribe {
         setter,
-        log_id: kind.log_leaf_ids().0,
+        log_id,
+        leaf_id,
         logs: HashSet::new(),
     };
     match kind {
-        TreeKind::Oak => blob_tree(rng, &mut scribe, origin, (4, 2, 0)),
-        TreeKind::Birch => blob_tree(rng, &mut scribe, origin, (5, 2, 0)),
+        TreeKind::Oak => blob_tree(rng, &mut scribe, origin, (4, 2, 0), 2),
+        TreeKind::Birch => blob_tree(rng, &mut scribe, origin, (5, 2, 0), 2),
         TreeKind::Spruce => spruce_tree(rng, &mut scribe, origin),
-        TreeKind::Jungle => blob_tree(rng, &mut scribe, origin, (4, 8, 0)),
+        TreeKind::Jungle => blob_tree(rng, &mut scribe, origin, (4, 8, 0), 2),
         TreeKind::Acacia => acacia_tree(rng, &mut scribe, origin),
         TreeKind::DarkOak => dark_oak_tree(rng, &mut scribe, origin),
     }

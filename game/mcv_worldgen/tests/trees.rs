@@ -127,12 +127,13 @@ fn trunk_height_in_vanilla_range() {
 ///   最大 cr0=1、lr=3、fh=8、off=2：11+160=171。
 /// - acacia（AcaciaFoliagePlacer.java:33-54，r=2, fh=0）：主冠
 ///   (−1,r3)=45−4角−1顶柱=44、(0,r1)=9、(0,r2) 十字=13 → 66；
-///   枝冠 (−1,r2)=21、(0,r1)∪(0,r1)=9 → ≤30。重叠/枝原木让位
-///   ⇒ 实测 [43, 96]，闭包取 [40, 100]。
+///   枝冠 (−1,r2)=21−1自身顶柱=20、(0,r1)∪(0,r1)=9 → ≤29。
+///   重叠/枝原木让位 ⇒ 实测 [43, 95]，闭包取 [40, 100]。
 /// - dark oak（DarkOakFoliagePlacer.java:33-52，r=0）：主冠
-///   (−1,r2)=36−4柱=32、(0,r3)=64−9角−4柱=51、(+1,r2)=44、
-///   50% 顶盖 (+2,r1)=0..4 → 127..131，扣 ≤12 枝顶原木让位 ⇒ ≥115；
-///   枝冠 ≤12×(20+9)=348 ⇒ 上界 131+348=479，闭包取 [115, 485]。
+///   (−1,r2)=36−4柱=32、(0,r3)=64−9极角−4柱=51、(+1,r2)=36−12
+///   （minDx+minDz>2 的 3 组合×4）=24、50% 顶盖 (+2,r0)=0..4
+///   → 107..111，扣 ≤12 枝顶原木让位 ⇒ ≥95；枝冠 ≤12×29=348
+///   ⇒ 上界 111+348=459，闭包取 [90, 465]。
 #[test]
 fn leaf_count_in_derived_band() {
     for kind in ALL_KINDS {
@@ -141,7 +142,7 @@ fn leaf_count_in_derived_band() {
             TreeKind::Oak | TreeKind::Birch | TreeKind::Jungle => (49, 61),
             TreeKind::Spruce => (29, 171),
             TreeKind::Acacia => (40, 100),
-            TreeKind::DarkOak => (115, 485),
+            TreeKind::DarkOak => (90, 465),
         };
         for seed in 0..64u64 {
             let n = count_id(&grow(seed, kind), leaf);
