@@ -99,10 +99,11 @@ fn vanilla_surface_material_bands() {
                         let top = vox[vidx(x, surface, z)];
                         // 材质由 offset 估计面（`surface_ours`）分带；base_3d
                         // 密度场抖动会把真实顶面压低 2-4 格露出 DIRT/STONE
-                        // （vanilla「密度场破面」行为）——只在估计与真实顶面
-                        // 一致（|Δ| ≤ 1）的列上锁材质带。
+                        //（vanilla「密度场破面」行为）——只在估计面与真实顶面
+                        // 逐格一致（est == surface，即 y==surface 材质分支生效处）
+                        // 的列上锁材质带。
                         let est = wg::surface_block_y(seed, cx * 16 + x as i32, cz * 16 + z as i32);
-                        if (est - surface).abs() > 1 {
+                        if est != surface {
                             continue;
                         }
                         if est <= SEA_LEVEL + 1 {
