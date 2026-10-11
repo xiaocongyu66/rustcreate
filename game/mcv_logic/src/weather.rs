@@ -77,18 +77,62 @@ impl Default for Weather {
 }
 
 impl Weather {
-    /// 晴天开局（ServerLevel 无天气存档时的默认态）。
+    /// 无档默认（26.1 `WeatherData` 无参构造，WeatherData.java:28-29，
+    /// 字段 :22-26 全 0/假）——**不是** rainTime=1：advanceWeatherCycle
+    /// 首 tick 对 0 计时器走 else 支重采样 RAIN_DELAY/THUNDER_DELAY
+    /// （ServerLevel.java:723-730）→ 新世界 ≥12000 tick（10 分钟）长晴。
+    /// 旧实现置 1，第二 tick 归零翻转 → 每个档进去默认就下雨（真机
+    /// 报障①根因）。
     pub fn new() -> Self {
         Self {
             clear_weather_time: 0,
-            rain_time: 1,
-            thunder_time: 1,
+            rain_time: 0,
+            thunder_time: 0,
             raining: false,
             thundering: false,
             rain_level: 0.0,
             thunder_level: 0.0,
             rain_fog_multiplier: 0.0,
         }
+    }
+
+    /// 档内恢复（ServerLevel.java:273 构造期 `prepareWeather`，:687-694：
+    /// raining → rainLevel=1.0、thundering → thunderLevel=1.0，免
+    /// 0.01/tick 慢爬）。五字段 = WeatherData.java:22-26；无天气块的
+    /// 旧档由存档层给 `WeatherData` 无档默认（全 0/假，见 `new`）。
+    pub fn restore(
+        clear_weather_time: i32,
+        rain_time: i32,
+        thunder_time: i32,
+        raining: bool,
+        thundering: bool,
+    ) -> Self {
+        let mut w = Self::new();
+        w.clear_weather_time = clear_weather_time.max(0) as u32;
+        w.rain_time = rain_time.max(0) as u32;
+        w.thunder_time = thunder_time.max(0) as u32;
+        w.raining = raining;
+        w.thundering = thundering;
+        if raining {
+            w.rain_level = 1.0; // prepareWeather ServerLevel.java:689-690
+        }
+        if thundering {
+            w.thunder_level = 1.0; // :690-692
+        }
+        w
+    }
+
+    /// 落盘快照（WeatherData.java:39-82 getter 全集，顺序对齐 codec
+    /// :11-15）。advanceWeatherCycle 每 tick 把计时器写回 WeatherData
+    /// （ServerLevel.java:734-738），故任意时刻快照即合法存档态。
+    pub fn weather_state(&self) -> (i32, i32, i32, bool, bool) {
+        (
+            self.clear_weather_time as i32,
+            self.rain_time as i32,
+            self.thunder_time as i32,
+            self.raining,
+            self.thundering,
+        )
     }
 
     pub fn is_raining(&self) -> bool {
@@ -388,5 +432,33 @@ mod tests {
             assert!(!w.is_raining(), "tick {t}: 新世界开局不应下雨");
             assert!(!w.is_thundering(), "tick {t}: 新世界开局不应雷暴");
         }
+    }
+
+    /// 档内恢复 = prepareWeather 语义（W2）：ServerLevel.java:273 构造期
+    /// `prepareWeather`（:687-694）——raining → rainLevel=1.0、thundering
+    /// → thunderLevel=1.0，雨势不经历 0.01/tick 慢爬；state() 快照与
+    /// restore() 对偶（负计时器钳 0，u32 域）。
+    #[test]
+    fn restore_matches_prepare_weather() {
+        let w = Weather::restore(77, 23_456, 9_876, true, true);
+        assert!(w.is_raining() && w.is_thundering());
+        assert_eq!((w.rain_level(), w.thunder_level()), (1.0, 1.0));
+        assert_eq!(
+            w.weather_state(),
+            (77, 23_456, 9_876, true, true),
+            "state() 与 restore() 五字段对偶"
+        );
+        // 晴档：levels 不抬。
+        let clear = Weather::restore(0, 5, 5, false, false);
+        assert_eq!((clear.rain_level(), clear.thunder_level()), (0.0, 0.0));
+        assert_eq!(clear.weather_state(), (0, 5, 5, false, false));
+        // 负值钳 0（坏值防御；原版 int 域但语义上负计时器 = 立即重采样）。
+        let neg = Weather::restore(-1, -5, 3, false, false);
+        assert_eq!(neg.weather_state(), (0, 0, 3, false, false));
+        // 恢复后下一 tick：raining 且计时器 >0 → 只递减不翻转。
+        let mut w = Weather::restore(0, 2, 0, true, false);
+        let mut r = det(13);
+        w.tick(&mut r);
+        assert!(w.is_raining(), "倒计时在档时恢复态不被首 tick 翻转");
     }
 }

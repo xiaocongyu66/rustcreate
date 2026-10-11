@@ -249,6 +249,13 @@ fn meta_roundtrip() {
             air_supply: 240,
             difficulty: 1,
         }),
+        weather: mcv_save::WeatherMeta {
+            clear_weather_time: 5,
+            rain_time: 12_345,
+            thunder_time: 6_789,
+            raining: true,
+            thundering: true,
+        },
     };
     let bytes = meta.encode();
     let back = LevelMeta::decode(&bytes).expect("decode");
@@ -268,10 +275,12 @@ fn meta_roundtrip() {
     assert_eq!((p.health, p.hunger), (7.5, 14.0));
     assert_eq!((p.saturation, p.exhaustion), (2.25, 12.5));
     assert_eq!((p.air_supply, p.difficulty), (240, 1));
+    // v6 天气块往返（WeatherData.java:11-15 字段序）。
+    assert_eq!(back.weather, meta.weather);
 
-    // 版本 6（超前）必须拒绝。
+    // 版本 7（超前）必须拒绝。
     let mut future = bytes.clone();
-    future[4] = 6;
+    future[4] = 7;
     assert!(LevelMeta::decode(&future).is_err());
 
     let bare = LevelMeta {
@@ -280,9 +289,11 @@ fn meta_roundtrip() {
         day_time: 0,
         mode: 0,
         player: None,
+        weather: mcv_save::WeatherMeta::default(),
     };
     let back = LevelMeta::decode(&bare.encode()).expect("decode");
     assert!(back.player.is_none());
+    assert_eq!(back.weather, mcv_save::WeatherMeta::default());
 }
 
 #[test]

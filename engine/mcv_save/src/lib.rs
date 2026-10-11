@@ -2,7 +2,8 @@
 //!
 //! `level.meta` format version history: v3 adds the hotbar, v4 the 27-slot
 //! main inventory, v5 the survival stats (health/hunger/saturation/exhaustion/
-//! air_supply/difficulty, appended before the trailing mode byte). Decoders
+//! air_supply/difficulty, appended before the trailing mode byte), v6 the
+//! weather block (between the player block and the mode byte). Decoders
 //! accept ≤ their own version and default the missing fields.
 //!
 //! Region file layout (all little-endian):
@@ -127,6 +128,70 @@ pub struct LevelMeta {
     /// 0 = survival, 1 = creative, 2 = hardcore.
     pub mode: u8,
     pub player: Option<PlayerMeta>,
+    /// v6 天气块（v1–v5 读原版无档默认 = 长晴，见 [`WeatherMeta::default`]）。
+    pub weather: WeatherMeta,
+}
+
+/// v6 天气块——26.1 `WeatherData` SavedData 的落盘等价（本仓并入
+/// level.meta，原版为独立 data/minecraft/weather.dat，SavedDataType id
+/// "weather"，WeatherData.java:19-21）。字段与**编码序**对齐其 codec
+/// （WeatherData.java:11-15：clear_weather_time/rain_time/thunder_time/
+/// raining/thundering）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WeatherMeta {
+    /// clearWeatherTime（`/weather clear` 时窗）。
+    pub clear_weather_time: i32,
+    /// rainTime 倒计时（tick）。
+    pub rain_time: i32,
+    /// thunderTime 倒计时（tick）。
+    pub thunder_time: i32,
+    pub raining: bool,
+    pub thundering: bool,
+}
+
+impl Default for WeatherMeta {
+    /// 原版无天气 NBT 的默认（WeatherData.java:28-29 无参构造，字段
+    /// :22-26 全 0/假）→ advanceWeatherCycle 首 tick 对 0 计时器重采样
+    /// RAIN_DELAY/THUNDER_DELAY（ServerLevel.java:723-730）→ **长晴**，
+    /// 旧档缺字段回退此默认而不是开局下雨。
+    fn default() -> Self {
+        Self {
+            clear_weather_time: 0,
+            rain_time: 0,
+            thunder_time: 0,
+            raining: false,
+            thundering: false,
+        }
+    }
+}
+
+/// 天气块固定字节数：3×i32 + 2×u8。
+const WEATHER_BYTES: usize = 3 * 4 + 2;
+
+/// 天气块编码（顺序对齐 WeatherData.java:11-15 codec 字段序）。
+fn encode_weather(out: &mut Vec<u8>, w: &WeatherMeta) {
+    out.extend_from_slice(&w.clear_weather_time.to_le_bytes());
+    out.extend_from_slice(&w.rain_time.to_le_bytes());
+    out.extend_from_slice(&w.thunder_time.to_le_bytes());
+    out.push(u8::from(w.raining));
+    out.push(u8::from(w.thundering));
+}
+
+/// 天气块解码（v6 起存在；缺失/截断由调用方决定回退或报错）。
+fn decode_weather(data: &[u8], i: &mut usize) -> Result<WeatherMeta, SaveError> {
+    if *i + WEATHER_BYTES > data.len() {
+        return Err(SaveError::Corrupt("truncated weather"));
+    }
+    let i32_at = |o: usize| i32::from_le_bytes(data[o..o + 4].try_into().unwrap());
+    let w = WeatherMeta {
+        clear_weather_time: i32_at(*i),
+        rain_time: i32_at(*i + 4),
+        thunder_time: i32_at(*i + 8),
+        raining: data[*i + 12] != 0,
+        thundering: data[*i + 13] != 0,
+    };
+    *i += WEATHER_BYTES;
+    Ok(w)
 }
 
 pub struct PlayerMeta {
@@ -193,7 +258,7 @@ impl LevelMeta {
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
         out.extend_from_slice(&Self::MAGIC);
-        out.extend_from_slice(&5u16.to_le_bytes()); // format version
+        out.extend_from_slice(&6u16.to_le_bytes()); // format version
         out.extend_from_slice(&self.seed.to_le_bytes());
         out.extend_from_slice(&self.day_time.to_le_bytes());
         let name = self.name.as_bytes();
@@ -229,6 +294,9 @@ impl LevelMeta {
                 out.push(p.difficulty);
             }
         }
+        // v6 天气块：player 块后、mode 之前——mode 居末位的旧解码位置约定
+        // 不变（旧解码器读 mode = data.last() 不受尾部追加影响）。
+        encode_weather(&mut out, &self.weather);
         out.push(self.mode);
         out
     }
@@ -238,7 +306,7 @@ impl LevelMeta {
             return Err(SaveError::Corrupt("bad magic"));
         }
         let ver = u16::from_le_bytes([data[4], data[5]]);
-        if ver > 5 {
+        if ver > 6 {
             return Err(SaveError::Corrupt("unsupported meta version"));
         }
         let seed = u64::from_le_bytes(data[6..14].try_into().unwrap());
@@ -252,7 +320,11 @@ impl LevelMeta {
         let name = String::from_utf8_lossy(&data[i..i + name_len]).into_owned();
         i += name_len;
         let player = match data.get(i) {
-            Some(0) | None => None,
+            Some(0) => {
+                i += 1;
+                None
+            }
+            None => None,
             Some(1) => {
                 i += 1;
                 let need = 4 * 5 + 2;
@@ -317,6 +389,14 @@ impl LevelMeta {
             }
             Some(_) => return Err(SaveError::Corrupt("bad player flag")),
         };
+        // v6 天气块；v1–v5 无该块 → 原版无天气 NBT 默认（WeatherData.java
+        // :28-29 全 0/假 = 长晴，advanceWeatherCycle 首 tick 重采样
+        // RAIN_DELAY，ServerLevel.java:723-730——回退不是开局下雨）。
+        let weather = if ver >= 6 {
+            decode_weather(data, &mut i)?
+        } else {
+            WeatherMeta::default()
+        };
         // v2 appends the game mode byte; v1 files are survival.
         let mode = if ver >= 2 {
             let m = data.last().copied().unwrap_or(0);
@@ -333,6 +413,7 @@ impl LevelMeta {
             day_time,
             mode,
             player,
+            weather,
         })
     }
 }
@@ -500,6 +581,7 @@ mod tests {
             name: "测试世界".into(),
             day_time: 123_456,
             mode: 2,
+            weather: WeatherMeta::default(),
             player: Some(PlayerMeta {
                 x: 1.5,
                 y: -3.25,
@@ -601,8 +683,66 @@ mod tests {
     fn future_version_rejected() {
         let mut out = Vec::new();
         out.extend_from_slice(b"MCV1");
-        out.extend_from_slice(&6u16.to_le_bytes());
+        out.extend_from_slice(&7u16.to_le_bytes());
         out.extend_from_slice(&[0u8; 24]);
         assert!(LevelMeta::decode(&out).is_err());
+    }
+
+    /// v6 天气块往返（W2）：WeatherData 五字段原样落盘/读回——雨天退出
+    /// 重进不再被 Weather::new() 覆盖（真机报障①持久化半边）。
+    #[test]
+    fn v6_roundtrip_preserves_weather() {
+        let meta = LevelMeta {
+            seed: 42,
+            name: "w".into(),
+            day_time: 9_000,
+            mode: 0,
+            player: None,
+            weather: WeatherMeta {
+                clear_weather_time: 77,
+                rain_time: 23_456,
+                thunder_time: 9_876,
+                raining: true,
+                thundering: false,
+            },
+        };
+        let back = LevelMeta::decode(&meta.encode()).expect("v6 档可读");
+        assert_eq!(back.weather, meta.weather);
+        // player=None 的 v6 档同样要带天气块（编码序：flag(0)→weather→mode）。
+        assert!(back.player.is_none());
+        assert!(back.weather.raining);
+    }
+
+    /// 旧 v5 档（无天气块）读入：天气五字段 = WeatherData 无档默认
+    /// （WeatherData.java:28-29 全 0/假）——回退长晴而非下雨（W2）。
+    #[test]
+    fn v5_file_reads_with_weather_defaults() {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"MCV1");
+        out.extend_from_slice(&5u16.to_le_bytes());
+        out.extend_from_slice(&7u64.to_le_bytes());
+        out.extend_from_slice(&500u64.to_le_bytes());
+        let name = b"world";
+        out.push(name.len() as u8);
+        out.extend_from_slice(name);
+        out.push(1); // player flag
+        for v in [0.0f32, 64.0, 0.0, 0.0, 0.0] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.push(0); // flying
+        out.push(0); // sel_slot
+        out.push(0); // hotbar 空
+        out.push(0); // main 空
+        // v5 生存数值 21B：health/hunger/saturation/exhaustion f32 + air i32
+        // + difficulty u8。
+        for v in [20.0f32, 20.0, 5.0, 0.0] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(&300i32.to_le_bytes());
+        out.push(2);
+        out.push(0); // mode 居末
+        let back = LevelMeta::decode(&out).expect("v5 档仍可读");
+        assert_eq!(back.weather, WeatherMeta::default());
+        assert!(!back.weather.raining && !back.weather.thundering);
     }
 }

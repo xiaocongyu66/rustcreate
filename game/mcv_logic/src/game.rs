@@ -1586,6 +1586,18 @@ impl GameRuntime {
                 }
                 self.time_ticks = meta.day_time;
                 self.mode = GameMode::from_u8(meta.mode);
+                // v6:天气随档恢复（26.1 ServerLevel.java:273 构造期
+                // prepareWeather :687-694 的移植：raining → rainLevel=1.0、
+                // thundering → thunderLevel=1.0；v1–v5 旧档无天气块 →
+                // WeatherData 无档默认全 0/假（WeatherData.java:28-29）=
+                // 长晴，不是开局下雨）。
+                self.weather = crate::weather::Weather::restore(
+                    meta.weather.clear_weather_time,
+                    meta.weather.rain_time,
+                    meta.weather.thunder_time,
+                    meta.weather.raining,
+                    meta.weather.thundering,
+                );
                 if let Some(p) = meta.player {
                     // 存档位置恢复即不走出生投放（stream 投放块以
                     // pos==ZERO 为待投放哨兵）。spawned 故意保持 false：
@@ -1682,6 +1694,21 @@ impl GameRuntime {
                 air_supply: self.air_supply,
                 difficulty: self.difficulty.id(),
             }),
+            // v6:天气五字段随档（26.1 WeatherData SavedData 落盘等价，
+            // WeatherData.java:11-15 字段序；advanceWeatherCycle 每 tick
+            // 把计时器写回 WeatherData，ServerLevel.java:734-738，任意
+            // 时刻快照即合法存档态）。
+            weather: {
+                let (clear_weather_time, rain_time, thunder_time, raining, thundering) =
+                    self.weather.weather_state();
+                mcv_save::WeatherMeta {
+                    clear_weather_time,
+                    rain_time,
+                    thunder_time,
+                    raining,
+                    thundering,
+                }
+            },
         };
         let tmp = self.save_dir.join("level.meta.tmp");
         if std::fs::create_dir_all(&self.save_dir).is_ok()
