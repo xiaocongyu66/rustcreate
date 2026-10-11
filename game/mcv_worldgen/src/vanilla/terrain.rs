@@ -288,7 +288,11 @@ pub fn overworld_jaggedness_spline() -> Spline {
     let mut b = Builder::new(Coord::Continents);
     b.point(-0.11, 0.0);
     b.spline(0.03, erosion_jaggedness(1.0, 0.5, 0.0, 0.0));
-    b.spline(0.65, erosion_jaggedness(1.0, 1.0, 1.0, 1.0));
+    // 0.65 点第 4 标量 = jaggednessFactorAtHighRidgeAndErosionIndex1 = 0.0
+    //（TerrainProvider.java:61）——高侵蚀带（erosion ∈ [-0.78,-0.5775] 段）
+    // 山脊中段 point(middle, 0.0)，高原顶部无锯齿；旧码漂移 1.0 使
+    // weirdness_jaggedness(1.0)≈0.465 混入（T3 红测试锁）。
+    b.spline(0.65, erosion_jaggedness(1.0, 1.0, 1.0, 0.0));
     b.build()
 }
 
