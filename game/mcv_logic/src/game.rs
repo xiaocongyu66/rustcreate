@@ -4425,7 +4425,7 @@ impl GameRuntime {
         // 清零（:196）、续挖每 tick 递增（:268），判定用递增前值——本调用在
         // continue_tick 之前，与原版「先判后增」同序。创造秒破无敲击音（:155-170）。
         if self.mine.pos == target
-            && self.mine.destroy_ticks % 4 == 0
+            && self.mine.destroy_ticks.is_multiple_of(4)
             && let Some((p, b)) = debris
         {
             let st = sound_type_of(b);

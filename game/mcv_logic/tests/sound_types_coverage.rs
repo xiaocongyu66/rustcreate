@@ -58,33 +58,38 @@ fn terrain_anchor_blocks() {
 
 #[test]
 fn wood_family_ids_are_wood() {
-    // W 波木族（feat/wood-content）依赖的全树种 log/planks 全部归 WOOD——
-    // 音效与材质同源断言（6 树种抽样 + 挂果两族）。
+    // W 波木族（feat/wood-content）依赖的全树种 log/planks 归属——音效与材质
+    // 同源断言（6 树种抽样 + 挂果两族）。原版特例（生成表照录，非缺口）：
+    // cherry_log 走独立 CHERRY_WOOD 族（Blocks.java:306 logProperties(...,
+    // SoundType.CHERRY_WOOD)）；honeycomb_block 原版即 CORAL_BLOCK
+    // （Blocks.java:4916 .sound(SoundType.CORAL_BLOCK)）。
     use mcv_audio::sound_type_by_name;
-    let wood = sound_type_by_name("WOOD").unwrap();
-    for name in [
-        "oak_log",
-        "spruce_log",
-        "birch_log",
-        "jungle_log",
-        "acacia_log",
-        "dark_oak_log",
-        "mangrove_log",
-        "cherry_log",
-        "oak_planks",
-        "spruce_planks",
-        "birch_planks",
-        "acacia_planks",
-        "crafting_table",
-        "beehive",
-        "honeycomb_block",
-        "oak_stairs",
-        "spruce_slab",
-        "acacia_fence",
+    for (name, family) in [
+        ("oak_log", "WOOD"),
+        ("spruce_log", "WOOD"),
+        ("birch_log", "WOOD"),
+        ("jungle_log", "WOOD"),
+        ("acacia_log", "WOOD"),
+        ("dark_oak_log", "WOOD"),
+        ("mangrove_log", "WOOD"),
+        ("cherry_log", "CHERRY_WOOD"),
+        ("oak_planks", "WOOD"),
+        ("spruce_planks", "WOOD"),
+        ("birch_planks", "WOOD"),
+        ("acacia_planks", "WOOD"),
+        ("crafting_table", "WOOD"),
+        ("beehive", "WOOD"),
+        ("honeycomb_block", "CORAL_BLOCK"),
+        ("oak_stairs", "WOOD"),
+        ("spruce_slab", "WOOD"),
+        ("acacia_fence", "WOOD"),
     ] {
         assert!(
-            std::ptr::eq(mcv_audio::try_sound_type_for_block(name).unwrap(), wood),
-            "{name} 应为 WOOD"
+            std::ptr::eq(
+                mcv_audio::try_sound_type_for_block(name).unwrap(),
+                sound_type_by_name(family).unwrap()
+            ),
+            "{name} 应为 {family}"
         );
     }
 }

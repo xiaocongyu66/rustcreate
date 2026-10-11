@@ -14,6 +14,7 @@ fn t(name: &str) -> &'static SoundType {
 }
 
 /// 一族五事件全对拍（S.java 行号写进断言消息供审计）。
+#[allow(clippy::too_many_arguments)] // 断言元组天然多（七参构造 + 源引注）
 fn assert_family(
     st: &SoundType,
     vol: f32,
