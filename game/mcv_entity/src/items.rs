@@ -365,10 +365,10 @@ pub fn collect_item_drop_snaps(world: &World, view: Option<(Vec3, f32)>) -> Vec<
     let mut out = Vec::new();
     for (e, d) in drops.iter() {
         let Some(b) = phys.get(e) else { continue };
-        if let Some((eye, radius)) = view {
-            if (b.pos - eye).length() > radius {
-                continue;
-            }
+        if let Some((eye, radius)) = view
+            && (b.pos - eye).length() > radius
+        {
+            continue;
         }
         out.push(ItemDropSnap {
             pos: b.pos,

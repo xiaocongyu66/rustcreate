@@ -158,7 +158,7 @@ impl ItemDropRenderer {
         });
         let vbuf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("item-drop-vbuf"),
-            size: (MAX_DROPS * 4 * size_of::<DropVertex>()) as u64,
+            size: (MAX_DROPS as usize * 4 * size_of::<DropVertex>()) as u64,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
