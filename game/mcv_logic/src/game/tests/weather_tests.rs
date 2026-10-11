@@ -10,7 +10,9 @@
 //! - 档内恢复走 ServerLevel.java:273 构造期 prepareWeather（:687-694）：
 //!   raining → rainLevel=1.0、thundering → thunderLevel=1.0。
 
-use super::{GameMode, GameRuntime, headless_rt, spawn_rng};
+use super::{
+    ChunkPos, GameMode, GameRuntime, Vec3, headless_rt, lit_chunk, spawn_rain_particles, spawn_rng,
+};
 
 /// 天气状态随 level.meta 往返（W1 红测试）：退出重进后 raining/thundering
 /// 必须从存档恢复（等价 WeatherData SavedData 落盘/读回）。旧实现天气
@@ -87,4 +89,64 @@ fn old_meta_without_weather_stays_clear() {
             "tick {t}: 旧档无天气块应回退原版长晴默认，不得开局下雨"
         );
     }
+}
+
+// ---- W3：空中雨层（幕帘带随相机，WeatherEffectRenderer.extractRenderState
+// :78-110）----
+
+/// 三态断言装配：3×3 实心区块（floor_top=69 → heightmap 首空 70）+ 满雨
+/// （set_for_test 只置状态位；rainLevel 以 0.01/tick 爬满，生成数公式
+/// :232 用 rainLevel²）。
+fn rainy_rt(tag: &str, feet_y: f64) -> GameRuntime {
+    let mut rt = headless_rt(tag);
+    for dx in -1i32..=1 {
+        for dz in -1i32..=1 {
+            rt.chunks
+                .entry(ChunkPos::new(dx, dz))
+                .or_insert_with(|| lit_chunk(dx, dz, 69));
+        }
+    }
+    rt.player.pos = Vec3::new(8.5, feet_y, 8.5);
+    rt.weather.set_for_test(true, false);
+    let mut r = spawn_rng();
+    for _ in 0..100 {
+        rt.weather.tick(&mut r);
+    }
+    assert!(
+        (rt.weather.rain_level() - 1.0).abs() < 1e-4,
+        "前置：rainLevel 应爬满，得 {}",
+        rt.weather.rain_level()
+    );
+    rt
+}
+
+/// 真机报障②回归：相机在高空气位（地表 70 < camY−10）→ 幕帘带
+/// [camY−10, camY+10] 内仍出雨特效（原版幕帘 y0=max(camY−10, terrain)、
+/// y1=max(camY+10, terrain)，飞行照样下；extractRenderState :91-92）。
+#[test]
+fn rain_effect_follows_camera_at_altitude() {
+    let mut rt = rainy_rt("wx-air", 200.0);
+    rt.spawn_rain_particles();
+    assert!(
+        !rt.particles.is_empty(),
+        "高空气位必须有雨特效（幕帘带随相机）"
+    );
+}
+
+/// 地表回归：脚落地表（camY≈71，surface 70 在 ±10 带内）→ 原版地表
+/// 雨滴路径（tickRainParticles :238-240 门内）照常出。
+#[test]
+fn rain_on_ground_still_spawns() {
+    let mut rt = rainy_rt("wx-gnd", 70.0);
+    rt.spawn_rain_particles();
+    assert!(!rt.particles.is_empty(), "地表雨滴路径不得回归");
+}
+
+/// 地下/悬顶负例：地表高出相机 +10 以上 → 无雨（:239-240 上界门保持；
+/// 幕帘带分支只对 terrain < camY−10 生效，不得误放行悬顶上方）。
+#[test]
+fn rain_suppressed_under_cover() {
+    let mut rt = rainy_rt("wx-cave", 40.0);
+    rt.spawn_rain_particles();
+    assert!(rt.particles.is_empty(), "地表高于相机 +10 不得出雨");
 }

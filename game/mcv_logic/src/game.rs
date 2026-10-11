@@ -3709,10 +3709,16 @@ impl GameRuntime {
     /// heightmap 即首空 y，与 `getHeightmapPos().getY()` 同语义，但
     /// **不计流体**是 worldgen 基线差异，下方手动补流体面）、相机高度
     /// ±10 过滤（:239-240）、方块/流体顶面出生（:247-254）。
+    /// **空中雨层**（真机报障②）：相机高出地表 >10 的列，地表雨滴全被
+    /// :238-240 滤掉，但原版雨幕列 `extractRenderState`（:78-110）仍以
+    /// `y0 = max(camY−10, terrain)、y1 = max(camY+10, terrain)` 生成——
+    /// 带随相机、飞行照样下。本仓按同一带在 [camY−10, camY+10] 内补
+    /// RAIN 粒子（KNOWN-DIVERGENCE：原版幕帘是 rain.png 列渲染
+    /// :112-162，本仓粒子引擎无列路径，以粒子近似同一视觉带；地表/地下
+    /// 行为与原版逐句一致）。
     /// 生物群系降水门（:241/:282-288）本仓无 biome 系统 → 恒 RAIN；
     /// 岩浆/岩浆块/营火→SMOKE 分支（:255-257）同理未接（KNOWN-DIVERGENCE，
-    /// 登记报告）。原版雨"雨幕"是 `textures/environment/rain.png` 列渲染
-    /// （WeatherEffectRenderer.java:57/:121-159），属渲染器扩展 → 遗留。
+    /// 登记报告）。
     fn spawn_rain_particles(&mut self) {
         let rain_level = self.weather.rain_level();
         if rain_level <= 0.0 {
@@ -3737,6 +3743,21 @@ impl GameRuntime {
                 continue; // 原版 hasChunk 门（getPrecipitationAt :283-285）
             }
             let mut top = self.surface_at(x, z);
+            if top < cam.y - 10 {
+                // 幕帘带分支：相机高出地表 >10（extractRenderState :91-92
+                // 的 y0 钳位成立）→ 雨滴带 [camY−10, camY+10]（原版幕帘
+                // y0/y1 全钳 camY±10）。全空列（哨兵 = WORLD_MIN_Y）原版
+                // 幕帘无 minY 门（:238 只管粒子），此处同为幕帘带 → 放行。
+                let ry = fast_rand() as f64 / u32::MAX as f64;
+                let rx = fast_rand() as f64 / u32::MAX as f64;
+                let rz = fast_rand() as f64 / u32::MAX as f64;
+                self.particles.spawn_rain_drop(
+                    x as f64 + rx,
+                    (cam.y - 10) as f64 + ry * 20.0,
+                    z as f64 + rz,
+                );
+                continue;
+            }
             if top <= mcv_core::WORLD_MIN_Y {
                 continue; // 原版 heightmapPos.getY() > minY 门（:238；v6：
                 // 全空列哨兵 = WORLD_MIN_Y，绝对域下即拒）
@@ -3748,8 +3769,8 @@ impl GameRuntime {
             {
                 top += 1;
             }
-            if top > cam.y + 10 || top < cam.y - 10 {
-                continue;
+            if top > cam.y + 10 {
+                continue; // :239-240 上界（地表高出相机 → 室内/悬顶无雨）
             }
             let rx = fast_rand() as f64 / u32::MAX as f64;
             let rz = fast_rand() as f64 / u32::MAX as f64;
