@@ -360,4 +360,33 @@ mod tests {
             assert!((3_600..=15_600).contains(&t));
         }
     }
+
+    /// 新世界长晴窗（W1 红测试）：26.1 无档默认 = WeatherData 无参构造
+    /// 全 0/假（WeatherData.java:22-26 字段、:28-29 构造体），首 tick
+    /// advanceWeatherCycle 对 0 计时器走 else 支重采样 RAIN_DELAY/
+    /// THUNDER_DELAY = 12000..180000（ServerLevel.java:713-720/:723-730，
+    /// 采样器 :186-189）→ 新档进世界 ≥12000 tick（10 分钟）内必晴。
+    /// 回归根因：旧实现 `new()` 置 rain_time/thunder_time=1，第二 tick
+    /// 归零翻转 → 每个档进去默认就下雨（真机报障 1）。
+    #[test]
+    fn new_world_stays_clear() {
+        let mut w = Weather::new();
+        let mut r = det(11);
+        w.tick(&mut r);
+        assert!(
+            (12_000..=180_000).contains(&w.rain_time),
+            "首 tick 后 rain_time 应重采样 RAIN_DELAY，得 {}",
+            w.rain_time
+        );
+        assert!(
+            (12_000..=180_000).contains(&w.thunder_time),
+            "首 tick 后 thunder_time 应重采样 THUNDER_DELAY，得 {}",
+            w.thunder_time
+        );
+        for t in 0..200 {
+            w.tick(&mut r);
+            assert!(!w.is_raining(), "tick {t}: 新世界开局不应下雨");
+            assert!(!w.is_thundering(), "tick {t}: 新世界开局不应雷暴");
+        }
+    }
 }

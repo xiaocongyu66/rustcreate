@@ -6623,6 +6623,8 @@ mod tests {
     // 出生投放专项测试见 spawn_tests.rs（本 mod 子模块，标准嵌套路径
     // src/game/tests/，共用无头装配 headless_rt / lit_chunk）。
     mod spawn_tests;
+    // 天气存档往返/旧档回退/雨粒子分层测试见 weather_tests.rs（同上路径）。
+    mod weather_tests;
     // ---- 进食整链（26.1 Consumable；板载 #94）----
 
     use mcv_item::ItemStack as ItemSt;
