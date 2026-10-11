@@ -617,15 +617,14 @@ impl ShapeEmitter<'_, '_> {
 
     /// 栅栏臂连接判据（mesher.cpp:515-540 fence_arm_connects）：哨兵/越界
     /// 不连；同栅栏类别（shape==Fence）连；实体不透明整立方（sturdy 近似）
-    /// 连。KNOWN-DIVERGENCE 与 C++ 侧同（无 tag/blockstate 体系，见
-    /// mesher.cpp:519-530），且 engine/mcv_game/src/blockshapes.rs::
-    /// fence_connects 是同规则的第三份（渲染臂与碰撞臂一致性）。
+    /// 连。M 波 #138 起谓词唯一出处是 mcv_core::shape::connects（与
+    /// engine/mcv_game/src/blockshapes.rs 碰撞臂同一函数，渲染臂与碰撞臂
+    /// 一致性由构造保证）；本包装保留 oracle 出处注释与 BARRIER 早退。
     fn arm_connects(&self, nb: u16) -> bool {
         if nb == BARRIER {
             return false;
         }
-        let i = info_of(nb & ID_MASK);
-        i.shape == Shape::Fence as u8 || (i.shape == Shape::Cube as u8 && i.opaque)
+        mcv_core::shape::connects(nb, Shape::Fence)
     }
 
     /// 栅栏（mesher.cpp:542-571 emit_fence）：中心立柱全高 + 水平四向臂
@@ -722,10 +721,51 @@ impl ShapeEmitter<'_, '_> {
         self.box_all(info, &base, -1);
         self.box_all(info, &step, -1);
     }
+
+    /// M 波 #138：6..15 档统一模板发射——盒表唯一出处
+    /// mcv_core::shape::template_boxes（渲染=拾取=碰撞同源，引注见该表）。
+    /// 栅栏/板/墙的臂盒（表索引 1..5）按邻格连接判定裁剪，判据
+    /// mcv_core::shape::connects 与碰撞侧同一函数（#62 对拍由构造保证）。
+    /// 每盒六面走与 Cube 相同的暴露面剔除（宁多勿漏，同 emit_stairs）。
+    fn template(&mut self, info: &Info, st: u8) {
+        let sh = Shape::from_u8(info.shape);
+        let (boxes, count) =
+            mcv_core::shape::template_boxes(sh, st, mcv_core::shape::BoxUse::Outline);
+        let armed = matches!(sh, Shape::Fence | Shape::Pane | Shape::Wall);
+        for (i, b) in boxes.iter().enumerate().take(count) {
+            if armed && i >= 1 {
+                // 表臂序（mcv_core ARM_DIRS）：0=+X 1=-X 2=+Z 3=-Z。
+                let (dx, dz) = match i {
+                    1 => (1, 0),
+                    2 => (-1, 0),
+                    3 => (0, 1),
+                    _ => (0, -1),
+                };
+                let nb = block_at(self.n, self.x + dx, self.y, self.z + dz);
+                if !mcv_core::shape::connects(nb, sh) {
+                    continue;
+                }
+            }
+            self.box_all(
+                info,
+                &Box3 {
+                    x0: b.x0,
+                    y0: b.y0,
+                    z0: b.z0,
+                    x1: b.x1,
+                    y1: b.y1,
+                    z1: b.z1,
+                },
+                -1,
+            );
+        }
+    }
 }
 
 /// 中心块逐格扫描发射非立方模板（mesher.cpp:614-669 emit_shapes）：仅
-/// 不透明 pass 调用；生成表只出 shape 0..5，default 整盒为防御性回退。
+/// 不透明 pass 调用；生成表出 shape 0..15（1..5 黄金冻结实现、6..15 走
+/// mcv_core::shape::template_boxes 模板，M 波 #138），default 整盒为
+/// 防御性回退。
 fn emit_shapes(n: &Nb, out: &mut MeshData) {
     for y in mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y {
         for z in 0..16 {
@@ -787,6 +827,11 @@ fn emit_shapes(n: &Nb, out: &mut MeshData) {
                         }
                     }
                     5 => em.stairs(info, st),
+                    // M 波 #138：6..15 档（carpet/trapdoor/pane/wall +
+                    // fence_gate/door/button/pressure_plate/ladder/snow）
+                    // 走 mcv_core::shape::template_boxes 模板（原全盒占位，
+                    // 黄金场景不含这批方块，网格字节不受影响）。
+                    6..=15 => em.template(info, st),
                     _ => em.box_all(
                         info,
                         &Box3 {
