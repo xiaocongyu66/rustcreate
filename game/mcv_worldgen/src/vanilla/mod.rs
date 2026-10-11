@@ -3,7 +3,10 @@
 //! 群系选择（v1 子集）+ 双洞穴（意面 + 奶酪）+ per-群系地表规则。
 //!
 //! 机制出处一律指向 26.1 反编译树（/root/mc-ref/src-26.1，只对齐机制与
-//! 常数，零代码搬运）；OpenSimplex2S 内核是唯一 vendored 例外（CC0-1.0）。
+//! 常数，零代码搬运）。格点噪声：vanilla density 路径用
+//! [`perlin::ImprovedNoise`]（26.1 synth/ImprovedNoise.java 的机制转写，
+//! 第四棒换代）；vendored OpenSimplex2S（`crate::os2s`，CC0-1.0）保留在库内，
+//! 由 `tests/os2s_golden`/`os2s_parity` 位型锁定，vanilla 路径不再经过它。
 //! v6 几何升原版：本世界 y 即 26.1 原生 y ∈ [-64, 320)（高 384、海平面
 //! 63，`mcv_core::WORLD_MIN_Y`/`SEA_LEVEL` 唯一定义源），曲线锚点空间与
 //! 世界空间重合——`mc_y_to_ours`/`ours_y_to_mc` 退化为恒等映射（保留
@@ -14,6 +17,7 @@ pub mod biomes;
 pub mod blended;
 pub mod climate;
 pub mod noise;
+pub mod perlin;
 pub mod spline;
 pub mod terrain;
 

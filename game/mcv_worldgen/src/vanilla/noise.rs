@@ -1,6 +1,7 @@
 //! vanilla 地形噪声层 — clean-room 对齐 26.1 `synth/PerlinNoise.java` 的
-//! fBm 递推语义与 `synth/NormalNoise.java` 的双层独立语义，底层格点噪声
-//! 换成 vendored 的 OpenSimplex2S（`crate::os2s::smooth`）。
+//! fBm 递推语义与 `synth/NormalNoise.java` 的双层独立语义；底层格点噪声为
+//! [`crate::vanilla::perlin::ImprovedNoise`]（26.1 `synth/ImprovedNoise.java`
+//! 的忠实机制移植，地形保真波第四棒换装——见该模块头注的取证链）。
 //!
 //! 机制出处（引用机制与常数 ≠ 搬运代码）：
 //! - 每倍频频率 ×2.0、值权重 ÷2（PerlinNoise.getValue:140-162 递推）；首倍频
@@ -15,14 +16,23 @@
 //!   扫非零 amplitude，:97-103 expectedDeviation）——非 amplitudes.len()；
 //! - 巨坐标 wrap（PerlinNoise.wrap:188-190，防 f32 晶格退化）。
 //!
-//! 与 26.1 的差异（v1 子集，验收报告说明）：26.1 的 2D 通道用 2D 格点噪声；
-//! 这里统一用 `noise3_ImproveXZ`，2D 通道取 y=0 平面切片（输出同为归一
-//! [-1,1] 量级，晶格方向一致），倍频种子以自有 splitmix 域盐派生；第二层
-//! 独立种子以一层种子的 splitmix 终混派生（等价 26.1 的第二次 fork：
-//! 种子材料不同即统计独立，确定性不依赖具体派生式）。内核四阶 falloff 的
-//! 单倍频 σ 高于 ImprovedNoise，逐倍频乘 σ 校准常数（2D 切片/3D 体积双口径，
-//! [`OS2S_TO_IMPROVED_SIGMA_2D`]/[`OS2S_TO_IMPROVED_SIGMA_3D`]）回原版统计
-//! （地形保真波 T2 主修，证据链见两常数文档）。
+//! ## 内核换代史（σ 校准常数的退役）
+//! v1：底层为 vendored OpenSimplex2S（`crate::os2s::smooth`，保留在库内，
+//! 由 `tests/os2s_golden`/`os2s_parity` 位型锁定），因 OS2S 单倍频 σ 高于
+//! ImprovedNoise（0.36002 vs 0.27106，×1.3317），曾以逐倍频乘 σ 比值常数
+//! 校准（2D 切片 0.73744 / 3D 体积 0.75291）。第四棒取证证明**σ 相等 ≠
+//! 谱相等**：校准只对齐值分布，不还原 ImprovedNoise 的空间相关结构——
+//! climate 通道窗内 std（plains_share 0.066<0.10）与 BlendedNoise 相邻差分
+//! 谱（p90 0.0550>0.05）两门双红的共同根因。内核换成原版机制本体后，
+//! value_factor 归一（NormalNoise.java:63，以 ImprovedNoise 单倍频统计为
+//! 基准）恢复设计语义，σ 校准常数随内核一并退役（引用失效即删，避免死码）。
+//!
+//! 与 26.1 的差异（v1 子集，验收报告说明）：倍频种子以自有 splitmix 域盐
+//! 派生（root + i·2^28，与 legacy noise.h 同式）；第二层独立种子以一层种子
+//! 的 splitmix 终混派生（等价 26.1 的第二次 fork：种子材料不同即统计独立，
+//! 确定性不依赖具体派生式）。
+
+use crate::vanilla::perlin::ImprovedNoise;
 
 /// splitmix64 终混合（复用 legacy 内核同源常数）。
 #[must_use]
@@ -47,47 +57,25 @@ const OCTAVE_SEED_STEP: u64 = 0x1000_0000;
 /// `salt` 为本通道域盐；`first_octave` 为 26.1 noise json 的 firstOctave
 /// （最低倍频波长 = 2^(-firstOctave) 格）；`amplitudes` 为 amplitude 表。
 /// `x/y/z` 为已乘通道 xz/y 缩放的 density 坐标（f64）。
-#[derive(Clone, Copy, Debug)]
+///
+/// 2D 通道（气候）：vanilla `DensityFunctions.shiftedNoise2d` 的 yScale=0
+/// 使求值坐标恒为 y=0（DensityFunctions.java:159-163 + ShiftedNoise.compute）——
+/// ImprovedNoise 直接按 (x, 0, z) 采样即原版语义，无需任何切片校准。
+#[derive(Clone, Debug)]
 pub struct NormalNoise {
-    seed: u64,
-    /// 第二层独立实例的根种子（NormalNoise.java:51-53 两次 create 各自
-    /// fork → 工厂种子不同；clean-room 用一层种子的 splitmix 终混派生）。
-    seed2: u64,
+    /// 第一层/第二层的逐倍频实例（PerlinNoise 每倍频持有一个 ImprovedNoise；
+    /// 种子 = 层根种子 + i·2^28）。
+    first: Vec<ImprovedNoise>,
+    second: Vec<ImprovedNoise>,
     first_octave: i32,
     amplitudes: &'static [f64],
     value_factor: f64,
     max_value: f64,
-    /// 2D 切片采样标记（气候通道 y=0）：选 [`OS2S_TO_IMPROVED_SIGMA_2D`]，
-    /// 否则 [`OS2S_TO_IMPROVED_SIGMA_3D`]（见两常数文档的口径差异）。
-    slice_2d: bool,
 }
 
 impl NormalNoise {
     #[must_use]
     pub fn new(world_seed: u64, salt: u64, first_octave: i32, amplitudes: &'static [f64]) -> Self {
-        Self::build(world_seed, salt, first_octave, amplitudes, false)
-    }
-
-    /// 2D 切片通道构造器：气候全通道按 y=0 平面切片采样（climate.rs
-    /// ShiftedNoise/ShiftNoise 语义），单倍频 σ 校准用**切片口径**
-    /// [`OS2S_TO_IMPROVED_SIGMA_2D`]（3D 通道走 [`Self::new`]）。
-    #[must_use]
-    pub fn new_slice_2d(
-        world_seed: u64,
-        salt: u64,
-        first_octave: i32,
-        amplitudes: &'static [f64],
-    ) -> Self {
-        Self::build(world_seed, salt, first_octave, amplitudes, true)
-    }
-
-    fn build(
-        world_seed: u64,
-        salt: u64,
-        first_octave: i32,
-        amplitudes: &'static [f64],
-        slice_2d: bool,
-    ) -> Self {
         let seed = noise_seed(world_seed, salt);
         let seed2 = splitmix64(seed);
         let octaves = amplitudes.len();
@@ -119,14 +107,25 @@ impl NormalNoise {
             vf /= 2.0;
             i += 1;
         }
+        // 逐倍频实例（NormalNoise.java:51-53 两次独立 create 的 clean-room
+        // 种子派生；PerlinNoise 每倍频一个 ImprovedNoise）。
+        let mut first = Vec::with_capacity(octaves);
+        let mut second = Vec::with_capacity(octaves);
+        for i in 0..octaves {
+            first.push(ImprovedNoise::new(
+                seed.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)),
+            ));
+            second.push(ImprovedNoise::new(
+                seed2.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)),
+            ));
+        }
         Self {
-            seed,
-            seed2,
+            first,
+            second,
             first_octave,
             amplitudes,
             value_factor,
             max_value: edge,
-            slice_2d,
         }
     }
 
@@ -139,39 +138,23 @@ impl NormalNoise {
     #[must_use]
     pub fn get_value(&self, x: f64, y: f64, z: f64) -> f64 {
         let d = 1.018_126_888_217_522_7_f64;
-        let first = self.one_perlin(self.seed, x, y, z);
-        let second = self.one_perlin(self.seed2, x * d, y * d, z * d);
+        let first = self.one_perlin(&self.first, x, y, z);
+        let second = self.one_perlin(&self.second, x * d, y * d, z * d);
         (first + second) * self.value_factor
     }
 
     #[must_use]
-    fn one_perlin(&self, root: u64, x: f64, y: f64, z: f64) -> f64 {
+    fn one_perlin(&self, octaves: &[ImprovedNoise], x: f64, y: f64, z: f64) -> f64 {
         let mut value = 0.0_f64;
         let mut factor = 2.0_f64.powi(self.first_octave);
         let mut value_factor = 2.0_f64.powi(self.amplitudes.len() as i32 - 1)
             / (2.0_f64.powi(self.amplitudes.len() as i32) - 1.0);
-        for (i, &amp) in self.amplitudes.iter().enumerate() {
-            if amp != 0.0 {
-                let seed = root.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
+        for (amp, inst) in self.amplitudes.iter().zip(octaves) {
+            if *amp != 0.0 {
                 let nx = wrap(x * factor);
                 let ny = wrap(y * factor);
                 let nz = wrap(z * factor);
-                value +=
-                    amp * if self.slice_2d {
-                        kernel_octave_2d(crate::os2s::smooth::noise3_ImproveXZ(
-                            seed as i64,
-                            nx,
-                            ny,
-                            nz,
-                        ))
-                    } else {
-                        kernel_octave_3d(crate::os2s::smooth::noise3_ImproveXZ(
-                            seed as i64,
-                            nx,
-                            ny,
-                            nz,
-                        ))
-                    } * value_factor;
+                value += amp * inst.noise(nx, ny, nz) * value_factor;
             }
             factor *= 2.0;
             value_factor /= 2.0;
@@ -185,48 +168,6 @@ impl NormalNoise {
 fn wrap(x: f64) -> f64 {
     let d = 3.355_443_2_e7_f64;
     x - (x / d + 0.5).floor() * d
-}
-
-/// OS2S 内核 → 原版 ImprovedNoise 的 σ 校准因子（地形保真波 T2 主修）。
-///
-/// NormalNoise 的 value_factor 归一（NormalNoise.java:63
-/// `0.16666666666666666 / expectedDeviation(...)`，:71-72
-/// `0.1·(1+1/(span+1))`）以**原版 ImprovedNoise 倍频统计**为基准标定
-/// （气候通道表 NoiseData.java:80-81：continentalness/erosion firstOctave -9，
-/// 经 ShiftedNoise xz_scale 0.25 采样，NoiseRouterData.java:89-96）。内核替换为
-/// vendored OpenSimplex2S（`noise3_ImproveXZ`，四阶 falloff）后单倍频 σ 系统性
-/// 偏高（原 0.26991 vs 0.35946 的 ×1.3317：Ocean 占比 35.71% 越带、平原窗
-/// 0.024<0.10 的真实环节），按 σ 比值把内核输出校准回原版倍频统计，使
-/// value_factor 归一恢复设计语义。
-///
-/// **双口径（地形保真波 T2 续刀，2026-10-11 主线程实测）**：内核在「体积均匀
-/// 采样」与「y=0 平面切片采样」下的 σ 并不相同（两内核 y 方向结构不同），
-/// 12 种子 × 15 万样本/口径（`/tmp/sigma_slice.py` + `/tmp/improved_noise.py`
-/// 移植复算）：
-/// - 体积口径：ImprovedNoise 0.27106 / OS2S 0.36002 → 比 **0.75291**（3D）；
-/// - y=0 切片口径：0.26555 / 0.36010 → 比 **0.73744**（2D）。
-///
-/// 气候全通道是 2D 切片采样（climate.rs y=0；vanilla ShiftedNoise/
-/// ShiftNoise.compute 亦 y·0.25 归零，NoiseRouterData.java:89-97），走
-/// [`Self::new_slice_2d`] 选切片常数；3D 通道（洞穴/山脊/base_3d）走体积
-/// 常数。BlendedNoise 倍频（vanilla 同为 ImprovedNoise 栈，3D 采样）同用
-/// 3D 常数（[`crate::vanilla::blended`]）。
-pub const OS2S_TO_IMPROVED_SIGMA_2D: f64 = 0.737_44;
-/// 体积（3D）口径 σ 比值 = 0.27106/0.36002（见 [`OS2S_TO_IMPROVED_SIGMA_2D`]）。
-pub const OS2S_TO_IMPROVED_SIGMA_3D: f64 = 0.752_91;
-
-/// 内核单倍频输出 → f64（2D 切片通道 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA_2D`]）。
-#[inline]
-#[must_use]
-pub(crate) fn kernel_octave_2d(n: f32) -> f64 {
-    f64::from(n) * OS2S_TO_IMPROVED_SIGMA_2D
-}
-
-/// 内核单倍频输出 → f64（3D 体积通道 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA_3D`]）。
-#[inline]
-#[must_use]
-pub(crate) fn kernel_octave_3d(n: f32) -> f64 {
-    f64::from(n) * OS2S_TO_IMPROVED_SIGMA_3D
 }
 
 #[cfg(test)]
@@ -280,15 +221,12 @@ mod tests {
     #[test]
     fn second_layer_uses_independent_root_seed() {
         let n = NormalNoise::new(2024, 0x1234, -7, &[1.0, 1.0, 1.0]);
-        assert_ne!(n.seed, n.seed2, "第二层根种子与第一层相同（未独立派生）");
+        // 两层实例由不同层根种子派生（第二次 fork 的 clean-room 等价）：
+        // 逐倍频求值位型必须两两不同（同种子会逐位重合）。
         for i in 0..n.amplitudes.len() {
-            let s1 = n
-                .seed
-                .wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
-            let s2 = n
-                .seed2
-                .wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
-            assert_ne!(s1, s2, "第 {i} 倍频两层种子重合");
+            let a = n.first[i].noise(1.0, 2.0, 3.0);
+            let b = n.second[i].noise(1.0, 2.0, 3.0);
+            assert_ne!(a.to_bits(), b.to_bits(), "第 {i} 倍频两层实例疑似同种子");
         }
     }
 

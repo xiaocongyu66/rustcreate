@@ -14,17 +14,23 @@
 //!   `IntStream.rangeClosed(-15, 0)`）、main 选择器栈 8 倍频（rangeClosed(-7, 0)）；
 //!   `compute`（:105-148）逐倍频坐标 ×2^-i、权重 2^i（低频主导，最高频倍频
 //!   权重 →0），输出 = `clampedLerp(factor, blendMin/512, blendMax/512)/128`；
-//!   factor = (mainNoiseValue/10 + 1)/2，factor ≥1 只取 max 栈、≤0 只取 min 栈。
-//! - 地表近旁统计（移植复算 /root/audit/_sim3.py）：σ≈0.13、波长 ≥60 格的
-//!   光滑起伏、相邻块 |Δ| p90 ≈0.02。
+//!   factor = (mainNoiseValue/10 + 1)/2，factor ≥1 只取 max 栈、≤0 只取 min 栈；
+//! - **5 参纵向 smear 全量移植**（第四棒起，[`crate::vanilla::perlin::ImprovedNoise`]
+//!   具备 5 参 yFudge 量化）：main 栈 `noise(·,·,·, mainSmear·pow, mainY·pow)`
+//!   （:109），min/max 栈 `noise(wx,wy,wz, yScalePow, limitY·pow)`（:130/:137），
+//!   其中 limitSmear = yMultiplier·smearScaleMultiplier = 684.412、
+//!   mainSmear = limitSmear/yFactor = 4.277575。
+//! - 地表近旁统计（第四棒忠实移植复算，quality.rs 同口径 seed 0x7EA200B1）：
+//!   σ≈0.13-0.18、相邻块 |Δ| p90 = 0.0153/0.0138（(0,0)/(4096,-4096)）。
 //!
-//! 既定偏差（clean-room 取舍，同 [`crate::vanilla::noise`] 的 2D 切片先例）：
-//! 5 参 `ImprovedNoise.noise(x,y,z,yScale,yFudge)` 的纵向 smear（y 分数坐标
-//! 量化）不移植——OS2S 内核无梯度内插层可注入；该机制只影响 6 个最高频限位
-//! 倍频的纵向微结构，水平地表谱不变（复算器对照验证）。
+//! 种子注入：vanilla = `RandomState.java:69-72` `random.fromHashOf("terrain")`
+//! → `withNewRandom`（三栈由同一 RandomSource 顺序派生）；clean-room 用分栈
+//! splitmix 域盐达成统计独立（同 [`crate::vanilla::noise::NormalNoise`]
+//! 第二层先例的既定偏差），倍频实例种子 = 栈根 + i·2^28。
 
 use crate::vanilla::noise::noise_seed;
 use crate::vanilla::noise::splitmix64;
+use crate::vanilla::perlin::ImprovedNoise;
 
 /// xzMultiplier = 684.412·0.25（BlendedNoise.java:64）。
 const XZ_MULT: f64 = 171.103;
@@ -34,6 +40,8 @@ const Y_MULT: f64 = 85.5515;
 const XZ_FACTOR: f64 = 80.0;
 /// yFactor（同上）。
 const Y_FACTOR: f64 = 160.0;
+/// smearScaleMultiplier（同上）。
+const SMEAR_MULT: f64 = 8.0;
 /// min/max 限位栈倍频数（rangeClosed(-15, 0)）。
 const LIMIT_OCTAVES: usize = 16;
 /// main 选择器栈倍频数（rangeClosed(-7, 0)）。
@@ -42,11 +50,11 @@ const MAIN_OCTAVES: usize = 8;
 const OCTAVE_SEED_STEP: u64 = 0x1000_0000;
 
 /// BlendedNoise：min/max 限位 + main 选择器的三层混合 3D 噪声。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct BlendedNoise {
-    seed_min: u64,
-    seed_max: u64,
-    seed_main: u64,
+    min_limit: Vec<ImprovedNoise>,
+    max_limit: Vec<ImprovedNoise>,
+    main: Vec<ImprovedNoise>,
 }
 
 impl BlendedNoise {
@@ -56,27 +64,18 @@ impl BlendedNoise {
     #[must_use]
     pub fn new(world_seed: u64, salt: u64) -> Self {
         let s = noise_seed(world_seed, salt);
+        let stack = |root: u64, n: usize| {
+            (0..n)
+                .map(|i| {
+                    ImprovedNoise::new(root.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)))
+                })
+                .collect::<Vec<_>>()
+        };
         Self {
-            seed_min: splitmix64(s ^ 0x5A11_1A5A),
-            seed_max: splitmix64(s ^ 0x5A22_2A5A),
-            seed_main: splitmix64(s ^ 0x5A33_3A5A),
+            min_limit: stack(splitmix64(s ^ 0x5A11_1A5A), LIMIT_OCTAVES),
+            max_limit: stack(splitmix64(s ^ 0x5A22_2A5A), LIMIT_OCTAVES),
+            main: stack(splitmix64(s ^ 0x5A33_3A5A), MAIN_OCTAVES),
         }
-    }
-
-    /// 单倍频求值：栈根种子 + i·2^28 派生，坐标已含 2^-i 频率因子。
-    /// OS2S 内核输出乘 3D 体积口径常数
-    /// [`crate::vanilla::noise::OS2S_TO_IMPROVED_SIGMA_3D`]
-    /// 校准回原版 ImprovedNoise 倍频统计（BlendedNoise.java:105-148 的三栈
-    /// 在原版均为 ImprovedNoise 且全 3D 采样；σ 基准证据见该常数文档）。
-    #[inline]
-    fn octave(root: u64, i: usize, x: f64, y: f64, z: f64) -> f64 {
-        let seed = root.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP));
-        crate::vanilla::noise::kernel_octave_3d(crate::os2s::smooth::noise3_ImproveXZ(
-            seed as i64,
-            wrap(x),
-            wrap(y),
-            wrap(z),
-        ))
     }
 
     /// BlendedNoise.compute（BlendedNoise.java:105-148）。
@@ -88,12 +87,21 @@ impl BlendedNoise {
         let main_x = limit_x / XZ_FACTOR;
         let main_y = limit_y / Y_FACTOR;
         let main_z = limit_z / XZ_FACTOR;
-        // main 选择器：8 倍频，坐标 ×2^-i、权重 2^i（/pow）。
+        // limitSmear = yMultiplier·smearScaleMultiplier（:97），
+        // mainSmear = limitSmear/yFactor（:98）。
+        let limit_smear = Y_MULT * SMEAR_MULT;
+        let main_smear = limit_smear / Y_FACTOR;
+        // main 选择器：8 倍频，坐标 ×2^-i、权重 2^i（/pow），5 参 smear（:109）。
         let mut pow = 1.0_f64;
         let mut main_value = 0.0_f64;
-        for i in 0..MAIN_OCTAVES {
-            main_value +=
-                Self::octave(self.seed_main, i, main_x * pow, main_y * pow, main_z * pow) / pow;
+        for inst in &self.main {
+            main_value += inst.noise_fudged(
+                wrap(main_x * pow),
+                wrap(main_y * pow),
+                wrap(main_z * pow),
+                main_smear * pow,
+                main_y * pow,
+            ) / pow;
             pow *= 0.5;
         }
         let factor = (main_value / 10.0 + 1.0) / 2.0;
@@ -103,15 +111,16 @@ impl BlendedNoise {
         let mut pow = 1.0_f64;
         let mut blend_min = 0.0_f64;
         let mut blend_max = 0.0_f64;
-        for i in 0..LIMIT_OCTAVES {
+        for (min_inst, max_inst) in self.min_limit.iter().zip(&self.max_limit) {
             let wx = wrap(limit_x * pow);
             let wy = wrap(limit_y * pow);
             let wz = wrap(limit_z * pow);
+            let y_scale_pow = limit_smear * pow;
             if !is_max {
-                blend_min += Self::octave(self.seed_min, i, wx, wy, wz) / pow;
+                blend_min += min_inst.noise_fudged(wx, wy, wz, y_scale_pow, limit_y * pow) / pow;
             }
             if !is_min {
-                blend_max += Self::octave(self.seed_max, i, wx, wy, wz) / pow;
+                blend_max += max_inst.noise_fudged(wx, wy, wz, y_scale_pow, limit_y * pow) / pow;
             }
             pow *= 0.5;
         }
