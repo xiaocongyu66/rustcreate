@@ -66,3 +66,37 @@ placer 族为纯函数 [`place_tree`]（不接 generate()/game.rs，接线=T5 �
 acacia 分支结构已按 ForkingTrunkPlacer.java:34-88 + AcaciaFoliagePlacer
 .java:33-54 全文移植（倾斜主杆+反向斜枝+双冠附着点）——**无
 acacia_branching_debt**。
+
+## TREES-2 树投影接线（#139 树接线波）的池化模型裁剪
+
+vanilla 后端 pass 2（`vanilla/tree_pass.rs`）把 [`place_tree`] 接进
+`generate()`：5×5 树池世界坐标纯函数 + 群系密度门。密度换算自 26.1
+placed feature 的 per-chunk 尝试数（E[count]/10.24，见模块头注），随
+池化模型固有六项偏差：
+
+1. **池栅格 vs 独立撒点**：原版每区块 `count` 次独立均匀尝试（可成团、
+   可重叠冠），本仓每 5×5 池至多一树（最小间距 ~5 格、期望密度同口径
+   = 每区块 E[count]）——密度对了、空间排布规整度不同。
+2. **高密度群系池容量截断**：Jungle E=50.1、Dark Forest count=16 超出
+   池容量上限 10.24 棵/区块 → 只按 1.0 概率封顶（且 10 群系点表
+   （biomes.rs v1）选不出 JUNGLE/DARK_FOREST，两树种当前不可达，表驱动
+   已留位——扩群系表即生效，届时刻度差按本条兑现）。
+3. **叶下不立树**：原版尝试用 OCEAN_FLOOR heightmap——叶也挡
+   motion，邻树冠上的列会在冠顶续放树（森林有「叠生树」）；本仓选址读
+   pass-1 体素实顶、拒绝以叶为立地 → 无叠生树。
+4. **跨界写裁剪**：原版 `blockStateWriteRadius=1` 的 CHUNK_FEATURES 语义
+   允许特征写邻区块；`generate()` 签名无跨界通道 → 树冠伸出本块的部分
+   由邻区块生成时以同一纯函数补齐（树干恒由其落点所属块负责），仅当
+   邻块尚未生成时视口边缘暂缺冠——流式加载下自愈，非持久缺块。
+5. **树基高度门**：`SEA+1 < base ≤ TREE_MAX_Y(=SEA+52)`（派发既定门，
+   legacy rust_terrain.rs TREE_MAX_Y 先例）——vanilla 无此高度上限
+   （SnowyPlains 稀疏云杉原版全高度程可长）；本仓高雪原（surface>
+   SEA+52）无树、低雪原（≤SEA+52）保留稀疏云杉，观感与原版一致。
+6. **树苗/群生后续刀**：placed feature 的 `would_survive(树苗)` 门在本仓
+   等价为立地白名单（SUPPORTS_VEGETATION 生成子集）直接判定；原版
+   「树苗方块生长成树」「暗橡树 2×2 群生」「巨型丛林木 2×2」的运行时
+   语义（BoneMeal/自然衰减/4 苗齐催）不在本波面——苗→树逻辑与 2×2
+   群生登记为后续刀。
+
+fancy oak（0.1/0.333）、pine（taiga 1/3）、fallen tree（各处 0.0125）
+折回对应主种（#135 六树种之外的 placer 不在本波面）。

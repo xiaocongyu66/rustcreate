@@ -16,10 +16,12 @@
 //!
 //! 密度带出处（26.1 数据，非拍脑袋）：`data/minecraft/worldgen/placed_feature
 //! /trees_birch_and_oak_leaf_litter.json` count = weighted_list(10 w9,
-//! 11 w1) → E=10.1 次尝试/区块；本仓 5×5 树池每区块恰交 4×4=16 池
-//! （任意 16 格窗口与 5 格池交叠恒 4 池/轴），每池成树概率 = 10.1/16。
-//! 每树 logs = 树干高 4..6（oak，TreeFeatures.java:136 (4,2,0)）/
-//! 5..7（birch :181 (5,2,0)）→ 期望 logs ≈ 10.1 × 5.4 ≈ 54。
+//! 11 w1) → E=10.1 次尝试/区块；本仓 5×5 树池与 16×16 区块的期望交叠池数
+//! = 16/5 每轴（跨界池按重叠比例摊）= 3.2² = 10.24，每池成树概率 =
+//! 10.1/10.24 ≈ 0.986。本窗（固定对齐）在块内池 3×3=9 个 → 期望 ≈ 8.9
+//! 棵树；每树 logs = 树干高 4..6（oak，TreeFeatures.java:136 (4,2,0)）/
+//! 5..7（birch :181 (5,2,0)）→ 实测 42（绿相位本机校准），带宽 ±3σ 级
+//! 包络 [20, 80] 锁密度门不静默漂移。
 
 use mcv_core::{ChunkPos, SEA_LEVEL};
 use mcv_worldgen::trees::ids;
@@ -38,9 +40,10 @@ const DESERT_SEED: u64 = 99;
 const DESERT_CX: i32 = 49;
 const DESERT_CZ: i32 = 20;
 
-/// Forest 窗 logs 计数带宽（绿相位以实测校准；红相位先放全带锁 logs>0）。
-const FOREST_LOGS_MIN: usize = 1;
-const FOREST_LOGS_MAX: usize = 10_000;
+/// Forest 窗 logs 计数带宽（绿相位实测 42 校准，见文件头密度带推导；
+/// 红相位的全带 [1,10000] 仅锁 logs>0）。
+const FOREST_LOGS_MIN: usize = 20;
+const FOREST_LOGS_MAX: usize = 80;
 
 /// 六树种原木 id（trees::ids，blocks_gen.inc.rs 引注）。
 const LOG_IDS: [u16; 6] = [

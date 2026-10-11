@@ -20,6 +20,7 @@ pub mod noise;
 pub mod perlin;
 pub mod spline;
 pub mod terrain;
+pub mod tree_pass;
 
 pub use biomes::Biome;
 
@@ -98,10 +99,18 @@ pub fn surface_block_y(world_seed: u64, block_x: i32, block_z: i32) -> i32 {
 #[must_use]
 pub fn biome_at(world_seed: u64, block_x: i32, block_z: i32) -> biomes::Biome {
     let sample = climate::ClimateSampler::new(world_seed).sample(block_x, block_z);
-    // 通道→参数对位（26.1 RandomState.java:101-109 构造 Climate.Sampler）：
-    // router.vegetation → humidity 槽位、router.ridges → weirdness 槽位；
-    // ClimateSample 字段名镜像 NoiseRouter 通道（vegetation/ridges），
-    // TargetPoint 字段名镜像 Climate.TargetPoint（humidity/weirdness）。
+    biome_from_sample(&sample)
+}
+
+/// 气候样本 → 群系（biome_at 与编排器 [`terrain::Orchestrator::biome_at`]
+/// 共用的唯一分类入口——树 pass 复用，不另建平行分类）。
+///
+/// 通道→参数对位（26.1 RandomState.java:101-109 构造 Climate.Sampler）：
+/// router.vegetation → humidity 槽位、router.ridges → weirdness 槽位；
+/// ClimateSample 字段名镜像 NoiseRouter 通道（vegetation/ridges），
+/// TargetPoint 字段名镜像 Climate.TargetPoint（humidity/weirdness）。
+#[must_use]
+pub fn biome_from_sample(sample: &climate::ClimateSample) -> biomes::Biome {
     let t = biomes::TargetPoint {
         temperature: (sample.temperature * biomes::Q as f64) as i64,
         humidity: (sample.vegetation * biomes::Q as f64) as i64,

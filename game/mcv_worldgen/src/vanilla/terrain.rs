@@ -651,6 +651,14 @@ impl Orchestrator {
         let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
         self.base_3d.get_value(bx, y_mc, bz)
     }
+
+    /// 一列的 MultiNoise 群系（复用本编排器的气候通道；pass 2 树投影的
+    /// 群系密度门/树种门用，分类入口 = [`crate::vanilla::biome_from_sample`]，
+    /// 不另建平行分类）。
+    #[must_use]
+    pub fn biome_at(&self, block_x: i32, block_z: i32) -> crate::vanilla::Biome {
+        crate::vanilla::biome_from_sample(&self.climate.sample(block_x, block_z))
+    }
 }
 
 fn squeeze(c: f64) -> f64 {
@@ -658,7 +666,7 @@ fn squeeze(c: f64) -> f64 {
     c / 2.0 - c * c * c / 24.0
 }
 
-/// 统一入口：生成一个区块（pass 1 柱层序）。
+/// 统一入口：生成一个区块（pass 1 柱层序 + pass 2 树投影）。
 ///
 /// # Errors
 /// 恒返回 `Ok(())`；保留 `Result` 以与 FFI 路径同构。
@@ -710,9 +718,14 @@ pub fn generate(
             }
         }
     }
+    // Pass 2（#139 树接线）：5×5 树池邻域扫描——树落点世界坐标纯函数；
+    // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
+    // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
+    crate::vanilla::tree_pass::project_trees(seed, chunk_x, chunk_z, &orch, out_voxels);
     // 高度图与 cpp kernel pass 3 / 存档重算（crate::recompute_heightmap）
     // 同一谓词（damp!=0 且非流体）——直接复用，三方由构造保证逐块一致。
     // （此前 vanilla 路径漏写高度图，恒 0 提交：出生列搜索全部 reject。）
+    // 树投影在高度图重算前完成：树荫计入 heightmap（legacy pass 3 同序）。
     let hm = crate::recompute_heightmap(out_voxels);
     out_heightmap[..256].copy_from_slice(&hm[..]);
     Ok(())
