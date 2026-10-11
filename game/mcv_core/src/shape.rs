@@ -417,8 +417,10 @@ pub const fn template_boxes(
         // boxZ(2,0,16,0,8) 自格边伸到中心、全高；碰撞=拾取（无 1.5 抬高）。
         Shape::Pane => {
             add!(bx(0.4375, 0.0, 0.4375, 0.5625, 1.0, 0.5625));
-            for dir in ARM_DIRS {
-                add!(arm_box(dir, 0.4375, 0.5625, 0.5, 0.0, 1.0));
+            let mut dir = 0;
+            while dir < ARM_DIRS.len() {
+                add!(arm_box(ARM_DIRS[dir], 0.4375, 0.5625, 0.5, 0.0, 1.0));
+                dir += 1;
             }
         }
         // 墙：WallBlock.java:66-74 makeShapes(16,14)——柱 column(8,0,16)
@@ -431,8 +433,10 @@ pub const fn template_boxes(
                 (1.0f32, 0.875f32)
             };
             add!(bx(0.25, 0.0, 0.25, 0.75, hp, 0.75));
-            for dir in ARM_DIRS {
-                add!(arm_box(dir, 0.3125, 0.6875, 0.3125, 0.0, ha));
+            let mut dir = 0;
+            while dir < ARM_DIRS.len() {
+                add!(arm_box(ARM_DIRS[dir], 0.3125, 0.6875, 0.3125, 0.0, ha));
+                dir += 1;
             }
         }
         // 栅栏：CrossCollisionBlock.java:36-47 + FenceBlock.java:37,41
@@ -446,8 +450,10 @@ pub const fn template_boxes(
                 1.0
             };
             add!(bx(0.375, 0.0, 0.375, 0.625, h, 0.625));
-            for dir in ARM_DIRS {
-                add!(arm_box(dir, 0.375, 0.625, 0.5, 0.0, h));
+            let mut dir = 0;
+            while dir < ARM_DIRS.len() {
+                add!(arm_box(ARM_DIRS[dir], 0.375, 0.625, 0.5, 0.0, h));
+                dir += 1;
             }
         }
         // 柵栏门：FenceGateBlock.java:39-44,47-51——outline=cube(16,16,4)
@@ -535,7 +541,10 @@ pub const fn template_boxes(
         // 空形），gen 表 solid=true + shapes_table 不变量 → 碰撞=outline
         // 高（1 层 2px 实体防穿），KNOWN-DIVERGENCE（原版 1 层雪可踩穿）。
         Shape::SnowLayer => {
-            let layers = (state & 15).min(7) + 1; // 1..8
+            // 层数 = state+1（state ≥7 视作满层 8）；每层 2px。
+            // const fn 里 Ord::min 不可用（conditionally-const），裸比较。
+            let raw = state & 15;
+            let layers = if raw >= 7 { 8 } else { raw + 1 };
             let h = layers as f32 * 0.125;
             add!(bx(0.0, 0.0, 0.0, 1.0, h, 1.0));
         }

@@ -1465,6 +1465,7 @@ version = "0.1.0"
 dependencies = [
  "glam",
  "mcv_core",
+ "mcv_mesher",
 ]
 
 [[package]]
