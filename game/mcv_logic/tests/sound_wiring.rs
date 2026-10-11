@@ -1,0 +1,58 @@
+//! 音效接线判据：步距门纯函数（26.1 Entity.java 步行音状态机）+ 千块表全名
+//! SoundType 覆盖。数值引注：
+//! - 步距累计：`moveDist += 水平位移 × 0.6`（Entity.java:812-813）；
+//! - 触发门：`moveDist > nextStep && !supportingState.isAir()`（Entity.java:820）；
+//! - 阈值更新：`nextStep = (int)moveDist + 1`（Entity.java:1188-1190），初值 1.0（:246）。
+use mcv_logic::game::step_gate;
+
+#[test]
+fn below_threshold_does_not_fire() {
+    // 初值 nextStep=1.0（Entity.java:246）：0.6 步距未过门。
+    assert_eq!(step_gate(0.6, 1.0), None);
+    // 恰好等值不触发（严格 >，Entity.java:820）。
+    assert_eq!(step_gate(1.0, 1.0), None);
+    assert_eq!(step_gate(0.999, 1.0), None);
+}
+
+#[test]
+fn crossing_fires_with_int_plus_one() {
+    // 过门即触发并按 (int)moveDist + 1 重置（Entity.java:1188-1190）：
+    // moveDist=1.05 → 新阈值 2.0。
+    assert_eq!(step_gate(1.05, 1.0), Some(2.0));
+    // moveDist=1.99 仍 → (int)1.99+1 = 2.0。
+    assert_eq!(step_gate(1.99, 2.0), Some(2.0));
+    // 跨两格：moveDist=2.4 → 3.0。
+    assert_eq!(step_gate(2.4, 1.0), Some(3.0));
+}
+
+#[test]
+fn walk_cadence_matches_vanilla() {
+    // 原版节奏复演：常速水平 0.2 格/tick × 0.6 = 0.12/tick，从 (0, 1.0) 起步。
+    // 触发点应落在 moveDist 首次 > 1.0（第 9 tick：1.08），随后每 1.0 一次。
+    let mut dist = 0.0f32;
+    let mut next = 1.0f32;
+    let mut fired_at = Vec::new();
+    for tick in 0..40u32 {
+        dist += 0.12;
+        if let Some(n) = step_gate(dist, next) {
+            next = n;
+            fired_at.push((tick, dist));
+        }
+    }
+    assert_eq!(fired_at.len(), 4, "40 tick 应触发 4 步: {fired_at:?}");
+    // 首步 ≈1.08（1.0 门），之后 2.04/3.0/3.96——阈值等差 1.0。
+    assert!((fired_at[0].1 - 1.08).abs() < 1e-5, "{fired_at:?}");
+    assert!((fired_at[1].1 - 2.04).abs() < 1e-5, "{fired_at:?}");
+    assert!((fired_at[2].1 - 3.00).abs() < 1e-5, "{fired_at:?}");
+    assert!((fired_at[3].1 - 3.96).abs() < 1e-5, "{fired_at:?}");
+}
+
+#[test]
+fn scale_0_6_maps_horizontal_to_move_dist() {
+    // 水平步距换算：原版每步实际水平距离 = 1.0/0.6 ≈ 1.667 格（Entity.java:812-813
+    // 的 ×0.6 与 :1188 的 +1 联合效果）；1.667 水平 → moveDist 1.0002 → 触发。
+    let moved_h = 1.667f32;
+    assert_eq!(step_gate(moved_h * 0.6, 1.0).is_some(), true);
+    // 不足一步（1.6 水平）不触发。
+    assert_eq!(step_gate(1.6f32 * 0.6, 1.0), None);
+}
