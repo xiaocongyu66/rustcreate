@@ -76,10 +76,10 @@ const NEW_ITEMS: &[(u16, &str)] = &[
     (mcv_item::JUNGLE_PRESSURE_PLATE, "jungle_pressure_plate"),
     (mcv_item::ACACIA_PRESSURE_PLATE, "acacia_pressure_plate"),
     (mcv_item::DARK_OAK_PRESSURE_PLATE, "dark_oak_pressure_plate"),
-    // 蜂窝族 + 玻璃瓶（honey_bottle.json 的 honey_block/glass_bottle 配角）
-    (mcv_item::HONEYCOMB, "honeycomb"),
-    (mcv_item::HONEY_BOTTLE, "honey_bottle"),
-    (mcv_item::GLASS_BOTTLE, "glass_bottle"),
+];
+
+/// 蜂窝/功能方块件（Block 物品，id 146-151）。
+const TAIL_ITEMS: &[(u16, &str)] = &[
     (mcv_item::HONEYCOMB_BLOCK, "honeycomb_block"),
     (mcv_item::HONEY_BLOCK, "honey_block"),
     (mcv_item::BEEHIVE, "beehive"),
@@ -98,23 +98,54 @@ const SAPLINGS: &[(u16, &str)] = &[
     (mcv_item::DARK_OAK_SAPLING, "dark_oak_sapling"),
 ];
 
+/// 纯物品件（Material，64 堆；图标走 #125 ITEM_SPRITES 表）。id 143-145。
+const MATERIAL_ITEMS: &[(u16, &str)] = &[
+    (mcv_item::HONEYCOMB, "honeycomb"),
+    (mcv_item::HONEY_BOTTLE, "honey_bottle"),
+    (mcv_item::GLASS_BOTTLE, "glass_bottle"),
+];
+
+/// 全部新件按 id 序：NEW_ITEMS(90-142) → MATERIAL(143-145) → TAIL(146-151)。
+fn all_new() -> Vec<(u16, &'static str)> {
+    NEW_ITEMS
+        .iter()
+        .copied()
+        .chain(MATERIAL_ITEMS.iter().copied())
+        .chain(TAIL_ITEMS.iter().copied())
+        .collect()
+}
+
 /// 追加序 = id 契约：62 件从 90 起连续编号，名字双向可查。
 #[test]
 fn wood_family_append_order_lock() {
-    for (i, (id, name)) in NEW_ITEMS.iter().enumerate() {
+    for (i, (id, name)) in all_new().iter().enumerate() {
         assert_eq!(*id, 90 + i as u16, "第 {i} 件 {name} 应为 id {}", 90 + i);
         assert_eq!(mcv_item::ITEMS[*id as usize].name, *name, "id {id} 错位");
         assert_eq!(mcv_item::item_by_name(name), Some(*id), "{name} 反查");
     }
     // 表总长 = 旧 90 + 新 62（尾部追加，旧 id 序列化稳定）。
     assert_eq!(mcv_item::ITEMS.len(), 152, "ITEMS 总数 90+62");
+    // 纯物品三件 kind 判据（图标层走 item 精灵而非方块图集）。
+    for (id, name) in MATERIAL_ITEMS {
+        assert!(
+            matches!(
+                mcv_item::ITEMS[*id as usize].kind,
+                mcv_item::ItemKind::Material
+            ),
+            "{name} 应为 Material"
+        );
+    }
 }
 
 /// ITEMS↔BLOCKS 映射齐：Block 物品指向同名方块（place→mine 回路自洽），
 /// 全部六树种 ×11 形 + 蜂窝族方块件无一缺漏。
 #[test]
 fn wood_family_block_mapping() {
-    for (id, name) in NEW_ITEMS.iter().chain(SAPLINGS.iter()) {
+    for (id, name) in NEW_ITEMS
+        .iter()
+        .chain(TAIL_ITEMS.iter())
+        .chain(SAPLINGS.iter())
+    {
         let def = &mcv_item::ITEMS[*id as usize];
         let mcv_item::ItemKind::Block(b) = def.kind else {
             panic!("{name} 应为 Block 物品（可放置），实为 {:?}", def.kind);
@@ -150,7 +181,7 @@ fn wood_family_block_mapping() {
 #[test]
 fn wood_family_icon_layer_present() {
     let sentinel = mcv_core::atlas::SENTINEL_LAYER as u16;
-    for (id, name) in NEW_ITEMS.iter().chain(SAPLINGS.iter()) {
+    for (id, name) in all_new().iter().chain(SAPLINGS.iter()) {
         let def = &mcv_item::ITEMS[*id as usize];
         match def.kind {
             ItemKind::Block(b) => {
@@ -172,9 +203,9 @@ fn wood_family_icon_layer_present() {
 /// 蜂窝族非方块件与木族全件均 64 堆（无耐久组件，inventory::max_stack 语义）。
 #[test]
 fn wood_family_stack_sizes() {
-    for (id, name) in NEW_ITEMS.iter() {
+    for (id, name) in all_new() {
         assert_eq!(
-            mcv_item::inventory::Hotbar::max_stack(*id),
+            mcv_item::inventory::Hotbar::max_stack(id),
             64,
             "{name} 应 64 堆"
         );
