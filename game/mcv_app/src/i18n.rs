@@ -4,9 +4,12 @@
 //! compact 表由 `ci/gen-lang.py` 从 Mojang 官方语言文件
 //! （`data/lang/en_us.json` / `zh_cn.json`，即 26.1.jar / 资产服务器抽出的
 //! 原版文案）挑出引擎 UI 用到的 ≤40 个 key 生成，位于
-//! `data/lang/compact/table.rs`。官方语言文件版权归 Mojang，政策与材质包
-//! 素材相同：开发期素材，发布前删除或替换为自维护表（`mcv.` 前缀 key 已是
-//! 自维护的 `data/lang/extra.json`）。改 key 后在仓库根目录重跑
+//! `data/lang/compact/table.rs`；物品名另产 `items_table.rs`
+//! （#137 W 波，行 = (mcv_item 注册名, en, zh)，键前缀按
+//! `block.minecraft.<注册名>` / `item.minecraft.<注册名>` 推导）。
+//! 官方语言文件版权归 Mojang，政策与材质包素材相同：开发期素材，发布前
+//! 删除或替换为自维护表（`mcv.` 前缀 key 已是自维护的
+//! `data/lang/extra.json`）。改 key/ITEMS 后在仓库根目录重跑
 //! `python3 ci/gen-lang.py` 再提交。
 //!
 //! ## 运行时策略
@@ -46,6 +49,14 @@ mod table {
     ));
 }
 
+// 物品名表（#137 W 波）：行 = (mcv_item 注册名, en, zh)。
+mod items_table {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/data/lang/compact/items_table.rs"
+    ));
+}
+
 /// 查 `key` 在 `lang` 下的文案。
 ///
 /// 回退链：目标语言 → en → key 本身（永不 panic，未知 key 显示原始 key
@@ -68,6 +79,29 @@ pub fn t(lang: Lang, key: &str) -> &str {
     // 表内 key 两语言都齐（gen-lang.py 保证 en/zh 同源同 key），故未命中
     // 即表外 key，直接回退 key 本身。
     key
+}
+
+/// 物品双语名（#137 W 波）：按 mcv_item 注册名查 [`items_table::ITEM_TABLE`]。
+///
+/// 回退链：表内命中目标语言 → 表内 en → 物品注册名（legacy 旧名如
+/// log/planks/leaves/lapis 无官方 key，gen-lang.py 不产行，显示注册名；
+/// 永不 panic）。`item` 越界返回空串（防御式，调用方多为 HUD）。
+///
+/// ⚠️ `Lang::Zh` 中文字形受字体层限制，见模块头注释。
+pub fn item_name(lang: Lang, item: u16) -> &'static str {
+    let Some(def) = mcv_item::ITEMS.get(item as usize) else {
+        return "";
+    };
+    let name = def.name;
+    let rows = items_table::ITEM_TABLE.as_slice();
+    match rows.iter().find(|(n, ..)| *n == name) {
+        Some((_, en, zh)) => match lang {
+            Lang::En => en,
+            Lang::Zh => zh,
+        },
+        // 表外（legacy 名）：回退注册名（'static，来自 ITEMS 静态表）。
+        None => name,
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +138,45 @@ mod tests {
     fn unknown_key_falls_back_to_key() {
         assert_eq!(t(Lang::En, "no.such.key.exists"), "no.such.key.exists");
         assert_eq!(t(Lang::Zh, "no.such.key.exists"), "no.such.key.exists");
+    }
+
+    // ---- 物品双语名（#137 W 波；期望值抄自 data/lang/{en_us,zh_cn}.json）----
+
+    #[test]
+    fn item_name_en_matches_official() {
+        assert_eq!(item_name(Lang::En, mcv_item::OAK_STAIRS), "Oak Stairs");
+        assert_eq!(
+            item_name(Lang::En, mcv_item::SPRUCE_PLANKS),
+            "Spruce Planks"
+        );
+        assert_eq!(item_name(Lang::En, mcv_item::HONEYCOMB), "Honeycomb");
+        assert_eq!(item_name(Lang::En, mcv_item::HONEY_BOTTLE), "Honey Bottle");
+        assert_eq!(item_name(Lang::En, mcv_item::BEEHIVE), "Beehive");
+        assert_eq!(item_name(Lang::En, mcv_item::CHEST), "Chest");
+    }
+
+    #[test]
+    fn item_name_zh_matches_official() {
+        assert_eq!(item_name(Lang::Zh, mcv_item::OAK_STAIRS), "橡木楼梯");
+        assert_eq!(item_name(Lang::Zh, mcv_item::SPRUCE_PLANKS), "云杉木板");
+        assert_eq!(item_name(Lang::Zh, mcv_item::HONEYCOMB), "蜜脾");
+        assert_eq!(
+            item_name(Lang::Zh, mcv_item::DARK_OAK_TRAPDOOR),
+            "深色橡木活板门"
+        );
+    }
+
+    #[test]
+    fn item_name_legacy_falls_back_to_registry_name() {
+        // 旧 14 方块名无官方 key：回退注册名，不伪造翻译。
+        assert_eq!(item_name(Lang::En, mcv_item::LOG), "log");
+        assert_eq!(item_name(Lang::Zh, mcv_item::PLANKS), "planks");
+        assert_eq!(item_name(Lang::En, mcv_item::LEAVES_ITEM), "leaves");
+    }
+
+    #[test]
+    fn item_name_out_of_range_is_empty() {
+        assert_eq!(item_name(Lang::En, 9999), "");
     }
 
     #[test]

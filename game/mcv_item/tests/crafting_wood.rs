@@ -437,10 +437,7 @@ fn crafting_table_two_by_two_planks_tag() {
 #[test]
 fn chest_eight_planks_with_hole() {
     // chest.json：`### / # # / ###`（planks tag）→ ×1。
-    let mut grid = g3();
-    for i in 0..9 {
-        grid[i] = SPRUCE_PLANKS;
-    }
+    let mut grid = [SPRUCE_PLANKS; 9];
     grid[4] = EMPTY_SLOT;
     assert_eq!(
         mcv_item::crafting::find_result(&grid, 3),
@@ -532,8 +529,8 @@ fn honeycomb_block_two_by_two() {
 fn beehive_planks_honeycomb_sandwich() {
     // beehive.json：`PPP / HHH / PPP`，P=planks tag。
     let mut grid = g3();
-    for i in 0..9 {
-        grid[i] = if i / 3 == 1 { HONEYCOMB } else { BIRCH_PLANKS };
+    for (i, slot) in grid.iter_mut().enumerate() {
+        *slot = if i / 3 == 1 { HONEYCOMB } else { BIRCH_PLANKS };
     }
     assert_eq!(
         mcv_item::crafting::find_result(&grid, 3),
@@ -553,8 +550,8 @@ fn beehive_planks_honeycomb_sandwich() {
     );
     // 蜂脾层错位不成（第 3 例负判据）。
     let mut grid = g3();
-    for i in 0..9 {
-        grid[i] = if i % 2 == 0 { HONEYCOMB } else { PLANKS };
+    for (i, slot) in grid.iter_mut().enumerate() {
+        *slot = if i % 2 == 0 { HONEYCOMB } else { PLANKS };
     }
     assert_ne!(
         mcv_item::crafting::find_result(&grid, 3),
