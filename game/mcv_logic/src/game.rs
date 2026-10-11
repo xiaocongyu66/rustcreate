@@ -6574,6 +6574,189 @@ mod tests {
         );
     }
 
+    // ---- 模拟距离实体门（26.1 ServerLevel.java:418-419）----
+    // 原版语义：实体仅当所在区块在 PLAYER_SIMULATION 票级别视图 ≤
+    // ENTITY_TICKING（DistanceManager.java:136-138，环 = 距玩家锚点
+    // Chebyshev ≤ sim_dist）才 tick；环外 = 冻结（不 AI、不位移、计时器
+    // 不走——invulnerableTime 递减也在 tick 内，LivingEntity.java:452-453），
+    // **不删除不卸载**（用户语：「超出就会暂停」）；checkDespawn 在环门外
+    // 照跑（ServerLevel.java:417-419 + Mob.java:655-679）。旧门只看
+    // 「自身区块 stage ≥ TerrainReady」（已载代理）——迟滞带（sim_dist <
+    // d ≤ sim_dist+3，仍在载）里的怪照常 tick，与原版不符。
+
+    /// rd=4 → sim_dist=5：实体环 = Chebyshev ≤5；迟滞带 d∈(5,8]（仍在
+    /// 载）；刷怪冷却关死，断言只面向手工放置的实体。`spawned=true` 关死
+    /// 出生投放（防后台 worker 生成 (0,0) 后投放挪动玩家锚点——本组测试
+    /// 锚点必须恒定：环内/环外由玩家块对怪块的 Chebyshev 距离决定）。
+    fn sim_rt(tag: &str) -> GameRuntime {
+        let mut rt = headless_rt(tag);
+        rt.render_dist = 4;
+        rt.spawn_cooldown = u32::MAX;
+        rt.spawned = true;
+        rt
+    }
+
+    /// 环内（d=3 ≤ 5）：动物照常 tick——noActionTime 按 20 Hz 递增
+    /// （Mob.java:683 serverAiStep，本仓 mob_ai 的 idle 账）。
+    #[test]
+    fn mob_inside_simulation_ring_ticks() {
+        let mut rt = sim_rt("sim-in");
+        rt.chunks.insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
+        let cow = spawn_mob(
+            &mut rt.mobs_app.world,
+            MobId::COW,
+            Vec3::new(3.0 * 16.0 + 8.5, 25.0, 8.5),
+        );
+        rt.stream(); // 票表锚 = 玩家块 (0,0)（pos=ZERO 待投放哨兵）
+        rt.fixed_step(1.0 / 20.0);
+        let ticks = rt.mobs_app.world.read::<MobTicks>();
+        let idle = ticks.get(cow).expect("环内动物在册").idle_ticks;
+        assert!(
+            idle >= 1,
+            "环内动物每 20 Hz tick 推进 noActionTime（≥1），实得 {idle}"
+        );
+    }
+
+    /// 环外迟滞带（d=7 > 5；块仍在载且已亮）：冻结——不位移、idle 不增、
+    /// **不删除**（暂停不消失；距玩家 112 格 > 32 且 idle=0，checkDespawn
+    /// 也不应移除它）。
+    #[test]
+    fn mob_outside_simulation_ring_frozen_but_kept() {
+        let mut rt = sim_rt("sim-out");
+        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        let cow = spawn_mob(
+            &mut rt.mobs_app.world,
+            MobId::COW,
+            Vec3::new(7.0 * 16.0 + 8.5, 25.0, 8.5),
+        );
+        rt.stream();
+        let before = *rt
+            .mobs_app
+            .world
+            .read::<PhysBody>()
+            .get(cow)
+            .expect("放置后在册");
+        for _ in 0..3 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        let bodies = rt.mobs_app.world.read::<PhysBody>();
+        let ticks = rt.mobs_app.world.read::<MobTicks>();
+        let body = bodies.get(cow).expect("环外实体不得被删除（冻结≠卸载）");
+        assert_eq!(body.pos, before.pos, "环外实体完全不 tick（位移零）");
+        assert_eq!(body.vel, before.vel, "环外实体速度不动");
+        assert_eq!(
+            ticks.get(cow).expect("组件保留").idle_ticks,
+            0,
+            "环外实体计时器冻结（noActionTime 不增）"
+        );
+    }
+
+    /// 冻结是暂时的：玩家锚点向怪迁移后（怪块落入环）恢复 tick，且冻结
+    /// 期间实体一直活着。
+    #[test]
+    fn mob_resumes_ticking_after_anchor_moves_closer() {
+        let mut rt = sim_rt("sim-resume");
+        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        let cow = spawn_mob(
+            &mut rt.mobs_app.world,
+            MobId::COW,
+            Vec3::new(7.0 * 16.0 + 8.5, 25.0, 8.5),
+        );
+        rt.stream();
+        for _ in 0..3 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        {
+            let ticks = rt.mobs_app.world.read::<MobTicks>();
+            assert_eq!(
+                ticks.get(cow).map(|t| t.idle_ticks),
+                Some(0),
+                "前置：冻结期 idle 不增"
+            );
+        }
+        // 锚点 (0,0) → (4,0)：怪块 (7,0) 落入环（d=3 ≤ 5，sim 级别
+        // (31−5)+3=29 ≤ 31）。pos≠ZERO 不触投放哨兵；玩家块 (4,0) 缺席，
+        // 玩家物理整步冻结（锚点稳定）。
+        rt.player.pos = Vec3::new(4.0 * 16.0 + 8.5, 70.0, 8.5);
+        rt.stream(); // 票表随锚点全量重建（stream 每帧语义）
+        rt.fixed_step(1.0 / 20.0);
+        let ticks = rt.mobs_app.world.read::<MobTicks>();
+        let idle = ticks.get(cow).expect("恢复后仍在册").idle_ticks;
+        assert!(idle >= 1, "回环后恢复 tick，实得 {idle}");
+    }
+
+    /// 环门外唯一逻辑 = checkDespawn（ServerLevel.java:417-419 的 despawn
+    /// 检查在环门之前）：环外冻结论不豁免 >128 格立即移除（Mob.java:664-666）。
+    /// 此为行为锁——两个相位都必须绿。
+    #[test]
+    fn frozen_mob_beyond_despawn_distance_still_despawns() {
+        let mut rt = sim_rt("sim-despawn");
+        rt.chunks.insert(ChunkPos::new(8, 0), lit_chunk(8, 0, 20));
+        let cow = spawn_mob(
+            &mut rt.mobs_app.world,
+            MobId::COW,
+            Vec3::new(8.0 * 16.0 + 8.5, 25.0, 8.5),
+        ); // 距玩家 (8.5,0,8.5) ≥128 格（dx=128，dy=25）
+        rt.stream();
+        rt.fixed_step(1.0 / 20.0);
+        assert!(
+            rt.mobs_app.world.read::<PhysBody>().get(cow).is_none(),
+            ">128 格的冻结实体仍被 checkDespawn 立即移除"
+        );
+    }
+
+    /// 箭矢同门（AbstractArrow 亦在 entityTickList，ServerLevel.java:419
+    /// 对全部实体生效）：环外箭矢滞空冻结——不推进、寿命不耗；环内照常飞。
+    #[test]
+    fn arrow_outside_simulation_ring_frozen() {
+        let mut rt = sim_rt("sim-arrow");
+        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        rt.chunks.insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
+        let (far, near) = {
+            let world = &mut rt.mobs_app.world;
+            let far = world.spawn();
+            world.insert(
+                far,
+                MobArrow {
+                    pos: Vec3::new(7.0 * 16.0 + 8.5, 25.0, 8.5),
+                    vel: Vec3::new(-10.0, 0.0, 0.0),
+                    ttl_ticks: 200,
+                    base_damage: 2.0,
+                    crit: false,
+                    player_owned: true,
+                },
+            );
+            let near = world.spawn();
+            world.insert(
+                near,
+                MobArrow {
+                    pos: Vec3::new(3.0 * 16.0 + 8.5, 25.0, 8.5),
+                    vel: Vec3::new(-10.0, 0.0, 0.0),
+                    ttl_ticks: 200,
+                    base_damage: 2.0,
+                    crit: false,
+                    player_owned: true,
+                },
+            );
+            (far, near)
+        };
+        rt.stream();
+        rt.fixed_step(1.0 / 20.0);
+        let arrows = rt.mobs_app.world.read::<MobArrow>();
+        let far_a = arrows.get(far).expect("环外箭矢在册");
+        assert_eq!(
+            far_a.pos,
+            Vec3::new(7.0 * 16.0 + 8.5, 25.0, 8.5),
+            "环外箭矢滞空冻结（不推进）"
+        );
+        assert_eq!(far_a.ttl_ticks, 200, "环外箭矢寿命不耗");
+        let near_a = arrows.get(near).expect("环内箭矢在册");
+        assert!(
+            near_a.pos.x < 3.0 * 16.0 + 8.5,
+            "环内箭矢照常推进（沿 −x 速度）"
+        );
+    }
+
     // ---- 触摸挖掘端到端（任务板 #93 优先项回归锁）----
     // 走 app 层同款入口：runtime.touch 点亮 + press_mine → fixed_step 固定步
     // 内 apply_touch_input 镜像 input.mining 并触发 on_left_press →
