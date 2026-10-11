@@ -82,7 +82,7 @@ fn biome_distribution_in_bands() {
 }
 
 /// 2) 海陆比：地表 < 海平面（v6 = 63，引 `SEA_LEVEL` 不钉字面量）的列占比
-/// 25%-45%。
+///    25%-45%。
 #[test]
 fn sea_land_ratio_in_bands() {
     let stride = 8_i32;
