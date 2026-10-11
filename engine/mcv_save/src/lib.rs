@@ -361,6 +361,9 @@ impl LevelMeta {
                         (f32_at(0), f32_at(4), f32_at(8), f32_at(12));
                     let air_supply = i32::from_le_bytes(data[i + 16..i + 20].try_into().unwrap());
                     let difficulty = data[i + 20];
+                    // 旧解码只到生存块为止（mode = data.last()），i 从未越过
+                    // 它；v6 起块后还有天气块，必须同步推进游标。
+                    i += SURVIVAL_BYTES;
                     (
                         health, hunger, saturation, exhaustion, air_supply, difficulty,
                     )
