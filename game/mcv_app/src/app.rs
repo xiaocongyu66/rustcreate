@@ -2875,6 +2875,8 @@ impl AppState {
             enabled: self.set_clouds != 0,
             fast: self.set_clouds == 1,
             distance: (runtime.render_dist * 16) as f32,
+            // 云色夜轨（Timelines.java:136-143，夜 ×(0.1,0.1,0.15)）。
+            tint: mcv_render::env_color::cloud_multiplier(runtime.time_ticks).to_array(),
             ..Default::default()
         };
         let clouds = self.clouds.as_ref();

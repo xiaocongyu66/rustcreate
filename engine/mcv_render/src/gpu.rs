@@ -2876,16 +2876,27 @@ impl Renderer {
         let tick = (scene.time * 20.0).round().max(0.0) as u64;
         let sky_col =
             env_color::SKY_COLOR * env_color::sky_multiplier(tick) * Vec3::from(scene.fog_tint);
+        // 朝向太阳的晨昏橙染（雾侧，AtmosphericFogEnvironment.java:29-39）：
+        // looking = forward·(sunX,0,0) > 0 时 srgbLerp(looking×alpha, 雾,
+        // opaque(sunrise))。sunX = sin(SUN_ANGLE)>0 ? −1 : 1（:30）——本仓
+        // sun_dir.x = −sin(angle)，sin>0 ⟺ dir.x<0，故 sunX = sign(dir.x)
+        // （晨向 +X 东、暮向 −X 西；alpha 白天/夜里为 0，不会误染）。
+        let (sr_rgb, sr_alpha) = env_color::sunrise_sunset(tick);
+        let mut fog_base = env_color::FOG_COLOR * env_color::fog_multiplier(tick);
+        if sr_alpha > 0.0 {
+            let sun_x = if scene.sun_dir.x < 0.0 { -1.0 } else { 1.0 };
+            let looking = cam.dir().x * sun_x;
+            if looking > 0.0 {
+                fog_base = env_color::srgb_lerp(looking * sr_alpha, fog_base, sr_rgb);
+            }
+        }
         // 雾色（AtmosphericFogEnvironment.getBaseColor:26-48）：
-        // srgbLerp(mixFactor, FOG_COLOR×雾乘轨, SKY_COLOR×天乘轨)——天气
-        // 乘子末端一乘（原版 WeatherAttributes.java:11 对 FOG_COLOR 全局
-        // MULTIPLY_RGB ×:43 applyWeatherDarken 对天穹分量，系数相同合并）。
+        // srgbLerp(mixFactor, FOG_COLOR×雾乘轨(+晨昏染), SKY_COLOR×天乘轨)
+        // ——天气乘子末端一乘（原版 WeatherAttributes.java:11 对 FOG_COLOR
+        // 全局 MULTIPLY_RGB ×:43 applyWeatherDarken 对天穹分量，系数相同合并）。
         let mix_factor = env_color::sky_fog_mix_factor(scene.fog_rd_end / 16.0);
-        let mut fog_col = env_color::srgb_lerp(
-            mix_factor,
-            env_color::FOG_COLOR * env_color::fog_multiplier(tick),
-            sky_col,
-        ) * Vec3::from(scene.fog_tint);
+        let mut fog_col =
+            env_color::srgb_lerp(mix_factor, fog_base, sky_col) * Vec3::from(scene.fog_tint);
         if underwater {
             // WATER_FOG_COLOR × waterVision 归一提亮（FogRenderer.java
             // :148-153 brightenFactor=waterVision、:162-167

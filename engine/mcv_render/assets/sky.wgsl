@@ -12,8 +12,11 @@ struct SkyUniforms {
     // → 程序化圆盘回退」开关已随素材红线删除——日月只画原版贴图 quad）。
     celestials: vec4<f32>,
     // 天穹色：xyz = SKY_COLOR × 昼夜乘轨 × 天气（Timelines.java:65-69 纯黑
-    // 夜轨）；w = 星亮度轨（Timelines.java:120-135，R3 消费）。
+    // 夜轨）；w = 星亮度轨（Timelines.java:120-135）。
     sky_color: vec4<f32>,
+    // 晨昏橙染：xyz = SUNRISE_SUNSET_COLOR 不透明色，w = alpha
+    // （Timelines.java:87-118 32 帧轨；白天/夜里 alpha=0 隐身）。
+    sunrise: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> sky: SkyUniforms;
@@ -73,7 +76,6 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     let far_pt = sky.inv_view_proj * vec4<f32>(v.ndc, 1.0, 1.0);
     let dir = normalize(far_pt.xyz / far_pt.w - sky.cam_pos.xyz);
 
-    let day = sky.sun_dir_day.w;
     let up = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
 
     // 天穹 = SKY_COLOR×昼夜乘轨（CPU 下发，夜里乘 0 = 纯黑，Timelines
@@ -83,13 +85,27 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     // 且底色蓝灰 = 「看不出昼夜」根因，B 报根因 A）。
     var color = mix(sky.fog_color.rgb, sky.sky_color.rgb, pow(up, 0.7));
 
+    // 太阳方向（晨昏带 + 天体 quad 共用）。
+    let s = normalize(sky.sun_dir_day.xyz);
+
+    // 晨昏橙染带（SkyRenderer.java:422-451 renderSunriseAndSunset 的解析
+    // 近似）：原版 = 以太阳方位为中心的 18 顶点扇面（半径环 alpha 衰减、
+    // Z 轴整扇 scale=alpha，TRANSLUCENT 叠在天空圆盘上、画在日月之前）。
+    // 近似 = alpha × 朝阳方位因子 × 地平窗口（|dir.y|<0.35，:102-123 扇面
+    // 压扁比的量级）；全量扇面网格登记债。
+    let sun_az = normalize(vec3<f32>(s.x, 0.0, s.z) + vec3<f32>(1e-5, 0.0, 0.0));
+    let view_az = normalize(vec3<f32>(dir.x, 0.0, dir.z) + vec3<f32>(1e-5, 0.0, 0.0));
+    let facing = clamp(dot(view_az, sun_az), 0.0, 1.0);
+    let band = sky.sunrise.w * facing
+        * pow(clamp(1.0 - abs(dir.y) / 0.35, 0.0, 1.0), 1.5);
+    color = mix(color, sky.sunrise.rgb, band);
+
     // Sun / moon：原版是贴图 quad（SkyRenderer.java:125-127 太阳、:149-157
     // 八相月亮，月亮 scale 20、太阳 scale 30、距离 100）。quad 平面基由
     // RotY(-90)·RotX(angle) 展开：太阳 U 轴（局部 +X）= 世界 +Z（南）、
     // V 轴（局部 +Z）= (-s.y, s.x, 0)；月亮路径同面反向（angle+180°），
     // 且 buildMoonPhases 的 UV 相对太阳横竖双镜像（:151-154 顶点 u0/u1、
     // v0/v1 对调）。U 轴对带 z 倾斜的 s 做 Gram-Schmidt 正交化保朝向稳定。
-    let s = normalize(sky.sun_dir_day.xyz);
     let u_axis = normalize(vec3<f32>(0.0, 0.0, 1.0) - s * s.z);
     let v_axis = cross(u_axis, s);
     // 原版 CELESTIAL 管线混合 = BlendFunction.OVERLAY（RenderPipelines.java:643
@@ -114,10 +130,13 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     }
 
     // Stars at night: hash lattice on the ray direction. 原版星星本身即
-    // 程序生成（buildStars 种子 10842L 随机 1500 quad，SkyRenderer.java:182+），
-    // 哈希点阵为等价程序化实现，非占位。
+    // 程序生成（buildStars 种子 10842L 随机 1500 quad，SkyRenderer.java:182+
+    // :332 starBrightness>0 才画、:406 alpha=亮度），哈希点阵为等价程序化
+    // 实现，非占位。亮度接 STAR_BRIGHTNESS 轨（Timelines.java:120-135：
+    // 白天 0 → 13228 起 0.5 → 23758 回落；旧 (1−day)×0.8 无曲线、日落后
+    // 即满亮）。
     let star_grid = floor(dir * 220.0);
-    let star = step(0.9992, hash3(star_grid)) * (1.0 - day) * step(0.05, dir.y);
+    let star = step(0.9992, hash3(star_grid)) * sky.sky_color.w * step(0.05, dir.y);
     color = mix(color, vec3<f32>(0.9, 0.92, 1.0), star * 0.8);
 
     return vec4<f32>(color, 1.0);

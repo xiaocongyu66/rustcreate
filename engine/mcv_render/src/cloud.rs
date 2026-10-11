@@ -60,6 +60,11 @@ pub struct CloudSettings {
     pub scale: f32,
     /// 整体不透明度，对应 26.1 CloudColor 的 alpha（天气染色留给主控扩展）。
     pub opacity: f32,
+    /// 云色 RGB 乘轨（Timelines.java:136-143 CLOUD_COLOR MULTIPLY_ARGB：
+    /// 白 → 夜 (0.1,0.1,0.15) NIGHT_CLOUD_COLOR_MULTIPLIER，主控按 tick 填；
+    /// 晴昼 = [1,1,1]）。登记债：天气云灰化（WeatherAttributes.java:12
+    /// CLOUD_COLOR BLEND_TO_GRAY）未做。
+    pub tint: [f32; 3],
 }
 
 impl Default for CloudSettings {
@@ -70,6 +75,7 @@ impl Default for CloudSettings {
             fast: false,
             scale: 1.0,
             opacity: 1.0,
+            tint: [1.0, 1.0, 1.0],
         }
     }
 }
@@ -353,8 +359,14 @@ impl Clouds {
         // ---- uniform（对应 26.1 CloudInfo + FogCloudsEnd）----
         let uniform = CloudUniform {
             view_proj: *view_proj,
-            // CloudColor：本引擎固定白色（天气染色由主控经环境属性扩展）
-            color: [1.0, 1.0, 1.0, settings.opacity],
+            // CloudColor = 白基色 × 昼夜乘轨（overworld.json:34 基色
+            // #ccffffff 的 RGB=白；alpha 乘子恒 1 → 只用 settings.opacity）。
+            color: [
+                settings.tint[0],
+                settings.tint[1],
+                settings.tint[2],
+                settings.opacity,
+            ],
             offset: [-x_in_cell, bottom, -z_in_cell],
             _pad0: 0.0,
             cell_size: [cell, THICKNESS * scale, cell],
