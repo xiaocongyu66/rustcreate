@@ -10,8 +10,9 @@
 //! 取舍（验收报告逐条说明）：
 //! - interpolated/blendDensity 的单元 8×4 插值不实现——段状高度带由气候
 //!   样条本身给出，单元插值只影响洞壁平滑度；
-//! - base_3d_noise（BlendedNoise 上下限夹逼混合）以自有双层 fBm 近其
-//!   「随机破面」效果（NOTES-terrain §6 的既有取舍）；
+//! - base_3d_noise 自 T4 起为真移植 BlendedNoise（vanilla/blended.rs：
+//!   NoiseRouterData.java:86 `createUnseeded(0.25,0.125,80,160,8)`，上下限
+//!   夹逼混合；此前「双层 fBm 近其破面」取舍作废）；
 //! - noodle / pillars 不在本 v1 管线（任务只点名双洞穴：意面 + 奶酪），
 //!   Noodle 通道以常数 64 代入（min 不生效）。
 //!
@@ -41,6 +42,7 @@
 //! - jagged.json（-16, [1.0]×16）：山脊锯齿通道同改 NormalNoise
 //!   （NoiseRouterData.java:99 `noise(JAGGED, 1500.0, 0.0)`）。
 
+use crate::vanilla::blended::BlendedNoise;
 use crate::vanilla::climate::ClimateSampler;
 use crate::vanilla::noise::NormalNoise;
 use crate::vanilla::spline::{Builder, Coord, Spline};
@@ -433,7 +435,10 @@ pub struct Orchestrator {
     offset_spline: Spline,
     factor_spline: Spline,
     jag_spline: Spline,
-    base_3d: NormalNoise,
+    /// base_3d_noise：vanilla BlendedNoise（NoiseRouterData.java:86
+    /// `BlendedNoise.createUnseeded(0.25, 0.125, 80, 160, 8)`；种子注入
+    /// RandomState.java:69-72 fromHashOf("terrain")，clean-room 用域盐派生）。
+    base_3d: BlendedNoise,
     // 洞穴/山脊通道（26.1 noise json 表）
     cave_entrance: NormalNoise,
     sp3d_rarity: NormalNoise,
@@ -464,7 +469,7 @@ impl Orchestrator {
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
             jag_spline: overworld_jaggedness_spline(),
-            base_3d: n(0x00B1_3D00, -7, &[1.0, 1.0, 1.0]),
+            base_3d: BlendedNoise::new(world_seed, 0x00B1_3D00),
             cave_entrance: n(0x0000_CAFE_0001 ^ 0x26, -7, &AMPS_CAVE_ENTRANCE),
             sp3d_rarity: n(0x0000_CAFE_0001 ^ 0x11, -11, &AMPS_1),
             sp3d_1: n(0x0000_CAFE_0001 ^ 0x21, -7, &AMPS_1),
@@ -609,8 +614,11 @@ impl Orchestrator {
         // initial = 4 · quarterNegative(factor·(depth + jag))
         let depth = y_clamp(y_mc) + cs.offset;
         let initial = 4.0 * quarter_negative(cs.factor * (depth + jag));
-        // base_3d_noise：随机破面（自有双层 fBm 近 BlendedNoise）
-        let base_3d_v = self.base_3d.get_value(bx * 2.0, y_mc * 0.75, bz * 2.0);
+        // base_3d_noise：vanilla BlendedNoise 破面（xz/yMultiplier=
+        // 684.412·scale 已在结构内，BlendedNoise.java:64-65；密度函数上下文
+        // 对 base_3d 无外层乘子——旧 fork 的 (x·2, y·0.75, z·2) 随迁删除，
+        // NoiseRouterData.java:86 注册原样引用）。
+        let base_3d_v = self.base_3d.get_value(bx, y_mc, bz);
         let sloped = initial + base_3d_v;
         // 双洞穴（sloped_cheese 的 rangeChoice 分界 1.5625，overworld.json
         // final_density 的 range_choice max_exclusive）
@@ -633,15 +641,15 @@ impl Orchestrator {
 
     /// 测试出口：base_3d 通道在 density() 同坐标约定下的原始值（破面输入）。
     /// 地形保真波 T4 红测试（quality.rs base_3d_channel_*）统计该通道的
-    /// σ 与相邻块 |Δ| p90；T4 接入 BlendedNoise 时乘子 (x·2, y·0.75, z·2)
-    /// 随迁入 BlendedNoise 内部（BlendedNoise.java:64-65 xz/yMultiplier），
+    /// σ 与相邻块 |Δ| p90；T4 接入 BlendedNoise 后乘子 (x·2, y·0.75, z·2)
+    /// 已随迁入 BlendedNoise 内部（BlendedNoise.java:64-65 xz/yMultiplier），
     /// 本出口坐标约定不变。
     #[must_use]
     pub fn base_3d_sample(&self, block_x: i32, block_y: i32, block_z: i32) -> f64 {
         let bx = f64::from(block_x);
         let bz = f64::from(block_z);
         let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
-        self.base_3d.get_value(bx * 2.0, y_mc * 0.75, bz * 2.0)
+        self.base_3d.get_value(bx, y_mc, bz)
     }
 }
 

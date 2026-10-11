@@ -11,6 +11,7 @@
 //! 256 时代的 1.5× 压缩与 96 海平面重标随之作废）。
 
 pub mod biomes;
+pub mod blended;
 pub mod climate;
 pub mod noise;
 pub mod spline;
