@@ -433,8 +433,9 @@ fn collect_item_drop_snaps_filters_by_radius_and_carries_fields() {
         250,
         &mut rng,
     );
-    // 眼位 (0,64,0)、视距 64：只收得近处一枚。
-    let snaps = mcv_entity::collect_item_drop_snaps(&app.world, Some((Vec3::ZERO, 64.0)));
+    // 眼位 (0,64,0)、视距 64：只收得近处一枚（远枚球距 ≈707 ≫ 64）。
+    let eye = Vec3::new(0.0, 64.0, 0.0);
+    let snaps = mcv_entity::collect_item_drop_snaps(&app.world, Some((eye, 64.0)));
     assert_eq!(snaps.len(), 1, "视距外的掉落物不进渲染快照");
     let s = snaps[0];
     assert_eq!(s.pos, Vec3::new(3.0, 64.0, 3.0));

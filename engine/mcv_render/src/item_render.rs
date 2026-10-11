@@ -22,6 +22,8 @@
 //! （tex_set=0），方块物品采方块图集侧面 tile（tex_set=1，与 HUD
 //! tile_icon 先例 game.rs `tiles[2]` 同源）。
 
+use wgpu::util::DeviceExt;
+
 use glam::Vec3;
 
 use crate::camera::Camera;
@@ -162,17 +164,18 @@ impl ItemDropRenderer {
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // 静态顺序索引：quad i → [4i..4i+3]（QUADS 模式等价）。
+        // 静态顺序索引：quad i → [4i..4i+3]（QUADS 模式等价），创建期一次
+        // 上传（GLES 纪律：创建期映射写入走 create_buffer_init，帧内
+        // 动态覆写才走 queue.write_buffer——粒子 ibuf 同款）。
         let mut indices = Vec::with_capacity((MAX_DROPS * 6) as usize);
         for q in 0..MAX_DROPS {
             let b = q * 4;
             indices.extend_from_slice(&[b, b + 1, b + 2, b, b + 2, b + 3]);
         }
-        let ibuf = device.create_buffer(&wgpu::BufferDescriptor {
+        let ibuf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("item-drop-ibuf"),
-            size: (indices.len() * 4) as u64,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
         });
         Self {
             pipeline,
