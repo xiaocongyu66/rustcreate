@@ -13,7 +13,7 @@
 use std::collections::BTreeMap;
 
 use mcv_core::BLOCKS;
-use mcv_worldgen::trees::{ALL_KINDS, BlockSetter, TreeKind, TreesRng, ids, place_tree};
+use mcv_worldgen::trees::{ALL_KINDS, BlockSetter, Rng, TreeKind, TreesRng, ids, place_tree};
 
 /// 画布：BTreeMap 保序 → 全量快照可直接 `PartialEq`（字节级确定性）。
 #[derive(Default, PartialEq, Eq, Debug, Clone)]
@@ -216,7 +216,7 @@ fn canopy_shape_invariants() {
                 assert!(
                     c.blocks
                         .iter()
-                        .any(|((x, y, z), v)| *y == top - 1 && *v == leaf),
+                        .any(|((_, y, _), v)| *y == top - 1 && *v == leaf),
                     "dark oak 冠下层缺失"
                 );
             }

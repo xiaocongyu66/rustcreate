@@ -87,7 +87,7 @@ impl Rng for TreesRng {
         // 的 unbiased-bucket 思路同构；31 位抽取面）。
         let threshold = ((1u64 << 32) % u64::from(bound)) as u32;
         loop {
-            let bits = (self.next_u64() >> 33) as u64;
+            let bits = self.next_u64() >> 33;
             let m = bits * u64::from(bound);
             if (m as u32) >= threshold {
                 return (m >> 32) as u32;
@@ -254,7 +254,8 @@ fn trunk_dark_oak<R: Rng, S: BlockSetter>(
     // :73-85 外圈枝干：4x4 外环 12 格各 1/3 概率，柱长 nextInt(3)+2。
     for ox in -1..=2 {
         for oz in -1..=2 {
-            if (ox < 0 || ox > 1 || oz < 0 || oz > 1) && rng.next_int(3) == 0 {
+            let outer = |v: i32| !(0..=1).contains(&v);
+            if (outer(ox) || outer(oz)) && rng.next_int(3) == 0 {
                 let length = rng.next_int(3) as i32 + 2; // :76 → 2..4
                 for by in 0..length {
                     scribe.place_log(Pos::new(origin.x + ox, ey - by - 1, origin.z + oz));
