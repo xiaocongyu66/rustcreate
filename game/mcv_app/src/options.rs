@@ -5,6 +5,9 @@
 use std::path::Path;
 
 /// 渲染距离持久化钳制范围（与 app.rs 设置按钮步进范围一致）。
+/// 原版对照：`IntRange(2, maxMemory≥1GB ? 32 : 16)`（Options.java:1407，
+/// 档位常量 4/12/16/32 见 :81-84）。本仓 4..16 = 设置 UI 步进域裁剪
+/// （原版下限 2 上限 32/16），差异登记为裁剪债（#115 刀 5b）。
 const DIST_MIN: i32 = 4;
 const DIST_MAX: i32 = 16;
 
@@ -20,10 +23,15 @@ pub struct Options {
 }
 
 impl Default for Options {
-    /// 与引入持久化前的硬编码默认值一致。
+    /// 桌面 8（引入持久化前的硬编码默认，headless 测试基线不动）；
+    /// Android 6（#115 刀 5b：移动端内存预算裁剪——vd6 resident ≈ 63.4 MiB
+    /// vs vd8 ≈ 101.7 MiB，算式见 docs/memory-budget.md）。
+    /// 原版对照：默认恒 12（Options.java:1405-1409，IntRange(2, 大内存
+    /// ?32:16)、无平台分支，弱机靠玩家自调）——本仓平台分支是移动端
+    /// resident 预算的主动裁剪，登记为裁剪债。
     fn default() -> Self {
         Self {
-            render_dist: 8,
+            render_dist: if cfg!(target_os = "android") { 6 } else { 8 },
             sens: 1.0,
             clouds: 2,
             lang: 0,
@@ -104,6 +112,9 @@ mod tests {
 
     #[test]
     fn roundtrip() {
+        // render_dist=12 = 原版默认对照（Options.java:1409），锁「对照值
+        // 可无损往返」；本仓桌面默认 8 / 移动默认 6 = 内存预算裁剪债
+        // （Default 文档）。语义不许删弱：12 必须原样往返不落钳制。
         let o = Options {
             render_dist: 12,
             sens: 2.25,
@@ -148,7 +159,9 @@ mod tests {
 
     #[test]
     fn save_load_roundtrip_on_disk() {
-        // 按进程号隔离，避免并发测试互踩
+        // 按进程号隔离，避免并发测试互踩。
+        // render_dist=6 与 Android 默认同值纯属巧合（本测锁的是磁盘
+        // 往返语义，不依赖默认值；桌面默认 8，见 Default 文档）。
         let dir = std::env::temp_dir().join(format!("mcv_options_test_{}", std::process::id()));
         let path = dir.join("options.txt");
         let o = Options {
