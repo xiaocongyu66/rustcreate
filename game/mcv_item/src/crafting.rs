@@ -2,12 +2,16 @@
 //! matching, cooking types, and the vanilla-recipe table. Engine per
 //! NOTES-2 §5 (ShapedRecipePattern/ShapelessRecipe/CraftingInput).
 //!
-//! 配方数值全部对账 26.1 数据包 `data/minecraft/recipe/*.json`（仓库外
-//! /root/mc-ref/src-26.1，不入库；逐条注释引文件名与键名）。tag 配方
-//! （`#minecraft:planks` / `#minecraft:<种>_logs` /
-//! `#minecraft:wooden_tool_materials`）= Ingredient 列表 contains 匹配；
-//! 只收编本引擎已注册物品（宁缺勿错：原版 tag 里 mangrove/cherry/crimson
-//! 等未注册成员不进列表）。
+//! 配方表 = 手写表（SHAPED/SHAPELESS/COOKING，#137 历史先行件，数值对账
+//! 26.1 数据包 `data/minecraft/recipe/*.json`——仓库外 /root/mc-ref/src-26.1，
+//! 不入库；逐条注释引文件名与键名）∪ 生成表（recipes_gen.inc.rs，
+//! ci/gen-recipes.py 从同一数据源直译的全量可收子集）。匹配顺序手写优先，
+//! 重叠条目同 id 同结果，材料面生成表只会更宽（原版 tag 直译 ⊇ 手写子集）。
+//! tag 配方（`#minecraft:planks` /
+//! `#minecraft:<种>_logs` / `#minecraft:wooden_tool_materials`）= Ingredient
+//! 列表 contains 匹配；只收编本引擎已注册物品（宁缺勿错：原版 tag 里
+//! mangrove/cherry/crimson 等未注册成员不进列表）。缺物品挡住的配方登记在
+//! ci/recipes-gap.md（后续波次输入）。
 
 use crate::ItemStack;
 
@@ -517,6 +521,11 @@ pub static COOKING: [CookingRecipe; 2] = [
     },
 ];
 
+// ---- 生成表（ci/gen-recipes.py 产物，随源重生成；DO NOT EDIT）----------------
+// 与上方手写表按「手写 ∪ 生成」合并匹配（见 find_result/find_cooking）；
+// 表内容、重叠与镜像语义的完整引注见该文件头注释与 ci/recipes-gap.md。
+include!("recipes_gen.inc.rs");
+
 /// Resolve a pattern char to its ingredient list（tag 配方 = 整张列表，
 /// 未知字符 = None → 该格永不匹配；26.1 ShapedRecipePattern 的 key 缺失
 /// 即配方反序列化失败，同语义）。
@@ -587,8 +596,10 @@ fn matches_shaped(grid: &[u16], w: usize, r: &ShapedRecipe) -> bool {
     if pattern_rows_fit(r.pattern, r.keys, &cropped, cw) {
         return true;
     }
-    // mirror test for asymmetric patterns（26.1 ShapedRecipePattern 允许镜像；
-    // 逐行反转字符后重比）。
+    // mirror test for asymmetric patterns（26.1 ShapedRecipePattern 允许镜像：
+    // :159-171 symmetrical==false 时 matches(input, true) 同样命中；JSON 数据
+    // 只含实际 pattern（Data 记录无镜像字段），镜像全在运行期——手写/生成表
+    // 均不展开镜像，逐行反转字符后重比）。
     let mirrored: Vec<String> = r
         .pattern
         .iter()
@@ -618,13 +629,14 @@ fn matches_shapeless(grid: &[u16], r: &ShapelessRecipe) -> bool {
 
 /// Finds a crafting result for a grid (w = 2 or 3). Shaped first (26.1 order:
 /// shaped/shapeless are distinct types; RecipeMap keeps insertion order).
+/// 遍历「手写表 ∪ 生成表」，手写优先（重叠条目同结果，行为不变）。
 pub fn find_result(grid: &[u16], w: usize) -> Option<(u16, u8)> {
-    for r in SHAPED.iter() {
+    for r in SHAPED.iter().chain(GEN_SHAPED.iter()) {
         if matches_shaped(grid, w, r) {
             return Some(r.result);
         }
     }
-    for r in SHAPELESS.iter() {
+    for r in SHAPELESS.iter().chain(GEN_SHAPELESS.iter()) {
         if matches_shapeless(grid, r) {
             return Some(r.result);
         }
@@ -633,7 +645,17 @@ pub fn find_result(grid: &[u16], w: usize) -> Option<(u16, u8)> {
 }
 
 pub fn find_cooking(input: u16) -> Option<&'static CookingRecipe> {
-    COOKING.iter().find(|r| r.input.contains(&input))
+    COOKING
+        .iter()
+        .chain(GEN_COOKING.iter())
+        .find(|r| r.input.contains(&input))
+}
+
+/// Furnace smelt result for one input item（26.1 smelting；燃料值另表待后续波，
+/// 见 ci/recipes-gap.md 债节）。纯 API：本引擎暂无 furnace 屏，UI 接线随
+/// furnace 物品/方块注册波补（不新建 UI 在本波范围内）。
+pub fn smelt_result(item: u16) -> Option<(u16, u8)> {
+    find_cooking(item).map(|r| r.result)
 }
 
 /// Consumes one of each occupied grid cell into `inv` (caller applies
