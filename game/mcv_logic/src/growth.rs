@@ -232,7 +232,7 @@ fn tree_ground_ok(below: u16) -> bool {
 ///
 /// `at` 读世界（绝对坐标）。偏差：farmland MOISTURE 状态本仓未建模
 /// （无湿度位）→ 恒取干耕地基值 1.0，湿耕地 3.0 分支不可达——登记
-/// KNOWN-DIVERGENCE GROWTH-1 ⑤（干耕地产量下限，节奏偏慢侧安全）。
+/// KNOWN-DIVERGENCE GROWTH-1 ⑥（干耕地产量下限，节奏偏慢侧安全）。
 pub fn crop_growth_speed(
     crop: u16,
     x: i32,
@@ -287,14 +287,12 @@ pub fn crop_growth_speed(
 /// - `at` 读邻域（作物速度 3×3 + 同作物 8 邻）。
 pub fn random_tick(
     id: BlockId,
-    x: i32,
-    y: i32,
-    z: i32,
+    pos: BlockPos,
     here: LightCell,
     above: LightCell,
     sky_darken: u8,
     rng: &mut impl Rng,
-    at: &dyn Fn(i32, i32, i32) -> BlockId,
+    at: &dyn Fn(BlockPos) -> BlockId,
 ) -> Growth {
     let raw = id.id();
     if is_sapling(raw) {
@@ -314,7 +312,7 @@ pub fn random_tick(
             return Growth::None;
         };
         // 立地门（tree_pass GROUND；不过 = 苗悬空/基座非土族 → 不长）。
-        if !tree_ground_ok(at(x, y - 1, z).id()) {
+        if !tree_ground_ok(at(BlockPos::new(pos.x, pos.y - 1, pos.z)).id()) {
             return Growth::None;
         }
         return Growth::GrowTree(kind);
@@ -330,7 +328,9 @@ pub fn random_tick(
         }
         // :83-84 nextInt((int)(25.0F / growthSpeed) + 1) == 0 —— Java 强转
         // 向零截断，Rust `as i32` 同语义。
-        let speed = crop_growth_speed(raw, x, y, z, at);
+        let speed = crop_growth_speed(raw, pos.x, pos.y, pos.z, &|px, py, pz| {
+            at(BlockPos::new(px, py, pz))
+        });
         let bound = (CROP_GROW_BASE / speed) as i32 + 1;
         if rng.next_int(bound.max(1) as u32) != 0 {
             return Growth::None;
@@ -386,14 +386,12 @@ pub fn scan_tick(
                 let above = BlockPos::new(pos.x, pos.y + 1, pos.z);
                 let g = random_tick(
                     id,
-                    pos.x,
-                    pos.y,
-                    pos.z,
+                    pos,
                     light(pos),
                     light(above),
                     sky_darken,
                     &mut rng,
-                    &|px, py, pz| read(BlockPos::new(px, py, pz)),
+                    read,
                 );
                 if g != Growth::None {
                     out.push((pos, g));

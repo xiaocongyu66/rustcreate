@@ -163,14 +163,12 @@ fn sapling_without_air_above_never_grows() {
         let mut rng = ScriptRng::lucky();
         let g = growth::random_tick(
             c.get(p),
-            p.x,
-            p.y,
-            p.z,
+            p,
             c.light(p),
             c.light(BlockPos::new(p.x, p.y + 1, p.z)),
             0,
             &mut rng,
-            &|x, y, z| c.read(BlockPos::new(x, y, z)),
+            &|p: BlockPos| c.read(p),
         );
         assert_eq!(g, Growth::None, "上方无空气必须不长");
     }
@@ -187,14 +185,12 @@ fn sapling_gate_short_circuit_and_two_stage_advance() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 0),
-        p.x,
-        p.y,
-        p.z,
+        p,
         LightCell { sky: 0, block: 0 },
         LightCell { sky: 0, block: 0 },
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::None);
     assert_eq!(rng.consumed, 0, "亮度门未过不得消耗随机流");
@@ -202,14 +198,12 @@ fn sapling_gate_short_circuit_and_two_stage_advance() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 0),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         LightCell { sky: 15, block: 0 },
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::SaplingAdvance);
     assert_eq!(rng.consumed, 1, "恰好消耗一次 nextInt(7)");
@@ -217,14 +211,12 @@ fn sapling_gate_short_circuit_and_two_stage_advance() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 1),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         LightCell { sky: 15, block: 0 },
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::GrowTree(TreeKind::Oak));
     // ④ skyDarken 只压天光：暗夜 darken=11 → 天光 15−11=4 < 9 不长；
@@ -233,27 +225,23 @@ fn sapling_gate_short_circuit_and_two_stage_advance() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 1),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         LightCell { sky: 15, block: 0 },
         11,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::None, "暗夜无光不长");
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 1),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         LightCell { sky: 15, block: 12 },
         11,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::GrowTree(TreeKind::Oak), "方块光不被 darken 压");
 }
@@ -268,14 +256,12 @@ fn sapling_grow_requires_tree_ground_below() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_sapling_stage(OAK_SAPLING, 1),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         LightCell { sky: 15, block: 0 },
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::None, "非土族基座不长树");
 }
@@ -294,14 +280,12 @@ fn crop_gate_light_and_max_age() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_crop_age(WHEAT, 0),
-        p.x,
-        p.y,
-        p.z,
+        p,
         LightCell { sky: 8, block: 0 },
         c.light(p),
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::None);
     assert_eq!(rng.consumed, 0);
@@ -309,14 +293,12 @@ fn crop_gate_light_and_max_age() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         growth::with_crop_age(WHEAT, 7),
-        p.x,
-        p.y,
-        p.z,
+        p,
         LightCell { sky: 15, block: 0 },
         c.light(p),
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     assert_eq!(g, Growth::None);
     assert_eq!(rng.consumed, 0, "满 age 不进 randomTick");
@@ -335,14 +317,12 @@ fn crop_growth_rhythm_constants() {
         let mut rng = ScriptRng::lucky();
         let g = growth::random_tick(
             growth::with_crop_age(WHEAT, age),
-            p.x,
-            p.y,
-            p.z,
+            p,
             LightCell { sky: 15, block: 0 },
             c.light(p),
             0,
             &mut rng,
-            &|x, y, z| c.read(BlockPos::new(x, y, z)),
+            &|p: BlockPos| c.read(p),
         );
         match g {
             Growth::CropGrow { new_age } => age = new_age,
@@ -386,14 +366,12 @@ fn random_tick_only_acts_on_registered_targets() {
         let mut rng = ScriptRng::lucky();
         let g = growth::random_tick(
             BlockId(raw),
-            p.x,
-            p.y,
-            p.z,
+            p,
             LightCell { sky: 15, block: 0 },
             LightCell { sky: 15, block: 0 },
             0,
             &mut rng,
-            &|x, y, z| c.read(BlockPos::new(x, y, z)),
+            &|p: BlockPos| c.read(p),
         );
         assert_eq!(g, Growth::None, "id {raw} 非 生长目标");
     }
@@ -414,14 +392,12 @@ fn tree_grows_at_sapling_spot() {
     let mut rng = ScriptRng::lucky();
     let g = growth::random_tick(
         c.get(p),
-        p.x,
-        p.y,
-        p.z,
+        p,
         c.light(p),
         c.light(BlockPos::new(p.x, p.y + 1, p.z)),
         0,
         &mut rng,
-        &|x, y, z| c.read(BlockPos::new(x, y, z)),
+        &|p: BlockPos| c.read(p),
     );
     let kind = match g {
         Growth::GrowTree(k) => k,
