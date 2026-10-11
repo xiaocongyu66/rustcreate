@@ -59,41 +59,51 @@ pub struct ClimateSampler {
 }
 
 impl ClimateSampler {
+    /// 气候通道全部为 2D 切片采样（sample() 中 y 恒 0；vanilla
+    /// ShiftedNoise/ShiftNoise.compute 亦 y·0.25 归零，NoiseRouterData.java:89-97
+    /// 与 DensityFunctions.java ShiftNoise 接口），故统一走
+    /// `NormalNoise::new_slice_2d`：单倍频 σ 用 y=0 切片口径常数
+    /// （noise.rs 双口径文档，/tmp/sigma_slice.py 实测 0.73744）。
     #[must_use]
     pub fn new(world_seed: u64) -> Self {
         Self {
-            shift_x: NormalNoise::new(
+            shift_x: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x5A11),
                 -3,
                 &[1.0, 1.0, 1.0, 0.0],
             ),
-            shift_z: NormalNoise::new(
+            shift_z: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x5A22),
                 -3,
                 &[1.0, 1.0, 1.0, 0.0],
             ),
-            continentalness: NormalNoise::new(
+            continentalness: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x4F11),
                 -9,
                 &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
             ),
-            erosion: NormalNoise::new(
+            erosion: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x0B55),
                 -9,
                 &[1.0, 1.0, 0.0, 1.0, 1.0],
             ),
-            ridge: NormalNoise::new(world_seed, salt(world_seed, 0x3D11), -7, &[1.0, 2.0, 1.0]),
-            temperature: NormalNoise::new(
+            ridge: NormalNoise::new_slice_2d(
+                world_seed,
+                salt(world_seed, 0x3D11),
+                -7,
+                &[1.0, 2.0, 1.0],
+            ),
+            temperature: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x7A11),
                 -10,
                 &[1.5, 0.0, 1.0],
             ),
-            vegetation: NormalNoise::new(
+            vegetation: NormalNoise::new_slice_2d(
                 world_seed,
                 salt(world_seed, 0x3B33),
                 -8,

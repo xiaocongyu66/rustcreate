@@ -20,9 +20,9 @@
 //! [-1,1] 量级，晶格方向一致），倍频种子以自有 splitmix 域盐派生；第二层
 //! 独立种子以一层种子的 splitmix 终混派生（等价 26.1 的第二次 fork：
 //! 种子材料不同即统计独立，确定性不依赖具体派生式）。内核四阶 falloff 的
-//! 单倍频 σ 高于 ImprovedNoise，逐倍频乘
-//! [`OS2S_TO_IMPROVED_SIGMA`] 校准回原版统计（地形保真波 T2 主修，
-//! 证据链见该常数文档）。
+//! 单倍频 σ 高于 ImprovedNoise，逐倍频乘 σ 校准常数（2D 切片/3D 体积双口径，
+//! [`OS2S_TO_IMPROVED_SIGMA_2D`]/[`OS2S_TO_IMPROVED_SIGMA_3D`]）回原版统计
+//! （地形保真波 T2 主修，证据链见两常数文档）。
 
 /// splitmix64 终混合（复用 legacy 内核同源常数）。
 #[must_use]
@@ -57,11 +57,37 @@ pub struct NormalNoise {
     amplitudes: &'static [f64],
     value_factor: f64,
     max_value: f64,
+    /// 2D 切片采样标记（气候通道 y=0）：选 [`OS2S_TO_IMPROVED_SIGMA_2D`]，
+    /// 否则 [`OS2S_TO_IMPROVED_SIGMA_3D`]（见两常数文档的口径差异）。
+    slice_2d: bool,
 }
 
 impl NormalNoise {
     #[must_use]
     pub fn new(world_seed: u64, salt: u64, first_octave: i32, amplitudes: &'static [f64]) -> Self {
+        Self::build(world_seed, salt, first_octave, amplitudes, false)
+    }
+
+    /// 2D 切片通道构造器：气候全通道按 y=0 平面切片采样（climate.rs
+    /// ShiftedNoise/ShiftNoise 语义），单倍频 σ 校准用**切片口径**
+    /// [`OS2S_TO_IMPROVED_SIGMA_2D`]（3D 通道走 [`Self::new`]）。
+    #[must_use]
+    pub fn new_slice_2d(
+        world_seed: u64,
+        salt: u64,
+        first_octave: i32,
+        amplitudes: &'static [f64],
+    ) -> Self {
+        Self::build(world_seed, salt, first_octave, amplitudes, true)
+    }
+
+    fn build(
+        world_seed: u64,
+        salt: u64,
+        first_octave: i32,
+        amplitudes: &'static [f64],
+        slice_2d: bool,
+    ) -> Self {
         let seed = noise_seed(world_seed, salt);
         let seed2 = splitmix64(seed);
         let octaves = amplitudes.len();
@@ -100,6 +126,7 @@ impl NormalNoise {
             amplitudes,
             value_factor,
             max_value: edge,
+            slice_2d,
         }
     }
 
@@ -130,12 +157,21 @@ impl NormalNoise {
                 let ny = wrap(y * factor);
                 let nz = wrap(z * factor);
                 value +=
-                    amp * kernel_octave(crate::os2s::smooth::noise3_ImproveXZ(
-                        seed as i64,
-                        nx,
-                        ny,
-                        nz,
-                    )) * value_factor;
+                    amp * if self.slice_2d {
+                        kernel_octave_2d(crate::os2s::smooth::noise3_ImproveXZ(
+                            seed as i64,
+                            nx,
+                            ny,
+                            nz,
+                        ))
+                    } else {
+                        kernel_octave_3d(crate::os2s::smooth::noise3_ImproveXZ(
+                            seed as i64,
+                            nx,
+                            ny,
+                            nz,
+                        ))
+                    } * value_factor;
             }
             factor *= 2.0;
             value_factor /= 2.0;
@@ -158,21 +194,38 @@ fn wrap(x: f64) -> f64 {
 /// `0.1·(1+1/(span+1))`）以**原版 ImprovedNoise 倍频统计**为基准标定
 /// （气候通道表 NoiseData.java:80-81：continentalness/erosion firstOctave -9，
 /// 经 ShiftedNoise xz_scale 0.25 采样，NoiseRouterData.java:89-96）。内核替换为
-/// vendored OpenSimplex2S（`noise3_ImproveXZ`，四阶 falloff）后，单倍频 σ 从
-/// 0.26991（ImprovedNoise 结构 40 万样本实测）变为 0.35946（OS2S 12 万样本
-/// 实测，两口径同分布均匀采样、2026-10-11 移植复算）——全通道 σ 系统性
-/// ×1.3317：Ocean 占比 35.71% 越带、平原窗占比 0.024<0.10（quality.rs T2
-/// 主门双红的真实环节：波长/shift×4 均已对齐，唯归一基准错配）。
-/// 本因子按 σ 比值 0.26991/0.35946 = 0.750854 把内核输出校准回原版倍频
-/// 统计，使 value_factor 归一恢复设计语义。BlendedNoise 倍频（vanilla 同为
-/// ImprovedNoise 栈）同用此因子（[`crate::vanilla::blended`]）。
-pub const OS2S_TO_IMPROVED_SIGMA: f64 = 0.750_9;
+/// vendored OpenSimplex2S（`noise3_ImproveXZ`，四阶 falloff）后单倍频 σ 系统性
+/// 偏高（原 0.26991 vs 0.35946 的 ×1.3317：Ocean 占比 35.71% 越带、平原窗
+/// 0.024<0.10 的真实环节），按 σ 比值把内核输出校准回原版倍频统计，使
+/// value_factor 归一恢复设计语义。
+///
+/// **双口径（地形保真波 T2 续刀，2026-10-11 主线程实测）**：内核在「体积均匀
+/// 采样」与「y=0 平面切片采样」下的 σ 并不相同（两内核 y 方向结构不同），
+/// 12 种子 × 15 万样本/口径（`/tmp/sigma_slice.py` + `/tmp/improved_noise.py`
+/// 移植复算）：
+/// - 体积口径：ImprovedNoise 0.27106 / OS2S 0.36002 → 比 **0.75291**（3D）；
+/// - y=0 切片口径：0.26555 / 0.36010 → 比 **0.73744**（2D）。
+/// 气候全通道是 2D 切片采样（climate.rs y=0；vanilla ShiftedNoise/
+/// ShiftNoise.compute 亦 y·0.25 归零，NoiseRouterData.java:89-97），走
+/// [`Self::new_slice_2d`] 选切片常数；3D 通道（洞穴/山脊/base_3d）走体积
+/// 常数。BlendedNoise 倍频（vanilla 同为 ImprovedNoise 栈，3D 采样）同用
+/// 3D 常数（[`crate::vanilla::blended`]）。
+pub const OS2S_TO_IMPROVED_SIGMA_2D: f64 = 0.737_44;
+/// 体积（3D）口径 σ 比值 = 0.27106/0.36002（见 [`OS2S_TO_IMPROVED_SIGMA_2D`]）。
+pub const OS2S_TO_IMPROVED_SIGMA_3D: f64 = 0.752_91;
 
-/// 内核单倍频输出 → f64（含 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA`]）。
+/// 内核单倍频输出 → f64（2D 切片通道 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA_2D`]）。
 #[inline]
 #[must_use]
-pub(crate) fn kernel_octave(n: f32) -> f64 {
-    f64::from(n) * OS2S_TO_IMPROVED_SIGMA
+pub(crate) fn kernel_octave_2d(n: f32) -> f64 {
+    f64::from(n) * OS2S_TO_IMPROVED_SIGMA_2D
+}
+
+/// 内核单倍频输出 → f64（3D 体积通道 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA_3D`]）。
+#[inline]
+#[must_use]
+pub(crate) fn kernel_octave_3d(n: f32) -> f64 {
+    f64::from(n) * OS2S_TO_IMPROVED_SIGMA_3D
 }
 
 #[cfg(test)]
