@@ -97,10 +97,10 @@ mcv_mesher 双 pass + 生产同款 `build_chunk`/`flush`）——它是记账量
 | meshed_chunks | 361 | = 网格域块数 |
 
 **收紧纪律**（派单）已执行：首跑暂定派单估值 40 MiB——run 38114958737
-实测 48.34 MiB 如约触发取证红（`mesh_memory.rs:166` panic，K5-MEAS 行
-先行落日志），随后按 2× 实测收紧为 96 MiB（`MESH_BUDGET_MIB` 注释登记
-实测值与 run 号）。真机 Mali 实测另走 render-stats 取证
-（`docs/real-machine-checklist.md` §9）。
+实测 48.34 MiB 如约触发取证红（`resident_bytes ≤ MESH_BUDGET_MIB` 断言
+panic，K5-MEAS 行先行落日志），随后按 2× 实测收紧为 96 MiB
+（`MESH_BUDGET_MIB` 注释登记实测值与 run 号）。真机 Mali 实测另走
+render-stats 取证（`docs/real-machine-checklist.md` §9）。
 
 ## 3. 图集域（atlas）
 
