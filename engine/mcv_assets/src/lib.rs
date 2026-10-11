@@ -330,7 +330,9 @@ pub mod celestial {
         for y in 0..w {
             for x in 0..w {
                 let sx = (u64::from(x) * u64::from(sw) / u64::from(w)) as u32;
-                let sy = (u64::from(y) * u64::from(sh) / u64::from(w)) as u32;
+                // y 分母必须用源高 sh（D3，129-D 审计）：此前误用目标边长 w
+                // ——素材恰为 32×32 方形时恒等无害，非方形素材会 y 向压扁。
+                let sy = (u64::from(y) * u64::from(sh) / u64::from(sh)) as u32;
                 let s = ((sy * sw + sx) * 4) as usize;
                 let d = layer * CELESTIAL_PX * CELESTIAL_PX * 4 + ((y * w + x) * 4) as usize;
                 dst[d..d + 4].copy_from_slice(&src[s..s + 4]);

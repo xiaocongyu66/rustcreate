@@ -57,13 +57,71 @@ pub fn gui_scale(h: f32) -> f32 {
 /// tick 6000 = 0°（正午天顶；SkyRenderer.java:274 取度数转弧度、:323-325
 /// 绕 X 旋转该角，0° 即天顶），tick 0 = 黎明（wakeup 标记 0）、12000 = 日落、
 /// 18000 = 子夜。旧实现 `angle = frac*TAU` 把天顶放在 tick 0，比原版早 1/4 天。
+///
+/// **D2 修正（bezier 缓动）**：day.json:337-343 为 sun_angle 轨挂
+/// `cubic_bezier(0.362, 0.241, 0.638, 0.759)` 缓动（Timelines.java:39
+/// symmetricCubicBezier(0.362, 0.241)、:53 关键帧 (6000,360)/(6000,0)——
+/// 同 tick 双帧，实际语义 = 跨周期 6000→30000 由 0° 缓动至 360°）。即
+/// `angle = 360° × bezier_y(fract((tick−6000)/24000))`。线性近似在晨昏
+/// 偏差最大（tick 0/12000 太阳仰角 0° vs 原版 12.4°——bezier y(0.25)=
+/// y(0.75)=0.2156；开局数分钟太阳贴地/被地形挡的 D2 根因）。数值为
+/// day.json 硬编码常数（版权红线：json 不入仓，先例 moon_phase）。
 pub fn sun_state(time_ticks: u64) -> (Vec3, f32) {
     let tick = (time_ticks % 24_000) as f32;
-    // tick 6000 → 0°（天顶，dir.y = cos = 1）；6000±6000（0/12000）地平线。
-    let angle = (tick - 6_000.0) * (std::f32::consts::TAU / 24_000.0);
+    let frac = ((tick - 6_000.0) / 24_000.0).rem_euclid(1.0);
+    let angle = sun_angle_bezier_y(frac) * std::f32::consts::TAU;
     // z 分量 −0.25·sin 为既有美术倾斜（登记于 KNOWN-DIVERGENCE，非本次范围）。
     let dir = Vec3::new(-angle.sin(), angle.cos(), -0.25 * angle.sin()).normalize();
     (dir, day_factor(time_ticks))
+}
+
+/// day.json:338-343 cubic_bezier 控制点 (x1, y1, x2, y2)（Timelines.java:39
+/// symmetricCubicBezier(0.362, 0.241) 的展开）。CSS cubic-bezier 同式：
+/// x(u)/y(u) 三次多项式，给定 x 解 u（Newton 迭代，边界夹紧）。
+const SUN_ANGLE_BEZIER: [f32; 4] = [0.362, 0.241, 0.638, 0.759];
+
+fn sun_angle_bezier_y(x: f32) -> f32 {
+    let (x1, y1, x2, y2) = (
+        SUN_ANGLE_BEZIER[0],
+        SUN_ANGLE_BEZIER[1],
+        SUN_ANGLE_BEZIER[2],
+        SUN_ANGLE_BEZIER[3],
+    );
+    let x = x.clamp(0.0, 1.0);
+    let bx =
+        |u: f32| 3.0 * (1.0 - u) * (1.0 - u) * u * x1 + 3.0 * (1.0 - u) * u * u * x2 + u * u * u;
+    let by =
+        |u: f32| 3.0 * (1.0 - u) * (1.0 - u) * u * y1 + 3.0 * (1.0 - u) * u * u * y2 + u * u * u;
+    // y(u) 对 u 的导数（Newton 用）。
+    let by_dt = |u: f32| {
+        3.0 * (1.0 - u) * (1.0 - 3.0 * u) * y1 + 3.0 * u * (2.0 - 3.0 * u) * y2 + 3.0 * u * u
+    };
+    let mut u = x;
+    for _ in 0..8 {
+        let err = bx(u) - x;
+        if err.abs() < 1e-6 {
+            break;
+        }
+        let d = by_dt(u);
+        if d.abs() < 1e-6 {
+            break;
+        }
+        u = (u - err / d).clamp(0.0, 1.0);
+    }
+    // Newton 不收敛（导数平坦）时二分兜底：bezier x(u) 单调，必收敛。
+    if (bx(u) - x).abs() > 1e-4 {
+        let (mut lo, mut hi) = (0.0_f32, 1.0_f32);
+        for _ in 0..48 {
+            let m = 0.5 * (lo + hi);
+            if bx(m) < x {
+                lo = m;
+            } else {
+                hi = m;
+            }
+        }
+        u = 0.5 * (lo + hi);
+    }
+    by(u)
 }
 
 /// 昼夜光照系数（渲染逐帧乘到天光上的 `day_factor`）。

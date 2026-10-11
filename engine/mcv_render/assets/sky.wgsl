@@ -101,7 +101,8 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     color = mix(color, sky.sunrise.rgb, band);
 
     // Sun / moon：原版是贴图 quad（SkyRenderer.java:125-127 太阳、:149-157
-    // 八相月亮，月亮 scale 20、太阳 scale 30、距离 100）。quad 平面基由
+    // 八相月亮，SUN_SIZE=30/MOON_SIZE=20（:50-52，quad 平面内 [-30,30]²/[-20,
+    // 20]²）、距离 100）。quad 平面基由
     // RotY(-90)·RotX(angle) 展开：太阳 U 轴（局部 +X）= 世界 +Z（南）、
     // V 轴（局部 +Z）= (-s.y, s.x, 0)；月亮路径同面反向（angle+180°），
     // 且 buildMoonPhases 的 UV 相对太阳横竖双镜像（:151-154 顶点 u0/u1、
@@ -112,14 +113,14 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     // → BlendFunction.java:9）：dst.rgb += src.rgb * src.a（加色）。sun.png /
     // moon/*.png 全图 alpha=1、四周暗色——加色下暗底≈无贡献，只亮出核心。
     // 素材缺失时纹理数组为全透明（无程序化圆盘回退）：加色 0，天空无天体。
-    let sun_hit = quad_hit(dir, s, 15.0, u_axis, v_axis);
+    let sun_hit = quad_hit(dir, s, 30.0, u_axis, v_axis);
     if (sun_hit.z > 0.0) {
         // 太阳 quad 顶色白、alpha=rainBrightness（:347），本引擎无雨 → 1。
         let tex = textureSampleLevel(celestial_tex, celestial_samp, sun_hit.xy, 0, 0.0);
         color += tex.rgb * tex.a;
     }
     let m = -s;
-    let moon_hit = quad_hit(dir, m, 10.0, u_axis, -v_axis);
+    let moon_hit = quad_hit(dir, m, 20.0, u_axis, -v_axis);
     if (moon_hit.z > 0.0) {
         // 月亮 quad UV 双镜像（buildMoonPhases :151-154）+ 相位层选择
         // （baseVertex = moonPhase.index() * 4，:370-372）。
