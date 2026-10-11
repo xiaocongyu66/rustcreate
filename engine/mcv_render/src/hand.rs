@@ -280,6 +280,47 @@ mod tests {
     }
 
     #[test]
+    fn arm_swing_uses_vanilla_arm_specific_curve() {
+        // 26.1 空手挥臂与物品挥动**幅度分离**（审计 #5/#6）：
+        // 臂专用位移 (−0.3,0.4,−0.4)（ItemInHandRenderer.java:267-269，物品
+        // 是 (−0.4,0.2,−0.2) swingArm:618-620）+ rotY(45°):271 之后
+        // rotY(70°·sin(√a·π)):274 与 rotZ(−20°·sin(a²·π)):275（物品路径走
+        // applyItemArmAttackTransform :332-340 的另一组角）。
+        let c = cam();
+        // a=0 与 a=1 全部正弦回零 → 精确归位。
+        let rest = hand_arm_matrix(&c, 0.0);
+        let done = hand_arm_matrix(&c, 1.0);
+        assert!(
+            rest.abs_diff_eq(done, 1e-4),
+            "挥臂进度 1 必须与静止同矩阵（:267-275 正弦全回零）"
+        );
+        // a=0.5 端到端 NDC 锁（16:9、hud 70°；本机对原版矩阵链全项
+        // Python 复算）：手端角 (0.1875,−0.625,0.125) → NDC ≈(0.095,−0.763)。
+        // 旧 interim 组合（物品幅度 + 绕视右轴整体劈砍）把臂抡向上半屏
+        // （手端 NDC y≈+0.7..+0.9、x≈0.20..0.46），对本锁必红。
+        let m = hand_arm_matrix(&c, 0.5);
+        let hand = [0.1875f32, -0.625, 0.125];
+        let ndc = hud_ndc(&c, (m * Vec3::from_array(hand).extend(1.0)).truncate());
+        assert!(
+            (ndc.0 - 0.095).abs() < 0.02 && (ndc.1 + 0.763).abs() < 0.02,
+            "a=0.5 手端角 NDC {ndc:?} 应≈(0.095,−0.763)——臂专用挥动幅度/旋转项回归"
+        );
+        // 肩端在挥动全程保持屏外（复算 a=0.5 时 y∈[−2.23,−1.81]）。
+        for sh in [
+            [-0.0625f32, 0.125, -0.125],
+            [-0.0625, 0.125, 0.125],
+            [0.1875, 0.125, -0.125],
+            [0.1875, 0.125, 0.125],
+        ] {
+            let ndc = hud_ndc(&c, (m * Vec3::from_array(sh).extend(1.0)).truncate());
+            assert!(
+                ndc.1 < -1.0,
+                "a=0.5 肩端 {sh:?} NDC {ndc:?} 必须屏外（y<−1）——挥臂把肩拽回画面即回归"
+            );
+        }
+    }
+
+    #[test]
     fn icon_quad_faces_viewer_and_is_sized() {
         let c = cam();
         let (pts, _uv) = hand_icon_quad(&c, 0.0);
