@@ -197,9 +197,9 @@ mod tests {
         //   θx = |cos(−0.25π − 0.2)|·0.1·5 = 0.275969°——−0.2 在 **cos 括号内**
         //   （:347 `cos(f*π − 0.2F)`），曾误写 (cos−0.2)·bob 得 0.2536° 未被
         //   平移断言抓到，此锁防再犯）。
-        let expected = Mat4::from_translation(Vec3::new(-0.03535534, -0.07071068, 0.0))
-            * Mat4::from_rotation_z(-0.212_132_0f32.to_radians())
-            * Mat4::from_rotation_x(0.275_968_5f32.to_radians());
+        let expected = Mat4::from_translation(Vec3::new(-0.035_355, -0.070_711, 0.0))
+            * Mat4::from_rotation_z(-0.212_132f32.to_radians())
+            * Mat4::from_rotation_x(0.275_969f32.to_radians());
         assert!(m.abs_diff_eq(expected, 1e-5), "bob 全矩阵对原版常数");
     }
 
