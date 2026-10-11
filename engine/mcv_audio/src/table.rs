@@ -339,7 +339,7 @@ pub fn try_sound_type_for_block(name: &str) -> Option<&'static SoundType> {
     BLOCK_SOUND_TYPES
         .binary_search_by(|(n, _)| (*n).cmp(name))
         .ok()
-        .map(|i| &BLOCK_SOUND_TYPES[i].1)
+        .map(|i| &SOUND_TYPES[BLOCK_SOUND_TYPES[i].1 as usize].1)
 }
 
 /// 按方块注册名查 SoundType,未登记名回落原版默认 STONE

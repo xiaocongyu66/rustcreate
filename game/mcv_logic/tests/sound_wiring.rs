@@ -40,11 +40,13 @@ fn walk_cadence_matches_vanilla() {
         }
     }
     assert_eq!(fired_at.len(), 4, "40 tick 应触发 4 步: {fired_at:?}");
-    // 首步 ≈1.08（1.0 门），之后 2.04/3.0/3.96——阈值等差 1.0。
+    // 首步 ≈1.08（1.0 门），之后首过 2.0/3.0/4.0 阈值落 2.04/3.12/4.08
+    // ——阈值 (int)moveDist+1 等差 1.0；严格 > 门下 0.12×25 真值恰 3.0
+    // 等值不触发（IEEE754 累积误差 <1e-5，断言容差内确定）。
     assert!((fired_at[0].1 - 1.08).abs() < 1e-5, "{fired_at:?}");
     assert!((fired_at[1].1 - 2.04).abs() < 1e-5, "{fired_at:?}");
-    assert!((fired_at[2].1 - 3.00).abs() < 1e-5, "{fired_at:?}");
-    assert!((fired_at[3].1 - 3.96).abs() < 1e-5, "{fired_at:?}");
+    assert!((fired_at[2].1 - 3.12).abs() < 1e-5, "{fired_at:?}");
+    assert!((fired_at[3].1 - 4.08).abs() < 1e-5, "{fired_at:?}");
 }
 
 #[test]

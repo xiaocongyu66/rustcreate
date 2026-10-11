@@ -381,7 +381,9 @@ fn all_java_types_present() {
 
 #[test]
 fn every_family_has_five_event_names() {
-    // 五事件名一律非空且不带下划线前缀（EMPTY 槽位 = intentionally_empty）。
+    // 五事件名一律非空且不带下划线前缀：EMPTY 槽位 = intentionally_empty；
+    // place 槽位存在 item.* 命名空间（CROP/HARD_CROP = item.crop.plant
+    // SE.java:476，NETHER_WART = item.nether_wart.plant），其余均 block.*。
     for (name, st) in SOUND_TYPES {
         for (kind, ev) in [
             ("dig", st.dig),
@@ -392,7 +394,7 @@ fn every_family_has_five_event_names() {
         ] {
             assert!(!ev.is_empty(), "{name}.{kind} 事件名空");
             assert!(
-                ev == "intentionally_empty" || ev.starts_with("block."),
+                ev == "intentionally_empty" || ev.starts_with("block.") || ev.starts_with("item."),
                 "{name}.{kind} 事件名非法: {ev}"
             );
         }
