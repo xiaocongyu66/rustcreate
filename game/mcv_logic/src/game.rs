@@ -1246,7 +1246,7 @@ impl GameRuntime {
     /// 模拟安全半径：以 `pc` 为中心最大 r ≥ 0，使 Chebyshev ≤r 的环全部
     /// **status ≥ Full**（原版实体物理门 = FULL 级 chunk：ChunkLevel.java
     /// :35-43 fullStatus，level ≤ 33 → FULL；Full 证据链 = worldgen commit
-    /// + 3×3 邻域光照齐，见 [`Self::advance_status_by_level`]）；玩家本块
+    /// 加 3×3 邻域光照齐，见 [`Self::advance_status_by_level`]）；玩家本块
     /// 未就位返回 **-1**（物理门：整步冻结，26.1 玩家实体在区块就绪前
     /// 不参与物理）。返回值同时导出钳制矩形（[`Self::clamp_to_sim_area`]），
     /// 玩家 AABB 查询的列恒真体素。
@@ -1313,6 +1313,7 @@ impl GameRuntime {
     ///   ChunkMap.move :1071-1096）。
     /// - r_safe 侧来自 4a 证据环（status≥Full，ChunkLevel.java:35-43
     ///   FULL 级）——票授权 × 证据齐备二者取小，稳态下与票域一致收敛。
+    ///
     /// `r ≥ 1` 时矩形区块再外扩一环（步进中原点位移 + AABB 半宽的查询
     /// 触达）仍整体落在已就位环 ≤r 内，pad = 玩家半宽 + 余量即可；
     /// `r = 0`（仅本块就位）时 pad 收到 1.0 格，触达不出本块。
