@@ -1182,15 +1182,19 @@ fn ocean_pair_edge_sync_keeps_water_column_and_is_idempotent() {
     p.init_and_pair();
 
     // 跨界两列浅水（深度 1..=10）：边同步不得回撤水柱（129-C §1 黑带）。
+    // 口径对齐锁定用例 ocean_water_column_falls_off_below_surface：水面格
+    // y=55=深度 1 → sky 14，往下每格 -1（sky=15-d，d=格面距）；129-C §6
+    // 「d≤10 → sky≥5」。首轮 CI 红是草案 y=55-d 的差一（d=10 → y=45 实为
+    // sky 4），按锁定口径修正为 y=56-d。
     for gx in [15usize, 16usize] {
         for d in 1..=10usize {
-            let y = 55 - d as i32;
+            let y = 56 - d as i32;
             assert!(
                 sky_p(&p, gx, y, 8) >= 5,
                 "跨界列 gx={gx} 深度{d} y={y} sky<5（边同步回撤水柱）"
             );
         }
-        // 深水 d=15 仍在递减序列上（14,13,…,0），不得错位。
+        // 深水 d=16 仍在递减序列末端（14,13,…,0），不得错位。
         assert_eq!(sky_p(&p, gx, 40, 8), 0, "gx={gx} 深水底");
     }
 
