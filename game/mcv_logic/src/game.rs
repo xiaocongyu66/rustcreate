@@ -2755,6 +2755,9 @@ impl GameRuntime {
             // 雨粒子：tick 后按天气强度在世界里补原版 RAIN 粒子
             // （原版同为 tick 尾客户端生成，LevelRenderer.java:1164）。
             self.spawn_rain_particles();
+            // ---- 生长 tick（#146：树苗→树 + 作物 age；ServerLevel.tickChunk
+            // 的 random tick 驱动，唯一调用点）----
+            self.growth_tick();
             // ---- 行走 bob 状态（26.1 LocalPlayer.aiStep → updateBob 链）----
             // LocalPlayer.java:989 walkDist += Mth.length(Δx,Δz)·0.6（每 tick）；
             // AbstractClientPlayer.java:84-87 tBob = min(0.1, |Δv|水平)，
@@ -3617,6 +3620,173 @@ impl GameRuntime {
     ///   随反编译提取）→ 用库默认 1..=4，KNOWN-DIVERGENCE（审计 N-3）。
     /// - 落地 y = 候选格本身（`mob.snapTo(xx, yStart, zz)`，:211；旧版
     ///   surface+1 悬空 1 格，审计 M-4）。
+    /// 生长 tick（#146，fixed_step 每 on_tick 调用一次）：树苗→树 +
+    /// 作物 age 推进。决策面全部在 [`crate::growth`]（纯函数，引注见该
+    /// 模块头注）；本方法只做三件事——ticking 域圈定、扫描、结算写入。
+    ///
+    /// - **ticking 域**：玩家块 Chebyshev ±2（5×5）且 `stage ≥
+    ///   LightLocalReady`（自然刷新同款就绪门，`try_natural_spawn` 先例）。
+    ///   原版 random tick 跑在模拟距内全部 ticking 块（ServerLevel.java:
+    ///   497-523 遍历 shouldTick 块）→ 本仓取交互半径子集，登记
+    ///   KNOWN-DIVERGENCE GROWTH-1 ④。push 序 = dx 升序、dz 升序 =
+    ///   (x, z) 字典序（`growth::scan_tick` 流消耗序契约面）。
+    /// - **结算**：CropGrow/SaplingAdvance = 单格写（age/stage 变 id 不变 →
+    ///   光照与高度图不受影响，只标 MESH|SAVE）；GrowTree = 苗位清 AIR →
+    ///   `place_tree`（#135）投影（替换门 [`crate::growth::tree_write_gate`]
+    ///   同 `vanilla/tree_pass.rs::ChunkClipper`；跨界裁剪同 TREES-2 ④）→
+    ///   逐格 `relight_block_edit`（树影投下后下方作物光照门才能如实收敛）
+    ///   + 触达块 MESH|SAVE。
+    fn growth_tick(&mut self) {
+        if self.phase != GamePhase::Playing {
+            return;
+        }
+        let pc = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        let mut chunks = Vec::with_capacity(25);
+        for dx in -2..=2 {
+            for dz in -2..=2 {
+                let p = ChunkPos::new(pc.x + dx, pc.z + dz);
+                let ready = self
+                    .chunks
+                    .get(&p)
+                    .is_some_and(|h| (h.stage() as u8) >= (Stage::LightLocalReady as u8));
+                if ready {
+                    chunks.push(p);
+                }
+            }
+        }
+        if chunks.is_empty() {
+            return;
+        }
+        let view = WorldView {
+            chunks: &self.chunks,
+        };
+        // 原始双通道光照（树苗门 darken 只压天光，LevelLightEngine.java:
+        // 146-151；缺块/界外 = 满亮天空，与 WorldView::light 同语义）。
+        let light = |p: BlockPos| -> crate::growth::LightCell {
+            if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
+                return crate::growth::LightCell { sky: 15, block: 0 };
+            }
+            match self.chunks.get(&p.chunk()) {
+                Some(h) if h.stage() != Stage::Empty => {
+                    let [lx, _, lz] = p.local();
+                    let v = h.light.read().unwrap()[mcv_core::vidx(lx, p.y, lz)];
+                    crate::growth::LightCell {
+                        sky: v >> 4,
+                        block: v & 0xF,
+                    }
+                }
+                _ => crate::growth::LightCell { sky: 15, block: 0 },
+            }
+        };
+        let darken = self.weather.sky_darken(sky_darken(self.time_ticks));
+        let decisions = crate::growth::scan_tick(
+            &chunks,
+            self.seed,
+            self.game_ticks,
+            darken,
+            &|p| view.block(p),
+            &light,
+        );
+        drop(view);
+        for (pos, g) in decisions {
+            match g {
+                crate::growth::Growth::None => {}
+                crate::growth::Growth::CropGrow { new_age } => {
+                    if let Some(h) = self.chunks.get(&pos.chunk()) {
+                        let [lx, _, lz] = pos.local();
+                        let idx = mcv_core::vidx(lx, pos.y, lz);
+                        let mut v = h.voxels.write().unwrap();
+                        v[idx] = crate::growth::with_crop_age(v[idx], new_age);
+                        drop(v);
+                        h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+                    }
+                }
+                crate::growth::Growth::SaplingAdvance => {
+                    if let Some(h) = self.chunks.get(&pos.chunk()) {
+                        let [lx, _, lz] = pos.local();
+                        let idx = mcv_core::vidx(lx, pos.y, lz);
+                        let mut v = h.voxels.write().unwrap();
+                        v[idx] = crate::growth::with_sapling_stage(v[idx], 1);
+                        drop(v);
+                        h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+                    }
+                }
+                crate::growth::Growth::GrowTree(kind) => {
+                    self.grow_tree_at(pos, kind);
+                }
+            }
+        }
+    }
+
+    /// 苗位长树（SaplingBlock.java:55 → TreeGrower.growTree 的本仓结构面）：
+    /// 先清苗位（TreeGrower.java:169 `setBlock(pos, emptyBlock, 260)`），
+    /// 再 `place_tree` 投影（树基 = 苗原位），逐格增量重光照。
+    fn grow_tree_at(&mut self, pos: BlockPos, kind: mcv_worldgen::trees::TreeKind) {
+        let base_chunk = pos.chunk();
+        let Some(handle) = self.chunks.get(&base_chunk) else {
+            return;
+        };
+        let [lx, _, lz] = pos.local();
+        let base_idx = mcv_core::vidx(lx, pos.y, lz);
+        // 清苗（growTree 先清位再 place；本仓 place_tree 恒成功 → 无回植
+        // 分支，TreeGrower.java:171-175 的失败恢复不适用）。
+        let old = handle.voxels.read().unwrap()[base_idx];
+        handle.voxels.write().unwrap()[base_idx] = BlockId(0);
+        handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        let mut edits: Vec<(BlockPos, u16, u16)> = vec![(pos, old.0, 0)];
+        // 树投影写手：跨界裁剪同 TREES-2 ④（苗所属块 16×16 柱内才落格），
+        // 替换门 = growth::tree_write_gate（ChunkClipper 同表）。
+        struct RuntimeSetter<'a> {
+            chunks: &'a HashMap<ChunkPos, Arc<ChunkHandle>>,
+            base: ChunkPos,
+            edits: &'a mut Vec<(BlockPos, u16, u16)>,
+        }
+        impl mcv_worldgen::trees::BlockSetter for RuntimeSetter<'_> {
+            fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
+                let p = BlockPos::new(x, y, z);
+                if p.chunk() != self.base
+                    || !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&y)
+                {
+                    return;
+                }
+                let Some(slot) = crate::growth::tree_slot_of(id) else {
+                    return;
+                };
+                let h = self.chunks.get(&self.base).expect("base chunk held");
+                let [lx, _, lz] = p.local();
+                let idx = mcv_core::vidx(lx, y, lz);
+                let cur = h.voxels.read().unwrap()[idx];
+                if !crate::growth::tree_write_gate(slot, cur) {
+                    return;
+                }
+                h.voxels.write().unwrap()[idx] = BlockId(id);
+                self.edits.push((p, cur.0, id));
+            }
+        }
+        {
+            let mut setter = RuntimeSetter {
+                chunks: &self.chunks,
+                base: base_chunk,
+                edits: &mut edits,
+            };
+            let mut rng = mcv_worldgen::trees::TreesRng::new(crate::growth::tree_stream_seed(
+                self.seed,
+                self.game_ticks,
+                pos,
+            ));
+            mcv_worldgen::trees::place_tree(&mut rng, pos.x, pos.y, pos.z, kind, &mut setter);
+        }
+        // 逐格增量重光照 + 高度图（26.1 setBlock → checkBlock 同位；树影
+        // 决定下方作物后续的亮度门，不能只标脏）。源块当帧优先重建网格。
+        for (p, o, n) in &edits {
+            relight_block_edit(&self.chunks, *p, *o, *n, &mut self.pending_light_edges);
+        }
+        self.mesh_priority = Some(base_chunk);
+    }
+
     /// - 种类池补 spider（审计 M-5；权重 JSON 未提取 → 均匀，
     ///   KNOWN-DIVERGENCE）。
     fn try_natural_spawn(&mut self) {
@@ -4514,6 +4684,24 @@ impl GameRuntime {
                         mcv_entity::PICKUP_DELAY,
                         &mut rng,
                     );
+                }
+                // 作物收获（#146，26.1 loot_table/blocks/wheat.json 直译：
+                // age=7 → 1 麦粒 + 0..3 种子、age<7 → 1 种子）。物品名 → id
+                // 走 mcv_item::item_by_name——ITEMS（#144 在扩）现无
+                // wheat/wheat_seeds → 解析 None 即不掉，待 #144 合入自动
+                // 接通（KNOWN-DIVERGENCE GROWTH-1 ②；届时勿在 DROP_TABLE
+                // 重复登记小麦行，防双重掉落）。
+                for (name, count) in crate::growth::harvest_drops(old, &mut rng) {
+                    if let Some(item_id) = mcv_item::item_by_name(name) {
+                        mcv_entity::spawn_item_drop(
+                            &mut self.mobs_app.world,
+                            c,
+                            item_id,
+                            count,
+                            mcv_entity::PICKUP_DELAY,
+                            &mut rng,
+                        );
+                    }
                 }
             }
             // 耐久段（ServerPlayerGameMode.java:296 itemStack.mineBlock →

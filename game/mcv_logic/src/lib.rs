@@ -21,6 +21,7 @@
 
 pub mod difficulty;
 pub mod game;
+pub mod growth;
 pub mod mob_render;
 pub mod ticket;
 pub mod ui;

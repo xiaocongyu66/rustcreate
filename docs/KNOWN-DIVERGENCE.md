@@ -197,3 +197,35 @@ AABB 0.25（Item.java SIZE）→ quad 边长 0.25、浮动 bob = sin(ageInTicks/
    方块/材料两观感在 ±0.03 块内。
 7. **手持 3D 模型债**已在 HAND-2 #7 登记（本波手持图标 sprite 简化版
    维持不动）。
+
+## GROWTH-1 生长波（#146，feat/growth）的运行时裁剪
+
+树苗→树（`mcv_logic/src/growth.rs` + `game.rs::growth_tick`）接 #135
+`place_tree` 结构库，随机 tick 结构对齐 26.1 `ServerLevel.tickChunk`
+（每块 × 24 section × random_tick_speed=3 尝试/tick，GameRules.java:74）。
+随运行时无状态位/无跨界通道的既定模型，登记六项偏差：
+
+1. **树形来源**：原版树苗 `growTree` 走 `TreeGrower` 特征参数（特征表+
+   placer 采样），本仓树结构 = `trees::place_tree`（#135 六树种结构库，
+   同 seed 同字节契约），不消费原版 sapling 特征参数——树形由 #135 锁定，
+   fancy oak/mega 系依旧折回（TREES-2 尾注）。
+2. **收获掉落物品缺口**：26.1 `loot_table/blocks/wheat.json` 直译为
+   `growth::harvest_drops` 的按名规格（age=7 → 1 麦粒 + 0..3 种子、
+   age<7 → 1 种子），物品 id 解析走 `mcv_item::item_by_name`——ITEMS 表
+   （#144 在扩）现无 wheat/wheat_seeds → 解析 None 即不掉。#144 合入后
+   自动接通；届时**勿在 DROP_TABLE 重复登记小麦行**（双重掉落），本断言
+   锁在 `tests/growth_runtime.rs::wheat_items_absent_until_items_wave_lands`。
+3. **作物面**：仅小麦（`is_crop`）；胡萝卜/土豆/甜菜根等 CropBlock 族
+   随 ITEMS 扩表同构接入（速度公式/亮度门已按 CropBlock.java:79-142
+   通用移植）。
+4. **ticking 域半径**：原版 random tick 跑在模拟距内全部 ticking 块
+   （ServerLevel.java:497-523 遍历 shouldTick 块），本仓取玩家块
+   Chebyshev ±2 的 5×5 交互子集——苗/麦的每格节奏不变（尝试数按 section
+   体积比例对齐），仅覆盖半径收窄。
+5. **尝试流重播种**：原版 `ServerLevel.random` 为世界级长流；本仓按
+   `(world_seed ^ GROWTH_DOMAIN, game_tick)` 每 tick 重播种（splitmix 终
+   混）——同世界态同 seed 恒同决策（契约面），节奏统计同分布，跨实现
+   字节级对拍不适用（同 trees.rs TreesRng 契约先例）。
+6. **湿耕地未建模**：farmland MOISTURE 状态无位 → `crop_growth_speed`
+   恒取干耕地 1.0 基值，湿耕 3.0 分支不可达（CropBlock.java:104-113）——
+   作物节奏偏慢侧（干耕产量下限），状态位波落地后同构接通。
