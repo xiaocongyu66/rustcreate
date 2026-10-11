@@ -13,6 +13,7 @@
 //! - `base_3d_channel_adjacent_delta_p90`：相邻块 |Δ| 谱由 main 选择器栈的
 //!   高频倍频主导，OS2S 校准版实测 **0.0550**>0.05，ImprovedNoise 版
 //!   **0.0153/0.0138**（(0,0)/(4096,-4096)）。
+//!
 //! 即：σ 相等 ≠ 谱相等，修移植 = 内核换成原版机制本体。
 //!
 //! ## 机制出处（26.1 反编译树 /root/mc-ref/src-26.1）
@@ -293,27 +294,30 @@ mod tests {
         );
     }
 
-    /// yFudge 纵向量化机制锁（ImprovedNoise.java:48-59）：yScale≠0 时 y 分数
-    /// 坐标被量化到 yScale 格——yFudge=1.0（≥yr 恒真 → fudgeLimit=yr）时
-    /// 有效 yr = yr mod yScale，故 y=0.30 与 y=0.55（同余 0.05 @ yScale 0.25）
-    /// 必须位型一致；yScale=0（3 参路径）无量化，二者不同。
+    /// yFudge 纵向量化机制锁（ImprovedNoise.java:48-61）：
+    /// 1. yScale=0 ⇒ yrFudge=0 ⇒ 5 参退化为 3 参逐位一致（:32-34 与 :57-59）；
+    /// 2. yScale≠0 ⇒ 量化改变角点权重（yr' = yr − floor(fudgeLimit/yScale)·yScale
+    ///    进入 gradDot，而 yAlpha 仍用量化前 yrOriginal，:101）——足够密的 y
+    ///    采样中必有位型不同的点（frac(y+yo) ≥ yScale 的部分）。
     #[test]
     fn y_fudge_quantizes_y_fraction() {
         let inst = ImprovedNoise::new(11);
         let (x, z) = (3.7_f64, -9.2);
-        let a = inst.noise_fudged(x, 0.30, z, 0.25, 1.0);
-        let b = inst.noise_fudged(x, 0.55, z, 0.25, 1.0);
-        assert_eq!(
-            a.to_bits(),
-            b.to_bits(),
-            "yFudge 量化失效：yr mod yScale 应同值（0.30 vs 0.55 @ scale 0.25）"
-        );
-        let c = inst.noise_fudged(x, 0.30, z, 0.0, 1.0);
-        let d = inst.noise_fudged(x, 0.55, z, 0.0, 1.0);
-        assert_ne!(
-            c.to_bits(),
-            d.to_bits(),
-            "yScale=0 不应量化（3 参语义，ImprovedNoise.java:57-59）"
+        for y in [0.1_f64, 0.55, 1.7, -3.4] {
+            let three_arg = inst.noise(x, y, z).to_bits();
+            let no_scale = inst.noise_fudged(x, y, z, 0.0, 0.0).to_bits();
+            assert_eq!(
+                three_arg, no_scale,
+                "yScale=0 应逐位退化为 3 参语义（y={y}）"
+            );
+        }
+        let any_diff = (0..50).any(|k| {
+            let y = f64::from(k) * 0.037 + 0.11;
+            inst.noise_fudged(x, y, z, 0.25, 1.0).to_bits() != inst.noise(x, y, z).to_bits()
+        });
+        assert!(
+            any_diff,
+            "yScale≠0 未改变任何采样点 = 纵向量化失效（ImprovedNoise.java:48-56）"
         );
     }
 }
