@@ -276,7 +276,10 @@ impl CreativePicker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mcv_item::{COBBLESTONE, PLANKS, STICK, WOODEN_PICKAXE_INDEX, WOODEN_SWORD_INDEX};
+    use mcv_item::{
+        COBBLESTONE, CRAFTING_TABLE, OAK_BUTTON, PLANKS, STICK, WOODEN_PICKAXE_INDEX,
+        WOODEN_SWORD_INDEX,
+    };
 
     fn stack(item: u16, n: u8) -> ItemStack {
         ItemStack::new(item, n)
@@ -399,7 +402,13 @@ mod tests {
         assert_eq!(cs.cursor.item, WOODEN_SWORD_INDEX);
         assert_eq!(cs.grid[0].count, 1, "同格剩余保留");
         assert!(cs.grid[3].is_empty() && cs.grid[6].is_empty());
-        // 消耗后已无配方。
+        // 剩余 1 板在 26.1 是合法按钮配方（oak_button.json：1 橡木板 shapeless）
+        // ——消耗判据改锁「只剩板」：清空后无配方。
+        assert_eq!(
+            cs.result().map(|s| (s.item, s.count)),
+            Some((OAK_BUTTON, 1))
+        );
+        cs.grid[0] = ItemStack::empty();
         assert!(cs.result().is_none());
     }
 
@@ -428,12 +437,17 @@ mod tests {
 
     #[test]
     fn pickaxe_needs_3x3_center_shaft() {
-        // 镐 MMM/_S_/_S_ 在 2x2 里放不下 → 无结果。
+        // 镐 MMM/_S_/_S_ 在 2x2 里放不下 → 不是镐。26.1 下 2x2 满板本身是
+        // 工作台配方（crafting_table.json 2×2 板 tag），结果锁工作台而非无。
         let mut cs2 = CraftScreen::new(2);
         for s in cs2.grid.iter_mut() {
             *s = stack(PLANKS, 1);
         }
-        assert!(cs2.result().is_none(), "2x2 满板不是镐配方");
+        assert_eq!(
+            cs2.result().map(|s| s.item),
+            Some(CRAFTING_TABLE),
+            "2x2 满板=工作台，不是镐"
+        );
         // 3x3 中列棍 → 木镐。
         let mut cs3 = CraftScreen::new(3);
         for x in 0..3 {
