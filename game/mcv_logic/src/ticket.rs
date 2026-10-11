@@ -323,12 +323,19 @@ mod tests {
         let mut t = TicketTable::new();
         let a = ChunkPos::new(0, 0);
         let b = ChunkPos::new(1, 0);
+        let c = ChunkPos::new(2, 0); // 无自票的第三方块：验证传播仍按距离
         t.add_ticket(a, TicketType::PlayerSimulation, 26);
         t.add_ticket(b, TicketType::PlayerSimulation, 26);
         t.add_ticket(a, TicketType::PlayerLoading, 31);
         t.replace_level_of_type(TicketType::PlayerSimulation, 21);
         assert_eq!(t.level_of_type(TicketType::PlayerSimulation, a), 21);
-        assert_eq!(t.level_of_type(TicketType::PlayerSimulation, b), 22);
+        // b 有自票（21，替换后）+ 邻票传播（21+1=22）→ min = 21。
+        assert_eq!(t.level_of_type(TicketType::PlayerSimulation, b), 21);
+        assert_eq!(
+            t.level_of_type(TicketType::PlayerSimulation, c),
+            23,
+            "自票 21 + Chebyshev 2"
+        );
         assert_eq!(
             t.level_of_type(TicketType::PlayerLoading, a),
             ENTITY_TICKING_LEVEL as u8,
