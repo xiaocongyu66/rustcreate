@@ -1302,16 +1302,26 @@ impl GameRuntime {
         r
     }
 
-    /// 步末位置钳制：把玩家钉回已就位矩形——钳制块矩形取 `pc ± max(r−1, 0)`
-    /// 再内收 pad：`r ≥ 1` 时矩形区块再外扩一环（步进中原点位移 + AABB
-    /// 半宽的查询触达）仍整体落在已就位环 ≤r 内，pad = 玩家半宽 + 余量
-    /// 即可；`r = 0`（仅本块就位）时 pad 收到 1.0 格，触达不出本块。
+    /// 步末位置钳制：把玩家钉回票覆盖的已就位矩形（刀 4b 票环派生）。
+    /// 矩形半宽 m = max(min(r_safe, cap) − 1, 0)：
+    /// - cap = sim_dist + (FULL − ENTITY_TICKING) = 票级别场 Full 授权域
+    ///   半径（级别场闭式 level(d) = (31 − sim_dist) + d ≤ 33，与
+    ///   [`Self::sim_safe_radius`] 的票环上界同源——4a 的 r_safe 已含此
+    ///   cap，此处 min 是防线纵深：任何未来调用方传入未收敛的就位环也
+    ///   越不出票覆盖域，玩家票环恒在（DistanceManager.java:110-117
+    ///   PLAYER_SIMULATION 单锚点 + :276,:319-321 加载方环随区块迁移，
+    ///   ChunkMap.move :1071-1096）。
+    /// - r_safe 侧来自 4a 证据环（status≥Full，ChunkLevel.java:35-43
+    ///   FULL 级）——票授权 × 证据齐备二者取小，稳态下与票域一致收敛。
+    /// `r ≥ 1` 时矩形区块再外扩一环（步进中原点位移 + AABB 半宽的查询
+    /// 触达）仍整体落在已就位环 ≤r 内，pad = 玩家半宽 + 余量即可；
+    /// `r = 0`（仅本块就位）时 pad 收到 1.0 格，触达不出本块。
     /// 被钳轴向速度清零（贴原版：移动在已加载区边缘自然停止——玩家区块
-    /// 恒有 ticket、物理从不越界，DistanceManager.java:110-117，而非撞
-    /// 假石头或穿进虚空）。
+    /// 恒有 ticket、物理从不越界，而非撞假石头或穿进虚空）。
     fn clamp_to_sim_area(&mut self, pc: ChunkPos, r_safe: i32) {
         debug_assert!(r_safe >= 0);
-        let m = (r_safe - 1).max(0);
+        let cap = self.sim_dist() + (ticket::FULL_LEVEL - ticket::ENTITY_TICKING_LEVEL);
+        let m = (r_safe.min(cap) - 1).max(0);
         let pad = if r_safe == 0 {
             1.0
         } else {
@@ -1332,15 +1342,15 @@ impl GameRuntime {
             p.pos.z = nz;
             p.vel.z = 0.0;
         }
-        // 不变量兜底（debug）：钳制后玩家所在区块必须仍 ≥TerrainReady，
-        // 否则模拟区门形同虚设（隐形墙回归的前置条件）。
+        // 不变量兜底（debug）：钳制后玩家所在区块必须仍满足新 ready 判据
+        // （status ≥ Full，与 sim_safe_radius 谓词同步——隐形墙回归前哨）。
         debug_assert!(
             self.chunks
                 .get(&ChunkPos::new(
                     (p.pos.x / 16.0).floor() as i32,
                     (p.pos.z / 16.0).floor() as i32
                 ))
-                .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8)),
+                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8)),
             "clamp_to_sim_area 后玩家仍在未就位区块：pos={} r_safe={}",
             p.pos,
             r_safe
@@ -4802,9 +4812,12 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let mut rng = || fast_rand();
     phys.for_each(|e, body| {
         // 模拟环门（26.1 ServerLevel.java:419：实体仅当所在区块
-        // inEntityTickingRange 才 tick，模拟区外=冻结不动，从不查询未加载
+        // inEntityTickingRange = DistanceManager.java:136-138 票级别
+        // ≤ENTITY_TICKING 才 tick，模拟区外=冻结不动，从不查询未加载
         // 列）。旧实现靠「未加载=石」代理，怪会在隐形石面上行走坠落；
-        // 世界视图未加载已改空气，这里显式冻结保持原版语义。
+        // 世界视图未加载已改空气，这里显式冻结保持原版语义。谓词取
+        // stage 证据位（刀 4a 仅重接玩家物理门 status≥Full，mob 门本波
+        // 逻辑不动，债登记：收口到票级别谓词见 ticket::is_entity_ticking）。
         let own = ChunkPos::new(
             (body.pos.x / 16.0).floor() as i32,
             (body.pos.z / 16.0).floor() as i32,
@@ -6203,6 +6216,73 @@ mod tests {
             rt.sim_safe_radius(pc),
             0,
             "本块 Full 后解冻，至少本块可动（邻环缺席截断）"
+        );
+    }
+
+    /// 刀 4b：钳制矩形由票覆盖环派生。cap = sim_dist + (FULL −
+    /// ENTITY_TICKING)（票级别场 Full 授权域半径，与 sim_safe_radius 上界
+    /// 同源）；m = max(min(r_safe, cap) − 1, 0)——票授权 × 证据环取小。
+    /// 边界：r_safe=1 → 矩形=本块（pad=半宽+余量）、r_safe=0 → pad 收
+    /// 1.0、cap 绑定（r_safe 超票域被压回）、被钳轴清速/余轴保速、钳后
+    /// 玩家块满足新 ready 判据（status≥Full 前哨，fixture 全 Full 兜住）。
+    #[test]
+    fn clamp_rect_derives_from_ticket_full_domain() {
+        let mut rt = headless_rt("clamp4b");
+        rt.render_dist = 4; // vd=5 → cap = 5 + 2 = 7
+        for cx in -9..=9 {
+            let pos = ChunkPos::new(cx, 0);
+            let h = Arc::new(ChunkHandle::new(pos));
+            h.advance_to(Stage::TerrainReady);
+            h.advance_status(ChunkStatus::Full);
+            rt.chunks.insert(pos, h);
+        }
+        let pad = mcv_game::Player::HALF[0] + 0.02;
+        let pc = ChunkPos::new(0, 0);
+
+        // r_safe=1 → m=0：矩形=本块，x 钳回 16−pad、vel.x 清零；z 未触
+        // 钳位（8.5 ∈ [pad, 16−pad]），vel.z 保留。
+        rt.player.pos = Vec3::new(15.9, 70.0, 8.5);
+        rt.player.vel = Vec3::new(9.0, 0.0, 3.0);
+        rt.clamp_to_sim_area(pc, 1);
+        assert_eq!(rt.player.pos.x, 16.0 - pad, "r_safe=1 右边界 = 16−pad");
+        assert_eq!(rt.player.vel.x, 0.0, "被钳轴清速");
+        assert_eq!(rt.player.vel.z, 3.0, "未钳轴保速");
+        assert_eq!(rt.player.pos.y, 70.0, "钳制不动 y");
+
+        // 左边界同理：lo = 0+pad。
+        rt.player.pos = Vec3::new(0.1, 70.0, 8.5);
+        rt.player.vel = Vec3::new(-9.0, 0.0, 0.0);
+        rt.clamp_to_sim_area(pc, 1);
+        assert_eq!(rt.player.pos.x, pad, "r_safe=1 左边界 = pad");
+
+        // r_safe=2 → m=1：矩形=pc±1，右界 = 32−pad。
+        rt.player.pos = Vec3::new(31.9, 70.0, 8.5);
+        rt.clamp_to_sim_area(pc, 2);
+        assert_eq!(rt.player.pos.x, 32.0 - pad, "r_safe=2 → 矩形 pc±1");
+
+        // r_safe=0：pad 收 1.0 格（仅本块就位，触达不出本块）。
+        rt.player.pos = Vec3::new(15.9, 70.0, 8.5);
+        rt.clamp_to_sim_area(pc, 0);
+        assert_eq!(rt.player.pos.x, 15.0, "r_safe=0 → pad=1.0");
+
+        // cap 绑定：r_safe=100 超出票 Full 授权域（cap=7）→ m=6，
+        // 与 r_safe=7 的矩形一致（票环派生防线纵深）。
+        rt.player.pos = Vec3::new(150.0, 70.0, 8.5);
+        rt.clamp_to_sim_area(pc, 100);
+        let capped_hi = rt.player.pos.x;
+        assert_eq!(capped_hi, 112.0 - pad, "cap=7 → m=6 → 右界 112−pad");
+        rt.player.pos = Vec3::new(150.0, 70.0, 8.5);
+        rt.clamp_to_sim_area(pc, 7);
+        assert_eq!(
+            rt.player.pos.x, capped_hi,
+            "r_safe 超票域被压回 cap，与 r_safe=cap 同矩形"
+        );
+        // 钳后玩家块 = (6,0)（111.68/16=6.98）：fixture 已 Full，debug
+        // 前哨（钳后 status≥Full）在此放行。
+        assert_eq!(
+            (rt.player.pos.x / 16.0).floor() as i32,
+            6,
+            "钳位落点在票覆盖域内"
         );
     }
 
