@@ -36,13 +36,18 @@ pub struct FrameUniforms {
     pub tint_grass: [f32; 4],
     /// xyz = plains 叶色（colormap/foliage.png 查表），w = 自由。
     pub tint_foliage: [f32; 4],
-    /// 帧旗标：x = 水下旗标（1.0 = 眼在水中 → 雾色切 WATER_FOG_COLOR，
-    /// terrain/particle.wgsl 消费；yzw 自由）。fog_params 四槽全被
-    /// 双层线性雾端点占满，旗标独立成槽（128 B 对齐不变）。
-    pub fog_flags: [f32; 4],
+    /// 雾色（CPU 按 Timelines 昼夜乘轨 + 天穹混色 + 天气乘子预合成，
+    /// AtmosphericFogEnvironment.getBaseColor:26-48；水下 =
+    /// WATER_FOG_COLOR × waterVision 归一提亮，FogRenderer.java:162-167；
+    /// w = 自由）。R1 的 fog_flags 槽升格：雾色不再于 shader 内混，
+    /// 水下/水上、昼夜、天气全部同源一色。
+    pub fog_color: [f32; 4],
+    /// lightmap 天光颜色（Timelines.java:70-73 SKY_LIGHT_COLOR 轨：
+    /// 白 → 夜 #7a7aff；lightmap.fsh:48 加色项）。w = 自由。
+    pub light_tint: [f32; 4],
 }
 
-const _: () = assert!(size_of::<FrameUniforms>() == 176);
+const _: () = assert!(size_of::<FrameUniforms>() == 192);
 
 /// 水绘制分段（#80 合批）：批次内每个成员区块一段。半透明水必须保持
 /// 逐区块远→近绘制序（混合次序不可变），故合批只合并索引缓冲，绘制仍
@@ -2865,6 +2870,31 @@ impl Renderer {
         );
         self.underwater_state = next_state;
 
+        // ---- 天象色彩（26.1 Timelines 昼夜乘轨，env_color 硬编码常数）----
+        // tick = scene.time × 20（app 层 time = ticks%24000 / 20，整 tick
+        // 精确回转）；菜单/测试场景 time 直接给 tick/20。
+        let tick = (scene.time * 20.0).round().max(0.0) as u64;
+        let sky_col =
+            env_color::SKY_COLOR * env_color::sky_multiplier(tick) * Vec3::from(scene.fog_tint);
+        // 雾色（AtmosphericFogEnvironment.getBaseColor:26-48）：
+        // srgbLerp(mixFactor, FOG_COLOR×雾乘轨, SKY_COLOR×天乘轨)——天气
+        // 乘子末端一乘（原版 WeatherAttributes.java:11 对 FOG_COLOR 全局
+        // MULTIPLY_RGB ×:43 applyWeatherDarken 对天穹分量，系数相同合并）。
+        let mix_factor = env_color::sky_fog_mix_factor(scene.fog_rd_end / 16.0);
+        let mut fog_col = env_color::srgb_lerp(
+            mix_factor,
+            env_color::FOG_COLOR * env_color::fog_multiplier(tick),
+            sky_col,
+        ) * Vec3::from(scene.fog_tint);
+        if underwater {
+            // WATER_FOG_COLOR × waterVision 归一提亮（FogRenderer.java
+            // :148-153 brightenFactor=waterVision、:162-167
+            // targetScale=1/max(rgb) lerp——满级时最大通道归 1）。
+            let c = env_color::WATER_FOG_COLOR;
+            let target = c * (1.0 / c.max_element());
+            fog_col = c + (target - c) * scene.water_vision.clamp(0.0, 1.0);
+        }
+
         let uniforms = FrameUniforms {
             view_proj: vp.to_cols_array_2d(),
             cam_pos_time: [eye.x, eye.y, eye.z, scene.time],
@@ -2904,7 +2934,11 @@ impl Renderer {
                 };
                 [env_start, env_end, rd_start, rd_end]
             },
-            fog_flags: [if underwater { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+            fog_color: [fog_col.x, fog_col.y, fog_col.z, 0.0],
+            light_tint: {
+                let lc = env_color::sky_light_color(tick);
+                [lc.x, lc.y, lc.z, 0.0]
+            },
             tint_grass: self.tint_grass,
             tint_foliage: self.tint_foliage,
         };
@@ -2923,17 +2957,21 @@ impl Renderer {
             scene.day_factor,
         ];
         sky_u[20..24].copy_from_slice(&sun_arr);
-        // 地平线基色 × 天气雾色乘子（雨/雷变灰变暗，天空 + 地形雾同源）。
-        let hor = [
-            0.62 * scene.fog_tint[0],
-            0.76 * scene.fog_tint[1],
-            0.95 * scene.fog_tint[2],
-            0.0,
-        ];
-        sky_u[24..28].copy_from_slice(&hor);
+        // 雾色（CPU 合成，同 FrameUniforms.fog_color；sky 地平带向雾色
+        // 渐隐 = 原 sky.fsh apply_fog(0..FogSkyEnd) 的解析近似）——
+        // R1 前该槽叫 fog_horizon 且 fs_sky 从未读取（死接线），现接活。
+        let fog_u = [fog_col.x, fog_col.y, fog_col.z, 0.0];
+        sky_u[24..28].copy_from_slice(&fog_u);
         // 天体参数：x = 月相序（MoonPhase 序 0..7）、y = 自由（旧「素材缺失
         // → 程序化圆盘回退」开关已随红线删除）。
         sky_u[28..32].copy_from_slice(&[scene.moon_phase as f32, 0.0, 0.0, 0.0]);
+        // 天穹色（SKY_COLOR×昼轨×天气）+ w = 星亮度轨（Timelines.java:120-135）。
+        sky_u[32..36].copy_from_slice(&[
+            sky_col.x,
+            sky_col.y,
+            sky_col.z,
+            env_color::star_brightness(tick),
+        ]);
         self.queue
             .write_buffer(&self.sky_buf, 0, bytemuck::cast_slice(&sky_u));
 
@@ -3087,6 +3125,7 @@ impl Renderer {
                         engine,
                         cam,
                         day: scene.day_factor,
+                        light_tint: env_color::sky_light_color(tick),
                         partial_tick,
                     },
                     &self.queue,

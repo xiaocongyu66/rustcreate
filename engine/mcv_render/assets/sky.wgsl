@@ -4,10 +4,16 @@ struct SkyUniforms {
     inv_view_proj: mat4x4<f32>,
     cam_pos: vec4<f32>,   // w = time
     sun_dir_day: vec4<f32>, // xyz = sun dir, w = day factor
-    fog_horizon: vec4<f32>, // xyz = horizon color, w = free
+    // 雾色（CPU 按 Timelines 昼夜乘轨 + 天穹混色预合成）。旧名 fog_horizon
+    // 声明后从未读取（死接线，B 报附带 bug），现接活：天穹向雾色渐隐 =
+    // 原 sky.fsh:12 apply_fog(0..FogSkyEnd) 的解析近似。
+    fog_color: vec4<f32>,
     // 天体参数：x = 月相序（MoonPhase 序 0..7）、yzw = 自由（旧「素材缺失
     // → 程序化圆盘回退」开关已随素材红线删除——日月只画原版贴图 quad）。
     celestials: vec4<f32>,
+    // 天穹色：xyz = SKY_COLOR × 昼夜乘轨 × 天气（Timelines.java:65-69 纯黑
+    // 夜轨）；w = 星亮度轨（Timelines.java:120-135，R3 消费）。
+    sky_color: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> sky: SkyUniforms;
@@ -70,14 +76,12 @@ fn fs_sky(v: VtxOut) -> @location(0) vec4<f32> {
     let day = sky.sun_dir_day.w;
     let up = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
 
-    // Day sky: zenith blue -> horizon pale; night: near-black blue.
-    let day_top = vec3<f32>(0.32, 0.55, 0.95);
-    let day_hor = vec3<f32>(0.62, 0.76, 0.95);
-    let night_top = vec3<f32>(0.008, 0.012, 0.035);
-    let night_hor = vec3<f32>(0.02, 0.03, 0.08);
-    let top = mix(night_top, day_top, day);
-    let hor = mix(night_hor, day_hor, day);
-    var color = mix(hor, top, pow(up, 0.7));
+    // 天穹 = SKY_COLOR×昼夜乘轨（CPU 下发，夜里乘 0 = 纯黑，Timelines
+    // .java:65-69），地平带向雾色渐隐（sky.fsh apply_fog 0..FogSkyEnd 的
+    // 解析近似；旧的 night_top/day_top 硬编码调色板 + day_factor 混色废弃
+    // ——day_factor 是亮度轨底 0.24，不是颜色轨，夜里天空/雾只压到 24%
+    // 且底色蓝灰 = 「看不出昼夜」根因，B 报根因 A）。
+    var color = mix(sky.fog_color.rgb, sky.sky_color.rgb, pow(up, 0.7));
 
     // Sun / moon：原版是贴图 quad（SkyRenderer.java:125-127 太阳、:149-157
     // 八相月亮，月亮 scale 20、太阳 scale 30、距离 100）。quad 平面基由

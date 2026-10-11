@@ -19,6 +19,8 @@ pub struct DrawCtx<'a> {
     pub engine: &'a ParticleEngine,
     pub cam: &'a Camera,
     pub day: f32,
+    /// lightmap 天光颜色（Timelines SKY_LIGHT_COLOR 轨，gpu.rs 传入）。
+    pub light_tint: glam::Vec3,
     pub partial_tick: f32,
 }
 
@@ -274,8 +276,13 @@ impl ParticleRenderer {
         queue: &wgpu::Queue,
     ) {
         self.scratch.clear();
-        ctx.engine
-            .extract_vertices(ctx.cam, ctx.day, ctx.partial_tick, &mut self.scratch);
+        ctx.engine.extract_vertices(
+            ctx.cam,
+            ctx.day,
+            ctx.light_tint,
+            ctx.partial_tick,
+            &mut self.scratch,
+        );
         let quads = self.scratch.len() / 4;
         if quads == 0 {
             return;
@@ -357,7 +364,7 @@ fn fallback_frame(layer: u32) -> Vec<u8> {
     px
 }
 
-/// 顶点布局（ParticleVertex 48 B，见 particle.wgsl PVertIn）。
+/// 顶点布局（ParticleVertex 56 B，见 particle.wgsl PVertIn）。
 fn particle_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
     wgpu::VertexBufferLayout {
         array_stride: size_of::<ParticleVertex>() as wgpu::BufferAddress,
@@ -389,7 +396,7 @@ fn particle_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 shader_location: 4,
             },
             wgpu::VertexAttribute {
-                format: wgpu::VertexFormat::Float32,
+                format: wgpu::VertexFormat::Float32x3,
                 offset: 44,
                 shader_location: 5,
             },

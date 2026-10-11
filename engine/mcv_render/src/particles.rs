@@ -236,7 +236,7 @@ impl QuadData {
     }
 }
 
-/// 渲染顶点（每 quad 4 顶点；stride 48 B，布局见 particle.wgsl PVertIn）。
+/// 渲染顶点（每 quad 4 顶点；stride 56 B，布局见 particle.wgsl PVertIn）。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ParticleVertex {
@@ -245,19 +245,26 @@ pub struct ParticleVertex {
     pub layer: u32,
     pub tex_set: u32,
     pub color: [f32; 4],
-    pub light: f32,
+    /// lightmap RGB（彩轨，R2 起）。
+    pub light: [f32; 3],
 }
 
-const _: () = assert!(size_of::<ParticleVertex>() == 48);
+const _: () = assert!(size_of::<ParticleVertex>() == 56);
 
 /// terrain 光照曲线 CPU 侧（与 terrain.wgsl `light_curve` 同公式；
-/// 26.1 lightmap.fsh:21-42 乘序：先 get_brightness v/(4-3v) 再乘 day）。
-fn light_curve(sky: u8, block: u8, day: f32) -> f32 {
+/// 26.1 lightmap.fsh:35-55 加色合成：环境底色 + 天光色×sb + 块光暖橙×bb）。
+fn light_curve(sky: u8, block: u8, day: f32, sky_light_color: glam::Vec3) -> [f32; 3] {
     let s = sky as f32 / 15.0;
     let b = block as f32 / 15.0;
     let sb = s / (4.0 - 3.0 * s) * day;
     let bb = b / (4.0 - 3.0 * b);
-    0.08 + 0.92 * sb.max(bb)
+    // BLOCK_LIGHT_TINT 0xFFD88C（EnvironmentAttributes.java:71-73 默认
+    // -10100），高照度 parabolic 趋白（lightmap.fsh:51-52）。
+    let tint = glam::Vec3::new(1.0, 0.847_058_83, 0.549_019_63);
+    let p = (2.0 * b - 1.0) * (2.0 * b - 1.0);
+    let block_col = tint.lerp(glam::Vec3::ONE, 0.9 * p);
+    let c = crate::env_color::AMBIENT_LIGHT_COLOR + sky_light_color * sb + block_col * bb;
+    c.clamp(glam::Vec3::ZERO, glam::Vec3::ONE).to_array()
 }
 
 /// SoA 粒子池 + 引擎。
@@ -890,6 +897,7 @@ impl ParticleEngine {
         &self,
         cam: &Camera,
         day: f32,
+        sky_light_color: glam::Vec3,
         partial_tick: f32,
         out: &mut Vec<ParticleVertex>,
     ) {
@@ -943,7 +951,7 @@ impl ParticleEngine {
             let alpha = r
                 .alpha
                 .current_alpha(self.age[i], self.lifetime[i], partial_tick);
-            let light = light_curve(r.sky_light, r.block_light, day);
+            let light = light_curve(r.sky_light, r.block_light, day, sky_light_color);
             let (u0, u1, v0, v1) = (r.u0, r.u1, r.v0, r.v1);
             // 顶点序与 UV 配对照抄 QuadParticleRenderState.java:130-137。
             let corners = [
@@ -1202,7 +1210,7 @@ mod tests {
         // eye = pos + EYE_HEIGHT(1.62) → 相机给 7.5，块体 y 8..9 全入视锥。
         let cam = cam_at(Vec3::new(0.5, 7.5, 4.0), 0.0);
         let mut out = Vec::new();
-        e.extract_vertices(&cam, 1.0, 0.0, &mut out);
+        e.extract_vertices(&cam, 1.0, glam::Vec3::ONE, 0.0, &mut out);
         assert_eq!(out.len(), 64 * 4, "4 verts per particle");
         let mut min_u = f32::MAX;
         let mut max_u = f32::MIN;
@@ -1321,7 +1329,7 @@ mod tests {
         // yaw=0 看 -Z，quad 展开在 x/y、z 恒等于粒子 z。
         let cam = cam_at(Vec3::new(0.0, 7.5, 0.0), 0.0);
         let mut out = Vec::new();
-        e.extract_vertices(&cam, 1.0, 0.0, &mut out);
+        e.extract_vertices(&cam, 1.0, glam::Vec3::ONE, 0.0, &mut out);
         assert_eq!(out.len(), 4);
         for v in &out {
             assert!(
@@ -1341,7 +1349,7 @@ mod tests {
         e.spawn_terrain([3.0, 9.0, 0.0], [0.0, 0.0, 0.0], mcv_core::tiles::STONE);
         let cam2 = cam_at(Vec3::new(0.0, 7.5, 0.0), std::f32::consts::FRAC_PI_2);
         let mut out2 = Vec::new();
-        e.extract_vertices(&cam2, 1.0, 0.0, &mut out2);
+        e.extract_vertices(&cam2, 1.0, glam::Vec3::ONE, 0.0, &mut out2);
         for v in &out2 {
             assert!(
                 (v.pos[0] - 3.0).abs() < 1e-4,
@@ -1441,7 +1449,7 @@ mod tests {
         // (z=+30) 被点剔除（QuadParticleGroup.java:35）。
         let cam = cam_at(Vec3::new(0.0, 7.5, 0.0), 0.0);
         let mut out = Vec::new();
-        e.extract_vertices(&cam, 1.0, 0.0, &mut out);
+        e.extract_vertices(&cam, 1.0, glam::Vec3::ONE, 0.0, &mut out);
         assert_eq!(
             out.len(),
             4,

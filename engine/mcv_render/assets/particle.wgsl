@@ -12,8 +12,10 @@ struct FrameUniforms {
     // 也必须占位到目标槽偏移）：tint 两槽粒子不消费。
     tint_grass: vec4<f32>,
     tint_foliage: vec4<f32>,
-    // x = 水下旗标（雾色选路）。
-    fog_flags: vec4<f32>,
+    // 雾色（CPU 预合成，同 terrain.wgsl）。
+    fog_color: vec4<f32>,
+    // lightmap 天光颜色（白 → 夜 #7a7aff）。粒子不读，占位对齐 terrain。
+    light_tint: vec4<f32>,
 };
 
 // 雾语义与 terrain.wgsl 完全同步（gpu.rs 同一份 fog_params）：双层线性
@@ -29,12 +31,8 @@ fn fog_factor(dist_sph: f32, dist_cyl: f32, fog: vec4<f32>) -> f32 {
     );
 }
 
-fn fog_color(flags: vec4<f32>) -> vec3<f32> {
-    if (flags.x > 0.5) {
-        return vec3<f32>(5.0, 5.0, 51.0) / 255.0;
-    }
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    return mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, frame.sun_dir_day.w);
+fn fog_color() -> vec3<f32> {
+    return frame.fog_color.rgb;
 }
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
@@ -48,7 +46,7 @@ struct PVertIn {
     @location(2) layer: u32,       // 图集层
     @location(3) tex_set: u32,     // 0 = 方块图集, 1 = particles 数组
     @location(4) color: vec4<f32>, // rgb tint × alpha（LifetimeAlpha）
-    @location(5) light: f32,       // light_curve 预算值
+    @location(5) light: vec3<f32>, // light_curve 彩色预算值（R2 彩轨）
 };
 
 
@@ -58,7 +56,7 @@ struct PVertOut {
     @location(1) @interpolate(flat) layer: u32,
     @location(2) @interpolate(flat) tex_set: u32,
     @location(3) color: vec4<f32>,
-    @location(4) light: f32,
+    @location(4) light: vec3<f32>,
     @location(5) dist: f32,      // 球距（env 雾层）
     @location(6) dist_cyl: f32,  // 柱距（renderDist 雾层）
 };
@@ -91,6 +89,6 @@ fn fs_particle(v: PVertOut) -> @location(0) vec4<f32> {
     }
     let fog = fog_factor(v.dist, v.dist_cyl, frame.fog_params);
     let lit = tex.rgb * v.color.rgb * v.light;
-    let rgb = mix(fog_color(frame.fog_flags), lit, fog);
+    let rgb = mix(fog_color(), lit, fog);
     return vec4<f32>(rgb, tex.a * v.color.a);
 }

@@ -16,8 +16,12 @@ struct FrameUniforms {
     // （colormap 素材缺失时 0 → 不染色）。
     tint_grass: vec4<f32>,
     tint_foliage: vec4<f32>,
-    // 帧旗标：x = 水下旗标（gpu.rs 迟滞确认态；只作雾色选路）。
-    fog_flags: vec4<f32>,
+    // 雾色（CPU 按 Timelines 昼夜乘轨 + 天穹混色 + 天气乘子预合成；水下
+    // = WATER_FOG_COLOR × waterVision 提亮）。rgb 有效，w = 自由。
+    fog_color: vec4<f32>,
+    // lightmap 天光颜色（Timelines.java:70-73 SKY_LIGHT_COLOR 轨，
+    // 白 → 夜 #7a7aff）。w = 自由。
+    light_tint: vec4<f32>,
 };
 
 struct ChunkOrigin {
@@ -34,16 +38,39 @@ fn face_shade(face_id: u32) -> f32 {
     return table[face_id];
 }
 
-// 亮度曲线（26.1 lightmap.fsh:21-42 乘序）：先 get_brightness v/(4−3v) 曲线、
-// 再乘昼夜因子 SkyFactor(=day)；旧实现先乘 day 后 pow 1.5 gamma，乘序相反，
-// 夜间被压得过暗。常数底 0.08+0.92·x 保留（对应原版 AmbientColor≈0.039 的
-// 既有映射，本次只调乘序与曲线，不动 shader 结构）。
-fn light_curve(sky: f32, block: f32, day: f32) -> f32 {
+// ---- lightmap 彩轨（26.1 lightmap.fsh:35-55 加色合成移植，RGB）----
+// 亮度曲线（lightmap.fsh:20-22）。
+fn get_brightness(level: f32) -> f32 {
+    return level / (4.0 - 3.0 * level);
+}
+
+// 抛物线混合因子（lightmap.fsh:31-33）：高照度趋白、低照度显色。
+fn parabolic_mix(level: f32) -> f32 {
+    let p = 2.0 * level - 1.0;
+    return p * p;
+}
+
+const BLOCK_LIGHT_TINT: vec3<f32> = vec3<f32>(1.0, 0.847, 0.549); // 0xFFD88C
+const AMBIENT_COLOR: vec3<f32> = vec3<f32>(0.0392, 0.0392, 0.0392); // #0a0a0a
+
+// 加色合成（lightmap.fsh:44-52）：
+//   color = max(Ambient, NightVision) + SkyLightColor×sky_b
+//         + mix(BlockLightTint, 1, 0.9×parabolic(block_level))×block_b
+// SkyLightColor 由 CPU 按昼轨下发（白 → 夜 #7a7aff，Timelines.java:70-73）。
+// 旧标量 0.08+0.92×max(sb,bb) 丢双源叠加也丢色相（夜面灰、火光不暖），
+// 语义按原版改正（B 报根因 B）。notGamma/boss 压暗/darkness 不做
+// （gamma=0 → 混合系数 0；boss/darkness 效果本仓无）。
+fn light_curve(sky: f32, block: f32, day: f32, sky_light_color: vec3<f32>) -> vec3<f32> {
     let s = sky / 15.0;
     let b = block / 15.0;
-    let sb = s / (4.0 - 3.0 * s) * day;
-    let bb = b / (4.0 - 3.0 * b);
-    return 0.08 + 0.92 * max(sb, bb);
+    let sb = get_brightness(s) * day;
+    let bb = get_brightness(b);
+    let block_col = mix(BLOCK_LIGHT_TINT, vec3<f32>(1.0), 0.9 * parabolic_mix(b));
+    return clamp(
+        AMBIENT_COLOR + sky_light_color * sb + block_col * bb,
+        vec3<f32>(0.0),
+        vec3<f32>(1.0),
+    );
 }
 
 // 雾透过率（26.1 fog.glsl:13-24 移植）：线性段 + 双层取 max——env 层
@@ -62,20 +89,12 @@ fn fog_factor(dist_sph: f32, dist_cyl: f32, fog: vec4<f32>) -> f32 {
     );
 }
 
-// 雾色：水下 = 原版 WATER_FOG_COLOR 0xFF050533（EnvironmentAttributes.java:33-35，
-// WaterFogEnvironment.getBaseColor 直返该值；此前混天空蓝是「水下无水感」根因）；
-// 水上 = 既有 夜色↔地平线 昼夜混色（R2 起改吃 CPU 下发的 Timelines 雾色轨）。
-// fog_flags.x = 水下旗标（fog_params 四槽已满，旗标独立成槽）。
-// 登记债：waterVision 雾色归一提亮（FogRenderer.java:148-166）在 R2 随
-// CPU 雾色一并接（水下雾距端点已于本刀接 waterVision）。
-const WATER_FOG_COLOR: vec3<f32> = vec3<f32>(5.0, 5.0, 51.0) / 255.0;
-
-fn fog_color(flags: vec4<f32>) -> vec3<f32> {
-    if (flags.x > 0.5) {
-        return WATER_FOG_COLOR;
-    }
-    let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
-    return mix(vec3<f32>(0.02, 0.03, 0.08), sky_horizon, frame.sun_dir_day.w);
+// 雾色完全由 CPU 下发（Timelines 昼夜乘轨 + AtmosphericFogEnvironment
+// 天穹混色 + 天气乘子 + 水下 WATER_FOG_COLOR×waterVision 提亮，见
+// gpu.rs draw_frame 与 FrameUniforms.fog_color 注释）——水下/水上、
+// 昼夜、天气同源一色，不再有 shader 侧分支。
+fn fog_color() -> vec3<f32> {
+    return frame.fog_color.rgb;
 }
 
 // 水色（缺陷 1）：water_still.png 是灰度 tint 蒙版（实测均值 177,177,177），
@@ -134,7 +153,7 @@ struct VtxOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) layer: u32,
-    @location(2) shade: f32,
+    @location(2) shade: vec3<f32>,
     @location(3) dist: f32,      // 球距（env 雾层，fog.glsl:32-34）
     @location(4) dist_cyl: f32,  // 柱距（renderDist 雾层，fog.glsl:36-40）
 };
@@ -155,7 +174,7 @@ fn vs_terrain(v: VtxIn) -> VtxOut {
     let blk = f32(v.lights.x);
     let day = frame.sun_dir_day.w;
     out.shade = face_shade(face) * mix(0.45, 1.0, ao)
-        * light_curve(sky, blk, day);
+        * light_curve(sky, blk, day, frame.light_tint.rgb);
     let rel = world - frame.cam_pos_time.xyz;
     out.dist = length(rel);
     out.dist_cyl = max(length(rel.xz), abs(rel.y));
@@ -172,7 +191,7 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
     let tint = biome_tint(tint_lut[v.layer]);
     let fog = fog_factor(v.dist, v.dist_cyl, frame.fog_params);
     let lit = tex.rgb * v.shade * tint;
-    return vec4<f32>(mix(fog_color(frame.fog_flags), lit, fog), 1.0);
+    return vec4<f32>(mix(fog_color(), lit, fog), 1.0);
 }
 
 // ---- mining crack overlay --------------------------------------------------
@@ -187,7 +206,7 @@ fn fs_crack(v: VtxOut) -> @location(0) vec4<f32> {
     }
     let fog = fog_factor(v.dist, v.dist_cyl, frame.fog_params);
     let lit = tex.rgb * v.shade;
-    return vec4<f32>(mix(fog_color(frame.fog_flags), lit, fog), tex.a);
+    return vec4<f32>(mix(fog_color(), lit, fog), tex.a);
 }
 
 // ---- block selection outline -----------------------------------------------
@@ -213,7 +232,7 @@ struct WaterOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) layer: u32,
-    @location(2) shade: f32,
+    @location(2) shade: vec3<f32>,
     @location(3) dist: f32,
     @location(4) dist_cyl: f32,
 };
@@ -234,7 +253,8 @@ fn vs_water(v: VtxIn) -> WaterOut {
     let face = v.aoflags.y & 0x7u;
     let sky = f32(v.lights.y);
     let blk = f32(v.lights.x);
-    out.shade = face_shade(face) * light_curve(sky, blk, frame.sun_dir_day.w);
+    out.shade = face_shade(face)
+        * light_curve(sky, blk, frame.sun_dir_day.w, frame.light_tint.rgb);
     let rel = world - frame.cam_pos_time.xyz;
     out.dist = length(rel);
     out.dist_cyl = max(length(rel.xz), abs(rel.y));
@@ -249,7 +269,7 @@ fn fs_water(v: WaterOut) -> @location(0) vec4<f32> {
     // 误读——那两行只注册炼药锅/粒子色，流体网格染色走 FluidStateModelSet
     // 的 tintSource 线（见 WATER_TINT 注释）。灰度蒙版 × 0x3F76E4 = 蓝。
     let lit = tex.rgb * v.shade * WATER_TINT;
-    let color = mix(fog_color(frame.fog_flags), lit, fog);
+    let color = mix(fog_color(), lit, fog);
     // alpha = 贴图 alpha（原版水不透明度语义：水色 ARGB=0xFF…，屏上
     // alpha≈贴图 180/255≈0.71 常数；雾只作用于 rgb，不改不透明度）。
     // 旧 0.72*fog+0.28（近处≈1.0 近不透明）系臆造，已回退。
