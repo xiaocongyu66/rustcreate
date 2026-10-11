@@ -154,4 +154,49 @@ mod tests {
         // 静止（bob=0）= 恒等：不走路时任何 walkDist 都不产生位移。
         assert!(view_bob_matrix(0.0, -12.5).abs_diff_eq(Mat4::IDENTITY, 1e-9));
     }
+
+    #[test]
+    fn hud_projection_is_independent_from_world() {
+        // 26.1 手 pass 独立投影（GameRenderer.java:726
+        // `hudProjection.setupPerspective(0.05F, 100.0F, hudFov, width, height)`，
+        // Camera.java:221-223 `calculateHudFov` = 固定 70.0F，
+        // Projection.java:69-72 `setPerspective(fov·π/180, w/h, …)`）：
+        //与世界 fov/near 解耦——疾跑/速度 FOV 变化不缩放手部。
+        let mut cam = camera();
+        // fov_y=1.2 rad ≈ 68.75° ≠ 70°、near 0.1 ≠ 0.05、far 256 ≠ 100。
+        let hud = cam.hud_proj();
+        let world = cam.proj();
+        assert!(
+            !hud.abs_diff_eq(world, 1e-4),
+            "hud 投影必须与世界投影解耦（fov/near/far 任一不同即不等）"
+        );
+        // hud fov = 70° 竖直：f = 1/tan(35°) ≈ 1.42815。
+        let f = 1.0 / (70.0f32.to_radians() * 0.5).tan();
+        assert!(
+            (hud.x_axis.x * cam.aspect - f).abs() < 1e-5,
+            "hud 竖直 fov 锁 70°（got {}）",
+            hud.x_axis.x * cam.aspect
+        );
+        // near=0.05/far=100 的 z 项：far/(near−far) 与 far·near/(near−far)。
+        assert!(
+            (hud.z_axis.z - 100.0 / (0.05 - 100.0)).abs() < 1e-3
+                && (hud.w_axis.z - 100.0 * 0.05 / (0.05 - 100.0)).abs() < 1e-3,
+            "hud near/far 锁 0.05/100（z_col {}）",
+            hud.z_axis.z
+        );
+        // near 解耦判别点：眼前 0.07 格——hud near=0.05 可见、世界 near=0.1
+        // 裁掉（手部贴脸不被世界近平面吞，:726 语义）。
+        let eye = cam.pos + Vec3::new(0.0, crate::EYE_HEIGHT, 0.0);
+        let p = (eye + Vec3::new(0.0, 0.0, -0.07)).extend(1.0);
+        let ch = cam.view_proj_hud() * p;
+        let cw = cam.view_proj() * p;
+        assert!(
+            ch.w > 0.0 && (0.0..=1.0).contains(&(ch.z / ch.w)),
+            "手 pass near=0.05 必须可见眼前 0.07 格点"
+        );
+        assert!(
+            cw.w <= 0.0 || !(0.0..=1.0).contains(&(cw.z / cw.w)),
+            "世界投影 near=0.1 必须裁掉同一点——两投影解耦失效"
+        );
+    }
 }
