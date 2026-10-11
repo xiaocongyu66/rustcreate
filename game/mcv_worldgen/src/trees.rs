@@ -15,8 +15,8 @@
 //! 逐字节复现」契约面，改消耗序 = 破坏确定性。
 //!
 //! 有意裁剪（`docs/KNOWN-DIVERGENCE.md` TREES-1 登记）：
-//! ① `getMaxFreeTreeHeight`（TreeFeature.java:119-134）+ `validTreePos`
-//!    （:54-56）要读世界查空——纯函数无读面，假定立地开阔（树足迹内的
+//! ① `getMaxFreeTreeHeight`（TreeFeature.java:96-112）+ `validTreePos`
+//!    （:53-55）要读世界查空——纯函数无读面，假定立地开阔（树足迹内的
 //!    「叶不盖本树原木」用本次调用自己的原木位置集模拟）；
 //! ② 基下 dirt 恒放（原版是条件替换，TreeConfiguration.java:23-25）；
 //! ③ decorators（树藤/可可/蜂巢）不在 #135 面（jungle 对齐
@@ -179,7 +179,7 @@ impl Pos {
 }
 
 /// 本树写手：包一层 [`BlockSetter`]，携带本树原木位置集——在「树足迹」内
-/// 模拟原版 `TreeFeature.validTreePos`（TreeFeature.java:54-56）的替换门：
+/// 模拟原版 `TreeFeature.validTreePos`（TreeFeature.java:53-55）的替换门：
 /// 叶不得覆盖本树原木；世界级碰撞仍是接线方职责（偏差 ①）。
 struct Scribe<'a, S: BlockSetter> {
     setter: &'a mut S,

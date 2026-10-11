@@ -43,3 +43,26 @@
    进食/弓等走引擎自有观感。
 7. 手持物为 GUI 精灵平片 quad + ICON_SIZE=0.45 自定（hand.rs）vs 原版
    builtin/generated 拉伸 3D 模型 + firstperson_righthand display 变换。
+
+## TREES-1 树结构纯函数库（#135 T 波）的四面裁剪（接线刀须补）
+
+`game/mcv_worldgen/src/trees.rs` 移植 26.1 `TreeFeature` + trunk/foliage
+placer 族为纯函数 [`place_tree`]（不接 generate()/game.rs，接线=T5 合入后
+的后续刀）。纯函数无世界读面，随之裁剪四项：
+
+1. 立地裁剪缺失：原版 `getMaxFreeTreeHeight`（TreeFeature.java:96-112）+
+   `validTreePos`（:53-55）逐格读世界查空/查可替换；本仓假定立地开阔，
+   仅在「树足迹内」用本次调用自己的原木位置集模拟替换门（叶不盖本树
+   原木）。接线方须在调用前自查立柱净空，否则树干可切崖/切结构。
+2. 基下 dirt 恒放：原版是条件替换——非 `CANNOT_REPLACE_BELOW_TREE_TRUNK`
+   标签才给 DIRT（TreeConfiguration.java:23-25）；本仓无条件放。
+3. decorators 未移植：树藤/树干藤/可可/蜂巢/苍藓/落叶层（TreeDecorator
+   族）不在 #135 面；jungle 因此对齐 `JUNGLE_TREE_NO_VINE` 注册项
+   （TreeFeatures.java:469），非带藤版 :461。
+4. 方块状态未建模：叶 distance/persistent（自然消亡机制随之未模拟）与
+   原木 axis 一元 id。后者语义无损——这些 placer 的原木恒
+   `defaultBlockState()`=axis_y（ForkingTrunkPlacer 的斜枝也是逐 y 竖杆）。
+
+acacia 分支结构已按 ForkingTrunkPlacer.java:34-88 + AcaciaFoliagePlacer
+.java:33-54 全文移植（倾斜主杆+反向斜枝+双冠附着点）——**无
+acacia_branching_debt**。
