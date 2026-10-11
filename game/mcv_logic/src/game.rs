@@ -723,6 +723,22 @@ pub enum CameraType {
 /// 第三人称摄像机距离上限（MC options.cameraDistance 默认 norm）。
 const THIRD_PERSON_DIST: f32 = 4.0;
 
+/// 物品图标三级解析（#150 同源函数）：Block 物品 → 方块图集（渲染端取
+/// `BLOCKS[].tiles[2]` 侧面 tile），材料物品 → GUI 精灵表图标名，空堆 →
+/// Empty。三处消费（HUD [`GameRuntime::build_hud`] 槽内容、第一人称手持
+/// [`GameRuntime::hand_item`]、掉落物 billboard [`GameRuntime::item_drops`]
+/// ）共用本函数——图标名/方块 id 的解析只此一份，uv 逻辑不漂移
+/// （26.1 Gui.renderSlot 与 ItemRenderer 同走 itemModelResolver 的语义位）。
+pub fn item_icon(stack: &mcv_item::ItemStack) -> mcv_render::gpu::HandItem {
+    if stack.is_empty() {
+        return mcv_render::gpu::HandItem::Empty;
+    }
+    match stack.def().kind {
+        mcv_item::ItemKind::Block(bid) => mcv_render::gpu::HandItem::Block(bid.id()),
+        _ => mcv_render::gpu::HandItem::Sprite(stack.def().name),
+    }
+}
+
 /// 方块交互距离（26.1 `Attributes.BLOCK_INTERACTION_RANGE` 基值 4.5，
 /// `Attributes.java:22-23`；创造 +0.5 加法修饰 = 5.0，`ServerPlayer.java:215-216`
 /// `CREATIVE_BLOCK_INTERACTION_RANGE_MODIFIER` ADD_VALUE）。挖掘/放置/选中
@@ -1027,9 +1043,9 @@ impl GameRuntime {
             .add_system(mcv_ecs::Stage::Fixed, "mob_arrows", arrow_system);
         // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
         // mob_ai 按 MobKind 过滤、掉落系统按 ItemDrop 过滤，互不触碰）。
-        // TODO 渲染：mcv_render Scene 目前只有地形/HUD/玩家模型通路，怪物
-        // 也未上屏——掉落物待通用实体渲染通路（billboard 物品图标或 1/4
-        // 缩放方块）落地后再接，先保证物理+拾取语义完整。
+        // 渲染（#150 通用物品渲染通路）：mcv_render::item_render 的
+        // billboard 批已接——GameRuntime::item_drops 每帧只读快照（图标
+        // 解析/光照/相位）喂 Scene.drops，物理+拾取语义不变。
         rt.mobs_app.add_system(
             mcv_ecs::Stage::Fixed,
             "item_physics",
@@ -4601,14 +4617,40 @@ impl GameRuntime {
     /// 第一人称手持物（渲染层数据）：选中槽 Block 物品 = 缩小方块（取
     /// `BLOCKS[].tiles`）、其余物品 = GUI 精灵图标 quad、空槽 = 只有手臂。
     pub fn hand_item(&self) -> mcv_render::gpu::HandItem {
-        let s = self.hotbar.selected(self.player.sel_slot);
-        if s.is_empty() {
-            return mcv_render::gpu::HandItem::Empty;
-        }
-        match s.def().kind {
-            mcv_item::ItemKind::Block(bid) => mcv_render::gpu::HandItem::Block(bid.id()),
-            _ => mcv_render::gpu::HandItem::Sprite(s.def().name),
-        }
+        item_icon(self.hotbar.selected(self.player.sel_slot))
+    }
+
+    /// 掉落物渲染快照（#150 刀 1）：mobs ECS World 里的 ItemDrop 集合 →
+    /// 渲染端 billboard 批（[`mcv_entity::collect_item_drop_snaps`] 只读
+    /// 收集 + 同源图标解析 [`item_icon`] + 所在格光照）。视距裁剪 = 渲染
+    /// 距离 ×16（mob 收集同口径）；年龄换 tick 叠加 partialTick——26.1
+    /// ItemEntityRenderState.ageInTicks 的 bob/spin 相位同源。
+    pub fn item_drops(&self) -> Vec<mcv_render::item_render::ItemDropDraw> {
+        let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
+        let snaps = mcv_entity::collect_item_drop_snaps(
+            &self.mobs_app.world,
+            Some((eye, self.render_dist as f32 * 16.0)),
+        );
+        snaps
+            .into_iter()
+            .map(|s| {
+                // 光照取掉落物盒中心所在格（feet + 0.125；缺区块按 0 全黑，
+                // light_at 同 mesher 的 missing=0 口径）。
+                let (b, k) = self.light_at(BlockPos::new(
+                    s.pos.x.floor() as i32,
+                    (s.pos.y + 0.125).floor() as i32,
+                    s.pos.z.floor() as i32,
+                ));
+                mcv_render::item_render::ItemDropDraw {
+                    pos: s.pos.to_array(),
+                    age_ticks: s.age_steps as f32 / mcv_entity::STEPS_PER_TICK as f32
+                        + self.tick_frac as f32,
+                    phase: s.phase,
+                    icon: item_icon(&mcv_item::ItemStack::new(s.item, s.count)),
+                    light: [b, k],
+                }
+            })
+            .collect()
     }
 
     /// 挖掘/选中 overlay（渲染层数据）：挖掘中目标锁定状态机目标并按进度
@@ -4740,21 +4782,20 @@ impl GameRuntime {
                     }
                     let ix = width * 0.5 - 88.0 * s + i as f32 * 20.0 * s;
                     let iy = height - 19.0 * s;
-                    match stack.def().kind {
-                        mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid.id() as usize].tiles[2],
+                    // 图标解析同源（#150）：item_icon 三级分支，与手持/掉落
+                    // 物同一函数（26.1 Gui.renderSlot 的 Block→方块 tile、
+                    // 其余→item sprite 分支）。
+                    match item_icon(stack) {
+                        mcv_render::gpu::HandItem::Block(bid) => quads.push(text::tile_icon(
+                            mcv_core::BLOCKS[bid as usize].tiles[2],
                             ix,
                             iy,
                             16.0 * s,
                         )),
-                        _ => quads.extend(g.sprite_full(
-                            stack.def().name,
-                            ix,
-                            iy,
-                            16.0 * s,
-                            16.0 * s,
-                            white,
-                        )),
+                        mcv_render::gpu::HandItem::Sprite(name) => {
+                            quads.extend(g.sprite_full(name, ix, iy, 16.0 * s, 16.0 * s, white))
+                        }
+                        mcv_render::gpu::HandItem::Empty => {}
                     }
                     if stack.count > 1 {
                         let t = stack.count.to_string();
@@ -4898,9 +4939,11 @@ impl GameRuntime {
                         [0.25, 0.25, 0.28, 0.8],
                     ));
                     if !stack.is_empty() {
-                        match stack.def().kind {
-                            mcv_item::ItemKind::Block(bid) => quads.push(text::tile_icon(
-                                mcv_core::BLOCKS[bid.id() as usize].tiles[2],
+                        // 图标解析同源（#150）：与 sprite 路径同一 item_icon；
+                        // 无图集时 Sprite 分支只画通用色块（无程序化贴图）。
+                        match item_icon(stack) {
+                            mcv_render::gpu::HandItem::Block(bid) => quads.push(text::tile_icon(
+                                mcv_core::BLOCKS[bid as usize].tiles[2],
                                 x + 5.0,
                                 y0 + 5.0,
                                 slot - 10.0,
@@ -6342,6 +6385,29 @@ mod tests {
     const STONE: u16 = 1;
     /// 千块表 id 1009 = "torch"（26.1 发光 14；damp=0，见 mcv_core::OPACITY）。
     const TORCH: u16 = 1009;
+
+    /// #150 图标解析同源锁：三处消费（HUD/手持/掉落物）共用 item_icon，
+    /// 方块物品 → Block(方块 id 透传)、材料物品 → Sprite(物品名)、空堆 →
+    /// Empty。hand_item/build_hud 改走本函数后，uv/名解析不许分叉。
+    #[test]
+    fn item_icon_resolves_block_material_and_empty() {
+        use mcv_render::gpu::HandItem;
+        // 圆石 = 方块物品（ItemKind::Block(BlockId(9))，registry 序 27）。
+        assert_eq!(
+            item_icon(&mcv_item::ItemStack::new(mcv_item::COBBLESTONE, 1)),
+            HandItem::Block(9)
+        );
+        // 木棍 = 材料物品 → 精灵名（GUI 表条目名 = mcv_item::ItemDef.name）。
+        assert_eq!(
+            item_icon(&mcv_item::ItemStack::new(mcv_item::STICK, 1)),
+            HandItem::Sprite("stick")
+        );
+        // 空堆 → Empty（手持只画手臂、HUD 槽跳过、掉落物不画）。
+        assert_eq!(item_icon(&mcv_item::ItemStack::empty()), HandItem::Empty);
+        // 手持物与图标解析同源：hand_item 是 item_icon(选中槽) 的直通。
+        // （GameRuntime 无头构造在本 mod 不可达——同源关系由
+        // tests/runtime.rs 的快照测试与该 pub fn 的单行实现锁住。）
+    }
 
     // v6：绝对 y 域，索引公式统一走 mcv_core::vidx（旧 y<<8|z<<4|x）。
     fn lidx(x: usize, y: usize, z: usize) -> usize {

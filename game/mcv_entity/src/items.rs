@@ -337,6 +337,50 @@ pub fn item_merge_system(ctx: &mut mcv_ecs::SysCtx) {
     }
 }
 
+/// 掉落物渲染只读快照（#150 通用物品渲染通路）： [`collect_item_drop_snaps`]
+/// 产出、渲染端消费的纯数据 POD——不含任何渲染类型（mcv_entity 不依赖
+/// mcv_render，分层守卫），图标/uv 解析在游戏层与渲染端中转。
+#[derive(Clone, Copy, Debug)]
+pub struct ItemDropSnap {
+    /// 世界坐标（PhysBody.pos，AABB 脚底中心；渲染端自己加 bob 抬升）。
+    pub pos: Vec3,
+    /// 物品内核 id（[`mcv_item::ITEMS`] 下标）。
+    pub item: u16,
+    pub count: u8,
+    /// 已存活步数（渲染端 ÷[`STEPS_PER_TICK`] 换 tick，叠加 partialTick
+    /// 驱动 bob/spin 相位——26.1 ItemEntityRenderState.ageInTicks 同源）。
+    pub age_steps: u32,
+    /// 上下浮动/自转随机相位。原版 `ItemEntity.bobOffs`（ItemEntity.java:53
+    /// `random.nextFloat() * π * 2`，实体随机场）；快照侧无 rng 访问，用
+    /// 实体槽位下标摊开成 0..2π 的确定性替身（同帧生成的多枚掉落物相位
+    /// 不重合即可，无行为依赖）。
+    pub phase: f32,
+}
+
+/// 收集全部掉落物渲染快照（纯只读，不动 World）。`view` = (眼位, 视距格)
+/// 时做球距剔除——与 mob 收集同口径（mcv_logic mob_render.rs
+/// collect_mob_instances_in 的渲染距离裁剪；掉落物量级几十，无空间索引）。
+pub fn collect_item_drop_snaps(world: &World, view: Option<(Vec3, f32)>) -> Vec<ItemDropSnap> {
+    let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
+    let mut out = Vec::new();
+    for (e, d) in drops.iter() {
+        let Some(b) = phys.get(e) else { continue };
+        if let Some((eye, radius)) = view {
+            if (b.pos - eye).length() > radius {
+                continue;
+            }
+        }
+        out.push(ItemDropSnap {
+            pos: b.pos,
+            item: d.item,
+            count: d.count,
+            age_steps: d.age,
+            phase: (e.idx() % 64) as f32 / 64.0 * std::f32::consts::TAU,
+        });
+    }
+    out
+}
+
 /// 主控结算 [`PickupReq`]：走 [`mcv_item::Hotbar::add`]（与破坏直落同一
 /// give 路径），全收 → despawn；有剩余（满栏）→ 组件 count 改为剩余量，
 /// 实体留在地上。GameRuntime 固定步末与集成测试共用本函数。

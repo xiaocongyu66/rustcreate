@@ -2551,6 +2551,7 @@ impl AppState {
             underwater: false,
             particles: None, // 菜单场景无世界粒子
             hand: None,      // 菜单场景无第一人称手持
+            drops: None,     // 菜单场景无掉落物可画
         };
         let Some(sp) = self.surface.as_mut() else {
             return;
@@ -2916,6 +2917,9 @@ impl AppState {
             &runtime.mobs_app.world,
             Some((camera.pos, runtime.render_dist as f32 * 16.0)),
         );
+        // 掉落物渲染快照（#150 刀 1）：ECS ItemDrop → billboard 批
+        // （图标解析/光照/相位换算在 game 层 item_drops 内聚）。
+        let drop_draws = runtime.item_drops();
         let scene = mcv_render::Scene {
             camera: &camera,
             time: (runtime.time_ticks % 24_000) as f32 / 20.0,
@@ -2948,6 +2952,7 @@ impl AppState {
                     item: runtime.hand_item(),
                     swing: runtime.swing_progress(),
                 }),
+            drops: Some(&drop_draws[..]),
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);

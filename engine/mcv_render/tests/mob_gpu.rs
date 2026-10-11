@@ -149,6 +149,7 @@ fn render(
         underwater: false,
         particles: None,
         hand: None,
+        drops: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);

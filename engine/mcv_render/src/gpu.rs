@@ -903,6 +903,9 @@ pub struct Scene<'a> {
     /// 独立 pass（26.1 GameRenderer.java:724-729 clearDepth → renderItemInHand）。
     /// 第三人称/加载态/死亡态传 None 不画。
     pub hand: Option<crate::hand::HandRender>,
+    /// 掉落物 billboard 批（#150 通用物品渲染通路）：世界 pass 内实体相
+    /// 画（mob 之后、裂纹 overlay 之前）；None/空批不画。
+    pub drops: Option<&'a [crate::item_render::ItemDropDraw]>,
 }
 
 /// 帧绘制结构性统计（#80 可观测性）：合批前后 draw 数对比的代码级证据。
@@ -1001,6 +1004,9 @@ pub struct Renderer {
     /// 粒子渲染（独立小 draw；纹理/管线在 ParticleRenderer 内）。
     particles: ParticleRenderer,
     particle_bind: wgpu::BindGroup,
+    /// 掉落物 billboard 渲染（#150；GUI 精灵表 + 方块图集双源采样）。
+    items: crate::item_render::ItemDropRenderer,
+    item_bind: wgpu::BindGroup,
     /// 第一人称手持：物品图标小管线（顶点布局复用 player）+ 手持方块
     /// 立方体缓冲（每帧覆写，CrackVertex 布局直通 terrain 管线）。
     hand_icon_pipeline: wgpu::RenderPipeline,
@@ -1830,6 +1836,15 @@ impl Renderer {
         let particles = ParticleRenderer::new(&device, &queue, color_format, assets_dir);
         let particle_bind =
             particles.build_bind_group(&device, &frame_buf, &terrain_views[0], &sampler);
+
+        // ---- item drops（#150 通用物品渲染通路）-------------------------
+        // 掉落物 billboard 批：GUI 精灵表（材料物品）+ 方块图集（方块物品）
+        // 双源采样；frame uniform 复用 frame_buf，采样器复用 terrain 最近邻。
+        // GLES 拆分数组设备上方块 tile 层若超出首数组则钳末层（粒子碎屑
+        // 同款已知限制，lavapipe/真机 ≥838 层单数组无此问题）。
+        let items = crate::item_render::ItemDropRenderer::new(&device, color_format);
+        let item_bind =
+            items.build_bind_group(&device, &frame_buf, &gui_view, &terrain_views[0], &sampler);
 
         // ---- bind groups ----------------------------------------------
         // terrain 图集数组槽：binding 2 = terrain_views[0]，追加数组 5/6/7
@@ -2679,6 +2694,8 @@ impl Renderer {
             tint_foliage,
             particles,
             particle_bind,
+            items,
+            item_bind,
             hand_icon_pipeline,
             hand_uniform,
             hand_bind,
@@ -3123,6 +3140,24 @@ impl Renderer {
             // mobs: 同序（entity 透不透明阶段，水前）
             if let Some(mobs) = scene.mobs {
                 self.draw_mobs(&mut pass, vp.to_cols_array_2d(), mobs);
+            }
+
+            // 掉落物（#150 通用物品渲染通路）：entity 相（mob 后、overlay/水
+            // 前），billboard 图标 cutout 写深度——26.1 ItemEntityRenderer 的
+            // 实体相语义（浮动 bob / 自转 spin 原式见 item_render.rs）。
+            if let Some(drops) = scene.drops {
+                self.items.draw(
+                    &mut pass,
+                    &self.item_bind,
+                    drops,
+                    crate::item_render::DropDrawCtx {
+                        cam,
+                        day: scene.day_factor,
+                        light_tint: env_color::sky_light_color(tick),
+                    },
+                    self.gui.as_ref(),
+                    &self.queue,
+                );
             }
 
             // 挖掘裂纹 + 选中描边：不透明后、水前（26.1 translucent 序）。

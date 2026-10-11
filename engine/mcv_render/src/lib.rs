@@ -11,6 +11,7 @@ pub mod frustum;
 pub mod gpu;
 pub mod gui;
 pub mod hand;
+pub mod item_render;
 pub mod mob_mesh;
 pub mod offscreen;
 pub mod particle_renderer;
@@ -26,6 +27,7 @@ pub use gpu::{
     Renderer, Scene, WaterPart,
 };
 pub use hand::{HandItem, HandRender};
+pub use item_render::{ItemDropDraw, ItemDropRenderer};
 pub use mob_mesh::{
     MAX_MOB_PARTS, MOB_KIND_COUNT, MOB_MAX_INSTANCES, MOB_PART_COUNTS, MOB_TEX_FILES,
     MOB_TEX_LAYERS, MobModelKind, MobPose, WALK_GAIN, build_mob_mesh, load_mob_payload,

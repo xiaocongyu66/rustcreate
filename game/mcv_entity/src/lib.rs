@@ -29,9 +29,10 @@ pub use effect::{
     fires_this_tick, hurt_burst, is_instant, slimes_to_spawn, wind_burst_power,
 };
 pub use items::{
-    DEATH_PICKUP_DELAY, DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, PICKUP_DELAY,
-    PICKUP_INFLATE_XZ, PICKUP_INFLATE_Y, PickupReq, item_merge_system, item_physics_system,
-    item_pickup_system, register_drop_components, settle_pickups, spawn_item_drop,
+    DEATH_PICKUP_DELAY, DESPAWN_AGE, DropWorld, ITEM_HALF, ItemDrop, ItemDropSnap, PICKUP_DELAY,
+    PICKUP_INFLATE_XZ, PICKUP_INFLATE_Y, PickupReq, STEPS_PER_TICK, collect_item_drop_snaps,
+    item_merge_system, item_physics_system, item_pickup_system, register_drop_components,
+    settle_pickups, spawn_item_drop,
 };
 pub use passive::{
     AnimState, EAT_GRASS_INTERVAL, EAT_GRASS_TICKS, PANIC_MAX_TICKS, PANIC_RADIUS,

@@ -253,7 +253,8 @@ const _: () = assert!(size_of::<ParticleVertex>() == 56);
 
 /// terrain 光照曲线 CPU 侧（与 terrain.wgsl `light_curve` 同公式；
 /// 26.1 lightmap.fsh:35-55 加色合成：环境底色 + 天光色×sb + 块光暖橙×bb）。
-fn light_curve(sky: u8, block: u8, day: f32, sky_light_color: glam::Vec3) -> [f32; 3] {
+/// pub：掉落物 billboard（item_render.rs）与粒子共用同一曲线，防漂移。
+pub fn light_curve(sky: u8, block: u8, day: f32, sky_light_color: glam::Vec3) -> [f32; 3] {
     let s = sky as f32 / 15.0;
     let b = block as f32 / 15.0;
     let sb = s / (4.0 - 3.0 * s) * day;

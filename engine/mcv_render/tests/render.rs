@@ -124,6 +124,7 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         underwater: false,
         particles: None,
         hand: None,
+        drops: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -201,6 +202,7 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         underwater: false,
         particles: None,
         hand: None,
+        drops: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -373,6 +375,7 @@ fn terrain_sky_and_hud_render() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -477,6 +480,7 @@ fn terrain_multi_array_grass_render() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -546,6 +550,7 @@ fn mining_crack_and_outline_darken_target() {
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
+            drops: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -762,6 +767,7 @@ fn water_pass_renders_uploaded_water_vertices() {
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
+            drops: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -942,6 +948,7 @@ fn gles_fallback_world_frame_smoke() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1016,6 +1023,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
+            drops: None,
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1110,6 +1118,7 @@ fn cjk_text_stays_within_line_box() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1195,6 +1204,7 @@ fn celestial_sun_texture_paints_core() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1268,6 +1278,7 @@ fn missing_assets_never_paint_fake_pixels() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1355,6 +1366,7 @@ fn missing_assets_never_paint_fake_pixels() {
         underwater: false,
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
+        drops: None,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1473,6 +1485,7 @@ fn four_mobs_paint_with_vanilla_textures() {
             underwater: false,
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
+            drops: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1643,6 +1656,7 @@ fn first_person_hand_paints_bottom_right() {
             underwater: false,
             particles: None,
             hand,
+            drops: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1781,6 +1795,36 @@ fn first_person_hand_paints_bottom_right() {
         "手持图标像素越出右下象限（bbox {icon_bb:?}）——图标锚点常数回归"
     );
 
+    // (g) 第二张材料精灵（stick）：图标行不同的 sprite 也要走通同一
+    //     hand_icon 通路（#150 刀 2 帧差样本；torch 无物品注册/无
+    //     item/torch.png 素材，债登记 ITEMRENDER-1——以 stick 为替代样本）。
+    let stick = frame(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &camera,
+        Some(mcv_render::HandRender {
+            item: mcv_render::HandItem::Sprite("stick"),
+            swing: 0.0,
+        }),
+    );
+    let (stick_diff, stick_bb) = diff_bbox(&empty, &stick, extent.width);
+    assert!(
+        stick_diff > 100,
+        "手持第二张精灵帧缺少图标像素：diff={stick_diff}（bbox {stick_bb:?}）"
+    );
+    // 两张精灵各自上屏且画面不同（图标行不同 → uv 不同 → 像素不同）。
+    let (between_diff, _) = diff_bbox(&sprite, &stick, extent.width);
+    assert!(
+        between_diff > 30,
+        "diamond 与 stick 两帧应有可辨差异（uv 解析漂移?）：diff={between_diff}"
+    );
+    assert!(
+        in_bottom_right(stick_bb),
+        "第二张精灵越出右下象限（bbox {stick_bb:?}）"
+    );
+
     let scope_err = pollster::block_on(guard.pop());
     assert!(
         scope_err.is_none(),
@@ -1880,6 +1924,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         underwater: false,
         particles: None,
         hand: None,
+        drops: None,
     };
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
     let st = renderer.last_frame_stats();
@@ -1965,6 +2010,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
             underwater: false,
             particles: None,
             hand: None,
+            drops: None,
         };
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
         let mut enc = device.create_command_encoder(&Default::default());
@@ -2138,6 +2184,7 @@ fn staging_upload_flush_contract() {
         underwater: false,
         particles: None,
         hand: None,
+        drops: None,
     };
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
     let mut enc = device.create_command_encoder(&Default::default());
@@ -2332,6 +2379,7 @@ fn wood_family_samples_render_thin_templates() {
             underwater: false,
             particles: None,
             hand: None,
+            drops: None,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);

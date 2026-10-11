@@ -171,3 +171,29 @@ docs/block-coverage.md；基线哨兵 `mcv_mesher/tests/coverage_audit.rs` +
    薄板（BlockBehaviour.java:333-334）；千块表 ladder solid=true 与 26.1 一致，
    模板表 Collision 薄板本就正确，非债。
 
+## ITEMRENDER-1 掉落物 billboard 简化（#150 通用物品渲染通路，未移植面）
+
+26.1 `ItemEntityRenderer.java`（:41-110）语义逐项对本仓
+`engine/mcv_render/src/item_render.rs` 的 billboard 实现登记偏差。已对齐：
+AABB 0.25（Item.java SIZE）→ quad 边长 0.25、浮动 bob = sin(ageInTicks/10
++ bobOffs)·0.1+0.1（:48 原式）、自转角 spin = ageInTicks/20 + bobOffs
+（ItemEntity.java:431-432 原式）、光照取所在格 lightmap。裁剪/简化项：
+
+1. **方块物品不做 1/4 微缩立方体**（原版 block item 模型 0.25 缩放六面
+   `tiles[]`；本仓统一 billboard 图标取 `tiles[2]` 侧面 tile）——3D 微缩
+   模型债；材料物品 sprite 挤出体（extruded sprite，FLAT_ITEM_DEPTH_
+   THRESHOLD :20 分支）同样不做。
+2. **count>1 不画堆叠**（submitMultipleFromCount :58-110 多模型随机散布，
+   seed=实体 id）——单枚 billboard 代表整堆。
+3. **无阴影**（EntityRenderer shadowRadius=0.15 / shadowStrength=0.75，
+   ItemEntityRenderer.java:27-28）——引擎无实体阴影通路（影深债，与
+   mob/player 阴影同域）。
+4. **自转轴简化**：原版整体模型绕世界 Y 转；billboard = 竖直卡片绕竖轴
+   自转（相机右向随 spin 旋转），侧对时投影收窄成线——无挤出厚度可见。
+5. **位置不插值**：快照取当前 PhysBody.pos（无 o-pos 外推），原版
+   partialTicks 位置插值缺失；引擎 60 Hz 步长下步进抖动 ≤1/60 格。
+6. **ITEM_MIN_HOVER_HEIGHT 并入浮动基线**：原版 = −bb.minY + 0.0625
+   （:47，bb 依模型盒），本仓取 0.125+0.0625 常数（DROP_CENTER_Y），
+   方块/材料两观感在 ±0.03 块内。
+7. **手持 3D 模型债**已在 HAND-2 #7 登记（本波手持图标 sprite 简化版
+   维持不动）。
