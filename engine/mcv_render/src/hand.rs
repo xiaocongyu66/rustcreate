@@ -201,8 +201,8 @@ mod tests {
     }
 
     /// 原版手 pass 投影的 NDC（16:9 桌面基准）：竖直 FOV 固定 70°
-    /// （GameRenderer.java:726 `hudProjection.setupPerspective(0.05,100,hudFov,…)`
-    /// + Camera.java:221-223 `calculateHudFov` = 70.0F + Projection.java:69-72
+    /// （GameRenderer.java:726 `hudProjection.setupPerspective(0.05,100,hudFov,…)`；
+    /// Camera.java:221-223 `calculateHudFov` = 70.0F；Projection.java:69-72
     /// `setPerspective(fov·π/180, w/h, …)`）。近平面只影响 z 映射，xy 判定不用。
     fn hud_ndc(cam: &Camera, world: Vec3) -> (f32, f32) {
         let f = 1.0 / (70.0f32.to_radians() * 0.5).tan();
