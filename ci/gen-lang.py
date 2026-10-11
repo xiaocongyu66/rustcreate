@@ -154,7 +154,7 @@ def main() -> int:
         "// DEVELOP_ONLY: en/zh 列取自 Mojang 官方 en_us.json/zh_cn.json（版权同\n"
         "// 材质包政策，发布前删除或替换为自维护表）；行 = (mcv_item 注册名, en, zh)，\n"
         "// legacy 名无官方 key 不产行（运行时回退注册名）。\n"
-        "pub const ITEM_TABLE: [(&str, &str, &str); "
+        "pub static ITEM_TABLE: [(&str, &str, &str); "
         f"{len(item_rows)}] = [\n{i_rows},\n];\n"
     )
     (OUT_DIR / "items_table.rs").write_text(items_table, encoding="utf-8")

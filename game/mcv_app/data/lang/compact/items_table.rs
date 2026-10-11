@@ -2,7 +2,7 @@
 // DEVELOP_ONLY: en/zh 列取自 Mojang 官方 en_us.json/zh_cn.json（版权同
 // 材质包政策，发布前删除或替换为自维护表）；行 = (mcv_item 注册名, en, zh)，
 // legacy 名无官方 key 不产行（运行时回退注册名）。
-pub const ITEM_TABLE: [(&str, &str, &str); 1377] = [
+pub static ITEM_TABLE: [(&str, &str, &str); 1377] = [
     ("stick", "Stick", "木棍"),
     ("coal", "Coal", "煤炭"),
     ("iron_ingot", "Iron Ingot", "铁锭"),
