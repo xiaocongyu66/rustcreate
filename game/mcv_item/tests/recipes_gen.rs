@@ -309,10 +309,7 @@ fn smelting_negatives_known_gaps() {
     // #144 物品地基波转正后，旧负例全部变正（产物已注册）：
     // log → charcoal（charcoal.json）；raw_copper → copper_ingot（缺口报告
     // 旧 top1）；sand → glass（glass.json）。
-    assert_eq!(
-        crafting::smelt_result(mcv_item::LOG),
-        Some((id("charcoal"), 1))
-    );
+    assert_eq!(crafting::smelt_result(LOG), Some((id("charcoal"), 1)));
     assert_eq!(
         crafting::smelt_result(mcv_item::RAW_COPPER),
         Some((id("copper_ingot"), 1))
