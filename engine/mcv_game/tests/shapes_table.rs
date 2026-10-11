@@ -344,10 +344,11 @@ fn render_bbox(id: u16, state: u16) -> Option<[f32; 6]> {
     bb
 }
 
-/// 拾取/碰撞盒并集包围盒（None=无盒）。
+/// 拾取/碰撞盒并集包围盒（None=无盒）。pos 与 [`render_bbox`] 的摆块位
+/// (8,8,8) 同格——push_boxes 输出世界坐标盒，与渲染顶点同域可比。
 fn shape_bbox(w: &dyn VoxelAccess, id: u16, mode: RayTarget) -> Option<[f32; 6]> {
     let mut out = [EMPTY_AABB; MAX_SHAPE_BOXES];
-    let n = push_boxes(BlockId(id), w, BlockPos::new(0, 0, 0), mode, &mut out);
+    let n = push_boxes(BlockId(id), w, BlockPos::new(8, 8, 8), mode, &mut out);
     let mut bb: Option<[f32; 6]> = None;
     for b in &out[..n] {
         bb = Some(match bb {
@@ -365,7 +366,7 @@ fn shape_bbox(w: &dyn VoxelAccess, id: u16, mode: RayTarget) -> Option<[f32; 6]>
     bb
 }
 
-fn assert_bbox_eq(id: u16, name: &str, what: &str, r: Option<[f32; 6]>, s: Option<[f32; 6]>) {
+fn assert_bbox_eq(_id: u16, name: &str, what: &str, r: Option<[f32; 6]>, s: Option<[f32; 6]>) {
     match (r, s) {
         (None, None) => {}
         (Some(a), Some(b)) => {
