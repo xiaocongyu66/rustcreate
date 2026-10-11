@@ -693,7 +693,7 @@ fn water_faces_against_floor_culled_and_lit_per_vanilla() {
                 }
                 for y in 10..=12i32 {
                     vox[mcv_core::vidx(x, y, z)] = water;
-                    light[mcv_core::vidx(x, y, z)] = (12 - (y - 10)) << 4;
+                    light[mcv_core::vidx(x, y, z)] = ((12 - (y - 10)) << 4) as u8;
                 }
                 light[mcv_core::vidx(x, 13, z)] = 15 << 4;
             }
