@@ -100,3 +100,44 @@ placed feature 的 per-chunk 尝试数（E[count]/10.24，见模块头注），�
 
 fancy oak（0.1/0.333）、pine（taiga 1/3）、fallen tree（各处 0.0125）
 折回对应主种（#135 六树种之外的 placer 不在本波面）。
+
+## SURF-1 表层规则（#140 地表内核波）的例外群系与参数裁剪
+
+vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场真实过零面
+（`SurfaceSystem.buildSurface` SurfaceSystem.java:106-163 逐列自顶向下扫描、
+`ON_FLOOR` = stoneDepthAbove≤1，SurfaceRules.java:680）+ 群系面表（
+`SurfaceRuleData.overworldLike`）。10 群系子集与 id 面之下的偏差：
+
+1. **缺失方块 id（千块表登记债）**：原版表层规则表引用的方块中，本仓
+   生成面缺——砾石 GRAVEL（海洋/河床 ON_FLOOR 默认
+   SurfaceRuleData.java:258-265 gravelOrStoneIfCeiling；砾石补丁另出
+   disk feature）、砂岩 SANDSTONE（滩/沙漠 DEEP/VERY_DEEP_UNDER_FLOOR
+   :254-255 与洞顶 :72）、各色彩陶与红沙（badlands 带 :202-232 + bandlands）、
+   灰化土/粗泥土（老生长针叶林 :158-161、风袭系 :113-156）、菌丝（蘑菇岛
+   :164）、泥（红树滩 :123）、雪块/浮冰/细雪/冰（frozen peaks/slopes/grove/
+   frozen ocean :96-143,240-252）、方解石（stony peaks :78-79）。以上群系
+   多数不在 10 群系点表（biomes.rs v1），可达者（海洋/河流底）以沙近似；
+   扩群系表/扩千块表后须按 SurfaceRuleData 逐群系补全，本波只锁「内陆
+   草群系顶格 = 草、滩/沙漠 = 沙、水下沉底 ∈ {沙,土}」（tests/surface_rules.rs）。
+2. **UNDER_FLOOR 带宽取块级常数 3**：原版带宽 = 1 + surfaceDepth（surface
+   噪声 0..4 + 0.25 随机抖动，SurfaceSystem.java:165-168）逐列变化；本仓
+   恒 `SUBSOIL_DEPTH=3`（terrain.rs）。
+3. **abovePreliminarySurface 门简化**：原版 = 无 jag 初始密度零点按 16 格
+   单元双线性插值 + surfaceDepth − 8（SurfaceRules.java:351-383
+   preliminarySurfaceLevel/`HOW_FAR_BELOW…=8` :264）；本仓 = 逐列含 jag
+   解析过零面 − 8（无单元插值、surfaceDepth 取 0）。带下回落 STONE 的
+   语义一致（深洞底不长草），带缘 ±几格差异属插值近似。
+4. **steep() 不实现**：邻列 WORLD_SURFACE_WG 高差 ≥4 判崖
+   （SurfaceRules.java:403-427）仅被 FROZEN_PEAKS/SNOWY_SLOPES/
+   JAGGED_PEAKS 三门消费（SurfaceRuleData.java:100/108/141）——10 群系
+   子集选不出这三群系；内陆草群系悬崖侧面按原版行为保持各列实顶材质
+   （每列自己的顶，无独立悬崖换石规则），扩群系后须补 steep 门。
+5. **滩/雪位置带覆盖群系带**：估计面 `surface_ours ≤ SEA+1 → 沙`、
+   `> SEA+46 → 雪草`（geometry_locks 契约「材质由 offset 估计面分带」，
+   tests/geometry_locks.rs:100-121）优先于群系面表；原版全按群系与
+   温度门（SNOWY_BEACH/DESERT 沙不依赖海拔，peaks 系雪不依赖固定 46）。
+   估计面与真实顶差 ±1-2 格的边缘列按估计面分带，是有意保留的既有契约。
+6. **水面置换门（swamp/mangrove puddle、frozen ocean 冰盖）不实现**：
+   SurfaceRuleData.java:186-199,240-252 的水/冰置面规则依赖 SWAMP 噪声与
+   temperature 门，10 群系子集无 SWAMP/MANGROVE/FROZEN_OCEAN → 不可达，
+   扩群系后随 id 债一并补。

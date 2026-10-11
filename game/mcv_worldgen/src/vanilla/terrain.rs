@@ -42,6 +42,7 @@
 //! - jagged.json（-16, [1.0]×16）：山脊锯齿通道同改 NormalNoise
 //!   （NoiseRouterData.java:99 `noise(JAGGED, 1500.0, 0.0)`）。
 
+use crate::vanilla::biomes::Biome;
 use crate::vanilla::blended::BlendedNoise;
 use crate::vanilla::climate::ClimateSampler;
 use crate::vanilla::noise::NormalNoise;
@@ -59,6 +60,25 @@ const GLOBAL_OFFSET: f64 = -0.50375;
 pub const ENTRANCE_FADE: i32 = 14;
 /// noodle 关闭哨兵（rangeChoice 的「未雕刻」常量）。
 const NOODLE_OFF: f64 = 64.0;
+
+/// 表层亚表带深（depth_above ∈ [2, 4] 层 = 26.1 UNDER_FLOOR 带
+/// `stoneDepthCheck(0, true, FLOOR)` = stoneDepthAbove ≤ 1 + surfaceDepth
+/// （SurfaceRules.java:676-680；surfaceDepth = surface 噪声 0..4 取块级常数 3，
+/// SurfaceSystem.java:165-168）。
+const SUBSOIL_DEPTH: i32 = 3;
+
+/// 真实实顶扫描上限余量：过零面上方的「软空气」半支（quarterNegative 负
+/// 支斜率 ÷4 ⇒ 每格仅 −factor/128 ≈ −0.03..−0.05）叠加 base_3d 极值尾
+/// （|v| ≤ ~0.6，BlendedNoise 混合界），20 格 ≥ 0.6·128/3.95（最低
+/// factor = overworldFactor 3.95）保证扫描窗罩住一切实心——窗过矮会把
+/// 峰顶齐窗削平（旧实现锚估计面即此病）。
+const REAL_TOP_SCAN_MARGIN: i32 = 20;
+
+/// abovePreliminarySurface 门深（SurfaceRules.java:264
+/// HOW_FAR_BELOW_PRELIMINARY_SURFACE_LEVEL_TO_BUILD_SURFACE = 8；
+/// SurfaceRuleData.java:278 全部表层规则包在该门内——带下（深洞底）
+/// 回落 STONE，洞口带内照常表层化）。
+const PRELIM_SURFACE_BAND: i32 = 8;
 
 // ---- 体素 id（镜像 mcv_core legacy 段顺序）----
 pub const AIR: u16 = 0;
@@ -422,6 +442,10 @@ pub struct ColumnState {
     /// SPAGHETTI_2D_ELEVATION 列常量（vanilla yScale=0 的 2D 通道，
     /// NoiseRouterData.java:273-275；mapFromUnitTo → [-8, +8]）。
     pub sp2d_elev: f64,
+    /// 样条估计面 = round(128+128·offset)——树门/群系窗/质量统计的估计
+    /// 口径（quality::plains_share、geometry_locks 材质分带）。#140 起不再
+    /// 决定 pass 1 表层材质：表层锚密度场真实过零面（见 generate 的逐列
+    /// 实顶扫描）。
     pub surface_ours: i32,
     pub ocean: bool,
 }
@@ -689,30 +713,84 @@ pub fn generate(
             let wz = base_z.wrapping_add(cz);
             let cs = orch.column_state(wx, wz);
             let surface = cs.surface_ours;
+            // 滩/雪位置带沿用 `surface_ours` 估计面口径（geometry_locks
+            // vanilla_surface_material_bands 的契约面：「材质由 offset 估计面
+            // 分带」，tests/geometry_locks.rs:100-121）。
             let beach = surface <= SEA + 1;
             let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
-            let top = surface.max(SEA);
-
-            for y in MIN_Y..=top {
-                let field = orch.density(&cs, wx, y, wz);
+            // 群系面表（#140 表层波）：26.1 表层是逐方块条件规则表
+            // （SurfaceRuleData.overworldLike），顶格按群系与水情取块——
+            // 内陆默认 grassOrDirtIfUnderwater（SurfaceRuleData.java:71,165：
+            // aboveWater→GRASS_BLOCK，否则 DIRT）、
+            // BEACH/WARM_OCEAN/DESERT 沙（:74-87 sandOrSandstoneIfCeiling）、
+            // SNOWY_PLAINS 草+雪层（雪草单块表示，本子集无 frozen peaks/
+            // badlands/mushroom/mangrove 例外群系，缺 id 债见
+            // KNOWN-DIVERGENCE SURF-1 ①）。
+            let (surface_id, subsoil_id) = if beach {
+                (SAND, SAND)
+            } else if snowy {
+                (SNOW_GRASS, DIRT)
+            } else {
+                match orch.biome_at(wx, wz) {
+                    Biome::Desert | Biome::Beach | Biome::Ocean | Biome::River => (SAND, SAND),
+                    Biome::SnowyPlains => (SNOW_GRASS, DIRT),
+                    Biome::Plains
+                    | Biome::Forest
+                    | Biome::BirchForest
+                    | Biome::Savanna
+                    | Biome::Taiga => (GRASS, DIRT),
+                }
+            };
+            // 表层锚 = 密度场**真实过零面**（逐列实顶扫描），不再锚样条估计
+            // 面 `surface_ours`（旧 y==surface→GRASS 的 ±1-2 格偏差把暴露层
+            // 打进 DIRT 带 = 用户可见整片裸土）。26.1 同语义：
+            // SurfaceSystem.buildSurface（SurfaceSystem.java:106-163）逐列从
+            // WORLD_SURFACE_WG 高度图顶自顶向下扫描，实心 stoneAboveDepth++
+            // （:146）、空气重置（:126-128）；ON_FLOOR = stoneDepthAbove ≤ 1
+            // （SurfaceRules.java:680 StoneDepthCheck）。解析过零面 =
+            // 128+128·(offset+jag)（jag 与 density() 内同式、列常量），向上
+            // 留 REAL_TOP_SCAN_MARGIN 软空气余量后并进同一趟自顶向下循环
+            // （扫描即填充，无二次 density 求值）。
+            let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
+            let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
+            let scan_top =
+                (crossing + REAL_TOP_SCAN_MARGIN).clamp(MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
+            let fill_top = scan_top.max(SEA);
+            // abovePreliminarySurface 门（SurfaceRuleData.java:278 全表层规则
+            // 的外包；SurfaceRules.java:379 = preliminary + surfaceDepth − 8，
+            // 此处 surfaceDepth 取 0 的块级简化）——带下实心一律 STONE。
+            let min_surface = crossing - PRELIM_SURFACE_BAND;
+            // vanilla 上下文（SurfaceSystem.java:119-148）：自顶向下，
+            // 空气重置 stoneAboveDepth、流体不重置只记水面（:129-132）、
+            // 实心 +1；depth_above==1 即 ON_FLOOR 顶层格。
+            let mut depth_above = 0_i32;
+            for y in (MIN_Y..=fill_top).rev() {
                 let id = if y == MIN_Y || (y <= MIN_Y + 4 && bedrock_noise(seed, wx, y, wz)) {
                     // 基岩层 −64..−60：底层恒实心，其上 4 格 50% 噪声
                     // （26.1 BedrockBlock 5 层规则；旧 256 基准为 0..2 三层）。
+                    // 基岩是实心非 defaultBlock（SurfaceSystem.java:149 只换
+                    // 石头）——同 vanilla 计入 stoneDepth 上下文但不换材质；
+                    // 该深度恒在 abovePreliminarySurface 带下（STONE 兜底）。
                     BEDROCK
-                } else if field <= 0.0 {
-                    if y <= SEA { WATER } else { AIR }
-                } else if y == surface {
-                    if beach {
-                        SAND
-                    } else if snowy {
-                        SNOW_GRASS
+                } else if orch.density(&cs, wx, y, wz) <= 0.0 {
+                    if y <= SEA {
+                        // 流体：不重置 depth_above（SurfaceSystem.java:129-132）。
+                        WATER
                     } else {
-                        GRASS
+                        depth_above = 0; // SurfaceSystem.java:126-128
+                        AIR
                     }
-                } else if y >= surface - 3 {
-                    if beach { SAND } else { DIRT }
                 } else {
-                    STONE
+                    depth_above += 1; // SurfaceSystem.java:146
+                    if y < min_surface {
+                        STONE
+                    } else if depth_above == 1 {
+                        surface_id
+                    } else if depth_above <= 1 + SUBSOIL_DEPTH {
+                        subsoil_id
+                    } else {
+                        STONE
+                    }
                 };
                 out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }
