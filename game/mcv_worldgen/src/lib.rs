@@ -19,7 +19,7 @@ mod rust_terrain;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
-use mcv_core::{ChunkHandle, ChunkPos, ChunkStatus, ChunkVoxels, Stage, TaskPool};
+use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
 
 /// 地形生成后端。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -110,10 +110,11 @@ pub fn commit_terrain(handle: &Arc<ChunkHandle>, out: TerrainOutput) {
     *handle.heightmap.write().unwrap() = out.heightmap;
     handle.mark_dirty(mcv_core::dirty::SAVE);
     handle.advance_to(Stage::TerrainReady);
-    // status 阶梯并行推进（与 stage 同点同条件，行为零变化）：TerrainReady
-    // = SURFACE——NOISE+SURFACE 本仓 worldgen 一次产出（CARVERS/FEATURES
-    // 无对应 pass，STRUCTURE_* 仅占位），合并档先例见 ChunkStatus 裁剪映射。
-    handle.advance_status(ChunkStatus::Surface);
+    // status 阶梯不再在此推进（刀 3a）：TerrainReady = SURFACE 的世界生成
+    // 完成度改由票级别派生统一驱动（game.rs advance_status_by_level——授权
+    // 门 = 票级别 target，证据门 = 本函数落下的 stage 位；替换刀 2 的
+    // 「同点同条件」接线，语义等价：commit 只发生在请求环内 = level ≤ 33
+    // 授权域，推进时机同帧）。
 }
 
 /// Blocking convenience for tests and save loading.

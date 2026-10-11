@@ -9,7 +9,8 @@
 //! （审计 stream-arch §2 / edit-mesh-staleness C3）。
 //!
 //! 与 stage 正交的还有 [`ChunkStatus`]（原版 12 态装载阶梯的类型镜像，
-//! 本波只接线 Empty→Surface→Light；加载门仍读 stage——解耦在刀 3）。
+//! 刀 3a 起推进由票级别派生驱动——授权门=票级别 target，证据门=stage 位；
+//! 加载门仍读 stage——解耦在刀 3b）。
 
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -42,9 +43,12 @@ pub mod dirty {
 /// LEVELCHUNK）。与 [`Stage`] **正交**：stage 是渲染/加载记账位（语义
 /// 不动），status 是 worldgen 完成度阶梯；二者各自单调、互不推进。
 ///
-/// 本波接线（同点同条件推进，行为零变化）：`Empty→Surface`（worldgen
-/// commit）→`Light`（块内布光）；`Full` 刀 3 接 ticket 驱动，`Spawn`
-/// 不接线（出生门仍在 stage 侧）。
+/// 本波接线（刀 3a）：推进由票级别派生驱动（`mcv_logic::ticket::
+/// generation_status` 授权 + game.rs `advance_status_by_level` 消费，替换
+/// 刀 2 的「同点同条件」接线）：`Surface`（证据=worldgen commit/读盘的
+/// TerrainReady 位）→`Light`（块内布光）→`Full`（级别 ≤33 且 3×3 邻域
+/// LIGHT——FULL 步 accumulated dependencies 半径 1）。`Spawn` 不接线
+/// （语义归出生门，出生门仍在 stage 侧）。
 ///
 /// 12→6 裁剪映射（显式登记，禁止沉默近似）：
 /// - stage `Empty` = `Empty`（EMPTY）；

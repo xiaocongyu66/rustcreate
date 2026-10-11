@@ -21,6 +21,8 @@ use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{Camera, HudQuad, text};
 
+use crate::ticket::{self, TicketTable, TicketType};
+
 pub const RENDER_DIST: i32 = 8;
 
 /// 世界竖直下界（f32 视图；唯一定义源是 [`mcv_core::WORLD_MIN_Y`]，
@@ -546,6 +548,11 @@ pub struct GameRuntime {
     /// future 完成，DistanceManager.java:87-104）；超时 300 帧（≈5s）视为
     /// 失败可弃。
     req_frames: HashMap<ChunkPos, u64>,
+    /// 票表（刀 3a：原版 TicketStorage + DistanceManager 裁剪镜像，见
+    /// [`crate::ticket`]）：玩家加载/模拟票存储与级别派生。卸载候选与
+    /// status 推进授权均由级别驱动（原版卸载迟滞 = 票级别语义，
+    /// ChunkMap.java:376-381）。
+    pub(crate) tickets: TicketTable,
     /// 卸载复活缓存（原版 ChunkMap.pendingUnloads，ChunkMap.java:388-392）：
     /// 越环区块先从活动 `chunks` 摘除（GPU 网格条目同步释放），数据留在
     /// 此处；重进请求环时原位复活、不重 IO 不重生成；每帧限量落盘，
@@ -895,6 +902,7 @@ impl GameRuntime {
             border_synced: HashMap::new(),
             stream_frame: 0,
             req_frames: HashMap::new(),
+            tickets: TicketTable::new(),
             pending_unloads: Vec::new(),
             pending_light_edges: Vec::new(),
             mesh_priority: None,
@@ -1199,6 +1207,36 @@ impl GameRuntime {
     /// 迟滞（要求 ≥2），原版等效余量 = 发书缓冲 vd+2 + FULL 生成晕。
     pub fn unload_dist(&self) -> i32 {
         self.sim_dist() + 3
+    }
+
+    /// 玩家票维护（刀 3a 接线）：每帧从玩家锚点全量重建——
+    /// - PLAYER_SIMULATION 单锚点（玩家块一张，级别 max(0, 31 − sim_dist)；
+    ///   DistanceManager.java:110-117 addPlayer / :132-134）；
+    /// - PLAYER_LOADING 方环（Chebyshev ≤ view_dist 的每块一张、级别 31；
+    ///   DistanceManager.java:276,:319-321）。
+    ///
+    /// view_dist 取 `sim_dist()` = rd+1（视距语义不变——本仓请求环含 +1
+    /// 支撑环，票发放半径对齐它后，级别传播给出的加载晕圈恰到 rd+4 ≡
+    /// 旧 `unload_dist`，卸载候选集逐块等价，见 [`crate::ticket`] 模块注释）。
+    ///
+    /// 债：原版为增量 tracker（addPlayer/removePlayer/updateViewDistance +
+    /// queueLevels 传播队列），本仓每帧重建 + 解析求 min——传播不动点等价
+    /// （ChunkTracker.java:23-27,:66），增量性不复制。
+    fn refresh_player_tickets(&mut self, center: ChunkPos) {
+        let vd = self.sim_dist();
+        let sim_level = (ticket::ENTITY_TICKING_LEVEL - vd).max(0) as u8;
+        self.tickets.clear();
+        self.tickets
+            .add_ticket(center, TicketType::PlayerSimulation, sim_level);
+        for dx in -vd..=vd {
+            for dz in -vd..=vd {
+                self.tickets.add_ticket(
+                    ChunkPos::new(center.x + dx, center.z + dz),
+                    TicketType::PlayerLoading,
+                    ticket::ENTITY_TICKING_LEVEL as u8,
+                );
+            }
+        }
     }
 
     /// 模拟安全半径：以 `pc` 为中心最大 r ≥ 0，使 Chebyshev ≤r 的环全部
@@ -1672,6 +1710,10 @@ impl GameRuntime {
         );
         self.stream_frame += 1;
 
+        // 票表维护（刀 3a）：玩家票随 center 迁移全量重建，卸载与 status
+        // 推进在本帧的派生都以它为输入。
+        self.refresh_player_tickets(center);
+
         // 光照边派发队列消化（审计 A3/F2）：编辑路径只入队，这里按步预算
         // 跨帧处理，未完保留（原版 LevelLightEngine 重排语义）。放在最前，
         // 让标脏的 MESH 当帧进入下面的 remesh 预算流。
@@ -1681,12 +1723,22 @@ impl GameRuntime {
             self.pending_light_edges = q;
         }
 
-        // ---- unload：迟滞环外、每帧 ≤4、pending_unloads 复活缓存 ----
-        let unload_r = self.unload_dist();
+        // ---- unload：票级别 > MAX_LEVEL（卸载迟滞=票级别语义）、每帧 ≤4、
+        // pending_unloads 复活缓存 ----
+        // 刀 3a：候选集从自研距离阈值改由票级别派生——`!is_loaded(level)`，
+        // 原版 updateChunkScheduling 的 `!ChunkLevel.isLoaded(level)` → toDrop
+        // （ChunkMap.java:376-381）。票发放半径 = view_dist = rd+1 时级别场
+        // 给出的边界 = Chebyshev rd+4 ≡ 旧 `unload_dist()`，候选集逐块等价
+        // （等价锁见 ticket.rs::loading_spread_unload_boundary_matches_legacy_
+        // distance_rule）。
+        let levels = self.tickets.level_map(self.chunks.keys().copied());
         let mut far: Vec<ChunkPos> = self
             .chunks
             .keys()
-            .filter(|c| (c.x - center.x).abs() > unload_r || (c.z - center.z).abs() > unload_r)
+            .filter(|c| {
+                let c = **c;
+                !ticket::is_loaded(levels.get(&c).copied().unwrap_or(ticket::NOT_LOADED) as i32)
+            })
             .copied()
             .collect();
         // 近端优先淘汰（同帧多候选时先处理离玩家近的，远期滞留短）。
@@ -1895,12 +1947,20 @@ impl GameRuntime {
                 mcv_light::init(&mut view);
             }
             handle.advance_to(Stage::LightLocalReady);
-            // status 阶梯并行推进（同点同条件，行为零变化）：LightLocalReady
-            // = LIGHT 拆两档之块内档；跨块边同步完成不另立 status 档（stage
-            // 侧 border_synced/Lit 记账），债见 ChunkStatus 裁剪映射。
-            handle.advance_status(ChunkStatus::Light);
             light_budget -= 1;
         }
+
+        // status 阶梯推进（刀 3a）：由票级别派生驱动，替换刀 2 的「同点同
+        // 条件」接线（worldgen commit→Surface / 光照 init→Light）。本帧的
+        // commit（drain）、读盘（request loop）、布光（上面的 init）产出的
+        // 证据都在这里统一消费——授权门 = 票级别 target（原版
+        // runAllUpdates → updateHighestAllowedStatus，DistanceManager.java:
+        // 75-84；ChunkLevel.generationStatus，ChunkLevel.java:17-19），证据
+        // 门 = 各 pass 完成的 stage 位。语义等价：请求环 ⊆ level ≤ 33 授权
+        // 域，各块推进时机仍为同帧；跨块边同步不另立 status 档（stage 侧
+        // border_synced/Lit 记账），债见 ChunkStatus 裁剪映射。
+        let status_levels = self.tickets.level_map(self.chunks.keys().copied());
+        self.advance_status_by_level(&status_levels);
 
         // border sync: mark pairs once both ends are LightLocalReady。
         // C1：新成对（两端都已本地布光）时真正交换边快照——init 只做块内
@@ -2119,6 +2179,43 @@ impl GameRuntime {
             }
         }
         true
+    }
+
+    /// status 阶梯推进：票级别派生驱动（刀 3a）。授权门 = 票级别允许的最
+    /// 高 status（[`ticket::generation_status`]，ChunkLevel.generationStatus
+    /// 镜像）；证据门 = 本仓各 pass 完成的 stage 位：
+    /// - stage ≥ TerrainReady（worldgen commit / 读盘）→ `Surface`；
+    /// - stage ≥ LightLocalReady（块内布光）→ `Light`；
+    /// - `Full`：级别 ≤ 33 且 3×3 邻域 ≥ LightLocalReady——FULL 步的
+    ///   accumulated dependencies 半径 1 = 邻域 LIGHT（ChunkPyramid.java:
+    ///   36-39；与网格门槛 [`Self::neighbors_ready`] 同谓词）。FULL 蕴含的
+    ///   跨块边一致性在本仓由 stage 侧 border_synced/Lit 记账（债，见
+    ///   ChunkStatus 裁剪映射）。`Spawn` 不接线（语义归出生门，本仓出生门
+    ///   = 出生列及邻域 TerrainReady 现状映射）。
+    ///
+    /// 级别 > MAX_LEVEL 的区块不授权任何推进（同帧已入卸载候选）。
+    fn advance_status_by_level(&self, levels: &HashMap<ChunkPos, u8>) {
+        for (pos, handle) in &self.chunks {
+            let Some(target) = ticket::generation_status(
+                levels.get(pos).copied().unwrap_or(ticket::NOT_LOADED) as i32,
+            ) else {
+                continue;
+            };
+            let target = target as u8;
+            let stage = handle.stage() as u8;
+            if target >= ChunkStatus::Surface as u8 && stage >= Stage::TerrainReady as u8 {
+                handle.advance_status(ChunkStatus::Surface);
+            }
+            if target >= ChunkStatus::Light as u8 && stage >= Stage::LightLocalReady as u8 {
+                handle.advance_status(ChunkStatus::Light);
+            }
+            if target == ChunkStatus::Full as u8
+                && stage >= Stage::LightLocalReady as u8
+                && self.neighbors_ready(*pos)
+            {
+                handle.advance_status(ChunkStatus::Full);
+            }
+        }
     }
 
     /// 触控效果注入：视角、槽位、放置、移动方向、跳跃、挖掘。

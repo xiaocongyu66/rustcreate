@@ -22,5 +22,6 @@
 pub mod difficulty;
 pub mod game;
 pub mod mob_render;
+pub mod ticket;
 pub mod ui;
 pub mod weather;
