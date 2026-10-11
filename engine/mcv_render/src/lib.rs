@@ -92,9 +92,9 @@ fn sun_angle_bezier_y(x: f32) -> f32 {
         |u: f32| 3.0 * (1.0 - u) * (1.0 - u) * u * x1 + 3.0 * (1.0 - u) * u * u * x2 + u * u * u;
     let by =
         |u: f32| 3.0 * (1.0 - u) * (1.0 - u) * u * y1 + 3.0 * (1.0 - u) * u * u * y2 + u * u * u;
-    // y(u) 对 u 的导数（Newton 用）。
-    let by_dt = |u: f32| {
-        3.0 * (1.0 - u) * (1.0 - 3.0 * u) * y1 + 3.0 * u * (2.0 - 3.0 * u) * y2 + 3.0 * u * u
+    // x(u) 对 u 的导数（Newton 解 bx(u)=x，必须用 x 的导数）。
+    let bx_dt = |u: f32| {
+        3.0 * (1.0 - u) * (1.0 - 3.0 * u) * x1 + 3.0 * u * (2.0 - 3.0 * u) * x2 + 3.0 * u * u
     };
     let mut u = x;
     for _ in 0..8 {
@@ -102,7 +102,7 @@ fn sun_angle_bezier_y(x: f32) -> f32 {
         if err.abs() < 1e-6 {
             break;
         }
-        let d = by_dt(u);
+        let d = bx_dt(u);
         if d.abs() < 1e-6 {
             break;
         }

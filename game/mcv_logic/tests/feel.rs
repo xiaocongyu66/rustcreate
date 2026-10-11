@@ -214,22 +214,24 @@ fn exhaustion_caps_at_40() {
 fn sun_zenith_at_tick_6000() {
     // day.json visual/sun_angle：tick 6000 = 0°（天顶）、18000 天底；晨昏
     // 段挂 cubic_bezier(0.362,0.241,0.638,0.759) 缓动（day.json:337-343，
-    // Timelines.java:39/:53）——D2 修正后 tick 0/12000 太阳仰角 =
-    // bezier y(0.75)=y(0.25)=0.21564 → 360×0.21564 = 77.6° → 仰角 12.4°，
-    // 不再贴地平线（线性近似 = 开局太阳被地形挡的根因，129-D 审计）。
-    // 对称缓动：晨昏仰角相等、方位相反（东升西落）。
+    // Timelines.java:39/:53）——D2 修正后 tick 0 相位 frac=0.75 → bezier
+    // y=0.7841 → angle=282.3°、tick 12000 frac=0.25 → y=0.2159 → angle=
+    // 77.7°：两者 cos≈0.2134 → 仰角 12.35°，不再贴地平线（线性近似 =
+    // 开局太阳被地形挡的根因，129-D 审计）。既有美术倾斜 z=−0.25·sin
+    // （KNOWN-DIVERGENCE）normalize 后 d.y=cos/√(1+0.0625·sin²)=
+    // 0.2134/1.0294≈0.2077。对称缓动：晨昏仰角相等、方位相反（东升西落）。
     let (d, _) = sun_state(6_000);
     assert!((d.y - 1.0).abs() < 1e-5, "tick 6000 太阳天顶，got {d}");
     let (d, _) = sun_state(0);
     assert!(
-        (d.y - 0.214_24).abs() < 0.002,
-        "tick 0 黎明仰角 12.4°，got {d}"
+        (d.y - 0.207_7).abs() < 0.002,
+        "tick 0 黎明仰角 12.35°，got {d}"
     );
     assert!(d.x > 0.9, "黎明太阳在东（+X），got {d}");
     let (d, _) = sun_state(12_000);
     assert!(
-        (d.y - 0.214_24).abs() < 0.002,
-        "tick 12000 日落仰角 12.4°，got {d}"
+        (d.y - 0.207_7).abs() < 0.002,
+        "tick 12000 日落仰角 12.35°，got {d}"
     );
     assert!(d.x < -0.9, "日落太阳在西（−X），got {d}");
     let (d, _) = sun_state(18_000);

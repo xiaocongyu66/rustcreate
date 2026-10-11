@@ -294,7 +294,8 @@ fn particles_respect_depth() {
 
 #[test]
 fn terrain_stride_layout_unchanged() {
-    // 防呆：粒子顶点独立布局（48B），不与 terrain 顶点（24B）混淆。
+    // 防呆：粒子顶点独立布局（56B，R2 light 彩轨 f32→[f32;3]），
+    // 不与 terrain 顶点（24B）混淆。
     assert_eq!(TERRAIN_STRIDE, 24);
-    assert_eq!(size_of::<mcv_render::particles::ParticleVertex>(), 48);
+    assert_eq!(size_of::<mcv_render::particles::ParticleVertex>(), 56);
 }
