@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn blended_noise_stays_bounded() {
         let n = BlendedNoise::new(7, 0x1234);
-        for k in 0..256_i64 {
+        for k in 0..256_i32 {
             let v = n.get_value(
                 f64::from(k) * 3.7 - 400.0,
                 f64::from(k % 128) * 2.3,
