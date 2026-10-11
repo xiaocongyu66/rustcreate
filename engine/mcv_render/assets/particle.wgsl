@@ -24,11 +24,14 @@ fn linear_fog(dist: f32, start: f32, end: f32) -> f32 {
     return clamp((dist - start) / (end - start), 0.0, 1.0);
 }
 
+// 透过率语义（同 terrain.wgsl：mix(fog_color, lit, fog) 消费序，
+// 覆盖率取反后接入）。
 fn fog_factor(dist_sph: f32, dist_cyl: f32, fog: vec4<f32>) -> f32 {
-    return max(
+    let coverage = max(
         linear_fog(dist_sph, fog.x, fog.y),
         linear_fog(dist_cyl, fog.z, fog.w),
     );
+    return 1.0 - coverage;
 }
 
 fn fog_color() -> vec3<f32> {

@@ -384,27 +384,6 @@ fn terrain_sky_and_hud_render() {
     }
 
     let (green_share, blue_share) = sample_stats(&rgba, extent.width, extent.height);
-    // TEMP DIAG (129-R debug round, remove before merge)
-    {
-        let st = renderer.last_frame_stats();
-        let px = |x: u32, y: u32| {
-            let i = ((y as usize) * 320 + x as usize) * 4;
-            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
-        };
-        eprintln!(
-            "DBG stats={st:?} sky(160,30)={:?} mid(160,120)={:?} gnd(160,200)={:?}",
-            px(160, 30),
-            px(160, 120),
-            px(160, 200),
-        );
-        eprintln!(
-            "DBG cpu sky_m0={:?} fog_m0={:?} sky_col0={:?} mix64={}",
-            mcv_render::env_color::sky_multiplier(0),
-            mcv_render::env_color::fog_multiplier(0),
-            mcv_render::env_color::sky_light_color(0),
-            mcv_render::env_color::sky_fog_mix_factor(64.0),
-        );
-    }
     assert!(
         green_share > 0.25,
         "bottom half should be mostly grass, got {green_share}"

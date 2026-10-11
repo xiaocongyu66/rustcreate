@@ -82,11 +82,17 @@ fn linear_fog(dist: f32, start: f32, end: f32) -> f32 {
     return clamp((dist - start) / (end - start), 0.0, 1.0);
 }
 
+// 返回**透过率**（1=无雾显原色，0=全雾）——消费端 `mix(fog_color, lit,
+// fog)` 是透过率序（原版 fog.glsl 的 total_fog_value 是覆盖率、配
+// mix(scene, fogColor, value)，此处为历史反向写法，语义必须与之匹配：
+// 覆盖率取反后接入）。R1 曾直接返回覆盖率致近场全被雾色吞（真机/CI
+// 全灰回归的根因）。
 fn fog_factor(dist_sph: f32, dist_cyl: f32, fog: vec4<f32>) -> f32 {
-    return max(
+    let coverage = max(
         linear_fog(dist_sph, fog.x, fog.y),
         linear_fog(dist_cyl, fog.z, fog.w),
     );
+    return 1.0 - coverage;
 }
 
 // 雾色完全由 CPU 下发（Timelines 昼夜乘轨 + AtmosphericFogEnvironment
