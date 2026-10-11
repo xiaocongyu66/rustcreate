@@ -141,3 +141,33 @@ vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场
    SurfaceRuleData.java:186-199,240-252 的水/冰置面规则依赖 SWAMP 噪声与
    temperature 门，10 群系子集无 SWAMP/MANGROVE/FROZEN_OCEAN → 不可达，
    扩群系后随 id 债一并补。
+
+## BLOCK-COVERAGE-1 全方块覆盖债量化（#147 审计波，只读登记）
+
+审计波零生产改动，量化「千块表距能用」的缺口（矩阵与波切分见
+docs/block-coverage.md；基线哨兵 `mcv_mesher/tests/coverage_audit.rs` +
+`mcv_item/tests/block_item_coverage.rs`，白名单只许单调收缩）：
+
+1. **整盒占位 447**：生成表 kind=1（26.1 模型非立方）且引擎 shape=Cube 的方块
+   （solid=true 255 / solid=false 192——后者「看着是整盒、走着穿过」）。逐族
+   收敛计划：十字档扩名 58 → 染料色变体 99 → 告示牌/头颅/贴墙 77（波切分见文档）。
+2. **solid×cross 错位 4**（#138「gen solid 强制」遗留的量化名单）：
+   amethyst_cluster + large/medium/small_amethyst_bud——26.1 十字视觉但
+   `AmethystClusterBlock` 自带 AABB 碰撞（Blocks.java:5078-5084 无 noCollision）；
+   引擎现整盒碰撞 + 整盒渲染。紫水晶族落地时按「cross 视觉 + 保留碰撞盒」收敛
+   （白名单 `SOLID_CROSS_DEBT` 锁死防恶化）。
+3. **Cross 超集近似 2**：pink_petals / wildflowers 引擎走 Cross，26.1 实为
+   flowerbed_*（贴地层分段模型，非 cross）——近似渲染，不修正（同随 flowerbed
+   模板落地收敛）。
+4. **贴图缺清单落点**：827 真实贴图层对 1171 方块六面**零真缺**（部分缺失 0、
+   层号越界 0）；missing 哨兵层唯一用户 = 六个无模型方块（air/barrier/cave_air/
+   light/structure_void/void_air，原版即不可见、网格器 INVISIBLE_GEOM）——名单
+   由测试锁死，新增全哨兵方块必须同步登记。
+5. **物品覆盖 98/1171（8.37%）**：ITEMS 快照 152 条（audit 时点 main=abf83707，
+   #144 扩表波并行中，合并后按实测更新）；3 个旧表占位别名
+   （cobblestone→cobble、iron_ore/diamond_ore→stone，id<14）白名单登记。
+6. **勘误**：HANDOFF-SHAPES「原版 ladder 无碰撞」按 26.1 修正——26.1
+   LadderBlock 无 `.noCollision()`（Blocks.java:1145-1146），碰撞 = getShape
+   薄板（BlockBehaviour.java:333-334）；千块表 ladder solid=true 与 26.1 一致，
+   模板表 Collision 薄板本就正确，非债。
+
