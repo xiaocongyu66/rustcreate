@@ -253,3 +253,56 @@ fn creative_hold_breaks_every_sixth_tick() {
     assert_eq!(m.creative_tick(None), None);
     assert_eq!(m.delay, 0);
 }
+
+/// 敲击计数节奏（新增 destroy_ticks，对拍 MultiPlayerGameMode.java:196/:251-263
+/// /:268/:281）：START 清零、同目标续挖每 tick 递增、挖穿归零——4 除判定在
+/// 递增前，即续挖第 1/5/9 tick 为敲击 tick。
+#[test]
+fn destroy_ticks_advance_and_reset() {
+    let a = pos(3, 3, 3);
+    let mut m = MineMachine::default();
+    // START：清零（:196）。
+    m.start(a, 0.05);
+    assert_eq!(m.destroy_ticks, 0);
+    // 续挖 9 tick：1..=9 递增（:268）。
+    for i in 1..=9u32 {
+        assert_eq!(
+            m.continue_tick(Some(MineHit {
+                pos: a,
+                per_tick: 0.05
+            })),
+            MineTick::Idle
+        );
+        assert_eq!(m.destroy_ticks, i);
+    }
+    // 换目标：隐式 ABORT + START，计数重新清零（startDestroyBlock :196）。
+    let b = pos(4, 3, 3);
+    assert_eq!(
+        m.continue_tick(Some(MineHit {
+            pos: b,
+            per_tick: 0.2
+        })),
+        MineTick::Idle
+    );
+    assert_eq!(m.destroy_ticks, 0);
+    // 挖穿：归零（:281 destroyTicks = 0.0F）。进度 0.2/tick：4 tick 后 0.9，
+    // 第 5 tick 到 1.1 破坏并清零。
+    for i in 1..=4u32 {
+        assert_eq!(
+            m.continue_tick(Some(MineHit {
+                pos: b,
+                per_tick: 0.2
+            })),
+            MineTick::Idle
+        );
+        assert_eq!(m.destroy_ticks, i);
+    }
+    assert_eq!(
+        m.continue_tick(Some(MineHit {
+            pos: b,
+            per_tick: 0.2
+        })),
+        MineTick::Broken(b)
+    );
+    assert_eq!(m.destroy_ticks, 0);
+}

@@ -74,26 +74,41 @@ impl SoundLoader {
         gain: f32,
         now: Instant,
     ) -> Option<AudioCmd> {
+        self.play_at_pitched(event, pos, listener, gain, 1.0, now)
+    }
+
+    /// 3D 位置播放事件(带行为音高乘子):最终音高 = 变体 pitch × `pitch_mult`
+    /// (原版步音/敲击/破坏等行为音在 SoundType.pitch 基础上的系数在调用点算好)。
+    /// 其余语义同 [`SoundLoader::play_at`]。
+    pub fn play_at_pitched(
+        &mut self,
+        event: &str,
+        pos: [f32; 3],
+        listener: [f32; 3],
+        gain: f32,
+        pitch_mult: f32,
+        now: Instant,
+    ) -> Option<AudioCmd> {
         let dist = crate::distance3(pos, listener);
         let atten = crate::distance_attenuation(dist, crate::DEFAULT_ATTENUATION_RADIUS);
-        self.trigger(event, gain * atten, false, true, now, None)
+        self.trigger(event, gain * atten, false, true, now, None, pitch_mult)
     }
 
     /// 2D UI 播放:无衰减。语义同 [`SoundLoader::play_at`] 的返回值。
     pub fn play_ui(&mut self, event: &str, gain: f32, now: Instant) -> Option<AudioCmd> {
-        self.trigger(event, gain, false, true, now, None)
+        self.trigger(event, gain, false, true, now, None, 1.0)
     }
 
     /// 循环播放命令(挖掘持续音)。幂等判定在音频线程侧
     /// ([`Mixer::apply`](crate::Mixer::apply),按事件名);循环不参与一次性节流。
     pub fn loop_start(&mut self, event: &str, gain: f32, now: Instant) -> Option<AudioCmd> {
-        self.trigger(event, gain, true, false, now, Some(event.to_string()))
+        self.trigger(event, gain, true, false, now, Some(event.to_string()), 1.0)
     }
 
     // ---- 内部 ----
 
     /// 通用触发:选变体 → 增益预乘变体音量 → 解析素材并产出命令。
-    /// `throttle=true` 时启用同变体路径最小间隔。
+    /// `throttle=true` 时启用同变体路径最小间隔;`pitch_mult` 乘到变体音高上。
     fn trigger(
         &mut self,
         event: &str,
@@ -102,6 +117,7 @@ impl SoundLoader {
         throttle: bool,
         now: Instant,
         loop_event: Option<String>,
+        pitch_mult: f32,
     ) -> Option<AudioCmd> {
         if !gain.is_finite() || gain <= 0.0 {
             return None;
@@ -119,6 +135,10 @@ impl SoundLoader {
         };
         let gain = gain * volume;
         if !gain.is_finite() || gain <= 0.0 {
+            return None;
+        }
+        let pitch = pitch * pitch_mult;
+        if !pitch.is_finite() || pitch <= 0.0 {
             return None;
         }
         if throttle

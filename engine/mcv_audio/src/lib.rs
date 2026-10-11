@@ -56,7 +56,10 @@ use std::time::Instant;
 pub use decode::{SoundData, decode_to_stereo};
 pub use loader::{CACHE_MAX, SAME_ID_MIN_INTERVAL, SoundLoader};
 pub use mixer::{MAX_VOICES, Mixer};
-pub use table::{SoundEvent, SoundTable, Variant};
+pub use table::{
+    BLOCK_SOUND_TYPES, SOUND_TYPES, STONE_SOUND_TYPE_IDX, SoundEvent, SoundTable, SoundType,
+    Variant, sound_type_by_name, sound_type_for_block, try_sound_type_for_block,
+};
 
 /// 3D 音效线性衰减半径(格)。距离 ≥ 该值时衰减为 0。与原版线性滚存一致。
 pub const DEFAULT_ATTENUATION_RADIUS: f32 = 16.0;
@@ -259,11 +262,26 @@ impl AudioManager {
     ///
     /// `gain` 为额外增益(1.0 = 原音量)。事件缺失/素材缺失/被节流时静默 no-op。
     pub fn play_event(&self, event: &str, pos: [f32; 3], listener: [f32; 3], gain: f32) {
+        self.play_event_pitched(event, pos, listener, gain, 1.0);
+    }
+
+    /// 3D 一次性播放事件(带行为音高乘子):最终音高 = 变体 pitch × `pitch_mult`
+    /// (原版行为音的 SoundType.pitch 系数——步音 ×1、敲击 ×0.5、破坏/放置 ×0.8
+    /// ——由调用点按 26.1 公式算好传入)。其余语义同 [`AudioManager::play_event`]。
+    pub fn play_event_pitched(
+        &self,
+        event: &str,
+        pos: [f32; 3],
+        listener: [f32; 3],
+        gain: f32,
+        pitch_mult: f32,
+    ) {
         if self.device.is_none() {
             return;
         }
         if let Ok(mut l) = self.loader.lock()
-            && let Some(cmd) = l.play_at(event, pos, listener, gain, Instant::now())
+            && let Some(cmd) =
+                l.play_at_pitched(event, pos, listener, gain, pitch_mult, Instant::now())
         {
             let _ = self.cmds.push(cmd);
         }

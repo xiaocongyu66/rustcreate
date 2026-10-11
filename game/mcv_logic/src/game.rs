@@ -653,6 +653,9 @@ pub struct GameRuntime {
     pub audio: mcv_audio::AudioManager,
     /// 脚步触发：自上次音效以来水平移动距离（格）。
     step_dist: f32,
+    /// 步距门阈值（26.1 `Entity.nextStep`，Entity.java:246 初值 1.0；触发后
+    /// 置 `(int)moveDist + 1`，:1188-1190）。
+    next_step: f32,
     /// 死亡中（health 归零）：app 层画死亡界面，respawn() 复活。
     pub dead: bool,
     /// 离地时的 y（落地按 26.1 规则算摔落伤害：floor(高度−3)）。
@@ -764,6 +767,10 @@ pub struct MineMachine {
     pub progress: f32,
     /// 破坏后冷却（原版 destroyDelay，5 tick；仅正常挖穿与创造连破置位）。
     pub delay: u32,
+    /// 续挖 tick 计数（原版 destroyTicks，MultiPlayerGameMode.java:78）：START
+    /// 清零（:196）、同目标续挖每 tick 递增（:268）；挖掘敲击音按
+    /// `destroyTicks % 4 == 0` 判定（:251-263），判定在递增前。
+    pub destroy_ticks: u32,
 }
 
 impl MineMachine {
@@ -775,6 +782,8 @@ impl MineMachine {
     pub fn start(&mut self, pos: BlockPos, per_tick: f32) -> Option<BlockPos> {
         self.pos = Some(pos);
         self.per_tick = per_tick;
+        // START 清零敲击计数（MultiPlayerGameMode.java:196 destroyTicks = 0.0F）。
+        self.destroy_ticks = 0;
         // START 当 tick 计入 1 份进度：服务端进度公式为 per×(ticksSpent+1)
         // （ServerPlayerGameMode.incrementDestroyProgress :132-142）。
         self.progress = per_tick;
@@ -825,12 +834,16 @@ impl MineMachine {
         self.progress += h.per_tick;
         if self.progress >= 1.0 {
             // 原版阈值是 `>= 1.0F`（:274），旧实现的 `> 1.0` 会漏掉恰好
-            // 1.0 的情形，按源码收紧。
+            // 1.0 的情形，按源码收紧。挖穿清敲击计数（:281 destroyTicks = 0.0F）。
             let pos = h.pos;
             self.abort();
             self.delay = 5;
+            self.destroy_ticks = 0;
             return MineTick::Broken(pos);
         }
+        // 同目标续挖每 tick 递增敲击计数（MultiPlayerGameMode.java:268
+        // destroyTicks++；敲击音判定在调用点用递增前值，同源 :251-263）。
+        self.destroy_ticks += 1;
         MineTick::Idle
     }
 
@@ -971,6 +984,7 @@ impl GameRuntime {
             cam_type: CameraType::default(),
             audio: mcv_audio::AudioManager::silent(mcv_audio::default_sounds_dir()),
             step_dist: 0.0,
+            next_step: 1.0, // Entity.java:246
             dead: false,
             fall_y: None,
             // 构造即加载态（26.1 doWorldLoad 先 setScreen(LevelLoadingScreen)
@@ -2766,27 +2780,44 @@ impl GameRuntime {
             // 速度倍率缝（physics 域解冻后补）。
             let wish_dir = wish * self.input.analog * self.effects.bundle().move_speed_mult as f32;
             let was_air = !self.player.on_ground;
-            let fall_v = self.player.vel.y.min(0.0);
             let jumped_off = i.jump && self.player.on_ground;
             let before = self.player.pos;
             let in_water = self.in_water(&WorldView {
                 chunks: &self.chunks,
             });
             // 入水沿：原版 Entity.updateFluidInteraction（Entity.java:1570
-            // -1574）——wasTouchingWater 假→真瞬间 resetFallDistance + 溅落
-            // 效果。摔落豁免由下方 fall_y 清空承担；溅落音按入水速度分档
-            // （event 缺素材时静默 no-op）。
+            // -1574）——wasTouchingWater 假→真瞬间 resetFallDistance +
+            // doWaterSplashEffect。摔落豁免由下方 fall_y 清空承担。水花按
+            // doWaterSplashEffect（Entity.java:1596-1622）：音量 = speed =
+            // min(1, sqrt(vx²·0.2+vy²+vz²·0.2)·0.2)（自身控制 volumeModifier
+            // =0.2，:1597-1601）；speed<0.25 → entity.player.splash，否则
+            // high_speed 分档（:1602-1607 + Player.java:382-390）；音高 =
+            // 1.0+(rand−rand)·0.4（:1608，同型随机式 :1408）。event 缺素材时
+            // 静默 no-op。
             let entered_water = in_water && !self.was_in_water;
-            if entered_water && fall_v < -2.0 {
+            if entered_water {
+                let v = self.player.vel;
+                let speed = (v.x * v.x * 0.2 + v.y * v.y + v.z * v.z * 0.2)
+                    .sqrt()
+                    .min(1.0)
+                    * 0.2;
+                let event = if speed < 0.25 {
+                    "entity.player.splash"
+                } else {
+                    "entity.player.splash.high_speed"
+                };
+                let r1 = (fast_rand() % 1024) as f32 / 1024.0;
+                let r2 = (fast_rand() % 1024) as f32 / 1024.0;
                 let p = self.player.pos;
-                self.audio.play_event(
-                    "entity.player.splash",
+                self.audio.play_event_pitched(
+                    event,
                     [p.x, p.y + 0.5, p.z],
                     [p.x, p.y, p.z],
-                    0.8,
+                    speed,
+                    1.0 + (r1 - r2) * 0.4,
                 );
-                // 溅水两波粒子（Entity.doPlayEffect/doWaterSplashEffect
-                // Entity.java:1594-1622：波 1+width·20 粒，width=0.6）。
+                // 溅水两波粒子（Entity.doWaterSplashEffect Entity.java:1594-1622：
+                // 波 1+width·20 粒，width=0.6）。
                 self.particles.spawn_water_splash(
                     p.x as f64,
                     (p.y + 0.5) as f64,
@@ -2860,21 +2891,13 @@ impl GameRuntime {
             self.clamp_to_sim_area(pc, r_safe);
             // ---- 行为音效：脚步 / 落地 ----
             let delta = self.player.pos - before;
-            let moved = delta.length();
             // exhaustion 只认水平位移（ServerPlayer.checkMovementStatistics:1444
             // 用 sqrt(dx²+dz²)，垂直不计）。
             let moved_h = Vec3::new(delta.x, 0.0, delta.z).length();
-            self.step_dist += moved;
+            // 步距累计：原版 moveDist 只加水平位移 × 0.6（Entity.java:812-813
+            // horizontalMovedDistance = horizontalDistance() * 0.6F）。
+            self.step_dist += moved_h * 0.6;
             if self.player.on_ground && was_air {
-                if fall_v < -3.0 {
-                    let p = self.player.pos;
-                    self.audio.play_event(
-                        "entity.player.small_fall",
-                        [p.x, p.y, p.z],
-                        [p.x, p.y, p.z],
-                        0.5,
-                    );
-                }
                 // 摔落伤害（MC: damage = floor(fallDistance - 3)）；安全坠落
                 // 距离 = 基础 3 + 跳跃提升 +1×(amp+1)（MobEffects.java:48-52
                 // SAFE_FALL_DISTANCE ADD_VALUE；LivingEntity.java:1824
@@ -2883,14 +2906,52 @@ impl GameRuntime {
                     let safe = 3.0 + self.effects.bundle().safe_fall_add as f32;
                     let dmg = (top - self.player.pos.y - safe).floor().max(0.0);
                     if dmg > 0.0 {
+                        // 摔落伤害音（LivingEntity.java:1770-1772：落地伤害>0
+                        // 才播 getFallDamageSound，1.0/1.0；分档 :1644
+                        // dmg>4 → big_fall 否则 small_fall）。
+                        let p = self.player.pos;
+                        let event = if dmg > 4.0 {
+                            "entity.player.big_fall"
+                        } else {
+                            "entity.player.small_fall"
+                        };
+                        self.audio
+                            .play_event(event, [p.x, p.y, p.z], [p.x, p.y, p.z], 1.0);
+                        // 方块摔落音（LivingEntity.playBlockFallSound :1831-1840：
+                        // 脚下 y−0.2 取非空方块，fall 音 volume×0.5、pitch×0.75）。
+                        let under = WorldView {
+                            chunks: &self.chunks,
+                        }
+                        .block(BlockPos::new(
+                            p.x.floor() as i32,
+                            (p.y - 0.2).floor() as i32,
+                            p.z.floor() as i32,
+                        ))
+                        .0;
+                        if under != 0 {
+                            let st = sound_type_of(under);
+                            self.audio.play_event_pitched(
+                                st.fall,
+                                [p.x, p.y, p.z],
+                                [p.x, p.y, p.z],
+                                st.volume * 0.5,
+                                st.pitch * 0.75,
+                            );
+                        }
                         self.hurt_player(dmg, None);
                     }
                 }
             } else if self.player.on_ground {
                 self.fall_y = None;
             }
-            if self.player.on_ground && self.step_dist > 2.2 {
-                self.step_dist = 0.0;
+            // 走路脚步：步距门（Entity.java:820 moveDist > nextStep）触发后
+            // 阈值 = (int)moveDist + 1（:1188-1190）；支撑格非空才发声（同
+            // :820 !supportingState.isAir()）。on_ground 门为本仓姿态位
+            // （原版无显式落地判定，支撑格判定近似）。
+            if self.player.on_ground
+                && let Some(ns) = step_gate(self.step_dist, self.next_step)
+            {
+                self.next_step = ns;
                 let p = self.player.pos;
                 let under = WorldView {
                     chunks: &self.chunks,
@@ -2903,9 +2964,20 @@ impl GameRuntime {
                     p.z.floor() as i32,
                 ))
                 .0;
-                if let Some(event) = step_event(under) {
-                    self.audio
-                        .play_event(event, [p.x, p.y, p.z], [p.x, p.y, p.z], 0.35);
+                if under != 0 {
+                    let st = sound_type_of(under);
+                    // 步音 volume = SoundType.volume × 0.15（Entity.java:1391
+                    // getVolume() * 0.15F）；音高 = SoundType.pitch × [0.8,1.2)
+                    // 随机（派单规格；26.1 同型随机式 Entity.java:1408 /
+                    // LocalPlayer.java:954）。
+                    let jitter = 0.8 + (fast_rand() % 1024) as f32 / 1024.0 * 0.4;
+                    self.audio.play_event_pitched(
+                        st.step,
+                        [p.x, p.y, p.z],
+                        [p.x, p.y, p.z],
+                        st.volume * 0.15,
+                        st.pitch * jitter,
+                    );
                 }
             }
             // ---- 生存统计（26.1 LivingEntity/ServerPlayer/FoodData）----
@@ -3976,15 +4048,22 @@ impl GameRuntime {
             if self.mode != GameMode::Creative {
                 self.hotbar.take_one(self.player.sel_slot);
             }
-            // 放置按新方块发声（26.1 GameRenderer 行为音）
-            if let Some(group) = block_group(new_id.0) {
+            // 放置按新方块发声（26.1 BlockItem.placeBlock → BlockItem.java:87：
+            // placeSound，volume=(st.volume+1)/2、pitch=st.pitch×0.8）。
+            if new_id.0 != 0 {
+                let st = sound_type_of(new_id.0);
                 let p = [
                     target.x as f32 + 0.5,
                     target.y as f32 + 0.5,
                     target.z as f32 + 0.5,
                 ];
-                self.audio
-                    .play_event(&format!("{group}.place"), p, [eye.x, eye.y, eye.z], 1.0);
+                self.audio.play_event_pitched(
+                    st.place,
+                    p,
+                    [eye.x, eye.y, eye.z],
+                    (st.volume + 1.0) / 2.0,
+                    st.pitch * 0.8,
+                );
             }
         }
     }
@@ -4176,15 +4255,23 @@ impl GameRuntime {
                 }
             }
         }
-        if let Some(group) = block_group(old.0) {
+        // 破坏音（26.1 客户端 levelEvent 2001 → LevelEventHandler.java:280-285：
+        // breakSound，volume=(st.volume+1)/2、pitch=st.pitch×0.8）。
+        if old.0 != 0 {
+            let st = sound_type_of(old.0);
             let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
             let p = [
                 target.x as f32 + 0.5,
                 target.y as f32 + 0.5,
                 target.z as f32 + 0.5,
             ];
-            self.audio
-                .play_event(&format!("{group}.break"), p, [eye.x, eye.y, eye.z], 1.0);
+            self.audio.play_event_pitched(
+                st.dig,
+                p,
+                [eye.x, eye.y, eye.z],
+                (st.volume + 1.0) / 2.0,
+                st.pitch * 0.8,
+            );
         }
     }
 
@@ -4331,6 +4418,24 @@ impl GameRuntime {
         let debris = target.map(|p| (p, view.block(p).0));
         if hit.is_some() {
             self.swing();
+        }
+        // 挖掘中敲击音（26.1 客户端 continueDestroyBlock，MultiPlayerGameMode
+        // .java:251-263）：同目标续挖且 `destroyTicks % 4 == 0` 的 tick 播
+        // hit 音（volume=(st.volume+1)/8、pitch=st.pitch×0.5）。计数在 START
+        // 清零（:196）、续挖每 tick 递增（:268），判定用递增前值——本调用在
+        // continue_tick 之前，与原版「先判后增」同序。创造秒破无敲击音（:155-170）。
+        if self.mine.pos == target
+            && self.mine.destroy_ticks % 4 == 0
+            && let Some((p, b)) = debris
+        {
+            let st = sound_type_of(b);
+            self.audio.play_event_pitched(
+                st.hit,
+                [p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5],
+                [eye.x, eye.y, eye.z],
+                (st.volume + 1.0) / 8.0,
+                st.pitch * 0.5,
+            );
         }
         match self.mine.continue_tick(hit) {
             MineTick::Broken(p) => self.destroy_block(p),
@@ -5993,28 +6098,21 @@ pub fn pick_attack_target(
     best
 }
 
-/// 挖掘/放置音效材质 → 26.1 sounds.json 事件前缀（BLOCKS 表序：0air 1stone
-/// 2dirt 3grass 4sand 5water 6log 7leaves 8planks 9cobble 10bedrock 11snow_grass
-/// 12/13花）。调用点按动作拼 `.place` / `.break` 后缀；26.1 无 dig/dirt 组，
-/// 泥土/草/沙共用 block.grass 音组。
-fn block_group(vid: u16) -> Option<&'static str> {
-    match vid & mcv_core::ID_MASK {
-        1 | 9 | 10 => Some("block.stone"),
-        2 | 3 | 4 | 7 | 11 => Some("block.grass"),
-        6 | 8 => Some("block.wood"),
-        _ => None,
-    }
+/// 方块 id → 原版 SoundType：千块表注册名 → mcv_audio 全表二分
+/// （26.1 Blocks.java `.sound(SoundType.X)` 归属；未登记名/越界 id 回落 STONE，
+/// BlockBehaviour.java:973 `Properties` 默认）。
+fn sound_type_of(vid: u16) -> &'static mcv_audio::SoundType {
+    let i = (vid & mcv_core::ID_MASK) as usize;
+    let name = mcv_core::BLOCKS.get(i).map_or("no_such_block", |d| d.name);
+    mcv_audio::sound_type_for_block(name)
 }
 
-/// 脚步材质 → 26.1 sounds.json 事件名：草方块踩草地音，沙/石踩石头音，
-/// 木板/原木踩木头音。
-fn step_event(vid: u16) -> Option<&'static str> {
-    match vid & mcv_core::ID_MASK {
-        1 | 4 | 9 | 10 => Some("block.stone.step"),
-        2 | 3 | 7 | 11 => Some("block.grass.step"),
-        6 | 8 => Some("block.wood.step"),
-        _ => None,
-    }
+/// 原版步距门纯函数（Entity.java:820 触发门 `moveDist > nextStep` +
+/// :1188-1190 阈值更新 `nextStep = (int)moveDist + 1`；moveDist 由调用侧按
+/// 水平位移 × 0.6 累计，:812-813）。返回 `Some(新阈值)` = 本 tick 触发一步；
+/// `None` = 未过门（等值不触发，严格 `>`）。
+pub fn step_gate(step_dist: f32, next_step: f32) -> Option<f32> {
+    (step_dist > next_step).then(|| step_dist.trunc().max(0.0) + 1.0)
 }
 
 #[cfg(test)]

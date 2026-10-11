@@ -300,3 +300,50 @@ fn splitmix64(seed: u64) -> u64 {
     z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     z ^ (z >> 31)
 }
+
+/// 一个原版方块音效族(26.1 `BlockBehaviour.SoundType`,SoundType.java:828-844
+/// 七参构造):volume/pitch + dig/step/place/hit/fall 五个 sounds.json 事件名。
+/// 行为侧增益/音高公式在调用点(与原版逐点一致),本表只存原版归一数值。
+#[derive(Debug, Clone, Copy)]
+pub struct SoundType {
+    /// 族音量(触发侧再乘行为系数,如步音 ×0.15)。
+    pub volume: f32,
+    /// 族音高(变体 pitch 之外的行为音高基数)。
+    pub pitch: f32,
+    /// 破坏音(SoundType.java:822 breakSound;挖掘完成/破坏方块)。
+    pub dig: &'static str,
+    /// 脚步/行进音(SoundType.java:823 stepSound)。
+    pub step: &'static str,
+    /// 放置音(SoundType.java:824 placeSound)。
+    pub place: &'static str,
+    /// 挖掘中敲击音(SoundType.java:825 hitSound)。
+    pub hit: &'static str,
+    /// 摔落到方块音(SoundType.java:826 fallSound)。
+    pub fall: &'static str,
+}
+
+include!("sound_types.inc.rs");
+
+/// 按 SoundType.java 常数名查(如 `"WOOD"`;诊断/测试用,线性扫全表)。
+pub fn sound_type_by_name(name: &str) -> Option<&'static SoundType> {
+    SOUND_TYPES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, st)| st)
+}
+
+/// 按方块注册名查 SoundType(`BLOCK_SOUND_TYPES` 二分,名字节序升序)。
+/// 返回 `None` = 未登记名(调用方按原版默认 STONE,见
+/// [`sound_type_for_block`])。
+pub fn try_sound_type_for_block(name: &str) -> Option<&'static SoundType> {
+    BLOCK_SOUND_TYPES
+        .binary_search_by(|(n, _)| (*n).cmp(name))
+        .ok()
+        .map(|i| &BLOCK_SOUND_TYPES[i].1)
+}
+
+/// 按方块注册名查 SoundType,未登记名回落原版默认 STONE
+/// (BlockBehaviour.java:973 `private SoundType soundType = SoundType.STONE;`)。
+pub fn sound_type_for_block(name: &str) -> &'static SoundType {
+    try_sound_type_for_block(name).unwrap_or(&SOUND_TYPES[STONE_SOUND_TYPE_IDX as usize].1)
+}

@@ -52,7 +52,7 @@ fn scale_0_6_maps_horizontal_to_move_dist() {
     // 水平步距换算：原版每步实际水平距离 = 1.0/0.6 ≈ 1.667 格（Entity.java:812-813
     // 的 ×0.6 与 :1188 的 +1 联合效果）；1.667 水平 → moveDist 1.0002 → 触发。
     let moved_h = 1.667f32;
-    assert_eq!(step_gate(moved_h * 0.6, 1.0).is_some(), true);
+    assert!(step_gate(moved_h * 0.6, 1.0).is_some());
     // 不足一步（1.6 水平）不触发。
     assert_eq!(step_gate(1.6f32 * 0.6, 1.0), None);
 }
