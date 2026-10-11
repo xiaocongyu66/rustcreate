@@ -8,20 +8,29 @@ struct FrameUniforms {
     cam_pos_time: vec4<f32>,
     sun_dir_day: vec4<f32>,
     fog_params: vec4<f32>,
+    // 以下三槽与 terrain.wgsl 布局逐字节对齐（同一 frame_buf，partial 视图
+    // 也必须占位到目标槽偏移）：tint 两槽粒子不消费。
+    tint_grass: vec4<f32>,
+    tint_foliage: vec4<f32>,
+    // x = 水下旗标（雾色选路）。
+    fog_flags: vec4<f32>,
 };
 
-// 雾语义与 terrain.wgsl 同步（gpu.rs 同一份 fog_params）：w≤0.5 = exp2 密度
-//（x）；w>0.5 = 水下，线性 fog.y..fog.z（−8..96，EnvironmentAttributes.java:
-// 36-41）+ 雾色 WATER_FOG_COLOR 0x050533（EnvironmentAttributes.java:33-35）。
-fn fog_factor(dist: f32, fog: vec4<f32>) -> f32 {
-    if (fog.w > 0.5) {
-        return clamp((fog.z - dist) / (fog.z - fog.y), 0.0, 1.0);
-    }
-    return exp2(-dist * fog.x);
+// 雾语义与 terrain.wgsl 完全同步（gpu.rs 同一份 fog_params）：双层线性
+// max(env 层球距, renderDist 层柱距)（26.1 fog.glsl:13-24/36-40）。
+fn linear_fog(dist: f32, start: f32, end: f32) -> f32 {
+    return clamp((dist - start) / (end - start), 0.0, 1.0);
 }
 
-fn fog_color(fog: vec4<f32>) -> vec3<f32> {
-    if (fog.w > 0.5) {
+fn fog_factor(dist_sph: f32, dist_cyl: f32, fog: vec4<f32>) -> f32 {
+    return max(
+        linear_fog(dist_sph, fog.x, fog.y),
+        linear_fog(dist_cyl, fog.z, fog.w),
+    );
+}
+
+fn fog_color(flags: vec4<f32>) -> vec3<f32> {
+    if (flags.x > 0.5) {
         return vec3<f32>(5.0, 5.0, 51.0) / 255.0;
     }
     let sky_horizon = vec3<f32>(0.62, 0.76, 0.95);
@@ -42,6 +51,7 @@ struct PVertIn {
     @location(5) light: f32,       // light_curve 预算值
 };
 
+
 struct PVertOut {
     @builtin(position) clip: vec4<f32>,
     @location(0) uv: vec2<f32>,
@@ -49,7 +59,8 @@ struct PVertOut {
     @location(2) @interpolate(flat) tex_set: u32,
     @location(3) color: vec4<f32>,
     @location(4) light: f32,
-    @location(5) dist: f32,
+    @location(5) dist: f32,      // 球距（env 雾层）
+    @location(6) dist_cyl: f32,  // 柱距（renderDist 雾层）
 };
 
 @vertex
@@ -61,7 +72,9 @@ fn vs_particle(v: PVertIn) -> PVertOut {
     out.tex_set = v.tex_set;
     out.color = v.color;
     out.light = v.light;
-    out.dist = length(v.pos - frame.cam_pos_time.xyz);
+    let rel = v.pos - frame.cam_pos_time.xyz;
+    out.dist = length(rel);
+    out.dist_cyl = max(length(rel.xz), abs(rel.y));
     return out;
 }
 
@@ -76,8 +89,8 @@ fn fs_particle(v: PVertOut) -> @location(0) vec4<f32> {
     if (tex.a < 0.02) {
         discard;
     }
-    let fog = fog_factor(v.dist, frame.fog_params);
+    let fog = fog_factor(v.dist, v.dist_cyl, frame.fog_params);
     let lit = tex.rgb * v.color.rgb * v.light;
-    let rgb = mix(fog_color(frame.fog_params), lit, fog);
+    let rgb = mix(fog_color(frame.fog_flags), lit, fog);
     return vec4<f32>(rgb, tex.a * v.color.a);
 }

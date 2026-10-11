@@ -675,6 +675,12 @@ pub struct GameRuntime {
     /// 空气供给（Entity.java:2739-2741 getMaxAirSupply = 300；消耗/恢复/
     /// 溺水伤害结算见 [`air_supply_tick`]，LivingEntity.java:417-439）。
     air_supply: i32,
+    /// 水下视野计时 waterVisionTime，tick 0..=600（LocalPlayer.java:155 字段、
+    /// :858-864 更新：眼在水中 +1/tick（旁观者 +10，本仓无旁观者）、出水
+    /// −10/tick）。getWaterVision（:1150-1163）换算成 0..1 视野系数：
+    /// 驱动水下雾 end = 96×max(0.25, wv)（WaterFogEnvironment.java:19-21）
+    /// 与雾色归一提亮（FogRenderer.java:148-166）。瞬态客户端态，不入存档。
+    water_vision_time: u32,
     /// 游泳姿态（Entity shared flag bit4，Entity.java:2657-2659/:2669-2671；状态机
     /// [`swimming_tick`]，Entity.java:1558-1564 + Player.java:1410-1416）。
     /// 原版 Pose.SWIMMING 由此驱动（Player.java:342-361）；第三人称
@@ -964,6 +970,7 @@ impl GameRuntime {
             jump_held_prev: false,
             flight_jump_trigger: 0.0,
             air_supply: MAX_AIR_SUPPLY,
+            water_vision_time: 0,
             swimming: false,
             was_in_water: false,
             fire_ticks: 0,
@@ -1751,13 +1758,14 @@ impl GameRuntime {
     }
 
     /// 天气渲染参数（app 层 Scene 装配用）：`(day_factor 混合值, 雾色 RGB
-    /// 乘子, 雾密度乘子)`。`day` 传 `mcv_render::sun_state(t).1`；
-    /// `base_fog_end` 传 `camera.far × 0.95`（FrameUniforms.fog_params 基线）。
-    pub fn weather_visual(&self, day: f32, base_fog_end: f32) -> (f32, [f32; 3], f32) {
+    /// 乘子, 环境雾层端点 (start, end))`。`day` 传
+    /// `mcv_render::sun_state(t).1`；雾端点基线 = 属性默认 0/1024
+    /// （EnvironmentAttributes.java:18-24），不再吃 camera.far。
+    pub fn weather_visual(&self, day: f32) -> (f32, [f32; 3], (f32, f32)) {
         (
             self.weather.sky_light_factor(day),
             self.weather.fog_tint(),
-            self.weather.fog_density_multiplier(base_fog_end),
+            self.weather.fog_env_endpoints(),
         )
     }
 
@@ -2970,6 +2978,13 @@ impl GameRuntime {
                     eyes_water,
                     self.mode != GameMode::Creative,
                 );
+                // waterVisionTime 计时（LocalPlayer.java:858-864）：眼在水中
+                // +1/tick、否则 −10/tick，clamp 0..=600。
+                self.water_vision_time = if eyes_water {
+                    (self.water_vision_time + 1).min(600)
+                } else {
+                    self.water_vision_time.saturating_sub(10)
+                };
                 if drown {
                     // broadcastEntityEvent(67) → makeDrownParticles：8 个
                     // BUBBLE（LivingEntity.java:2087-2088/:2113-2123）。
@@ -3629,6 +3644,24 @@ impl GameRuntime {
         self.eye_in_water(&WorldView {
             chunks: &self.chunks,
         })
+    }
+
+    /// 水下视野系数 waterVision 0..1（LocalPlayer.getWaterVision，:1150-1163
+    /// 原式：`a×0.6 + b×0.4`，a = clamp(t/100)、b = t<100 ? 0 :
+    /// clamp((t−100)/500)，t = waterVisionTime；满 600 → 1.0）。非水上方
+    /// 原版恒 0（:1151-1153 早退），此处调用方只在 underwater 分支消费。
+    pub fn water_vision(&self) -> f32 {
+        let t = self.water_vision_time as f32;
+        if t >= 600.0 {
+            return 1.0;
+        }
+        let a = (t / 100.0).clamp(0.0, 1.0);
+        let b = if t < 100.0 {
+            0.0
+        } else {
+            ((t - 100.0) / 500.0).clamp(0.0, 1.0)
+        };
+        a * 0.6 + b * 0.399_999_98
     }
 
     /// 空气供给 0..=300（原版气泡 HUD 消费；HUD 接线登记遗留，见报告）。

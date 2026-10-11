@@ -2530,9 +2530,12 @@ impl AppState {
             time: 0.0,
             day_factor: day,
             sun_dir: sun,
-            // 加载画面无天气（晴基线）。
+            // 加载画面无天气（晴基线）：env 雾端点 = 属性默认 0/1024；
+            // rd 雾层按默认视距 8 chunks（空场景无几何，仅天空）。
             fog_tint: [1.0, 1.0, 1.0],
-            fog_density_mult: 1.0,
+            fog_env: [0.0, 1024.0],
+            fog_rd_end: 128.0,
+            water_vision: 0.0,
             moon_phase: mcv_render::celestial::moon_phase(6_000),
             width: mw,
             height: mh,
@@ -2829,9 +2832,9 @@ impl AppState {
 
         let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
         let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
-        // 天气视觉（WeatherAttributes SKY_LIGHT_FACTOR/雾修饰；
-        // AtmosphericFogEnvironment 雾距收缩 → exp 雾密度映射）。
-        let (day, weather_tint, weather_dens) = runtime.weather_visual(day, camera.far * 0.95);
+        // 天气视觉（WeatherAttributes SKY_LIGHT_FACTOR/雾修饰；雾端点 =
+        // AtmosphericFogEnvironment.java:68-72 雨偏移后的 env 层 0..1024）。
+        let (day, weather_tint, (env_start, env_end)) = runtime.weather_visual(day);
         // 进世界加载画面（26.1 LevelLoadingScreen）：盖在游戏画面上的
         // 独立 HUD（不画游戏 HUD/触屏按钮，玩家此刻不应看到血条快捷栏）。
         let loading = runtime.phase == mcv_logic::game::GamePhase::Loading;
@@ -2916,7 +2919,9 @@ impl AppState {
             day_factor: day,
             sun_dir: sun,
             fog_tint: weather_tint,
-            fog_density_mult: weather_dens,
+            fog_env: [env_start, env_end],
+            fog_rd_end: (runtime.render_dist * 16) as f32,
+            water_vision: runtime.water_vision(),
             // 月相：26.1 月相周期 192000 tick（timeline/moon.json）。
             moon_phase: mcv_render::celestial::moon_phase(runtime.time_ticks),
             width: sp.config.width as f32,

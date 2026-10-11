@@ -198,12 +198,18 @@ impl Weather {
         c
     }
 
-    /// 雾距密度乘子（AtmosphericFogEnvironment.java:70-73 等价映射：
-    /// 本仓雾是 `exp2(−dist×density)`，能见度∝1/density；end 收缩 k 倍 →
-    /// density 放大 1/k。end' = max(96, end − 256×mult)）。
-    pub fn fog_density_multiplier(&self, base_end: f32) -> f32 {
-        let end = (base_end - 256.0 * self.rain_fog_multiplier).max(96.0);
-        base_end / end
+    /// 环境雾层端点 (start, end)（AtmosphericFogEnvironment.java:68-72
+    /// 原式，overworld 属性基线 FOG_START/END_DISTANCE = 0/1024，
+    /// EnvironmentAttributes.java:18-24）：
+    /// `start = 0 − 160×rainFogMult`、
+    /// `end = max(min(96, base), base − 256×rainFogMult)`
+    /// （base=1024 → min 项恒 96，96 下限只在 base<96 的维度咬合）。
+    /// 旧「exp 密度乘子」系本仓 exp 雾的等价映射，随双层线性雾废弃。
+    pub fn fog_env_endpoints(&self) -> (f32, f32) {
+        let base = 1024.0_f32;
+        let start = -160.0 * self.rain_fog_multiplier;
+        let end = (base - 256.0 * self.rain_fog_multiplier).max(96.0_f32.min(base));
+        (start, end)
     }
 
     /// 难度联动（Mob.java:799-811 的 difficulty 输入归 pathfinding，此处
@@ -323,18 +329,24 @@ mod tests {
         assert_eq!(w.fog_tint(), [0.25, 0.25, 0.3]); // 雨层权重归 0，只剩雷
     }
 
-    /// AtmosphericFogEnvironment.java:70-73 — 雾距收缩 → 密度放大。
+    /// AtmosphericFogEnvironment.java:70-72 — 雨雾端点收缩。
     #[test]
-    fn fog_density_grows_with_rain() {
+    fn fog_env_shrinks_with_rain() {
         let mut w = Weather::new();
         w.rain_level = 1.0;
         w.rain_fog_multiplier = 1.0;
-        let m = w.fog_density_multiplier(200.0);
-        // end = max(96, 200−256) = 96 → 密度 ×200/96。
-        assert!((m - 200.0 / 96.0).abs() < 1e-4, "mult {m}");
-        // 晴天无变化。
+        let (start, end) = w.fog_env_endpoints();
+        // start = −160；end = max(96, 1024−256) = 768（overworld base=1024，
+        // 96 下限不咬合）。
+        assert!((start + 160.0).abs() < 1e-4, "start {start}");
+        assert!((end - 768.0).abs() < 1e-4, "end {end}");
+        // 半雨：mult=0.5 → start −80、end 896。
+        w.rain_fog_multiplier = 0.5;
+        let (start, end) = w.fog_env_endpoints();
+        assert!((start + 80.0).abs() < 1e-4 && (end - 896.0).abs() < 1e-4);
+        // 晴天 = 属性默认 0/1024。
         w.rain_fog_multiplier = 0.0;
-        assert_eq!(w.fog_density_multiplier(200.0), 1.0);
+        assert_eq!(w.fog_env_endpoints(), (0.0, 1024.0));
     }
 
     /// ServerLevel.java:188-191 — 采样区间（长周期模拟粗检）。

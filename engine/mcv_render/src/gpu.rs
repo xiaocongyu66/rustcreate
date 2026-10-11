@@ -36,9 +36,13 @@ pub struct FrameUniforms {
     pub tint_grass: [f32; 4],
     /// xyz = plains 叶色（colormap/foliage.png 查表），w = 自由。
     pub tint_foliage: [f32; 4],
+    /// 帧旗标：x = 水下旗标（1.0 = 眼在水中 → 雾色切 WATER_FOG_COLOR，
+    /// terrain/particle.wgsl 消费；yzw 自由）。fog_params 四槽全被
+    /// 双层线性雾端点占满，旗标独立成槽（128 B 对齐不变）。
+    pub fog_flags: [f32; 4],
 }
 
-const _: () = assert!(size_of::<FrameUniforms>() == 144);
+const _: () = assert!(size_of::<FrameUniforms>() == 176);
 
 /// 水绘制分段（#80 合批）：批次内每个成员区块一段。半透明水必须保持
 /// 逐区块远→近绘制序（混合次序不可变），故合批只合并索引缓冲，绘制仍
@@ -852,9 +856,18 @@ pub struct Scene<'a> {
     /// 天气雾色 RGB 乘子（AtmosphericFogEnvironment.applyWeatherDarken:50-62；
     /// 晴 = [1,1,1]）乘到地平线色上（天空 + 地形雾同源）。
     pub fog_tint: [f32; 3],
-    /// 天气雾密度乘子（雾距收缩 AtmosphericFogEnvironment.java:70-73 的
-    /// exp 雾等价映射；晴 = 1.0）。
-    pub fog_density_mult: f32,
+    /// 环境雾层端点 [start, end]（方块）。原版 = FOG_START/END_DISTANCE 属性
+    /// （EnvironmentAttributes.java:18-24 默认 0/1024）+ 雨偏移
+    /// （AtmosphericFogEnvironment.java:70-72，weather 层下发）。水下分支
+    /// 由 draw_frame 换 WATER_FOG −8/96×max(0.25,waterVision)。
+    pub fog_env: [f32; 2],
+    /// renderDist 雾层终点（方块）= 渲染距离 chunks × 16
+    /// （FogRenderer.java:180/:193-195；起点 = end − clamp(end/10, 4, 64)）。
+    pub fog_rd_end: f32,
+    /// 水下视野 waterVision 0..1（LocalPlayer.getWaterVision:1150-1163 的
+    /// 水下计时渐升；水下雾 end = 96×max(0.25,该值)（WaterFogEnvironment
+    /// .java:19-21）+ 雾色归一提亮（FogRenderer.java:148-166））。非水下 0。
+    pub water_vision: f32,
     /// 月相序号 0..=7（MoonPhase 序，`celestial::moon_phase` 由游戏时间算出）。
     pub moon_phase: u32,
     /// Render target size in pixels (HUD coordinate space).
@@ -2861,19 +2874,37 @@ impl Renderer {
                 scene.sun_dir.z,
                 scene.day_factor,
             ],
-            // 雾：常规 = 基线 0.006 × 天气乘子（雨雾距收缩的 exp 映射，
-            // AtmosphericFogEnvironment.java:70-73）；水下 = 原版线性雾端点
-            // 照抄 WATER_FOG_START/END_DISTANCE = −8/96、雾色
-            // WATER_FOG_COLOR 0x050533（EnvironmentAttributes.java:33-41、
-            // WaterFogEnvironment.java:16-38——end×waterVision 因本仓无该
-            // 通路按 1.0，登记债；FogRenderer.java:148-166 提亮同债）。
-            // 旧 [0.05,·,32,·] exp 近似（20 m 透过 0.5，96 m 视野被提前
-            // 糊死）与雾色混天空蓝均系偏离，已换（水下旗标经迟滞）。
-            fog_params: if underwater {
-                [0.0, -8.0, 96.0, 1.0]
-            } else {
-                [0.006 * scene.fog_density_mult, 0.0, cam.far * 0.95, 0.0]
+            // 雾：双层线性（26.1 fog.glsl:23-24 total_fog_value = max(env 层,
+            // renderDist 层)，无 exp）。
+            // - env 层（球距）：常规 = 属性 FOG_START/END_DISTANCE + 雨偏移
+            //   （AtmosphericFogEnvironment.java:70-72，weather 层下发）；水下
+            //   = WATER_FOG_START/END_DISTANCE = −8/96 × max(0.25, waterVision)
+            //   （EnvironmentAttributes.java:36-41 + WaterFogEnvironment.java
+            //   :16-21——**端点裁决**：原版 end 并非常数 96，入场即
+            //   96×0.25=24，随水下计时 600 tick 渐升至 96（waterVision 0→1，
+            //   LocalPlayer.java:858-864 +1/tick、出水 −10/tick；:1150-1163
+            //   a·0.6+b·0.4 ramp），同一 waterVision 又是雾色归一提亮系数
+            //   （FogRenderer.java:148-153 brightenFactor → :162-167
+            //   targetScale=1/max(rgb) lerp）。审计 A 判「−8..96 一致」是
+            //   收敛极限、C 指出 24→96 缺失——本实现按原版原文两端点+提亮
+            //   全接，争议消除。）
+            // - rd 层（柱距）：无条件对**所有**雾类型生效（FogRenderer.java
+            //   :193-195）：end = chunks×16、start = end − clamp(end/10,4,64)。
+            //   旧 exp2(−0.006d) 密度雾曲线整体错误且半雾点 115.5 m 恰压在
+            //   原版雾起点（审计 A Q2，「雾蒙蒙」数学根因），far*0.95 为
+            //   死参数——全部废弃。
+            fog_params: {
+                let rd_end = scene.fog_rd_end.max(0.0);
+                let span = (rd_end / 10.0).clamp(4.0, 64.0);
+                let rd_start = (rd_end - span).max(0.0);
+                let (env_start, env_end) = if underwater {
+                    (-8.0, 96.0 * scene.water_vision.max(0.25))
+                } else {
+                    (scene.fog_env[0], scene.fog_env[1])
+                };
+                [env_start, env_end, rd_start, rd_end]
             },
+            fog_flags: [if underwater { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
             tint_grass: self.tint_grass,
             tint_foliage: self.tint_foliage,
         };
