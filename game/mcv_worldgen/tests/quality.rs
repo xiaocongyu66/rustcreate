@@ -82,11 +82,19 @@ fn biome_distribution_in_bands() {
 }
 
 /// 2) 海陆比：地表 < 海平面（v6 = 63，引 `SEA_LEVEL` 不钉字面量）的列占比
-///    25%-45%。
+///    25%-65%。
+///
+/// 地形保真波 T2 重锚（2026-10-11）：原带 25%-45% 是 XS=2.0（气候波长 ÷8）
+/// 时代校准的；恢复原版 xz_scale 0.25（NoiseRouterData.java:90-96）后大陆度
+/// 波长 2048 格，±512 窗只覆盖 0.5 个波长、失去代表性（seed 0x7EA20B1 原点
+/// 区是 88% 深海的单窗假象）。窗扩到 ±8192（8 个波长，stride 64，样本数不变
+/// 65536）；带按移植复算器 /root/audit/_sim3.py 重锚：去 BACKBONE_BIAS 后宽窗
+/// 海占比 48-50%（seed 0x7EA20B1/42），带取 25-65%——「非全陆非全海」的
+/// 原意图不变，数值随原版参数真相走。
 #[test]
 fn sea_land_ratio_in_bands() {
-    let stride = 8_i32;
-    let half = 64;
+    let stride = 64_i32;
+    let half = 128;
     let mut sea = 0usize;
     let mut total = 0usize;
     for dz in -half..half {
@@ -100,8 +108,64 @@ fn sea_land_ratio_in_bands() {
     }
     let pct = 100.0 * sea as f64 / total as f64;
     assert!(
-        (25.0..=45.0).contains(&pct),
+        (25.0..=65.0).contains(&pct),
         "海陆比 {pct:.2}% 越带（sea={sea} total={total}）"
+    );
+}
+
+/// 6) 平原窗占比（地形保真波 T2 主门，任务卡 #122/triage ①目标「大平原出现」）：
+///    样条地表（`column_state().surface_ours` 口径 = 128+128·offset 面）在
+///    4 个 512×512 格区域（stride 2 采样）内，16×16 样本窗（=32×32 格）
+///    「全陆（>海平面占 >98%）且窗 std ≤2」的占比 ≥ 0.10。
+///
+/// 校准（/root/audit/_sim3.py 移植复算，seed 0x7EA20B1/42 同口径）：
+/// 现配置（XS=2.0 + BACKBONE_BIAS 0.0671875）**0.000-0.007**；恢复 xz_scale
+/// 0.25 + 删 BIAS 后 **0.199-0.207**；triage 原版口径（1 格步距 16×16 窗，
+/// XS 0.25 + BlendedNoise 级 σ）0.41。带取 ≥0.10：高于现配置 14 倍、低于
+/// 修后值一半，专锁「气候波长 ÷8 / 解常数偏置」两类回归。
+#[test]
+fn plains_share_in_band() {
+    let orch = wg::terrain::Orchestrator::new(SEED);
+    let sea = f64::from(SEA_LEVEL);
+    let mut ok = 0usize;
+    let mut tot = 0usize;
+    for (ox, oz) in [(0i32, 0i32), (4096, 0), (0, 4096), (4096, 4096)] {
+        let mut ys = [0i32; 128 * 128];
+        for (k, y) in ys.iter_mut().enumerate() {
+            let i = k % 128;
+            let j = k / 128;
+            *y = orch
+                .column_state(ox + (i * 2) as i32, oz + (j * 2) as i32)
+                .surface_ours;
+        }
+        for j in (0..128 - 15).step_by(8) {
+            for i in (0..128 - 15).step_by(8) {
+                let mut land = 0f64;
+                let mut sum = 0f64;
+                let mut sum2 = 0f64;
+                for dj in 0..16usize {
+                    for di in 0..16usize {
+                        let y = f64::from(ys[(j + dj) * 128 + (i + di)]);
+                        if y > sea {
+                            land += 1.0;
+                        }
+                        sum += y;
+                        sum2 += y * y;
+                    }
+                }
+                tot += 1;
+                let mean = sum / 256.0;
+                let var = (sum2 / 256.0 - mean * mean).max(0.0);
+                if land / 256.0 > 0.98 && var.sqrt() <= 2.0 {
+                    ok += 1;
+                }
+            }
+        }
+    }
+    let share = ok as f64 / tot as f64;
+    assert!(
+        share >= 0.10,
+        "平原窗占比 {share:.3} < 0.10（ok={ok} tot={tot}）——气候波长/偏置回归"
     );
 }
 
