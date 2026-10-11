@@ -114,7 +114,7 @@ macro_rules! def {
 }
 
 /// Registry order must stay stable (ids are serialized).
-pub static ITEMS: [ItemDef; 90] = [
+pub static ITEMS: [ItemDef; 152] = [
     def!("stick", ItemKind::Stick, 0.0, 0.0, 0, 0),
     def!("coal", ItemKind::Coal, 0.0, 0.0, 0, 0),
     def!("iron_ingot", ItemKind::IronIngot, 0.0, 0.0, 0, 0),
@@ -222,12 +222,49 @@ pub static ITEMS: [ItemDef; 90] = [
     def!("emerald", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("flint", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("apple", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("oak_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("birch_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("spruce_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("jungle_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("acacia_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("dark_oak_sapling", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 树苗 = 方块物品（可放置；原版 oak_sapling 等是 block item，方块 id 见
+    // blocks_gen——#137 W 波从 Material 转正，图标走方块图集 tile）。
+    def!("oak_sapling", ItemKind::Block(BlockId(647)), 0.0, 0.0, 0, 0),
+    def!(
+        "birch_sapling",
+        ItemKind::Block(BlockId(86)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "spruce_sapling",
+        ItemKind::Block(BlockId(951)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "jungle_sapling",
+        ItemKind::Block(BlockId(499)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_sapling",
+        ItemKind::Block(BlockId(23)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_sapling",
+        ItemKind::Block(BlockId(307)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
     // 方块物品（mine->item; place->block 双向路径）：砂砾（gravel.json
     // 未触发燧石分支时掉自身）与深板岩圆石（deepslate.json）。
     def!("gravel", ItemKind::Block(BlockId(431)), 0.0, 0.0, 0, 0),
@@ -307,6 +344,343 @@ pub static ITEMS: [ItemDef; 90] = [
     ),
     def!("gold_nugget", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("quartz", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // ---- 木族+蜂窝道具（任务板 #137 W 波）。90 起尾插保持旧 id 序列化稳定。
+    // BlockId 均为 blocks_gen.inc.rs 官方方块（名字同名，映射测试
+    // tests/wood_family.rs::wood_family_block_mapping 锁死）；oak 族 log/planks
+    // 沿用旧物品位 LOG=31(块 6 "log")/PLANKS=26(块 8 "planks")，不新造重复。
+    // 五树种 planks（oak = 旧 PLANKS=26）。
+    def!(
+        "spruce_planks",
+        ItemKind::Block(BlockId(949)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("birch_planks", ItemKind::Block(BlockId(84)), 0.0, 0.0, 0, 0),
+    def!(
+        "jungle_planks",
+        ItemKind::Block(BlockId(497)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_planks",
+        ItemKind::Block(BlockId(21)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_planks",
+        ItemKind::Block(BlockId(305)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 楼梯 ×6
+    def!("oak_stairs", ItemKind::Block(BlockId(651)), 0.0, 0.0, 0, 0),
+    def!(
+        "spruce_stairs",
+        ItemKind::Block(BlockId(955)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("birch_stairs", ItemKind::Block(BlockId(90)), 0.0, 0.0, 0, 0),
+    def!(
+        "jungle_stairs",
+        ItemKind::Block(BlockId(503)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_stairs",
+        ItemKind::Block(BlockId(27)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_stairs",
+        ItemKind::Block(BlockId(311)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 台阶 ×6
+    def!("oak_slab", ItemKind::Block(BlockId(650)), 0.0, 0.0, 0, 0),
+    def!("spruce_slab", ItemKind::Block(BlockId(954)), 0.0, 0.0, 0, 0),
+    def!("birch_slab", ItemKind::Block(BlockId(89)), 0.0, 0.0, 0, 0),
+    def!("jungle_slab", ItemKind::Block(BlockId(502)), 0.0, 0.0, 0, 0),
+    def!("acacia_slab", ItemKind::Block(BlockId(26)), 0.0, 0.0, 0, 0),
+    def!(
+        "dark_oak_slab",
+        ItemKind::Block(BlockId(310)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 栅栏 ×6
+    def!("oak_fence", ItemKind::Block(BlockId(643)), 0.0, 0.0, 0, 0),
+    def!(
+        "spruce_fence",
+        ItemKind::Block(BlockId(944)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("birch_fence", ItemKind::Block(BlockId(79)), 0.0, 0.0, 0, 0),
+    def!(
+        "jungle_fence",
+        ItemKind::Block(BlockId(492)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("acacia_fence", ItemKind::Block(BlockId(16)), 0.0, 0.0, 0, 0),
+    def!(
+        "dark_oak_fence",
+        ItemKind::Block(BlockId(300)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 栅栏门 ×6
+    def!(
+        "oak_fence_gate",
+        ItemKind::Block(BlockId(644)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "spruce_fence_gate",
+        ItemKind::Block(BlockId(945)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "birch_fence_gate",
+        ItemKind::Block(BlockId(80)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "jungle_fence_gate",
+        ItemKind::Block(BlockId(493)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_fence_gate",
+        ItemKind::Block(BlockId(17)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_fence_gate",
+        ItemKind::Block(BlockId(301)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 门 ×6
+    def!("oak_door", ItemKind::Block(BlockId(642)), 0.0, 0.0, 0, 0),
+    def!("spruce_door", ItemKind::Block(BlockId(943)), 0.0, 0.0, 0, 0),
+    def!("birch_door", ItemKind::Block(BlockId(78)), 0.0, 0.0, 0, 0),
+    def!("jungle_door", ItemKind::Block(BlockId(491)), 0.0, 0.0, 0, 0),
+    def!("acacia_door", ItemKind::Block(BlockId(15)), 0.0, 0.0, 0, 0),
+    def!(
+        "dark_oak_door",
+        ItemKind::Block(BlockId(299)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 活板门 ×6
+    def!(
+        "oak_trapdoor",
+        ItemKind::Block(BlockId(652)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "spruce_trapdoor",
+        ItemKind::Block(BlockId(956)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "birch_trapdoor",
+        ItemKind::Block(BlockId(91)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "jungle_trapdoor",
+        ItemKind::Block(BlockId(504)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_trapdoor",
+        ItemKind::Block(BlockId(28)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_trapdoor",
+        ItemKind::Block(BlockId(312)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 按钮 ×6
+    def!("oak_button", ItemKind::Block(BlockId(641)), 0.0, 0.0, 0, 0),
+    def!(
+        "spruce_button",
+        ItemKind::Block(BlockId(942)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("birch_button", ItemKind::Block(BlockId(77)), 0.0, 0.0, 0, 0),
+    def!(
+        "jungle_button",
+        ItemKind::Block(BlockId(490)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_button",
+        ItemKind::Block(BlockId(14)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_button",
+        ItemKind::Block(BlockId(298)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 压力板 ×6
+    def!(
+        "oak_pressure_plate",
+        ItemKind::Block(BlockId(646)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "spruce_pressure_plate",
+        ItemKind::Block(BlockId(950)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "birch_pressure_plate",
+        ItemKind::Block(BlockId(85)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "jungle_pressure_plate",
+        ItemKind::Block(BlockId(498)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "acacia_pressure_plate",
+        ItemKind::Block(BlockId(22)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!(
+        "dark_oak_pressure_plate",
+        ItemKind::Block(BlockId(306)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    // 蜂窝族（honeycomb/honey_bottle/glass_bottle 为纯物品，图标走 #125
+    // ITEM_SPRITES 表；方块件直连 blocks_gen）。
+    def!("honeycomb", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("honey_bottle", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("glass_bottle", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!(
+        "honeycomb_block",
+        ItemKind::Block(BlockId(466)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("honey_block", ItemKind::Block(BlockId(465)), 0.0, 0.0, 0, 0),
+    def!("beehive", ItemKind::Block(BlockId(72)), 0.0, 0.0, 0, 0),
+    def!("bee_nest", ItemKind::Block(BlockId(71)), 0.0, 0.0, 0, 0),
+    // 功能方块（crafting_table.json/chest.json 的产物；UI 已有合成屏/容器面板）。
+    def!(
+        "crafting_table",
+        ItemKind::Block(BlockId(252)),
+        0.0,
+        0.0,
+        0,
+        0
+    ),
+    def!("chest", ItemKind::Block(BlockId(198)), 0.0, 0.0, 0, 0),
 ];
 
 /// 内核名 → 物品 id（loot 表 `&'static str` 接线用；未注册 None）。
@@ -386,6 +760,71 @@ pub const BASALT: u16 = 86;
 pub const ANCIENT_DEBRIS: u16 = 87;
 pub const GOLD_NUGGET: u16 = 88;
 pub const QUARTZ: u16 = 89;
+
+// ---- 木族+蜂窝道具（#137 W 波，90-151，与 ITEMS 追加序一致；映射与
+// 图标层测试 tests/wood_family.rs 锁死）。oak 族 log/planks = 旧 LOG/PLANKS。
+pub const SPRUCE_PLANKS: u16 = 90;
+pub const BIRCH_PLANKS: u16 = 91;
+pub const JUNGLE_PLANKS: u16 = 92;
+pub const ACACIA_PLANKS: u16 = 93;
+pub const DARK_OAK_PLANKS: u16 = 94;
+pub const OAK_STAIRS: u16 = 95;
+pub const SPRUCE_STAIRS: u16 = 96;
+pub const BIRCH_STAIRS: u16 = 97;
+pub const JUNGLE_STAIRS: u16 = 98;
+pub const ACACIA_STAIRS: u16 = 99;
+pub const DARK_OAK_STAIRS: u16 = 100;
+pub const OAK_SLAB: u16 = 101;
+pub const SPRUCE_SLAB: u16 = 102;
+pub const BIRCH_SLAB: u16 = 103;
+pub const JUNGLE_SLAB: u16 = 104;
+pub const ACACIA_SLAB: u16 = 105;
+pub const DARK_OAK_SLAB: u16 = 106;
+pub const OAK_FENCE: u16 = 107;
+pub const SPRUCE_FENCE: u16 = 108;
+pub const BIRCH_FENCE: u16 = 109;
+pub const JUNGLE_FENCE: u16 = 110;
+pub const ACACIA_FENCE: u16 = 111;
+pub const DARK_OAK_FENCE: u16 = 112;
+pub const OAK_FENCE_GATE: u16 = 113;
+pub const SPRUCE_FENCE_GATE: u16 = 114;
+pub const BIRCH_FENCE_GATE: u16 = 115;
+pub const JUNGLE_FENCE_GATE: u16 = 116;
+pub const ACACIA_FENCE_GATE: u16 = 117;
+pub const DARK_OAK_FENCE_GATE: u16 = 118;
+pub const OAK_DOOR: u16 = 119;
+pub const SPRUCE_DOOR: u16 = 120;
+pub const BIRCH_DOOR: u16 = 121;
+pub const JUNGLE_DOOR: u16 = 122;
+pub const ACACIA_DOOR: u16 = 123;
+pub const DARK_OAK_DOOR: u16 = 124;
+pub const OAK_TRAPDOOR: u16 = 125;
+pub const SPRUCE_TRAPDOOR: u16 = 126;
+pub const BIRCH_TRAPDOOR: u16 = 127;
+pub const JUNGLE_TRAPDOOR: u16 = 128;
+pub const ACACIA_TRAPDOOR: u16 = 129;
+pub const DARK_OAK_TRAPDOOR: u16 = 130;
+pub const OAK_BUTTON: u16 = 131;
+pub const SPRUCE_BUTTON: u16 = 132;
+pub const BIRCH_BUTTON: u16 = 133;
+pub const JUNGLE_BUTTON: u16 = 134;
+pub const ACACIA_BUTTON: u16 = 135;
+pub const DARK_OAK_BUTTON: u16 = 136;
+pub const OAK_PRESSURE_PLATE: u16 = 137;
+pub const SPRUCE_PRESSURE_PLATE: u16 = 138;
+pub const BIRCH_PRESSURE_PLATE: u16 = 139;
+pub const JUNGLE_PRESSURE_PLATE: u16 = 140;
+pub const ACACIA_PRESSURE_PLATE: u16 = 141;
+pub const DARK_OAK_PRESSURE_PLATE: u16 = 142;
+pub const HONEYCOMB: u16 = 143;
+pub const HONEY_BOTTLE: u16 = 144;
+pub const GLASS_BOTTLE: u16 = 145;
+pub const HONEYCOMB_BLOCK: u16 = 146;
+pub const HONEY_BLOCK: u16 = 147;
+pub const BEEHIVE: u16 = 148;
+pub const BEE_NEST: u16 = 149;
+pub const CRAFTING_TABLE_ITEM: u16 = 150;
+pub const CHEST: u16 = 151;
 
 // tool registry indices for recipes/tests
 pub const WOODEN_SWORD_INDEX: u16 = 7;

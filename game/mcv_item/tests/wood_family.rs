@@ -163,12 +163,7 @@ fn wood_family_icon_layer_present() {
             _ => {
                 let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join(format!("../../assets/minecraft/textures/item/{name}.png"));
-                assert!(
-                    path.is_file(),
-                    "{} 缺 item 精灵 {}",
-                    name,
-                    path.display()
-                );
+                assert!(path.is_file(), "{} 缺 item 精灵 {}", name, path.display());
             }
         }
     }
