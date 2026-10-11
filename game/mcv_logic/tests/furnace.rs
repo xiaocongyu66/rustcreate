@@ -289,6 +289,7 @@ use std::path::PathBuf;
 
 use glam::Vec3;
 use mcv_core::{BlockId, ChunkHandle, ChunkPos, ChunkStatus, Stage};
+use mcv_item::{COAL, COBBLESTONE, STONE_ITEM};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
 
 /// 唯一临时存档目录（测试并行安全；runtime.rs 同款）。

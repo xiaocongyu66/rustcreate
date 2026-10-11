@@ -4155,10 +4155,10 @@ impl GameRuntime {
         };
         let (cursor, drops) = f.close_to_world();
         let mut spills: Vec<mcv_item::ItemStack> = Vec::new();
-        if let Some(st) = cursor {
-            if let Some(rest) = self.hotbar.add(self.player.sel_slot, st) {
-                spills.push(rest);
-            }
+        if let Some(st) = cursor
+            && let Some(rest) = self.hotbar.add(self.player.sel_slot, st)
+        {
+            spills.push(rest);
         }
         spills.extend(drops);
         if !spills.is_empty() {
