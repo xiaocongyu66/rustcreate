@@ -67,8 +67,8 @@ impl Camera {
 
     /// 手 pass 独立透视投影：竖直 FOV 固定 70°、near=0.05、far=100、
     /// aspect 与世界同（GameRenderer.java:726
-    /// `hudProjection.setupPerspective(0.05F, 100.0F, hudFov, width, height)`
-    /// + Camera.java:221-223 `calculateHudFov` = 固定 70.0F +
+    /// `hudProjection.setupPerspective(0.05F, 100.0F, hudFov, width, height)`；
+    /// Camera.java:221-223 `calculateHudFov` = 固定 70.0F；
     /// Projection.java:69-72 `setPerspective(fov·π/180, width/height, …)`）。
     /// 与世界 fov（options.fov×速度修正）解耦：疾跑/速度 FOV 变化不缩放手部
     /// （原版 26.1 同款；本仓 fov_y 恒 1.25 rad ≈71.6°，near/far 差异仍真实）。
