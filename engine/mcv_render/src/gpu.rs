@@ -1008,6 +1008,13 @@ pub struct Renderer {
     hand_bind: wgpu::BindGroup,
     hand_terrain_vbuf: wgpu::Buffer,
     hand_terrain_ibuf: wgpu::Buffer,
+    /// 手 pass 专用 frame uniform（手持方块的 terrain 管线绑定）：与世界
+    /// frame_buf 只差 view_proj——原版手 pass 用独立 hudProjection
+    /// （GameRenderer.java:726），手持方块同投影（26.1 renderItemInHand
+    /// 在 hud3d 投影下渲染全部手持件）。绑定组与 frame_bind 同布局，
+    /// 仅 binding 0 换 buffer。
+    hand_frame_buf: wgpu::Buffer,
+    hand_frame_bind: wgpu::BindGroup,
     /// 水下雾迟滞状态 (确认态, 连续反向计数)，见
     /// [`step_underwater_hysteresis`]。
     underwater_state: (bool, u32),
@@ -1860,6 +1867,24 @@ impl Renderer {
                 resource: wgpu::BindingResource::TextureView(view),
             });
         }
+        // 手 pass 专用 frame uniform（手持方块走 hud 投影，GameRenderer.java
+        // :726）：与 frame_bind 同布局，binding 0 换 hand_frame_buf。
+        let hand_frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("hand-frame-uniforms"),
+            size: size_of::<FrameUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut hand_frame_entries = frame_bind_entries.clone();
+        hand_frame_entries[0] = wgpu::BindGroupEntry {
+            binding: 0,
+            resource: hand_frame_buf.as_entire_binding(),
+        };
+        let hand_frame_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("hand-frame-bind"),
+            layout: &frame_bind_layout,
+            entries: &hand_frame_entries,
+        });
         let frame_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("frame-bind"),
             layout: &frame_bind_layout,
@@ -2659,6 +2684,8 @@ impl Renderer {
             hand_bind,
             hand_terrain_vbuf,
             hand_terrain_ibuf,
+            hand_frame_buf,
+            hand_frame_bind,
             max_chunks,
             max_hud_quads,
             last_stats: FrameStats::default(),
@@ -2958,6 +2985,15 @@ impl Renderer {
         };
         self.queue
             .write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&uniforms));
+        // 手 pass 专用 frame uniform（手持方块）：只差 view_proj——
+        // hud 投影（GameRenderer.java:726）+ 同一 bob；雾/天象等
+        // 逐字段同值（手部贴脸不受世界雾影响原版同源同参）。
+        if scene.hand.is_some() {
+            let mut hand_uniforms = uniforms;
+            hand_uniforms.view_proj = cam.view_proj_hud().to_cols_array_2d();
+            self.queue
+                .write_buffer(&self.hand_frame_buf, 0, bytemuck::bytes_of(&hand_uniforms));
+        }
 
         let inv_vp = vp.inverse();
         let mut sky_u = [0f32; 44];
@@ -3259,7 +3295,9 @@ impl Renderer {
         models[crate::player_mesh::P_R_ARM] = crate::hand::hand_arm_matrix(cam, swing);
         if self.skins_loaded {
             let mut mu = PlayerUniforms {
-                view_proj: cam.view_proj().to_cols_array_2d(),
+                // 手 pass 独立投影（hudFov 70°/near 0.05，GameRenderer.java
+                // :726），与世界 fov 解耦；bob 同源（view_proj_hud）。
+                view_proj: cam.view_proj_hud().to_cols_array_2d(),
                 models: [[[0f32; 4]; 4]; PART_COUNT],
             };
             for (m, dst) in models.iter().zip(mu.models.iter_mut()) {
@@ -3410,13 +3448,16 @@ impl Renderer {
                     bytemuck::cast_slice(&[0.0f32; 4]),
                 );
                 pass.set_pipeline(&self.terrain_pipeline);
-                pass.set_bind_group(0, &self.frame_bind, &[off]);
+                // 手 pass 专用 frame uniform：hud 投影（GameRenderer.java:726）
+                // —— 手持方块与臂/图标同投影（26.1 renderItemInHand 全件
+                // 在 hud3d 投影下渲染）。
+                pass.set_bind_group(0, &self.hand_frame_bind, &[off]);
                 pass.set_vertex_buffer(0, self.hand_terrain_vbuf.slice(..));
                 pass.set_index_buffer(self.hand_terrain_ibuf.slice(..), wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..36, 0, 0..1);
             }
 
-            // 物品图标（不写深度；uniform 每帧喂世界 view_proj；quad 索引
+            // 物品图标（不写深度；uniform 每帧喂 hud 视投影；quad 索引
             // 单独写——sprite 路径没有方块 36 索引可复用）。
             if let Some(verts) = icon {
                 self.queue
@@ -3424,7 +3465,7 @@ impl Renderer {
                 self.queue.write_buffer(
                     &self.hand_uniform,
                     0,
-                    bytemuck::bytes_of(&cam.view_proj().to_cols_array_2d()),
+                    bytemuck::bytes_of(&cam.view_proj_hud().to_cols_array_2d()),
                 );
                 self.queue.write_buffer(
                     &self.hand_terrain_ibuf,

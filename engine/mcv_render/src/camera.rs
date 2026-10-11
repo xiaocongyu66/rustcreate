@@ -64,6 +64,43 @@ impl Camera {
     pub fn view_proj(&self) -> Mat4 {
         self.proj() * self.bob * self.view()
     }
+
+    /// 手 pass 独立透视投影：竖直 FOV 固定 70°、near=0.05、far=100、
+    /// aspect 与世界同（GameRenderer.java:726
+    /// `hudProjection.setupPerspective(0.05F, 100.0F, hudFov, width, height)`
+    /// + Camera.java:221-223 `calculateHudFov` = 固定 70.0F +
+    /// Projection.java:69-72 `setPerspective(fov·π/180, width/height, …)`）。
+    /// 与世界 fov（options.fov×速度修正）解耦：疾跑/速度 FOV 变化不缩放手部
+    /// （原版 26.1 同款；本仓 fov_y 恒 1.25 rad ≈71.6°，near/far 差异仍真实）。
+    pub fn hud_proj(&self) -> Mat4 {
+        const HUD_FOV_DEG: f32 = 70.0;
+        const HUD_NEAR: f32 = 0.05;
+        const HUD_FAR: f32 = 100.0;
+        let f = 1.0 / (HUD_FOV_DEG.to_radians() * 0.5).tan();
+        Mat4::from_cols_array(&[
+            f / self.aspect,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            f,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            HUD_FAR / (HUD_NEAR - HUD_FAR),
+            -1.0,
+            0.0,
+            0.0,
+            HUD_FAR * HUD_NEAR / (HUD_NEAR - HUD_FAR),
+            0.0,
+        ])
+    }
+
+    /// 手 pass 视投影（含行走 bob）：`hud_proj · bob · view`。
+    pub fn view_proj_hud(&self) -> Mat4 {
+        self.hud_proj() * self.bob * self.view()
+    }
 }
 
 /// 视空间行走 bob 矩阵（26.1 `GameRenderer.bobView`，GameRenderer.java
