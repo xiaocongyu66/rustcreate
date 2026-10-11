@@ -19,7 +19,7 @@ mod rust_terrain;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender};
 
-use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
+use mcv_core::{ChunkHandle, ChunkPos, ChunkStatus, ChunkVoxels, Stage, TaskPool};
 
 /// 地形生成后端。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -110,6 +110,10 @@ pub fn commit_terrain(handle: &Arc<ChunkHandle>, out: TerrainOutput) {
     *handle.heightmap.write().unwrap() = out.heightmap;
     handle.mark_dirty(mcv_core::dirty::SAVE);
     handle.advance_to(Stage::TerrainReady);
+    // status 阶梯并行推进（与 stage 同点同条件，行为零变化）：TerrainReady
+    // = SURFACE——NOISE+SURFACE 本仓 worldgen 一次产出（CARVERS/FEATURES
+    // 无对应 pass，STRUCTURE_* 仅占位），合并档先例见 ChunkStatus 裁剪映射。
+    handle.advance_status(ChunkStatus::Surface);
 }
 
 /// Blocking convenience for tests and save loading.

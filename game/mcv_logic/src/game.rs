@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use glam::Vec3;
-use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
+use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, ChunkStatus, Stage};
 use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
@@ -1895,6 +1895,10 @@ impl GameRuntime {
                 mcv_light::init(&mut view);
             }
             handle.advance_to(Stage::LightLocalReady);
+            // status 阶梯并行推进（同点同条件，行为零变化）：LightLocalReady
+            // = LIGHT 拆两档之块内档；跨块边同步完成不另立 status 档（stage
+            // 侧 border_synced/Lit 记账），债见 ChunkStatus 裁剪映射。
+            handle.advance_status(ChunkStatus::Light);
             light_budget -= 1;
         }
 
@@ -2037,6 +2041,8 @@ impl GameRuntime {
         // 「就绪」判定依赖 Uploaded）。无头 NullMesher 不产出网格、不
         // 推进，由测试手工 advance_to。
         handle.advance_to(Stage::Uploaded);
+        // Uploaded/MeshReady 是渲染记账，不占 status 档（stage 侧）——
+        // status 无对应推进点（ChunkStatus 裁剪映射）。
         // 真机取证埋点（logcat -s RustMcv）：网格入队/上传事件带
         // 区块坐标与索引量——静止期反复出现即重网格循环实证。
         log::debug!("mesh upload {pos:?} idx={idx_count}");
