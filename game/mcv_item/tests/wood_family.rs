@@ -123,8 +123,9 @@ fn wood_family_append_order_lock() {
         assert_eq!(mcv_item::ITEMS[*id as usize].name, *name, "id {id} 错位");
         assert_eq!(mcv_item::item_by_name(name), Some(*id), "{name} 反查");
     }
-    // 表总长 = 旧 90 + 新 62（尾部追加，旧 id 序列化稳定）。
-    assert_eq!(mcv_item::ITEMS.len(), 152, "ITEMS 总数 90+62");
+    // 表总长 = 旧 90 + 新 62 = 152（#137 时代锁）；#144 物品地基波尾插扩到
+    // 1381，本段只锁 90..152 段不动，全表规模锁在 tests/items_full.rs。
+    assert_eq!(mcv_item::ITEMS.len(), 1381, "ITEMS 总数 152+1229");
     // 纯物品三件 kind 判据（图标层走 item 精灵而非方块图集）。
     for (id, name) in MATERIAL_ITEMS {
         assert!(

@@ -124,6 +124,12 @@ def main() -> int:
     item_missing = []
     for name, kind in defs:
         key = f"block.minecraft.{name}" if kind == "Block" else f"item.minecraft.{name}"
+        # Block 物品的官方键缺 block.minecraft.<名> 时回退 item.minecraft.<名>
+        # （26.1 作物/藤蔓方块物品以纯物品名注册显示键：wheat_seeds/carrot/
+        # potato 等 10 件，Items.java registerItem+createBlockItemWithCustom-
+        # ItemName 形态——#144 物品地基波实证）。
+        if (key not in en_full or key not in zh_full) and kind == "Block":
+            key = f"item.minecraft.{name}"
         if key in en_full and key in zh_full:
             item_rows.append((name, en_full[key], zh_full[key]))
         else:

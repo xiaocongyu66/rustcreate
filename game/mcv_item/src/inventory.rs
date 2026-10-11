@@ -414,14 +414,187 @@ pub const NO_DROP: &[&str] = &[
     "black_stained_glass_pane",
 ];
 
+/// 明确「无 silk 语义下不掉自身」的方块（drops_for_block 自掉回退的负名单）。
+/// 26.1 loot_table/blocks/*.json 逐文件取证（#144 掉落打通波；仓库外参考树）:
+/// - loot 文件缺席：bedrock/barrier/command_*/end_portal_frame/jigsaw/light/
+///   structure_*/test_* —— 技术方块原版无掉落文件；
+/// - 非 silk 池恒空：玻璃族/冰族（NO_DROP 全集同源）+ 虫蚀石族 + sculk 族 +
+///   珊瑚扇/蕾 + 蛙卵 + 蛋糕 + 各色陶瓦 + 紫水晶芽簇 + 草丛等 —— silk 才有掉落；
+/// - 非 silk 掉他物且未被 DROP_TABLE 收编：菌岩→下界岩、营火→木炭、
+///   菌块→蘑菇、珊瑚块→失活块、ender_chest→黑曜石、新树种树叶→树苗/木棍、
+///   作物/浆果丛/洞穴藤（crops 波领地）、amethyst_cluster→碎晶 等
+///   —— 特殊掉落语义登记债（ci/recipes-gap.md 债节）。
+pub const NO_SELF_DROP: &[&str] = &[
+    "amethyst_cluster",
+    "azalea_leaves",
+    "barrier",
+    "bedrock",
+    "beetroots",
+    "black_stained_glass",
+    "black_stained_glass_pane",
+    "blue_ice",
+    "blue_stained_glass",
+    "blue_stained_glass_pane",
+    "brain_coral",
+    "brain_coral_block",
+    "brain_coral_fan",
+    "brown_mushroom_block",
+    "brown_stained_glass",
+    "brown_stained_glass_pane",
+    "bubble_coral",
+    "bubble_coral_block",
+    "bubble_coral_fan",
+    "budding_amethyst",
+    "bush",
+    "cake",
+    "calibrated_sculk_sensor",
+    "campfire",
+    "carrots",
+    "cave_vines",
+    "chain_command_block",
+    "cherry_leaves",
+    "chiseled_bookshelf",
+    "chorus_plant",
+    "cocoa",
+    "command_block",
+    "creaking_heart",
+    "crimson_nylium",
+    "cyan_stained_glass",
+    "cyan_stained_glass_pane",
+    "dead_brain_coral",
+    "dead_brain_coral_fan",
+    "dead_bubble_coral",
+    "dead_bubble_coral_fan",
+    "dead_bush",
+    "dead_fire_coral",
+    "dead_fire_coral_fan",
+    "dead_horn_coral",
+    "dead_horn_coral_fan",
+    "dead_tube_coral",
+    "dead_tube_coral_fan",
+    "end_portal_frame",
+    "ender_chest",
+    "fern",
+    "fire_coral",
+    "fire_coral_block",
+    "fire_coral_fan",
+    "flowering_azalea_leaves",
+    "frogspawn",
+    "glass",
+    "glass_pane",
+    "glow_lichen",
+    "gray_stained_glass",
+    "gray_stained_glass_pane",
+    "green_stained_glass",
+    "green_stained_glass_pane",
+    "hanging_roots",
+    "horn_coral",
+    "horn_coral_block",
+    "horn_coral_fan",
+    "ice",
+    "infested_chiseled_stone_bricks",
+    "infested_cobblestone",
+    "infested_cracked_stone_bricks",
+    "infested_deepslate",
+    "infested_mossy_stone_bricks",
+    "infested_stone",
+    "infested_stone_bricks",
+    "jigsaw",
+    "large_amethyst_bud",
+    "large_fern",
+    "light",
+    "light_blue_stained_glass",
+    "light_blue_stained_glass_pane",
+    "light_gray_stained_glass",
+    "light_gray_stained_glass_pane",
+    "lime_stained_glass",
+    "lime_stained_glass_pane",
+    "magenta_stained_glass",
+    "magenta_stained_glass_pane",
+    "mangrove_leaves",
+    "medium_amethyst_bud",
+    "melon_stem",
+    "mushroom_stem",
+    "nether_sprouts",
+    "orange_stained_glass",
+    "orange_stained_glass_pane",
+    "packed_ice",
+    "pale_hanging_moss",
+    "pale_oak_leaves",
+    "pink_stained_glass",
+    "pink_stained_glass_pane",
+    "pitcher_crop",
+    "potatoes",
+    "pumpkin_stem",
+    "purple_stained_glass",
+    "purple_stained_glass_pane",
+    "red_mushroom_block",
+    "red_stained_glass",
+    "red_stained_glass_pane",
+    "reinforced_deepslate",
+    "repeating_command_block",
+    "sculk",
+    "sculk_catalyst",
+    "sculk_sensor",
+    "sculk_shrieker",
+    "sculk_vein",
+    "seagrass",
+    "short_dry_grass",
+    "short_grass",
+    "small_amethyst_bud",
+    "small_dripleaf",
+    "soul_campfire",
+    "spawner",
+    "structure_block",
+    "structure_void",
+    "suspicious_gravel",
+    "suspicious_sand",
+    "sweet_berry_bush",
+    "tall_dry_grass",
+    "tall_grass",
+    "test_block",
+    "test_instance_block",
+    "torchflower_crop",
+    "trial_spawner",
+    "tube_coral",
+    "tube_coral_block",
+    "tube_coral_fan",
+    "turtle_egg",
+    "vault",
+    "vine",
+    "warped_nylium",
+    "white_stained_glass",
+    "white_stained_glass_pane",
+    "yellow_stained_glass",
+    "yellow_stained_glass_pane",
+];
+
 /// 方块破坏掉落(26.1 `Block.playerDestroy` → `dropResources` 语义,表驱动)。
 ///
 /// 调用方必须先过 `hasCorrectToolForDrops` 门(`mining::has_correct_tool`,
 /// ServerPlayerGameMode.java:295-299:canDestroy 为假时不走 playerDestroy)。
-/// 概率池与数量区间用调用方 `rng` 掷点;无规则方块返回空表(未注册 =
-/// 宁缺勿错,玻璃族 = `NO_DROP` 明确不掉)。树叶族多池可同 tick 多掉。
+/// 概率池与数量区间用调用方 `rng` 掷点。表行之外的方块走**自掉回退**：
+/// 已注册同名 Block 物品 → 掉自身(26.1 loot 自掉族通用语义)；其余返回空表
+/// (未注册 = 宁缺勿错;玻璃/冰族 = `NO_DROP` 明确不掉;`NO_SELF_DROP` =
+/// loot 取证的无 silk 不掉/掉他物名单)。树叶族多池可同 tick 多掉。
 pub fn drops_for_block(id: BlockId, rng: &mut impl FnMut() -> u32) -> Vec<ItemStack> {
     let name = mcv_core::BLOCKS[id.id() as usize].name;
+    // 自掉回退(#144 掉落打通)：DROP_TABLE 无行覆盖时，方块名 = 物品注册名
+    // 且已注册为 Block 物品 → 掉自身 ×1(26.1 loot_table/blocks/* 自掉族的
+    // 通用路径，Block Behaviour#getCloneItemStack 同名语义；survives_explosion
+    // 池恒过)。silk/特殊掉落(非 silk 掉他物、恒空、无 loot 文件)经
+    // NO_SELF_DROP 负名单挡下=债；kind 非 Block 的同名材料(如作物方块
+    // "wheat" 对材料 "wheat")不回退，归 crops 波。
+    let has_row = DROP_TABLE.iter().any(|r| r.blocks.contains(&name));
+    if !has_row {
+        if !NO_SELF_DROP.contains(&name)
+            && let Some(item_id) = crate::item_by_name(name)
+            && matches!(crate::ITEMS[item_id as usize].kind, ItemKind::Block(_))
+        {
+            return vec![ItemStack::new(item_id, 1)];
+        }
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for row in DROP_TABLE.iter().filter(|r| r.blocks.contains(&name)) {
         // 必掉池不消耗 rng(确定性路径与掉落点抖动序列解耦)。

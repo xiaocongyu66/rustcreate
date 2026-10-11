@@ -10,14 +10,21 @@
 //
 // 合并语义（crafting.rs）：匹配走「手写表 ∪ 生成表」，手写优先。生成表是
 // JSON 直译的超集，与手写表（#137 历史先行件，保留不削）重叠的条目同 id 同
-// 结果，材料面只会更宽（原版 tag 直译 ⊇ 手写手收子集；本表与手写表重叠 71 条）。
+// 结果，材料面只会更宽（原版 tag 直译 ⊇ 手写手收子集；本表与手写表重叠 72 条）。
 // 镜像：26.1 JSON 只含实际 pattern（ShapedRecipePattern.Data 无镜像字段），
 // 镜像在运行期由 matches_shaped 的 xFlip 分支覆盖（ShapedRecipePattern.java
 // :159-171 —— symmetrical==false 时 matches(input, true) 同样命中）。
 // 物品 id = game/mcv_item/src/lib.rs ITEMS 下标（u16），尾注 = 注册名。
 
-/// 26.1 crafting_shaped 可收子集（69 条；文件名字典序 = 配方 id 序）。
-pub static GEN_SHAPED: [ShapedRecipe; 69] = [
+/// 26.1 crafting_shaped 可收子集（708 条；文件名字典序 = 配方 id 序）。
+pub static GEN_SHAPED: [ShapedRecipe; 708] = [
+    /* recipe/acacia_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "acacia_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[93] /* acacia_planks */)],
+        result: (1079, 1), // acacia_boat
+    },
     /* recipe/acacia_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "acacia_door",
@@ -45,12 +52,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (117, 1), // acacia_fence_gate
     },
+    /* recipe/acacia_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "acacia_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[895] /* stripped_acacia_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (156, 6), // acacia_hanging_sign
+    },
     /* recipe/acacia_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "acacia_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[93] /* acacia_planks */)],
         result: (141, 1), // acacia_pressure_plate
+    },
+    /* recipe/acacia_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "acacia_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[895] /* stripped_acacia_log */)],
+        result: (158, 6), // acacia_shelf
+    },
+    /* recipe/acacia_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "acacia_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[93] /* acacia_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (159, 3), // acacia_sign
     },
     /* recipe/acacia_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -73,15 +107,230 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         keys: &[('#', &[93] /* acacia_planks */)],
         result: (129, 2), // acacia_trapdoor
     },
+    /* recipe/acacia_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "acacia_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[79] /* acacia_log */)],
+        result: (160, 3), // acacia_wood
+    },
+    /* recipe/activator_rail.json（category=misc）*/
+    ShapedRecipe {
+        id: "activator_rail",
+        pattern: &["XSX", "X#X", "XSX"],
+        keys: &[
+            ('#', &[823] /* redstone_torch */),
+            ('S', &[0] /* stick */),
+            ('X', &[2] /* iron_ingot */),
+        ],
+        result: (161, 6), // activator_rail
+    },
+    /* recipe/amethyst_block.json（category=building）*/
+    ShapedRecipe {
+        id: "amethyst_block",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1081] /* amethyst_shard */)],
+        result: (163, 1), // amethyst_block
+    },
+    /* recipe/andesite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "andesite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[63] /* andesite */)],
+        result: (165, 6), // andesite_slab
+    },
+    /* recipe/andesite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "andesite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[63] /* andesite */)],
+        result: (166, 4), // andesite_stairs
+    },
+    /* recipe/andesite_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "andesite_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[63] /* andesite */)],
+        result: (167, 6), // andesite_wall
+    },
+    /* recipe/anvil.json（category=misc）*/
+    ShapedRecipe {
+        id: "anvil",
+        pattern: &["III", " i ", "iii"],
+        keys: &[
+            ('I', &[528] /* iron_block */),
+            ('i', &[2] /* iron_ingot */),
+        ],
+        result: (168, 1), // anvil
+    },
+    /* recipe/armor_stand.json（category=misc）*/
+    ShapedRecipe {
+        id: "armor_stand",
+        pattern: &["///", " / ", "/_/"],
+        keys: &[
+            ('/', &[0] /* stick */),
+            ('_', &[870] /* smooth_stone_slab */),
+        ],
+        result: (1085, 1), // armor_stand
+    },
+    /* recipe/arrow.json（category=equipment）*/
+    ShapedRecipe {
+        id: "arrow",
+        pattern: &["X", "#", "Y"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[48] /* flint */),
+            ('Y', &[1178] /* feather */),
+        ],
+        result: (38, 4), // arrow
+    },
+    /* recipe/bamboo_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "bamboo_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (175, 3), // bamboo_door
+    },
+    /* recipe/bamboo_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[182] /* bamboo_planks */),
+        ],
+        result: (176, 3), // bamboo_fence
+    },
+    /* recipe/bamboo_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "bamboo_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[182] /* bamboo_planks */),
+        ],
+        result: (177, 1), // bamboo_fence_gate
+    },
+    /* recipe/bamboo_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[897] /* stripped_bamboo_block */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (178, 6), // bamboo_hanging_sign
+    },
+    /* recipe/bamboo_mosaic.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_mosaic",
+        pattern: &["#", "#"],
+        keys: &[('#', &[186] /* bamboo_slab */)],
+        result: (179, 1), // bamboo_mosaic
+    },
+    /* recipe/bamboo_mosaic_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "bamboo_mosaic_slab",
+        pattern: &["###"],
+        keys: &[('#', &[179] /* bamboo_mosaic */)],
+        result: (180, 6), // bamboo_mosaic_slab
+    },
+    /* recipe/bamboo_mosaic_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "bamboo_mosaic_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[179] /* bamboo_mosaic */)],
+        result: (181, 4), // bamboo_mosaic_stairs
+    },
+    /* recipe/bamboo_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "bamboo_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (183, 1), // bamboo_pressure_plate
+    },
+    /* recipe/bamboo_raft.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_raft",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (1089, 1), // bamboo_raft
+    },
+    /* recipe/bamboo_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[897] /* stripped_bamboo_block */)],
+        result: (184, 6), // bamboo_shelf
+    },
+    /* recipe/bamboo_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "bamboo_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[182] /* bamboo_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (185, 3), // bamboo_sign
+    },
+    /* recipe/bamboo_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "bamboo_slab",
+        pattern: &["###"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (186, 6), // bamboo_slab
+    },
+    /* recipe/bamboo_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "bamboo_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (187, 4), // bamboo_stairs
+    },
+    /* recipe/bamboo_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "bamboo_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[182] /* bamboo_planks */)],
+        result: (188, 2), // bamboo_trapdoor
+    },
+    /* recipe/barrel.json（category=misc）*/
+    ShapedRecipe {
+        id: "barrel",
+        pattern: &["PSP", "P P", "PSP"],
+        keys: &[
+            ('P', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('S', &[101, 102, 103, 104, 105, 106, 186, 285, 354, 619, 706, 967] /* #wooden_slabs: oak_slab, spruce_slab, birch_slab, jungle_slab, acacia_slab, dark_oak_slab, bamboo_slab, cherry_slab, crimson_slab, mangrove_slab, pale_oak_slab, warped_slab */),
+        ],
+        result: (189, 1), // barrel
+    },
+    /* recipe/beacon.json（category=misc）*/
+    ShapedRecipe {
+        id: "beacon",
+        pattern: &["GGG", "GSG", "OOO"],
+        keys: &[
+            ('G', &[475] /* glass */),
+            ('O', &[84] /* obsidian */),
+            ('S', &[1282] /* nether_star */),
+        ],
+        result: (191, 1), // beacon
+    },
     /* recipe/beehive.json（category=misc；手写表重叠）*/
     ShapedRecipe {
         id: "beehive",
         pattern: &["PPP", "HHH", "PPP"],
         keys: &[
             ('H', &[143] /* honeycomb */),
-            ('P', &[26, 90, 91, 92, 93, 94] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */),
+            ('P', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
         ],
         result: (148, 1), // beehive
+    },
+    /* recipe/birch_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "birch_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[91] /* birch_planks */)],
+        result: (1093, 1), // birch_boat
     },
     /* recipe/birch_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -110,12 +359,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (115, 1), // birch_fence_gate
     },
+    /* recipe/birch_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "birch_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[898] /* stripped_birch_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (196, 6), // birch_hanging_sign
+    },
     /* recipe/birch_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "birch_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[91] /* birch_planks */)],
         result: (139, 1), // birch_pressure_plate
+    },
+    /* recipe/birch_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "birch_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[898] /* stripped_birch_log */)],
+        result: (198, 6), // birch_shelf
+    },
+    /* recipe/birch_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "birch_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[91] /* birch_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (199, 3), // birch_sign
     },
     /* recipe/birch_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -138,6 +414,223 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         keys: &[('#', &[91] /* birch_planks */)],
         result: (127, 2), // birch_trapdoor
     },
+    /* recipe/birch_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "birch_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[76] /* birch_log */)],
+        result: (200, 3), // birch_wood
+    },
+    /* recipe/black_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "black_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[212] /* black_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (201, 1), // black_banner
+    },
+    /* recipe/black_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "black_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[212] /* black_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (202, 1), // black_bed
+    },
+    /* recipe/black_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "black_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[212] /* black_wool */)],
+        result: (204, 3), // black_carpet
+    },
+    /* recipe/black_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "black_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[212] /* black_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1097, 1), // black_harness
+    },
+    /* recipe/black_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "black_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1096] /* black_dye */),
+        ],
+        result: (209, 8), // black_stained_glass
+    },
+    /* recipe/black_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "black_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[209] /* black_stained_glass */)],
+        result: (210, 16), // black_stained_glass_pane
+    },
+    /* recipe/black_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "black_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1096] /* black_dye */),
+        ],
+        result: (210, 8), // black_stained_glass_pane
+    },
+    /* recipe/black_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "black_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1096] /* black_dye */),
+        ],
+        result: (211, 8), // black_terracotta
+    },
+    /* recipe/blackstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "blackstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[213] /* blackstone */)],
+        result: (214, 6), // blackstone_slab
+    },
+    /* recipe/blackstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "blackstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[213] /* blackstone */)],
+        result: (215, 4), // blackstone_stairs
+    },
+    /* recipe/blackstone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "blackstone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[213] /* blackstone */)],
+        result: (216, 6), // blackstone_wall
+    },
+    /* recipe/blast_furnace.json（category=misc）*/
+    ShapedRecipe {
+        id: "blast_furnace",
+        pattern: &["III", "IXI", "###"],
+        keys: &[
+            ('#', &[869] /* smooth_stone */),
+            ('I', &[2] /* iron_ingot */),
+            ('X', &[473] /* furnace */),
+        ],
+        result: (217, 1), // blast_furnace
+    },
+    /* recipe/blue_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "blue_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[231] /* blue_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (218, 1), // blue_banner
+    },
+    /* recipe/blue_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "blue_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[231] /* blue_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (219, 1), // blue_bed
+    },
+    /* recipe/blue_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "blue_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[231] /* blue_wool */)],
+        result: (221, 3), // blue_carpet
+    },
+    /* recipe/blue_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "blue_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[231] /* blue_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1104, 1), // blue_harness
+    },
+    /* recipe/blue_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "blue_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1102] /* blue_dye */),
+        ],
+        result: (228, 8), // blue_stained_glass
+    },
+    /* recipe/blue_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "blue_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[228] /* blue_stained_glass */)],
+        result: (229, 16), // blue_stained_glass_pane
+    },
+    /* recipe/blue_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "blue_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1102] /* blue_dye */),
+        ],
+        result: (229, 8), // blue_stained_glass_pane
+    },
+    /* recipe/blue_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "blue_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1102] /* blue_dye */),
+        ],
+        result: (230, 8), // blue_terracotta
+    },
+    /* recipe/bolt_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "bolt_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[321, 974] /* copper_block+waxed_copper_block: copper_block, waxed_copper_block */),
+            ('S', &[1105] /* bolt_armor_trim_smithing_template */),
+        ],
+        result: (1105, 2), // bolt_armor_trim_smithing_template
+    },
+    /* recipe/bone_block.json（category=building）*/
+    ShapedRecipe {
+        id: "bone_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1106] /* bone_meal */)],
+        result: (232, 1), // bone_block
+    },
+    /* recipe/bookshelf.json（category=building）*/
+    ShapedRecipe {
+        id: "bookshelf",
+        pattern: &["###", "XXX", "###"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('X', &[5] /* book */),
+        ],
+        result: (233, 1), // bookshelf
+    },
     /* recipe/bow.json（category=equipment）*/
     ShapedRecipe {
         id: "bow",
@@ -148,12 +641,444 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (42, 1), // bow
     },
+    /* recipe/bowl.json（category=misc）*/
+    ShapedRecipe {
+        id: "bowl",
+        pattern: &["# #", " # "],
+        keys: &[('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */)],
+        result: (1108, 4), // bowl
+    },
+    /* recipe/bread.json（category=misc）*/
+    ShapedRecipe {
+        id: "bread",
+        pattern: &["###"],
+        keys: &[('#', &[1367] /* wheat */)],
+        result: (1109, 1), // bread
+    },
+    /* recipe/brewing_stand.json（category=misc）*/
+    ShapedRecipe {
+        id: "brewing_stand",
+        pattern: &[" B ", "###"],
+        keys: &[
+            ('#', &[27, 57, 213] /* #stone_crafting_materials: cobblestone, cobbled_deepslate, blackstone */),
+            ('B', &[1100] /* blaze_rod */),
+        ],
+        result: (237, 1), // brewing_stand
+    },
+    /* recipe/brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[241] /* bricks */)],
+        result: (238, 6), // brick_slab
+    },
+    /* recipe/brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[241] /* bricks */)],
+        result: (239, 4), // brick_stairs
+    },
+    /* recipe/brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[241] /* bricks */)],
+        result: (240, 6), // brick_wall
+    },
+    /* recipe/bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1112] /* brick */)],
+        result: (241, 1), // bricks
+    },
+    /* recipe/brown_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "brown_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[255] /* brown_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (242, 1), // brown_banner
+    },
+    /* recipe/brown_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "brown_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[255] /* brown_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (243, 1), // brown_bed
+    },
+    /* recipe/brown_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "brown_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[255] /* brown_wool */)],
+        result: (245, 3), // brown_carpet
+    },
+    /* recipe/brown_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "brown_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[255] /* brown_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1116, 1), // brown_harness
+    },
+    /* recipe/brown_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "brown_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1114] /* brown_dye */),
+        ],
+        result: (252, 8), // brown_stained_glass
+    },
+    /* recipe/brown_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "brown_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[252] /* brown_stained_glass */)],
+        result: (253, 16), // brown_stained_glass_pane
+    },
+    /* recipe/brown_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "brown_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1114] /* brown_dye */),
+        ],
+        result: (253, 8), // brown_stained_glass_pane
+    },
+    /* recipe/brown_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "brown_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1114] /* brown_dye */),
+        ],
+        result: (254, 8), // brown_terracotta
+    },
+    /* recipe/brush.json（category=equipment）*/
+    ShapedRecipe {
+        id: "brush",
+        pattern: &["X", "#", "I"],
+        keys: &[
+            ('#', &[1149] /* copper_ingot */),
+            ('I', &[0] /* stick */),
+            ('X', &[1178] /* feather */),
+        ],
+        result: (1117, 1), // brush
+    },
+    /* recipe/bucket.json（category=misc）*/
+    ShapedRecipe {
+        id: "bucket",
+        pattern: &["# #", " # "],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (1118, 1), // bucket
+    },
+    /* recipe/bundle.json（category=equipment）*/
+    ShapedRecipe {
+        id: "bundle",
+        pattern: &["-", "#"],
+        keys: &[
+            ('#', &[1236] /* leather */),
+            ('-', &[40] /* string */),
+        ],
+        result: (1119, 1), // bundle
+    },
+    /* recipe/cake.json（category=misc）*/
+    ShapedRecipe {
+        id: "cake",
+        pattern: &["AAA", "BEB", "CCC"],
+        keys: &[
+            ('A', &[1259] /* milk_bucket */),
+            ('B', &[1354] /* sugar */),
+            ('C', &[1367] /* wheat */),
+            ('E', &[1103, 1115, 1171] /* #eggs: blue_egg, brown_egg, egg */),
+        ],
+        result: (263, 1), // cake
+    },
+    /* recipe/calibrated_sculk_sensor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "calibrated_sculk_sensor",
+        pattern: &[" # ", "#X#"],
+        keys: &[
+            ('#', &[1081] /* amethyst_shard */),
+            ('X', &[843] /* sculk_sensor */),
+        ],
+        result: (265, 1), // calibrated_sculk_sensor
+    },
+    /* recipe/campfire.json（category=misc）*/
+    ShapedRecipe {
+        id: "campfire",
+        pattern: &[" S ", "SCS", "LLL"],
+        keys: &[
+            ('C', &[1, 1126] /* #coals: coal, charcoal */),
+            ('L', &[31, 76, 77, 78, 79, 80, 160, 200, 279, 288, 347, 356, 384, 539, 612, 622, 656, 700, 709, 884, 895, 896, 898, 899, 900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 960, 969] /* #logs: log, birch_log, spruce_log, jungle_log, acacia_log, dark_oak_log, acacia_wood, birch_wood, cherry_log, cherry_wood, crimson_hyphae, crimson_stem, dark_oak_wood, jungle_wood, mangrove_log, mangrove_wood, oak_wood, pale_oak_log, pale_oak_wood, spruce_wood, stripped_acacia_log, stripped_acacia_wood, stripped_birch_log, stripped_birch_wood, stripped_cherry_log, stripped_cherry_wood, stripped_crimson_hyphae, stripped_crimson_stem, stripped_dark_oak_log, stripped_dark_oak_wood, stripped_jungle_log, stripped_jungle_wood, stripped_mangrove_log, stripped_mangrove_wood, stripped_oak_log, stripped_oak_wood, stripped_pale_oak_log, stripped_pale_oak_wood, stripped_spruce_log, stripped_spruce_wood, stripped_warped_hyphae, stripped_warped_stem, warped_hyphae, warped_stem */),
+            ('S', &[0] /* stick */),
+        ],
+        result: (266, 1), // campfire
+    },
+    /* recipe/candle.json（category=misc）*/
+    ShapedRecipe {
+        id: "candle",
+        pattern: &["S", "H"],
+        keys: &[
+            ('H', &[143] /* honeycomb */),
+            ('S', &[40] /* string */),
+        ],
+        result: (267, 1), // candle
+    },
+    /* recipe/carrot_on_a_stick.json（category=misc）*/
+    ShapedRecipe {
+        id: "carrot_on_a_stick",
+        pattern: &["# ", " X"],
+        keys: &[
+            ('#', &[1183] /* fishing_rod */),
+            ('X', &[268] /* carrot */),
+        ],
+        result: (1121, 1), // carrot_on_a_stick
+    },
+    /* recipe/cartography_table.json（category=misc）*/
+    ShapedRecipe {
+        id: "cartography_table",
+        pattern: &["@@", "##", "##"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('@', &[1301] /* paper */),
+        ],
+        result: (269, 1), // cartography_table
+    },
+    /* recipe/cauldron.json（category=misc）*/
+    ShapedRecipe {
+        id: "cauldron",
+        pattern: &["# #", "# #", "###"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (271, 1), // cauldron
+    },
+    /* recipe/cherry_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "cherry_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (1127, 1), // cherry_boat
+    },
+    /* recipe/cherry_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "cherry_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (274, 3), // cherry_door
+    },
+    /* recipe/cherry_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "cherry_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[280] /* cherry_planks */),
+        ],
+        result: (275, 3), // cherry_fence
+    },
+    /* recipe/cherry_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "cherry_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[280] /* cherry_planks */),
+        ],
+        result: (276, 1), // cherry_fence_gate
+    },
+    /* recipe/cherry_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "cherry_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[900] /* stripped_cherry_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (277, 6), // cherry_hanging_sign
+    },
+    /* recipe/cherry_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "cherry_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (281, 1), // cherry_pressure_plate
+    },
+    /* recipe/cherry_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "cherry_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[900] /* stripped_cherry_log */)],
+        result: (283, 6), // cherry_shelf
+    },
+    /* recipe/cherry_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "cherry_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[280] /* cherry_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (284, 3), // cherry_sign
+    },
+    /* recipe/cherry_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cherry_slab",
+        pattern: &["###"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (285, 6), // cherry_slab
+    },
+    /* recipe/cherry_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "cherry_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (286, 4), // cherry_stairs
+    },
+    /* recipe/cherry_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "cherry_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[280] /* cherry_planks */)],
+        result: (287, 2), // cherry_trapdoor
+    },
+    /* recipe/cherry_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "cherry_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[279] /* cherry_log */)],
+        result: (288, 3), // cherry_wood
+    },
     /* recipe/chest.json（category=misc；手写表重叠）*/
     ShapedRecipe {
         id: "chest",
         pattern: &["###", "# #", "###"],
-        keys: &[('#', &[26, 90, 91, 92, 93, 94] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */)],
+        keys: &[('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */)],
         result: (151, 1), // chest
+    },
+    /* recipe/chiseled_bookshelf.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_bookshelf",
+        pattern: &["###", "XXX", "###"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('X', &[101, 102, 103, 104, 105, 106, 186, 285, 354, 619, 706, 967] /* #wooden_slabs: oak_slab, spruce_slab, birch_slab, jungle_slab, acacia_slab, dark_oak_slab, bamboo_slab, cherry_slab, crimson_slab, mangrove_slab, pale_oak_slab, warped_slab */),
+        ],
+        result: (290, 1), // chiseled_bookshelf
+    },
+    /* recipe/chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_copper",
+        pattern: &["#", "#"],
+        keys: &[('#', &[360] /* cut_copper_slab */)],
+        result: (291, 1), // chiseled_copper
+    },
+    /* recipe/chiseled_deepslate.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_deepslate",
+        pattern: &["#", "#"],
+        keys: &[('#', &[308] /* cobbled_deepslate_slab */)],
+        result: (292, 1), // chiseled_deepslate
+    },
+    /* recipe/chiseled_nether_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_nether_bricks",
+        pattern: &["#", "#"],
+        keys: &[('#', &[642] /* nether_brick_slab */)],
+        result: (293, 1), // chiseled_nether_bricks
+    },
+    /* recipe/chiseled_polished_blackstone.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_polished_blackstone",
+        pattern: &["#", "#"],
+        keys: &[('#', &[744] /* polished_blackstone_slab */)],
+        result: (294, 1), // chiseled_polished_blackstone
+    },
+    /* recipe/chiseled_quartz_block.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_quartz_block",
+        pattern: &["#", "#"],
+        keys: &[('#', &[791] /* quartz_slab */)],
+        result: (295, 1), // chiseled_quartz_block
+    },
+    /* recipe/chiseled_red_sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_red_sandstone",
+        pattern: &["#", "#"],
+        keys: &[('#', &[811] /* red_sandstone_slab */)],
+        result: (296, 1), // chiseled_red_sandstone
+    },
+    /* recipe/chiseled_resin_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_resin_bricks",
+        pattern: &["#", "#"],
+        keys: &[('#', &[828] /* resin_brick_slab */)],
+        result: (297, 1), // chiseled_resin_bricks
+    },
+    /* recipe/chiseled_sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_sandstone",
+        pattern: &["#", "#"],
+        keys: &[('#', &[837] /* sandstone_slab */)],
+        result: (298, 1), // chiseled_sandstone
+    },
+    /* recipe/chiseled_stone_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_stone_bricks",
+        pattern: &["#", "#"],
+        keys: &[('#', &[886] /* stone_brick_slab */)],
+        result: (299, 1), // chiseled_stone_bricks
+    },
+    /* recipe/chiseled_tuff.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_tuff",
+        pattern: &["#", "#"],
+        keys: &[('#', &[946] /* tuff_slab */)],
+        result: (300, 1), // chiseled_tuff
+    },
+    /* recipe/chiseled_tuff_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "chiseled_tuff_bricks",
+        pattern: &["#", "#"],
+        keys: &[('#', &[942] /* tuff_brick_slab */)],
+        result: (301, 1), // chiseled_tuff_bricks
+    },
+    /* recipe/clay.json（category=building）*/
+    ShapedRecipe {
+        id: "clay",
+        pattern: &["##", "##"],
+        keys: &[('#', &[69] /* clay_ball */)],
+        result: (304, 1), // clay
+    },
+    /* recipe/clock.json（category=equipment）*/
+    ShapedRecipe {
+        id: "clock",
+        pattern: &[" # ", "#X#", " # "],
+        keys: &[
+            ('#', &[59] /* gold_ingot */),
+            ('X', &[46] /* redstone */),
+        ],
+        result: (1132, 1), // clock
+    },
+    /* recipe/coal_block.json（category=building）*/
+    ShapedRecipe {
+        id: "coal_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1] /* coal */)],
+        result: (306, 1), // coal_block
     },
     /* recipe/coarse_dirt.json（category=building）*/
     ShapedRecipe {
@@ -165,12 +1090,549 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (65, 4), // coarse_dirt
     },
+    /* recipe/coast_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "coast_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[27] /* cobblestone */),
+            ('S', &[1133] /* coast_armor_trim_smithing_template */),
+        ],
+        result: (1133, 2), // coast_armor_trim_smithing_template
+    },
+    /* recipe/cobbled_deepslate_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cobbled_deepslate_slab",
+        pattern: &["###"],
+        keys: &[('#', &[57] /* cobbled_deepslate */)],
+        result: (308, 6), // cobbled_deepslate_slab
+    },
+    /* recipe/cobbled_deepslate_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "cobbled_deepslate_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[57] /* cobbled_deepslate */)],
+        result: (309, 4), // cobbled_deepslate_stairs
+    },
+    /* recipe/cobbled_deepslate_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "cobbled_deepslate_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[57] /* cobbled_deepslate */)],
+        result: (310, 6), // cobbled_deepslate_wall
+    },
+    /* recipe/cobblestone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cobblestone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[27] /* cobblestone */)],
+        result: (311, 6), // cobblestone_slab
+    },
+    /* recipe/cobblestone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "cobblestone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[27] /* cobblestone */)],
+        result: (312, 4), // cobblestone_stairs
+    },
+    /* recipe/cobblestone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "cobblestone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[27] /* cobblestone */)],
+        result: (313, 6), // cobblestone_wall
+    },
+    /* recipe/comparator.json（category=redstone）*/
+    ShapedRecipe {
+        id: "comparator",
+        pattern: &[" # ", "#X#", "III"],
+        keys: &[
+            ('#', &[823] /* redstone_torch */),
+            ('I', &[28] /* stone */),
+            ('X', &[89] /* quartz */),
+        ],
+        result: (317, 1), // comparator
+    },
+    /* recipe/compass.json（category=equipment）*/
+    ShapedRecipe {
+        id: "compass",
+        pattern: &[" # ", "#X#", " # "],
+        keys: &[
+            ('#', &[2] /* iron_ingot */),
+            ('X', &[46] /* redstone */),
+        ],
+        result: (1136, 1), // compass
+    },
+    /* recipe/composter.json（category=misc）*/
+    ShapedRecipe {
+        id: "composter",
+        pattern: &["# #", "# #", "###"],
+        keys: &[('#', &[101, 102, 103, 104, 105, 106, 186, 285, 354, 619, 706, 967] /* #wooden_slabs: oak_slab, spruce_slab, birch_slab, jungle_slab, acacia_slab, dark_oak_slab, bamboo_slab, cherry_slab, crimson_slab, mangrove_slab, pale_oak_slab, warped_slab */)],
+        result: (318, 1), // composter
+    },
+    /* recipe/conduit.json（category=misc）*/
+    ShapedRecipe {
+        id: "conduit",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[1280] /* nautilus_shell */),
+            ('X', &[1216] /* heart_of_the_sea */),
+        ],
+        result: (319, 1), // conduit
+    },
+    /* recipe/cookie.json（category=misc）*/
+    ShapedRecipe {
+        id: "cookie",
+        pattern: &["#X#"],
+        keys: &[
+            ('#', &[1367] /* wheat */),
+            ('X', &[315] /* cocoa_beans */),
+        ],
+        result: (1144, 8), // cookie
+    },
+    /* recipe/copper_axe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_axe",
+        pattern: &["XX", "X#", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (152, 1), // copper_axe
+    },
+    /* recipe/copper_bars.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_bars",
+        pattern: &["###", "###"],
+        keys: &[('#', &[1149] /* copper_ingot */)],
+        result: (320, 16), // copper_bars
+    },
+    /* recipe/copper_block.json（category=building）*/
+    ShapedRecipe {
+        id: "copper_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1149] /* copper_ingot */)],
+        result: (321, 1), // copper_block
+    },
+    /* recipe/copper_boots.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_boots",
+        pattern: &["X X", "X X"],
+        keys: &[('X', &[1149] /* copper_ingot */)],
+        result: (1145, 1), // copper_boots
+    },
+    /* recipe/copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[321] /* copper_block */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (322, 4), // copper_bulb
+    },
+    /* recipe/copper_chain.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_chain",
+        pattern: &["N", "I", "N"],
+        keys: &[
+            ('I', &[1149] /* copper_ingot */),
+            ('N', &[1151] /* copper_nugget */),
+        ],
+        result: (323, 1), // copper_chain
+    },
+    /* recipe/copper_chest.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_chest",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[1149] /* copper_ingot */),
+            ('X', &[151] /* chest */),
+        ],
+        result: (324, 1), // copper_chest
+    },
+    /* recipe/copper_chestplate.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_chestplate",
+        pattern: &["X X", "XXX", "XXX"],
+        keys: &[('X', &[1149] /* copper_ingot */)],
+        result: (1146, 1), // copper_chestplate
+    },
+    /* recipe/copper_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "copper_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[1149] /* copper_ingot */)],
+        result: (325, 3), // copper_door
+    },
+    /* recipe/copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[321] /* copper_block */)],
+        result: (327, 4), // copper_grate
+    },
+    /* recipe/copper_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[1149] /* copper_ingot */)],
+        result: (1147, 1), // copper_helmet
+    },
+    /* recipe/copper_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (1148, 1), // copper_hoe
+    },
+    /* recipe/copper_ingot_from_nuggets.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_ingot_from_nuggets",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1151] /* copper_nugget */)],
+        result: (1149, 1), // copper_ingot
+    },
+    /* recipe/copper_lantern.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_lantern",
+        pattern: &["XXX", "X#X", "XXX"],
+        keys: &[
+            ('#', &[330] /* copper_torch */),
+            ('X', &[1151] /* copper_nugget */),
+        ],
+        result: (328, 1), // copper_lantern
+    },
+    /* recipe/copper_leggings.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_leggings",
+        pattern: &["XXX", "X X", "X X"],
+        keys: &[('X', &[1149] /* copper_ingot */)],
+        result: (1150, 1), // copper_leggings
+    },
+    /* recipe/copper_pickaxe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_pickaxe",
+        pattern: &["XXX", " # ", " # "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (153, 1), // copper_pickaxe
+    },
+    /* recipe/copper_shovel.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_shovel",
+        pattern: &["X", "#", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (154, 1), // copper_shovel
+    },
+    /* recipe/copper_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (1152, 1), // copper_spear
+    },
+    /* recipe/copper_sword.json（category=equipment）*/
+    ShapedRecipe {
+        id: "copper_sword",
+        pattern: &["X", "X", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1149] /* #copper_tool_materials: copper_ingot */),
+        ],
+        result: (155, 1), // copper_sword
+    },
+    /* recipe/copper_torch.json（category=misc）*/
+    ShapedRecipe {
+        id: "copper_torch",
+        pattern: &["C", "X", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('C', &[1151] /* copper_nugget */),
+            ('X', &[1, 1126] /* coal+charcoal: coal, charcoal */),
+        ],
+        result: (330, 4), // copper_torch
+    },
+    /* recipe/copper_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "copper_trapdoor",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1149] /* copper_ingot */)],
+        result: (331, 1), // copper_trapdoor
+    },
+    /* recipe/crafter.json（category=redstone）*/
+    ShapedRecipe {
+        id: "crafter",
+        pattern: &["###", "#C#", "RDR"],
+        keys: &[
+            ('#', &[2] /* iron_ingot */),
+            ('C', &[150] /* crafting_table */),
+            ('D', &[435] /* dropper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (338, 1), // crafter
+    },
     /* recipe/crafting_table.json（category=misc；手写表重叠）*/
     ShapedRecipe {
         id: "crafting_table",
         pattern: &["##", "##"],
-        keys: &[('#', &[26, 90, 91, 92, 93, 94] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */)],
+        keys: &[('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */)],
         result: (150, 1), // crafting_table
+    },
+    /* recipe/creaking_heart.json（category=misc）*/
+    ShapedRecipe {
+        id: "creaking_heart",
+        pattern: &["L", "R", "L"],
+        keys: &[
+            ('L', &[700] /* pale_oak_log */),
+            ('R', &[827] /* resin_block */),
+        ],
+        result: (339, 1), // creaking_heart
+    },
+    /* recipe/crimson_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "crimson_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[349] /* crimson_planks */)],
+        result: (342, 3), // crimson_door
+    },
+    /* recipe/crimson_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "crimson_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[349] /* crimson_planks */),
+        ],
+        result: (343, 3), // crimson_fence
+    },
+    /* recipe/crimson_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "crimson_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[349] /* crimson_planks */),
+        ],
+        result: (344, 1), // crimson_fence_gate
+    },
+    /* recipe/crimson_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "crimson_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[903] /* stripped_crimson_stem */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (346, 6), // crimson_hanging_sign
+    },
+    /* recipe/crimson_hyphae.json（category=building）*/
+    ShapedRecipe {
+        id: "crimson_hyphae",
+        pattern: &["##", "##"],
+        keys: &[('#', &[356] /* crimson_stem */)],
+        result: (347, 3), // crimson_hyphae
+    },
+    /* recipe/crimson_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "crimson_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[349] /* crimson_planks */)],
+        result: (350, 1), // crimson_pressure_plate
+    },
+    /* recipe/crimson_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "crimson_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[903] /* stripped_crimson_stem */)],
+        result: (352, 6), // crimson_shelf
+    },
+    /* recipe/crimson_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "crimson_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[349] /* crimson_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (353, 3), // crimson_sign
+    },
+    /* recipe/crimson_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "crimson_slab",
+        pattern: &["###"],
+        keys: &[('#', &[349] /* crimson_planks */)],
+        result: (354, 6), // crimson_slab
+    },
+    /* recipe/crimson_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "crimson_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[349] /* crimson_planks */)],
+        result: (355, 4), // crimson_stairs
+    },
+    /* recipe/crimson_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "crimson_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[349] /* crimson_planks */)],
+        result: (357, 2), // crimson_trapdoor
+    },
+    /* recipe/crossbow.json（category=equipment）*/
+    ShapedRecipe {
+        id: "crossbow",
+        pattern: &["#&#", "~$~", " # "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('$', &[938] /* tripwire_hook */),
+            ('&', &[2] /* iron_ingot */),
+            ('~', &[40] /* string */),
+        ],
+        result: (1154, 1), // crossbow
+    },
+    /* recipe/cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[321] /* copper_block */)],
+        result: (359, 4), // cut_copper
+    },
+    /* recipe/cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[359] /* cut_copper */)],
+        result: (360, 6), // cut_copper_slab
+    },
+    /* recipe/cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[359] /* cut_copper */)],
+        result: (361, 4), // cut_copper_stairs
+    },
+    /* recipe/cut_red_sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_red_sandstone",
+        pattern: &["##", "##"],
+        keys: &[('#', &[810] /* red_sandstone */)],
+        result: (362, 4), // cut_red_sandstone
+    },
+    /* recipe/cut_red_sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_red_sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[362] /* cut_red_sandstone */)],
+        result: (363, 6), // cut_red_sandstone_slab
+    },
+    /* recipe/cut_sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_sandstone",
+        pattern: &["##", "##"],
+        keys: &[('#', &[836] /* sandstone */)],
+        result: (364, 4), // cut_sandstone
+    },
+    /* recipe/cut_sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "cut_sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[364] /* cut_sandstone */)],
+        result: (365, 6), // cut_sandstone_slab
+    },
+    /* recipe/cyan_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "cyan_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[377] /* cyan_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (366, 1), // cyan_banner
+    },
+    /* recipe/cyan_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "cyan_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[377] /* cyan_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (367, 1), // cyan_bed
+    },
+    /* recipe/cyan_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "cyan_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[377] /* cyan_wool */)],
+        result: (369, 3), // cyan_carpet
+    },
+    /* recipe/cyan_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "cyan_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[377] /* cyan_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1157, 1), // cyan_harness
+    },
+    /* recipe/cyan_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "cyan_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1156] /* cyan_dye */),
+        ],
+        result: (374, 8), // cyan_stained_glass
+    },
+    /* recipe/cyan_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "cyan_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[374] /* cyan_stained_glass */)],
+        result: (375, 16), // cyan_stained_glass_pane
+    },
+    /* recipe/cyan_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "cyan_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1156] /* cyan_dye */),
+        ],
+        result: (375, 8), // cyan_stained_glass_pane
+    },
+    /* recipe/cyan_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "cyan_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1156] /* cyan_dye */),
+        ],
+        result: (376, 8), // cyan_terracotta
+    },
+    /* recipe/dark_oak_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "dark_oak_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[94] /* dark_oak_planks */)],
+        result: (1159, 1), // dark_oak_boat
     },
     /* recipe/dark_oak_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -199,12 +1661,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (118, 1), // dark_oak_fence_gate
     },
+    /* recipe/dark_oak_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "dark_oak_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[904] /* stripped_dark_oak_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (380, 6), // dark_oak_hanging_sign
+    },
     /* recipe/dark_oak_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "dark_oak_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[94] /* dark_oak_planks */)],
         result: (142, 1), // dark_oak_pressure_plate
+    },
+    /* recipe/dark_oak_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "dark_oak_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[904] /* stripped_dark_oak_log */)],
+        result: (382, 6), // dark_oak_shelf
+    },
+    /* recipe/dark_oak_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "dark_oak_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[94] /* dark_oak_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (383, 3), // dark_oak_sign
     },
     /* recipe/dark_oak_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -227,6 +1716,122 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         keys: &[('#', &[94] /* dark_oak_planks */)],
         result: (130, 2), // dark_oak_trapdoor
     },
+    /* recipe/dark_oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "dark_oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[80] /* dark_oak_log */)],
+        result: (384, 3), // dark_oak_wood
+    },
+    /* recipe/dark_prismarine.json（category=building）*/
+    ShapedRecipe {
+        id: "dark_prismarine",
+        pattern: &["SSS", "SIS", "SSS"],
+        keys: &[
+            ('I', &[1096] /* black_dye */),
+            ('S', &[1310] /* prismarine_shard */),
+        ],
+        result: (385, 1), // dark_prismarine
+    },
+    /* recipe/dark_prismarine_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "dark_prismarine_slab",
+        pattern: &["###"],
+        keys: &[('#', &[385] /* dark_prismarine */)],
+        result: (386, 6), // dark_prismarine_slab
+    },
+    /* recipe/dark_prismarine_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "dark_prismarine_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[385] /* dark_prismarine */)],
+        result: (387, 4), // dark_prismarine_stairs
+    },
+    /* recipe/daylight_detector.json（category=redstone）*/
+    ShapedRecipe {
+        id: "daylight_detector",
+        pattern: &["GGG", "QQQ", "WWW"],
+        keys: &[
+            ('G', &[475] /* glass */),
+            ('Q', &[89] /* quartz */),
+            ('W', &[101, 102, 103, 104, 105, 106, 186, 285, 354, 619, 706, 967] /* #wooden_slabs: oak_slab, spruce_slab, birch_slab, jungle_slab, acacia_slab, dark_oak_slab, bamboo_slab, cherry_slab, crimson_slab, mangrove_slab, pale_oak_slab, warped_slab */),
+        ],
+        result: (388, 1), // daylight_detector
+    },
+    /* recipe/decorated_pot_simple.json（category=misc）*/
+    ShapedRecipe {
+        id: "decorated_pot_simple",
+        pattern: &[" # ", "# #", " # "],
+        keys: &[('#', &[1112] /* brick */)],
+        result: (405, 1), // decorated_pot
+    },
+    /* recipe/deepslate_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[410] /* deepslate_bricks */)],
+        result: (407, 6), // deepslate_brick_slab
+    },
+    /* recipe/deepslate_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[410] /* deepslate_bricks */)],
+        result: (408, 4), // deepslate_brick_stairs
+    },
+    /* recipe/deepslate_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "deepslate_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[410] /* deepslate_bricks */)],
+        result: (409, 6), // deepslate_brick_wall
+    },
+    /* recipe/deepslate_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[747] /* polished_deepslate */)],
+        result: (410, 4), // deepslate_bricks
+    },
+    /* recipe/deepslate_tile_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_tile_slab",
+        pattern: &["###"],
+        keys: &[('#', &[422] /* deepslate_tiles */)],
+        result: (419, 6), // deepslate_tile_slab
+    },
+    /* recipe/deepslate_tile_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_tile_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[422] /* deepslate_tiles */)],
+        result: (420, 4), // deepslate_tile_stairs
+    },
+    /* recipe/deepslate_tile_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "deepslate_tile_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[422] /* deepslate_tiles */)],
+        result: (421, 6), // deepslate_tile_wall
+    },
+    /* recipe/deepslate_tiles.json（category=building）*/
+    ShapedRecipe {
+        id: "deepslate_tiles",
+        pattern: &["##", "##"],
+        keys: &[('#', &[410] /* deepslate_bricks */)],
+        result: (422, 4), // deepslate_tiles
+    },
+    /* recipe/detector_rail.json（category=misc）*/
+    ShapedRecipe {
+        id: "detector_rail",
+        pattern: &["X X", "X#X", "XRX"],
+        keys: &[
+            ('#', &[891] /* stone_pressure_plate */),
+            ('R', &[46] /* redstone */),
+            ('X', &[2] /* iron_ingot */),
+        ],
+        result: (423, 6), // detector_rail
+    },
     /* recipe/diamond_axe.json（category=equipment）*/
     ShapedRecipe {
         id: "diamond_axe",
@@ -236,6 +1841,51 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
             ('X', &[3] /* #diamond_tool_materials: diamond */),
         ],
         result: (22, 1), // diamond_axe
+    },
+    /* recipe/diamond_block.json（category=building）*/
+    ShapedRecipe {
+        id: "diamond_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[3] /* diamond */)],
+        result: (424, 1), // diamond_block
+    },
+    /* recipe/diamond_boots.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_boots",
+        pattern: &["X X", "X X"],
+        keys: &[('X', &[3] /* diamond */)],
+        result: (1161, 1), // diamond_boots
+    },
+    /* recipe/diamond_chestplate.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_chestplate",
+        pattern: &["X X", "XXX", "XXX"],
+        keys: &[('X', &[3] /* diamond */)],
+        result: (1162, 1), // diamond_chestplate
+    },
+    /* recipe/diamond_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[3] /* diamond */)],
+        result: (1163, 1), // diamond_helmet
+    },
+    /* recipe/diamond_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[3] /* #diamond_tool_materials: diamond */),
+        ],
+        result: (1164, 1), // diamond_hoe
+    },
+    /* recipe/diamond_leggings.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_leggings",
+        pattern: &["XXX", "X X", "X X"],
+        keys: &[('X', &[3] /* diamond */)],
+        result: (1165, 1), // diamond_leggings
     },
     /* recipe/diamond_pickaxe.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -257,6 +1907,16 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (24, 1), // diamond_shovel
     },
+    /* recipe/diamond_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "diamond_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[3] /* #diamond_tool_materials: diamond */),
+        ],
+        result: (1166, 1), // diamond_spear
+    },
     /* recipe/diamond_sword.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
         id: "diamond_sword",
@@ -277,12 +1937,384 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (62, 2), // diorite
     },
+    /* recipe/diorite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "diorite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[62] /* diorite */)],
+        result: (425, 6), // diorite_slab
+    },
+    /* recipe/diorite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "diorite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[62] /* diorite */)],
+        result: (426, 4), // diorite_stairs
+    },
+    /* recipe/diorite_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "diorite_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[62] /* diorite */)],
+        result: (427, 6), // diorite_wall
+    },
+    /* recipe/dispenser.json（category=redstone）*/
+    ShapedRecipe {
+        id: "dispenser",
+        pattern: &["###", "#X#", "#R#"],
+        keys: &[
+            ('#', &[27] /* cobblestone */),
+            ('R', &[46] /* redstone */),
+            ('X', &[42] /* bow */),
+        ],
+        result: (429, 1), // dispenser
+    },
+    /* recipe/dried_ghast.json（category=building）*/
+    ShapedRecipe {
+        id: "dried_ghast",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[1191] /* ghast_tear */),
+            ('X', &[82] /* soul_sand */),
+        ],
+        result: (432, 1), // dried_ghast
+    },
+    /* recipe/dried_kelp_block.json（category=building）*/
+    ShapedRecipe {
+        id: "dried_kelp_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1168] /* dried_kelp */)],
+        result: (433, 1), // dried_kelp_block
+    },
+    /* recipe/dripstone_block.json（category=building）*/
+    ShapedRecipe {
+        id: "dripstone_block",
+        pattern: &["##", "##"],
+        keys: &[('#', &[732] /* pointed_dripstone */)],
+        result: (434, 1), // dripstone_block
+    },
+    /* recipe/dropper.json（category=redstone）*/
+    ShapedRecipe {
+        id: "dropper",
+        pattern: &["###", "# #", "#R#"],
+        keys: &[
+            ('#', &[27] /* cobblestone */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (435, 1), // dropper
+    },
+    /* recipe/dune_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "dune_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[836] /* sandstone */),
+            ('S', &[1169] /* dune_armor_trim_smithing_template */),
+        ],
+        result: (1169, 2), // dune_armor_trim_smithing_template
+    },
+    /* recipe/emerald_block.json（category=building）*/
+    ShapedRecipe {
+        id: "emerald_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[47] /* emerald */)],
+        result: (436, 1), // emerald_block
+    },
+    /* recipe/enchanting_table.json（category=misc）*/
+    ShapedRecipe {
+        id: "enchanting_table",
+        pattern: &[" B ", "D#D", "###"],
+        keys: &[
+            ('#', &[84] /* obsidian */),
+            ('B', &[5] /* book */),
+            ('D', &[3] /* diamond */),
+        ],
+        result: (438, 1), // enchanting_table
+    },
+    /* recipe/end_crystal.json（category=misc）*/
+    ShapedRecipe {
+        id: "end_crystal",
+        pattern: &["GGG", "GEG", "GTG"],
+        keys: &[
+            ('E', &[1174] /* ender_eye */),
+            ('G', &[475] /* glass */),
+            ('T', &[1191] /* ghast_tear */),
+        ],
+        result: (1173, 1), // end_crystal
+    },
+    /* recipe/end_rod.json（category=misc）*/
+    ShapedRecipe {
+        id: "end_rod",
+        pattern: &["/", "#"],
+        keys: &[
+            ('#', &[1308] /* popped_chorus_fruit */),
+            ('/', &[1100] /* blaze_rod */),
+        ],
+        result: (440, 4), // end_rod
+    },
+    /* recipe/end_stone_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "end_stone_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[445] /* end_stone_bricks */)],
+        result: (442, 6), // end_stone_brick_slab
+    },
+    /* recipe/end_stone_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "end_stone_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[445] /* end_stone_bricks */)],
+        result: (443, 4), // end_stone_brick_stairs
+    },
+    /* recipe/end_stone_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "end_stone_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[445] /* end_stone_bricks */)],
+        result: (444, 6), // end_stone_brick_wall
+    },
+    /* recipe/end_stone_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "end_stone_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[441] /* end_stone */)],
+        result: (445, 4), // end_stone_bricks
+    },
+    /* recipe/ender_chest.json（category=misc）*/
+    ShapedRecipe {
+        id: "ender_chest",
+        pattern: &["###", "#E#", "###"],
+        keys: &[
+            ('#', &[84] /* obsidian */),
+            ('E', &[1174] /* ender_eye */),
+        ],
+        result: (446, 1), // ender_chest
+    },
+    /* recipe/exposed_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "exposed_chiseled_copper",
+        pattern: &["#", "#"],
+        keys: &[('#', &[459] /* exposed_cut_copper_slab */)],
+        result: (447, 1), // exposed_chiseled_copper
+    },
+    /* recipe/exposed_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "exposed_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[448] /* exposed_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (450, 4), // exposed_copper_bulb
+    },
+    /* recipe/exposed_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "exposed_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[448] /* exposed_copper */)],
+        result: (455, 4), // exposed_copper_grate
+    },
+    /* recipe/exposed_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "exposed_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[448] /* exposed_copper */)],
+        result: (458, 4), // exposed_cut_copper
+    },
+    /* recipe/exposed_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "exposed_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[458] /* exposed_cut_copper */)],
+        result: (459, 6), // exposed_cut_copper_slab
+    },
+    /* recipe/exposed_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "exposed_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[458] /* exposed_cut_copper */)],
+        result: (460, 4), // exposed_cut_copper_stairs
+    },
+    /* recipe/eye_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "eye_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[441] /* end_stone */),
+            ('S', &[1177] /* eye_armor_trim_smithing_template */),
+        ],
+        result: (1177, 2), // eye_armor_trim_smithing_template
+    },
+    /* recipe/fishing_rod.json（category=equipment）*/
+    ShapedRecipe {
+        id: "fishing_rod",
+        pattern: &["  #", " #X", "# X"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[40] /* string */),
+        ],
+        result: (1183, 1), // fishing_rod
+    },
+    /* recipe/fletching_table.json（category=misc）*/
+    ShapedRecipe {
+        id: "fletching_table",
+        pattern: &["@@", "##", "##"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('@', &[48] /* flint */),
+        ],
+        result: (468, 1), // fletching_table
+    },
+    /* recipe/flow_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "flow_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[1110] /* breeze_rod */),
+            ('S', &[1185] /* flow_armor_trim_smithing_template */),
+        ],
+        result: (1185, 2), // flow_armor_trim_smithing_template
+    },
+    /* recipe/flower_pot.json（category=misc）*/
+    ShapedRecipe {
+        id: "flower_pot",
+        pattern: &["# #", " # "],
+        keys: &[('#', &[1112] /* brick */)],
+        result: (469, 1), // flower_pot
+    },
+    /* recipe/furnace.json（category=misc）*/
+    ShapedRecipe {
+        id: "furnace",
+        pattern: &["###", "# #", "###"],
+        keys: &[('#', &[27, 57, 213] /* #stone_crafting_materials: cobblestone, cobbled_deepslate, blackstone */)],
+        result: (473, 1), // furnace
+    },
+    /* recipe/glass_bottle.json（category=misc）*/
+    ShapedRecipe {
+        id: "glass_bottle",
+        pattern: &["# #", " # "],
+        keys: &[('#', &[475] /* glass */)],
+        result: (145, 3), // glass_bottle
+    },
+    /* recipe/glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[475] /* glass */)],
+        result: (476, 16), // glass_pane
+    },
+    /* recipe/glistering_melon_slice.json（category=misc）*/
+    ShapedRecipe {
+        id: "glistering_melon_slice",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[88] /* gold_nugget */),
+            ('X', &[73] /* melon_slice */),
+        ],
+        result: (1192, 1), // glistering_melon_slice
+    },
+    /* recipe/glowstone.json（category=building）*/
+    ShapedRecipe {
+        id: "glowstone",
+        pattern: &["##", "##"],
+        keys: &[('#', &[74] /* glowstone_dust */)],
+        result: (479, 1), // glowstone
+    },
+    /* recipe/gold_block.json（category=building）*/
+    ShapedRecipe {
+        id: "gold_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[59] /* gold_ingot */)],
+        result: (480, 1), // gold_block
+    },
     /* recipe/gold_ingot_from_nuggets.json（category=misc）*/
     ShapedRecipe {
         id: "gold_ingot_from_nuggets",
         pattern: &["###", "###", "###"],
         keys: &[('#', &[88] /* gold_nugget */)],
         result: (59, 1), // gold_ingot
+    },
+    /* recipe/golden_apple.json（category=misc）*/
+    ShapedRecipe {
+        id: "golden_apple",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[59] /* gold_ingot */),
+            ('X', &[49] /* apple */),
+        ],
+        result: (1196, 1), // golden_apple
+    },
+    /* recipe/golden_axe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_axe",
+        pattern: &["XX", "X#", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[59] /* #gold_tool_materials: gold_ingot */),
+        ],
+        result: (1197, 1), // golden_axe
+    },
+    /* recipe/golden_boots.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_boots",
+        pattern: &["X X", "X X"],
+        keys: &[('X', &[59] /* gold_ingot */)],
+        result: (1198, 1), // golden_boots
+    },
+    /* recipe/golden_carrot.json（category=misc）*/
+    ShapedRecipe {
+        id: "golden_carrot",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[88] /* gold_nugget */),
+            ('X', &[268] /* carrot */),
+        ],
+        result: (1199, 1), // golden_carrot
+    },
+    /* recipe/golden_chestplate.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_chestplate",
+        pattern: &["X X", "XXX", "XXX"],
+        keys: &[('X', &[59] /* gold_ingot */)],
+        result: (1200, 1), // golden_chestplate
+    },
+    /* recipe/golden_dandelion.json（category=misc）*/
+    ShapedRecipe {
+        id: "golden_dandelion",
+        pattern: &["###", "#I#", "###"],
+        keys: &[
+            ('#', &[88] /* gold_nugget */),
+            ('I', &[379] /* dandelion */),
+        ],
+        result: (482, 1), // golden_dandelion
+    },
+    /* recipe/golden_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[59] /* gold_ingot */)],
+        result: (1201, 1), // golden_helmet
+    },
+    /* recipe/golden_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[59] /* #gold_tool_materials: gold_ingot */),
+        ],
+        result: (1202, 1), // golden_hoe
+    },
+    /* recipe/golden_leggings.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_leggings",
+        pattern: &["XXX", "X X", "X X"],
+        keys: &[('X', &[59] /* gold_ingot */)],
+        result: (1204, 1), // golden_leggings
     },
     /* recipe/golden_pickaxe.json（category=equipment）*/
     ShapedRecipe {
@@ -294,6 +2326,26 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (17, 1), // golden_pickaxe
     },
+    /* recipe/golden_shovel.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_shovel",
+        pattern: &["X", "#", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[59] /* #gold_tool_materials: gold_ingot */),
+        ],
+        result: (1206, 1), // golden_shovel
+    },
+    /* recipe/golden_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "golden_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[59] /* #gold_tool_materials: gold_ingot */),
+        ],
+        result: (1207, 1), // golden_spear
+    },
     /* recipe/golden_sword.json（category=equipment）*/
     ShapedRecipe {
         id: "golden_sword",
@@ -303,6 +2355,195 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
             ('X', &[59] /* #gold_tool_materials: gold_ingot */),
         ],
         result: (11, 1), // golden_sword
+    },
+    /* recipe/granite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "granite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[61] /* granite */)],
+        result: (483, 6), // granite_slab
+    },
+    /* recipe/granite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "granite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[61] /* granite */)],
+        result: (484, 4), // granite_stairs
+    },
+    /* recipe/granite_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "granite_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[61] /* granite */)],
+        result: (485, 6), // granite_wall
+    },
+    /* recipe/gray_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "gray_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[497] /* gray_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (486, 1), // gray_banner
+    },
+    /* recipe/gray_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "gray_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[497] /* gray_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (487, 1), // gray_bed
+    },
+    /* recipe/gray_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "gray_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[497] /* gray_wool */)],
+        result: (489, 3), // gray_carpet
+    },
+    /* recipe/gray_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "gray_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[497] /* gray_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1210, 1), // gray_harness
+    },
+    /* recipe/gray_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "gray_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1209] /* gray_dye */),
+        ],
+        result: (494, 8), // gray_stained_glass
+    },
+    /* recipe/gray_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "gray_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[494] /* gray_stained_glass */)],
+        result: (495, 16), // gray_stained_glass_pane
+    },
+    /* recipe/gray_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "gray_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1209] /* gray_dye */),
+        ],
+        result: (495, 8), // gray_stained_glass_pane
+    },
+    /* recipe/gray_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "gray_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1209] /* gray_dye */),
+        ],
+        result: (496, 8), // gray_terracotta
+    },
+    /* recipe/green_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "green_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[509] /* green_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (498, 1), // green_banner
+    },
+    /* recipe/green_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "green_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[509] /* green_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (499, 1), // green_bed
+    },
+    /* recipe/green_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "green_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[509] /* green_wool */)],
+        result: (501, 3), // green_carpet
+    },
+    /* recipe/green_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "green_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[509] /* green_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1213, 1), // green_harness
+    },
+    /* recipe/green_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "green_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1212] /* green_dye */),
+        ],
+        result: (506, 8), // green_stained_glass
+    },
+    /* recipe/green_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "green_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[506] /* green_stained_glass */)],
+        result: (507, 16), // green_stained_glass_pane
+    },
+    /* recipe/green_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "green_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1212] /* green_dye */),
+        ],
+        result: (507, 8), // green_stained_glass_pane
+    },
+    /* recipe/green_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "green_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1212] /* green_dye */),
+        ],
+        result: (508, 8), // green_terracotta
+    },
+    /* recipe/grindstone.json（category=misc）*/
+    ShapedRecipe {
+        id: "grindstone",
+        pattern: &["I-I", "# #"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('-', &[892] /* stone_slab */),
+            ('I', &[0] /* stick */),
+        ],
+        result: (510, 1), // grindstone
+    },
+    /* recipe/heavy_weighted_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "heavy_weighted_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (514, 1), // heavy_weighted_pressure_plate
     },
     /* recipe/honey_block.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -318,6 +2559,27 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         keys: &[('#', &[143] /* honeycomb */)],
         result: (146, 1), // honeycomb_block
     },
+    /* recipe/hopper.json（category=redstone）*/
+    ShapedRecipe {
+        id: "hopper",
+        pattern: &["I I", "ICI", " I "],
+        keys: &[
+            ('C', &[151] /* chest */),
+            ('I', &[2] /* iron_ingot */),
+        ],
+        result: (515, 1), // hopper
+    },
+    /* recipe/host_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "host_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[928] /* terracotta */),
+            ('S', &[1220] /* host_armor_trim_smithing_template */),
+        ],
+        result: (1220, 2), // host_armor_trim_smithing_template
+    },
     /* recipe/iron_axe.json（category=equipment）*/
     ShapedRecipe {
         id: "iron_axe",
@@ -327,6 +2589,82 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
             ('X', &[2] /* #iron_tool_materials: iron_ingot */),
         ],
         result: (21, 1), // iron_axe
+    },
+    /* recipe/iron_bars.json（category=misc）*/
+    ShapedRecipe {
+        id: "iron_bars",
+        pattern: &["###", "###"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (527, 16), // iron_bars
+    },
+    /* recipe/iron_block.json（category=building）*/
+    ShapedRecipe {
+        id: "iron_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (528, 1), // iron_block
+    },
+    /* recipe/iron_boots.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_boots",
+        pattern: &["X X", "X X"],
+        keys: &[('X', &[2] /* iron_ingot */)],
+        result: (1223, 1), // iron_boots
+    },
+    /* recipe/iron_chain.json（category=misc）*/
+    ShapedRecipe {
+        id: "iron_chain",
+        pattern: &["N", "I", "N"],
+        keys: &[
+            ('I', &[2] /* iron_ingot */),
+            ('N', &[1228] /* iron_nugget */),
+        ],
+        result: (529, 1), // iron_chain
+    },
+    /* recipe/iron_chestplate.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_chestplate",
+        pattern: &["X X", "XXX", "XXX"],
+        keys: &[('X', &[2] /* iron_ingot */)],
+        result: (1224, 1), // iron_chestplate
+    },
+    /* recipe/iron_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "iron_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (530, 3), // iron_door
+    },
+    /* recipe/iron_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[2] /* iron_ingot */)],
+        result: (1225, 1), // iron_helmet
+    },
+    /* recipe/iron_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[2] /* #iron_tool_materials: iron_ingot */),
+        ],
+        result: (1226, 1), // iron_hoe
+    },
+    /* recipe/iron_ingot_from_nuggets.json（category=misc）*/
+    ShapedRecipe {
+        id: "iron_ingot_from_nuggets",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1228] /* iron_nugget */)],
+        result: (2, 1), // iron_ingot
+    },
+    /* recipe/iron_leggings.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_leggings",
+        pattern: &["XXX", "X X", "X X"],
+        keys: &[('X', &[2] /* iron_ingot */)],
+        result: (1227, 1), // iron_leggings
     },
     /* recipe/iron_pickaxe.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -348,6 +2686,16 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (23, 1), // iron_shovel
     },
+    /* recipe/iron_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "iron_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[2] /* #iron_tool_materials: iron_ingot */),
+        ],
+        result: (1229, 1), // iron_spear
+    },
     /* recipe/iron_sword.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
         id: "iron_sword",
@@ -357,6 +2705,50 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
             ('X', &[2] /* #iron_tool_materials: iron_ingot */),
         ],
         result: (9, 1), // iron_sword
+    },
+    /* recipe/iron_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "iron_trapdoor",
+        pattern: &["##", "##"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (531, 1), // iron_trapdoor
+    },
+    /* recipe/item_frame.json（category=misc）*/
+    ShapedRecipe {
+        id: "item_frame",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1236] /* leather */),
+        ],
+        result: (1230, 1), // item_frame
+    },
+    /* recipe/jack_o_lantern.json（category=building）*/
+    ShapedRecipe {
+        id: "jack_o_lantern",
+        pattern: &["A", "B"],
+        keys: &[
+            ('A', &[270] /* carved_pumpkin */),
+            ('B', &[933] /* torch */),
+        ],
+        result: (532, 1), // jack_o_lantern
+    },
+    /* recipe/jukebox.json（category=misc）*/
+    ShapedRecipe {
+        id: "jukebox",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('X', &[3] /* diamond */),
+        ],
+        result: (534, 1), // jukebox
+    },
+    /* recipe/jungle_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "jungle_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[92] /* jungle_planks */)],
+        result: (1231, 1), // jungle_boat
     },
     /* recipe/jungle_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -385,12 +2777,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (116, 1), // jungle_fence_gate
     },
+    /* recipe/jungle_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "jungle_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[906] /* stripped_jungle_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (535, 6), // jungle_hanging_sign
+    },
     /* recipe/jungle_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "jungle_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[92] /* jungle_planks */)],
         result: (140, 1), // jungle_pressure_plate
+    },
+    /* recipe/jungle_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "jungle_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[906] /* stripped_jungle_log */)],
+        result: (537, 6), // jungle_shelf
+    },
+    /* recipe/jungle_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "jungle_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[92] /* jungle_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (538, 3), // jungle_sign
     },
     /* recipe/jungle_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -412,6 +2831,730 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["###", "###"],
         keys: &[('#', &[92] /* jungle_planks */)],
         result: (128, 2), // jungle_trapdoor
+    },
+    /* recipe/jungle_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "jungle_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[78] /* jungle_log */)],
+        result: (539, 3), // jungle_wood
+    },
+    /* recipe/ladder.json（category=misc）*/
+    ShapedRecipe {
+        id: "ladder",
+        pattern: &["# #", "###", "# #"],
+        keys: &[('#', &[0] /* stick */)],
+        result: (541, 3), // ladder
+    },
+    /* recipe/lantern.json（category=misc）*/
+    ShapedRecipe {
+        id: "lantern",
+        pattern: &["XXX", "X#X", "XXX"],
+        keys: &[
+            ('#', &[933] /* torch */),
+            ('X', &[1228] /* iron_nugget */),
+        ],
+        result: (542, 1), // lantern
+    },
+    /* recipe/lapis_block.json（category=building）*/
+    ShapedRecipe {
+        id: "lapis_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1234] /* lapis_lazuli */)],
+        result: (543, 1), // lapis_block
+    },
+    /* recipe/lead.json（category=equipment）*/
+    ShapedRecipe {
+        id: "lead",
+        pattern: &["~~ ", "~~ ", "  ~"],
+        keys: &[('~', &[40] /* string */)],
+        result: (1235, 2), // lead
+    },
+    /* recipe/leather.json（category=misc）*/
+    ShapedRecipe {
+        id: "leather",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1320] /* rabbit_hide */)],
+        result: (1236, 1), // leather
+    },
+    /* recipe/leather_boots.json（category=equipment）*/
+    ShapedRecipe {
+        id: "leather_boots",
+        pattern: &["X X", "X X"],
+        keys: &[('X', &[1236] /* leather */)],
+        result: (1237, 1), // leather_boots
+    },
+    /* recipe/leather_chestplate.json（category=equipment）*/
+    ShapedRecipe {
+        id: "leather_chestplate",
+        pattern: &["X X", "XXX", "XXX"],
+        keys: &[('X', &[1236] /* leather */)],
+        result: (1238, 1), // leather_chestplate
+    },
+    /* recipe/leather_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "leather_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[1236] /* leather */)],
+        result: (1239, 1), // leather_helmet
+    },
+    /* recipe/leather_horse_armor.json（category=misc）*/
+    ShapedRecipe {
+        id: "leather_horse_armor",
+        pattern: &["X X", "XXX", "X X"],
+        keys: &[('X', &[1236] /* leather */)],
+        result: (1240, 1), // leather_horse_armor
+    },
+    /* recipe/leather_leggings.json（category=equipment）*/
+    ShapedRecipe {
+        id: "leather_leggings",
+        pattern: &["XXX", "X X", "X X"],
+        keys: &[('X', &[1236] /* leather */)],
+        result: (1241, 1), // leather_leggings
+    },
+    /* recipe/lectern.json（category=redstone）*/
+    ShapedRecipe {
+        id: "lectern",
+        pattern: &["SSS", " B ", " S "],
+        keys: &[
+            ('B', &[233] /* bookshelf */),
+            ('S', &[101, 102, 103, 104, 105, 106, 186, 285, 354, 619, 706, 967] /* #wooden_slabs: oak_slab, spruce_slab, birch_slab, jungle_slab, acacia_slab, dark_oak_slab, bamboo_slab, cherry_slab, crimson_slab, mangrove_slab, pale_oak_slab, warped_slab */),
+        ],
+        result: (548, 1), // lectern
+    },
+    /* recipe/lever.json（category=redstone）*/
+    ShapedRecipe {
+        id: "lever",
+        pattern: &["X", "#"],
+        keys: &[
+            ('#', &[27] /* cobblestone */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (549, 1), // lever
+    },
+    /* recipe/light_blue_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_blue_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[562] /* light_blue_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (551, 1), // light_blue_banner
+    },
+    /* recipe/light_blue_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_blue_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[562] /* light_blue_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (552, 1), // light_blue_bed
+    },
+    /* recipe/light_blue_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_blue_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[562] /* light_blue_wool */)],
+        result: (554, 3), // light_blue_carpet
+    },
+    /* recipe/light_blue_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "light_blue_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[562] /* light_blue_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1244, 1), // light_blue_harness
+    },
+    /* recipe/light_blue_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "light_blue_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1243] /* light_blue_dye */),
+        ],
+        result: (559, 8), // light_blue_stained_glass
+    },
+    /* recipe/light_blue_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_blue_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[559] /* light_blue_stained_glass */)],
+        result: (560, 16), // light_blue_stained_glass_pane
+    },
+    /* recipe/light_blue_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_blue_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1243] /* light_blue_dye */),
+        ],
+        result: (560, 8), // light_blue_stained_glass_pane
+    },
+    /* recipe/light_blue_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "light_blue_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1243] /* light_blue_dye */),
+        ],
+        result: (561, 8), // light_blue_terracotta
+    },
+    /* recipe/light_gray_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_gray_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[574] /* light_gray_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (563, 1), // light_gray_banner
+    },
+    /* recipe/light_gray_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_gray_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[574] /* light_gray_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (564, 1), // light_gray_bed
+    },
+    /* recipe/light_gray_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_gray_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[574] /* light_gray_wool */)],
+        result: (566, 3), // light_gray_carpet
+    },
+    /* recipe/light_gray_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "light_gray_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[574] /* light_gray_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1247, 1), // light_gray_harness
+    },
+    /* recipe/light_gray_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "light_gray_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1246] /* light_gray_dye */),
+        ],
+        result: (571, 8), // light_gray_stained_glass
+    },
+    /* recipe/light_gray_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_gray_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[571] /* light_gray_stained_glass */)],
+        result: (572, 16), // light_gray_stained_glass_pane
+    },
+    /* recipe/light_gray_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "light_gray_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1246] /* light_gray_dye */),
+        ],
+        result: (572, 8), // light_gray_stained_glass_pane
+    },
+    /* recipe/light_gray_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "light_gray_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1246] /* light_gray_dye */),
+        ],
+        result: (573, 8), // light_gray_terracotta
+    },
+    /* recipe/light_weighted_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "light_weighted_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[59] /* gold_ingot */)],
+        result: (575, 1), // light_weighted_pressure_plate
+    },
+    /* recipe/lightning_rod.json（category=redstone）*/
+    ShapedRecipe {
+        id: "lightning_rod",
+        pattern: &["#", "#", "#"],
+        keys: &[('#', &[1149] /* copper_ingot */)],
+        result: (576, 1), // lightning_rod
+    },
+    /* recipe/lime_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "lime_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[591] /* lime_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (580, 1), // lime_banner
+    },
+    /* recipe/lime_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "lime_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[591] /* lime_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (581, 1), // lime_bed
+    },
+    /* recipe/lime_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "lime_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[591] /* lime_wool */)],
+        result: (583, 3), // lime_carpet
+    },
+    /* recipe/lime_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "lime_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[591] /* lime_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1250, 1), // lime_harness
+    },
+    /* recipe/lime_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "lime_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1249] /* lime_dye */),
+        ],
+        result: (588, 8), // lime_stained_glass
+    },
+    /* recipe/lime_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "lime_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[588] /* lime_stained_glass */)],
+        result: (589, 16), // lime_stained_glass_pane
+    },
+    /* recipe/lime_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "lime_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1249] /* lime_dye */),
+        ],
+        result: (589, 8), // lime_stained_glass_pane
+    },
+    /* recipe/lime_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "lime_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1249] /* lime_dye */),
+        ],
+        result: (590, 8), // lime_terracotta
+    },
+    /* recipe/lodestone.json（category=misc）*/
+    ShapedRecipe {
+        id: "lodestone",
+        pattern: &["SSS", "S#S", "SSS"],
+        keys: &[
+            ('#', &[2] /* iron_ingot */),
+            ('S', &[299] /* chiseled_stone_bricks */),
+        ],
+        result: (592, 1), // lodestone
+    },
+    /* recipe/loom.json（category=misc）*/
+    ShapedRecipe {
+        id: "loom",
+        pattern: &["@@", "##"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('@', &[40] /* string */),
+        ],
+        result: (593, 1), // loom
+    },
+    /* recipe/mace.json（category=equipment）*/
+    ShapedRecipe {
+        id: "mace",
+        pattern: &["#", "I"],
+        keys: &[
+            ('#', &[513] /* heavy_core */),
+            ('I', &[1110] /* breeze_rod */),
+        ],
+        result: (1251, 1), // mace
+    },
+    /* recipe/magenta_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "magenta_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[605] /* magenta_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (594, 1), // magenta_banner
+    },
+    /* recipe/magenta_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "magenta_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[605] /* magenta_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (595, 1), // magenta_bed
+    },
+    /* recipe/magenta_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "magenta_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[605] /* magenta_wool */)],
+        result: (597, 3), // magenta_carpet
+    },
+    /* recipe/magenta_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "magenta_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[605] /* magenta_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1254, 1), // magenta_harness
+    },
+    /* recipe/magenta_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "magenta_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1253] /* magenta_dye */),
+        ],
+        result: (602, 8), // magenta_stained_glass
+    },
+    /* recipe/magenta_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "magenta_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[602] /* magenta_stained_glass */)],
+        result: (603, 16), // magenta_stained_glass_pane
+    },
+    /* recipe/magenta_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "magenta_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1253] /* magenta_dye */),
+        ],
+        result: (603, 8), // magenta_stained_glass_pane
+    },
+    /* recipe/magenta_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "magenta_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1253] /* magenta_dye */),
+        ],
+        result: (604, 8), // magenta_terracotta
+    },
+    /* recipe/magma_block.json（category=building）*/
+    ShapedRecipe {
+        id: "magma_block",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1255] /* magma_cream */)],
+        result: (85, 1), // magma_block
+    },
+    /* recipe/mangrove_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "mangrove_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (1256, 1), // mangrove_boat
+    },
+    /* recipe/mangrove_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "mangrove_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (607, 3), // mangrove_door
+    },
+    /* recipe/mangrove_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "mangrove_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[613] /* mangrove_planks */),
+        ],
+        result: (608, 3), // mangrove_fence
+    },
+    /* recipe/mangrove_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "mangrove_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[613] /* mangrove_planks */),
+        ],
+        result: (609, 1), // mangrove_fence_gate
+    },
+    /* recipe/mangrove_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "mangrove_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[908] /* stripped_mangrove_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (610, 6), // mangrove_hanging_sign
+    },
+    /* recipe/mangrove_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "mangrove_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (614, 1), // mangrove_pressure_plate
+    },
+    /* recipe/mangrove_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "mangrove_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[908] /* stripped_mangrove_log */)],
+        result: (617, 6), // mangrove_shelf
+    },
+    /* recipe/mangrove_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "mangrove_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[613] /* mangrove_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (618, 3), // mangrove_sign
+    },
+    /* recipe/mangrove_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "mangrove_slab",
+        pattern: &["###"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (619, 6), // mangrove_slab
+    },
+    /* recipe/mangrove_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "mangrove_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (620, 4), // mangrove_stairs
+    },
+    /* recipe/mangrove_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "mangrove_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[613] /* mangrove_planks */)],
+        result: (621, 2), // mangrove_trapdoor
+    },
+    /* recipe/mangrove_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "mangrove_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[612] /* mangrove_log */)],
+        result: (622, 3), // mangrove_wood
+    },
+    /* recipe/map.json（category=misc）*/
+    ShapedRecipe {
+        id: "map",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[1301] /* paper */),
+            ('X', &[1136] /* compass */),
+        ],
+        result: (1258, 1), // map
+    },
+    /* recipe/minecart.json（category=misc）*/
+    ShapedRecipe {
+        id: "minecart",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (1260, 1), // minecart
+    },
+    /* recipe/moss_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "moss_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[70] /* moss_block */)],
+        result: (626, 3), // moss_carpet
+    },
+    /* recipe/mossy_cobblestone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "mossy_cobblestone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[627] /* mossy_cobblestone */)],
+        result: (628, 6), // mossy_cobblestone_slab
+    },
+    /* recipe/mossy_cobblestone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "mossy_cobblestone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[627] /* mossy_cobblestone */)],
+        result: (629, 4), // mossy_cobblestone_stairs
+    },
+    /* recipe/mossy_cobblestone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "mossy_cobblestone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[627] /* mossy_cobblestone */)],
+        result: (630, 6), // mossy_cobblestone_wall
+    },
+    /* recipe/mossy_stone_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "mossy_stone_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[634] /* mossy_stone_bricks */)],
+        result: (631, 6), // mossy_stone_brick_slab
+    },
+    /* recipe/mossy_stone_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "mossy_stone_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[634] /* mossy_stone_bricks */)],
+        result: (632, 4), // mossy_stone_brick_stairs
+    },
+    /* recipe/mossy_stone_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "mossy_stone_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[634] /* mossy_stone_bricks */)],
+        result: (633, 6), // mossy_stone_brick_wall
+    },
+    /* recipe/mud_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "mud_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[638] /* mud_bricks */)],
+        result: (635, 6), // mud_brick_slab
+    },
+    /* recipe/mud_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "mud_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[638] /* mud_bricks */)],
+        result: (636, 4), // mud_brick_stairs
+    },
+    /* recipe/mud_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "mud_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[638] /* mud_bricks */)],
+        result: (637, 6), // mud_brick_wall
+    },
+    /* recipe/mud_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "mud_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[690] /* packed_mud */)],
+        result: (638, 4), // mud_bricks
+    },
+    /* recipe/name_tag.json（category=equipment）*/
+    ShapedRecipe {
+        id: "name_tag",
+        pattern: &[" X", "# "],
+        keys: &[
+            ('#', &[1301] /* paper */),
+            ('X', &[88, 1151, 1228] /* #metal_nuggets: gold_nugget, copper_nugget, iron_nugget */),
+        ],
+        result: (1279, 1), // name_tag
+    },
+    /* recipe/nether_brick_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "nether_brick_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[1281] /* nether_brick */),
+            ('W', &[645] /* nether_bricks */),
+        ],
+        result: (641, 6), // nether_brick_fence
+    },
+    /* recipe/nether_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "nether_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[645] /* nether_bricks */)],
+        result: (642, 6), // nether_brick_slab
+    },
+    /* recipe/nether_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "nether_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[645] /* nether_bricks */)],
+        result: (643, 4), // nether_brick_stairs
+    },
+    /* recipe/nether_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "nether_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[645] /* nether_bricks */)],
+        result: (644, 6), // nether_brick_wall
+    },
+    /* recipe/nether_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "nether_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1281] /* nether_brick */)],
+        result: (645, 1), // nether_bricks
+    },
+    /* recipe/netherite_block.json（category=building）*/
+    ShapedRecipe {
+        id: "netherite_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[60] /* netherite_ingot */)],
+        result: (651, 1), // netherite_block
+    },
+    /* recipe/netherite_upgrade_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "netherite_upgrade_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[81] /* netherrack */),
+            ('S', &[1292] /* netherite_upgrade_smithing_template */),
+        ],
+        result: (1292, 2), // netherite_upgrade_smithing_template
+    },
+    /* recipe/note_block.json（category=redstone）*/
+    ShapedRecipe {
+        id: "note_block",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('X', &[46] /* redstone */),
+        ],
+        result: (652, 1), // note_block
+    },
+    /* recipe/oak_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "oak_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[26] /* oak_planks: planks */)],
+        result: (1293, 1), // oak_boat
     },
     /* recipe/oak_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -440,12 +3583,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (113, 1), // oak_fence_gate
     },
+    /* recipe/oak_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "oak_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[910] /* stripped_oak_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (653, 6), // oak_hanging_sign
+    },
     /* recipe/oak_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "oak_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[26] /* oak_planks: planks */)],
         result: (137, 1), // oak_pressure_plate
+    },
+    /* recipe/oak_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "oak_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[910] /* stripped_oak_log */)],
+        result: (654, 6), // oak_shelf
+    },
+    /* recipe/oak_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "oak_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[26] /* oak_planks: planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (655, 3), // oak_sign
     },
     /* recipe/oak_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -467,6 +3637,1291 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["###", "###"],
         keys: &[('#', &[26] /* oak_planks: planks */)],
         result: (125, 2), // oak_trapdoor
+    },
+    /* recipe/oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[31] /* oak_log: log */)],
+        result: (656, 3), // oak_wood
+    },
+    /* recipe/observer.json（category=redstone）*/
+    ShapedRecipe {
+        id: "observer",
+        pattern: &["###", "RRQ", "###"],
+        keys: &[
+            ('#', &[27] /* cobblestone */),
+            ('Q', &[89] /* quartz */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (657, 1), // observer
+    },
+    /* recipe/orange_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "orange_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[672] /* orange_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (660, 1), // orange_banner
+    },
+    /* recipe/orange_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "orange_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[672] /* orange_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (661, 1), // orange_bed
+    },
+    /* recipe/orange_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "orange_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[672] /* orange_wool */)],
+        result: (663, 3), // orange_carpet
+    },
+    /* recipe/orange_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "orange_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[672] /* orange_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1297, 1), // orange_harness
+    },
+    /* recipe/orange_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "orange_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1296] /* orange_dye */),
+        ],
+        result: (668, 8), // orange_stained_glass
+    },
+    /* recipe/orange_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "orange_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[668] /* orange_stained_glass */)],
+        result: (669, 16), // orange_stained_glass_pane
+    },
+    /* recipe/orange_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "orange_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1296] /* orange_dye */),
+        ],
+        result: (669, 8), // orange_stained_glass_pane
+    },
+    /* recipe/orange_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "orange_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1296] /* orange_dye */),
+        ],
+        result: (670, 8), // orange_terracotta
+    },
+    /* recipe/oxidized_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "oxidized_chiseled_copper",
+        pattern: &["#", "#"],
+        keys: &[('#', &[686] /* oxidized_cut_copper_slab */)],
+        result: (674, 1), // oxidized_chiseled_copper
+    },
+    /* recipe/oxidized_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "oxidized_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[675] /* oxidized_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (677, 4), // oxidized_copper_bulb
+    },
+    /* recipe/oxidized_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "oxidized_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[675] /* oxidized_copper */)],
+        result: (682, 4), // oxidized_copper_grate
+    },
+    /* recipe/oxidized_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "oxidized_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[675] /* oxidized_copper */)],
+        result: (685, 4), // oxidized_cut_copper
+    },
+    /* recipe/oxidized_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "oxidized_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[685] /* oxidized_cut_copper */)],
+        result: (686, 6), // oxidized_cut_copper_slab
+    },
+    /* recipe/oxidized_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "oxidized_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[685] /* oxidized_cut_copper */)],
+        result: (687, 4), // oxidized_cut_copper_stairs
+    },
+    /* recipe/painting.json（category=misc）*/
+    ShapedRecipe {
+        id: "painting",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1062, 1077] /* #wool: black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, white_wool, yellow_wool */),
+        ],
+        result: (1298, 1), // painting
+    },
+    /* recipe/pale_moss_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_moss_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[692] /* pale_moss_block */)],
+        result: (693, 3), // pale_moss_carpet
+    },
+    /* recipe/pale_oak_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_oak_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (1299, 1), // pale_oak_boat
+    },
+    /* recipe/pale_oak_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "pale_oak_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (695, 3), // pale_oak_door
+    },
+    /* recipe/pale_oak_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_oak_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[701] /* pale_oak_planks */),
+        ],
+        result: (696, 3), // pale_oak_fence
+    },
+    /* recipe/pale_oak_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "pale_oak_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[701] /* pale_oak_planks */),
+        ],
+        result: (697, 1), // pale_oak_fence_gate
+    },
+    /* recipe/pale_oak_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_oak_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[912] /* stripped_pale_oak_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (698, 6), // pale_oak_hanging_sign
+    },
+    /* recipe/pale_oak_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "pale_oak_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (702, 1), // pale_oak_pressure_plate
+    },
+    /* recipe/pale_oak_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_oak_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[912] /* stripped_pale_oak_log */)],
+        result: (704, 6), // pale_oak_shelf
+    },
+    /* recipe/pale_oak_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "pale_oak_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[701] /* pale_oak_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (705, 3), // pale_oak_sign
+    },
+    /* recipe/pale_oak_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "pale_oak_slab",
+        pattern: &["###"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (706, 6), // pale_oak_slab
+    },
+    /* recipe/pale_oak_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "pale_oak_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (707, 4), // pale_oak_stairs
+    },
+    /* recipe/pale_oak_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "pale_oak_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[701] /* pale_oak_planks */)],
+        result: (708, 2), // pale_oak_trapdoor
+    },
+    /* recipe/pale_oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "pale_oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[700] /* pale_oak_log */)],
+        result: (709, 3), // pale_oak_wood
+    },
+    /* recipe/paper.json（category=misc）*/
+    ShapedRecipe {
+        id: "paper",
+        pattern: &["###"],
+        keys: &[('#', &[920] /* sugar_cane */)],
+        result: (1301, 3), // paper
+    },
+    /* recipe/pink_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "pink_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[727] /* pink_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (714, 1), // pink_banner
+    },
+    /* recipe/pink_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "pink_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[727] /* pink_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (715, 1), // pink_bed
+    },
+    /* recipe/pink_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "pink_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[727] /* pink_wool */)],
+        result: (717, 3), // pink_carpet
+    },
+    /* recipe/pink_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "pink_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[727] /* pink_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1305, 1), // pink_harness
+    },
+    /* recipe/pink_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "pink_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1304] /* pink_dye */),
+        ],
+        result: (723, 8), // pink_stained_glass
+    },
+    /* recipe/pink_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "pink_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[723] /* pink_stained_glass */)],
+        result: (724, 16), // pink_stained_glass_pane
+    },
+    /* recipe/pink_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "pink_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1304] /* pink_dye */),
+        ],
+        result: (724, 8), // pink_stained_glass_pane
+    },
+    /* recipe/pink_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "pink_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1304] /* pink_dye */),
+        ],
+        result: (725, 8), // pink_terracotta
+    },
+    /* recipe/piston.json（category=redstone）*/
+    ShapedRecipe {
+        id: "piston",
+        pattern: &["TTT", "#X#", "#R#"],
+        keys: &[
+            ('#', &[27] /* cobblestone */),
+            ('R', &[46] /* redstone */),
+            ('T', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('X', &[2] /* iron_ingot */),
+        ],
+        result: (728, 1), // piston
+    },
+    /* recipe/polished_andesite.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_andesite",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[63] /* andesite */)],
+        result: (733, 4), // polished_andesite
+    },
+    /* recipe/polished_andesite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_andesite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[733] /* polished_andesite */)],
+        result: (734, 6), // polished_andesite_slab
+    },
+    /* recipe/polished_andesite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_andesite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[733] /* polished_andesite */)],
+        result: (735, 4), // polished_andesite_stairs
+    },
+    /* recipe/polished_basalt.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_basalt",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[86] /* basalt */)],
+        result: (736, 4), // polished_basalt
+    },
+    /* recipe/polished_blackstone.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[213] /* blackstone */)],
+        result: (737, 4), // polished_blackstone
+    },
+    /* recipe/polished_blackstone_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[741] /* polished_blackstone_bricks */)],
+        result: (738, 6), // polished_blackstone_brick_slab
+    },
+    /* recipe/polished_blackstone_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[741] /* polished_blackstone_bricks */)],
+        result: (739, 4), // polished_blackstone_brick_stairs
+    },
+    /* recipe/polished_blackstone_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "polished_blackstone_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[741] /* polished_blackstone_bricks */)],
+        result: (740, 6), // polished_blackstone_brick_wall
+    },
+    /* recipe/polished_blackstone_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[737] /* polished_blackstone */)],
+        result: (741, 4), // polished_blackstone_bricks
+    },
+    /* recipe/polished_blackstone_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "polished_blackstone_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[737] /* polished_blackstone */)],
+        result: (743, 1), // polished_blackstone_pressure_plate
+    },
+    /* recipe/polished_blackstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[737] /* polished_blackstone */)],
+        result: (744, 6), // polished_blackstone_slab
+    },
+    /* recipe/polished_blackstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_blackstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[737] /* polished_blackstone */)],
+        result: (745, 4), // polished_blackstone_stairs
+    },
+    /* recipe/polished_blackstone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "polished_blackstone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[737] /* polished_blackstone */)],
+        result: (746, 6), // polished_blackstone_wall
+    },
+    /* recipe/polished_deepslate.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_deepslate",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[57] /* cobbled_deepslate */)],
+        result: (747, 4), // polished_deepslate
+    },
+    /* recipe/polished_deepslate_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_deepslate_slab",
+        pattern: &["###"],
+        keys: &[('#', &[747] /* polished_deepslate */)],
+        result: (748, 6), // polished_deepslate_slab
+    },
+    /* recipe/polished_deepslate_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_deepslate_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[747] /* polished_deepslate */)],
+        result: (749, 4), // polished_deepslate_stairs
+    },
+    /* recipe/polished_deepslate_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "polished_deepslate_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[747] /* polished_deepslate */)],
+        result: (750, 6), // polished_deepslate_wall
+    },
+    /* recipe/polished_diorite.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_diorite",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[62] /* diorite */)],
+        result: (751, 4), // polished_diorite
+    },
+    /* recipe/polished_diorite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_diorite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[751] /* polished_diorite */)],
+        result: (752, 6), // polished_diorite_slab
+    },
+    /* recipe/polished_diorite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_diorite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[751] /* polished_diorite */)],
+        result: (753, 4), // polished_diorite_stairs
+    },
+    /* recipe/polished_granite.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_granite",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[61] /* granite */)],
+        result: (754, 4), // polished_granite
+    },
+    /* recipe/polished_granite_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_granite_slab",
+        pattern: &["###"],
+        keys: &[('#', &[754] /* polished_granite */)],
+        result: (755, 6), // polished_granite_slab
+    },
+    /* recipe/polished_granite_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_granite_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[754] /* polished_granite */)],
+        result: (756, 4), // polished_granite_stairs
+    },
+    /* recipe/polished_tuff.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_tuff",
+        pattern: &["SS", "SS"],
+        keys: &[('S', &[64] /* tuff */)],
+        result: (757, 4), // polished_tuff
+    },
+    /* recipe/polished_tuff_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_tuff_slab",
+        pattern: &["###"],
+        keys: &[('#', &[757] /* polished_tuff */)],
+        result: (758, 6), // polished_tuff_slab
+    },
+    /* recipe/polished_tuff_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "polished_tuff_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[757] /* polished_tuff */)],
+        result: (759, 4), // polished_tuff_stairs
+    },
+    /* recipe/polished_tuff_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "polished_tuff_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[757] /* polished_tuff */)],
+        result: (760, 6), // polished_tuff_wall
+    },
+    /* recipe/powered_rail.json（category=misc）*/
+    ShapedRecipe {
+        id: "powered_rail",
+        pattern: &["X X", "X#X", "XRX"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('R', &[46] /* redstone */),
+            ('X', &[59] /* gold_ingot */),
+        ],
+        result: (763, 6), // powered_rail
+    },
+    /* recipe/prismarine.json（category=building）*/
+    ShapedRecipe {
+        id: "prismarine",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1310] /* prismarine_shard */)],
+        result: (764, 1), // prismarine
+    },
+    /* recipe/prismarine_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "prismarine_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[767] /* prismarine_bricks */)],
+        result: (765, 6), // prismarine_brick_slab
+    },
+    /* recipe/prismarine_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "prismarine_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[767] /* prismarine_bricks */)],
+        result: (766, 4), // prismarine_brick_stairs
+    },
+    /* recipe/prismarine_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "prismarine_slab",
+        pattern: &["###"],
+        keys: &[('#', &[764] /* prismarine */)],
+        result: (768, 6), // prismarine_slab
+    },
+    /* recipe/prismarine_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "prismarine_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[764] /* prismarine */)],
+        result: (769, 4), // prismarine_stairs
+    },
+    /* recipe/prismarine_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "prismarine_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[764] /* prismarine */)],
+        result: (770, 6), // prismarine_wall
+    },
+    /* recipe/purple_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "purple_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[783] /* purple_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (772, 1), // purple_banner
+    },
+    /* recipe/purple_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "purple_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[783] /* purple_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (773, 1), // purple_bed
+    },
+    /* recipe/purple_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "purple_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[783] /* purple_wool */)],
+        result: (775, 3), // purple_carpet
+    },
+    /* recipe/purple_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "purple_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[783] /* purple_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1317, 1), // purple_harness
+    },
+    /* recipe/purple_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "purple_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1316] /* purple_dye */),
+        ],
+        result: (780, 8), // purple_stained_glass
+    },
+    /* recipe/purple_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "purple_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[780] /* purple_stained_glass */)],
+        result: (781, 16), // purple_stained_glass_pane
+    },
+    /* recipe/purple_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "purple_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1316] /* purple_dye */),
+        ],
+        result: (781, 8), // purple_stained_glass_pane
+    },
+    /* recipe/purple_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "purple_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1316] /* purple_dye */),
+        ],
+        result: (782, 8), // purple_terracotta
+    },
+    /* recipe/purpur_block.json（category=building）*/
+    ShapedRecipe {
+        id: "purpur_block",
+        pattern: &["FF", "FF"],
+        keys: &[('F', &[1308] /* popped_chorus_fruit */)],
+        result: (784, 4), // purpur_block
+    },
+    /* recipe/purpur_pillar.json（category=building）*/
+    ShapedRecipe {
+        id: "purpur_pillar",
+        pattern: &["#", "#"],
+        keys: &[('#', &[786] /* purpur_slab */)],
+        result: (785, 1), // purpur_pillar
+    },
+    /* recipe/purpur_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "purpur_slab",
+        pattern: &["###"],
+        keys: &[('#', &[784, 785] /* purpur_block+purpur_pillar: purpur_block, purpur_pillar */)],
+        result: (786, 6), // purpur_slab
+    },
+    /* recipe/purpur_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "purpur_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[784, 785] /* purpur_block+purpur_pillar: purpur_block, purpur_pillar */)],
+        result: (787, 4), // purpur_stairs
+    },
+    /* recipe/quartz_block.json（category=building）*/
+    ShapedRecipe {
+        id: "quartz_block",
+        pattern: &["##", "##"],
+        keys: &[('#', &[89] /* quartz */)],
+        result: (788, 1), // quartz_block
+    },
+    /* recipe/quartz_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "quartz_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[788] /* quartz_block */)],
+        result: (789, 4), // quartz_bricks
+    },
+    /* recipe/quartz_pillar.json（category=building）*/
+    ShapedRecipe {
+        id: "quartz_pillar",
+        pattern: &["#", "#"],
+        keys: &[('#', &[788] /* quartz_block */)],
+        result: (790, 2), // quartz_pillar
+    },
+    /* recipe/quartz_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "quartz_slab",
+        pattern: &["###"],
+        keys: &[('#', &[295, 788, 790] /* chiseled_quartz_block+quartz_block+quartz_pillar: chiseled_quartz_block, quartz_block, quartz_pillar */)],
+        result: (791, 6), // quartz_slab
+    },
+    /* recipe/quartz_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "quartz_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[295, 788, 790] /* chiseled_quartz_block+quartz_block+quartz_pillar: chiseled_quartz_block, quartz_block, quartz_pillar */)],
+        result: (792, 4), // quartz_stairs
+    },
+    /* recipe/rail.json（category=misc）*/
+    ShapedRecipe {
+        id: "rail",
+        pattern: &["X X", "X#X", "X X"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[2] /* iron_ingot */),
+        ],
+        result: (793, 16), // rail
+    },
+    /* recipe/raiser_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "raiser_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[928] /* terracotta */),
+            ('S', &[1322] /* raiser_armor_trim_smithing_template */),
+        ],
+        result: (1322, 2), // raiser_armor_trim_smithing_template
+    },
+    /* recipe/raw_copper_block.json（category=building）*/
+    ShapedRecipe {
+        id: "raw_copper_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[45] /* raw_copper */)],
+        result: (794, 1), // raw_copper_block
+    },
+    /* recipe/raw_gold_block.json（category=building）*/
+    ShapedRecipe {
+        id: "raw_gold_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[44] /* raw_gold */)],
+        result: (795, 1), // raw_gold_block
+    },
+    /* recipe/raw_iron_block.json（category=building）*/
+    ShapedRecipe {
+        id: "raw_iron_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[43] /* raw_iron */)],
+        result: (796, 1), // raw_iron_block
+    },
+    /* recipe/recovery_compass.json（category=equipment）*/
+    ShapedRecipe {
+        id: "recovery_compass",
+        pattern: &["SSS", "SCS", "SSS"],
+        keys: &[
+            ('C', &[1136] /* compass */),
+            ('S', &[1170] /* echo_shard */),
+        ],
+        result: (1323, 1), // recovery_compass
+    },
+    /* recipe/red_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[819] /* red_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (797, 1), // red_banner
+    },
+    /* recipe/red_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[819] /* red_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (798, 1), // red_bed
+    },
+    /* recipe/red_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[819] /* red_wool */)],
+        result: (800, 3), // red_carpet
+    },
+    /* recipe/red_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "red_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[819] /* red_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1326, 1), // red_harness
+    },
+    /* recipe/red_nether_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "red_nether_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[809] /* red_nether_bricks */)],
+        result: (806, 6), // red_nether_brick_slab
+    },
+    /* recipe/red_nether_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "red_nether_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[809] /* red_nether_bricks */)],
+        result: (807, 4), // red_nether_brick_stairs
+    },
+    /* recipe/red_nether_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_nether_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[809] /* red_nether_bricks */)],
+        result: (808, 6), // red_nether_brick_wall
+    },
+    /* recipe/red_nether_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "red_nether_bricks",
+        pattern: &["NW", "WN"],
+        keys: &[
+            ('N', &[1281] /* nether_brick */),
+            ('W', &[649] /* nether_wart */),
+        ],
+        result: (809, 1), // red_nether_bricks
+    },
+    /* recipe/red_sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "red_sandstone",
+        pattern: &["##", "##"],
+        keys: &[('#', &[68] /* red_sand */)],
+        result: (810, 1), // red_sandstone
+    },
+    /* recipe/red_sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "red_sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[810, 296] /* red_sandstone+chiseled_red_sandstone: red_sandstone, chiseled_red_sandstone */)],
+        result: (811, 6), // red_sandstone_slab
+    },
+    /* recipe/red_sandstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "red_sandstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[810, 296, 362] /* red_sandstone+chiseled_red_sandstone+cut_red_sandstone: red_sandstone, chiseled_red_sandstone, cut_red_sandstone */)],
+        result: (812, 4), // red_sandstone_stairs
+    },
+    /* recipe/red_sandstone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_sandstone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[810] /* red_sandstone */)],
+        result: (813, 6), // red_sandstone_wall
+    },
+    /* recipe/red_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "red_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1325] /* red_dye */),
+        ],
+        result: (815, 8), // red_stained_glass
+    },
+    /* recipe/red_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[815] /* red_stained_glass */)],
+        result: (816, 16), // red_stained_glass_pane
+    },
+    /* recipe/red_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "red_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1325] /* red_dye */),
+        ],
+        result: (816, 8), // red_stained_glass_pane
+    },
+    /* recipe/red_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "red_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1325] /* red_dye */),
+        ],
+        result: (817, 8), // red_terracotta
+    },
+    /* recipe/redstone_block.json（category=redstone）*/
+    ShapedRecipe {
+        id: "redstone_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[46] /* redstone */)],
+        result: (820, 1), // redstone_block
+    },
+    /* recipe/redstone_lamp.json（category=redstone）*/
+    ShapedRecipe {
+        id: "redstone_lamp",
+        pattern: &[" R ", "RGR", " R "],
+        keys: &[
+            ('G', &[479] /* glowstone */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (821, 1), // redstone_lamp
+    },
+    /* recipe/redstone_torch.json（category=redstone）*/
+    ShapedRecipe {
+        id: "redstone_torch",
+        pattern: &["X", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[46] /* redstone */),
+        ],
+        result: (823, 1), // redstone_torch
+    },
+    /* recipe/repeater.json（category=redstone）*/
+    ShapedRecipe {
+        id: "repeater",
+        pattern: &["#X#", "III"],
+        keys: &[
+            ('#', &[823] /* redstone_torch */),
+            ('I', &[28] /* stone */),
+            ('X', &[46] /* redstone */),
+        ],
+        result: (825, 1), // repeater
+    },
+    /* recipe/resin_block.json（category=building）*/
+    ShapedRecipe {
+        id: "resin_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[832] /* resin_clump */)],
+        result: (827, 1), // resin_block
+    },
+    /* recipe/resin_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "resin_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[831] /* resin_bricks */)],
+        result: (828, 6), // resin_brick_slab
+    },
+    /* recipe/resin_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "resin_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[831] /* resin_bricks */)],
+        result: (829, 4), // resin_brick_stairs
+    },
+    /* recipe/resin_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "resin_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[831] /* resin_bricks */)],
+        result: (830, 6), // resin_brick_wall
+    },
+    /* recipe/resin_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "resin_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1327] /* resin_brick */)],
+        result: (831, 1), // resin_bricks
+    },
+    /* recipe/respawn_anchor.json（category=misc）*/
+    ShapedRecipe {
+        id: "respawn_anchor",
+        pattern: &["OOO", "GGG", "OOO"],
+        keys: &[
+            ('G', &[479] /* glowstone */),
+            ('O', &[358] /* crying_obsidian */),
+        ],
+        result: (833, 1), // respawn_anchor
+    },
+    /* recipe/rib_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "rib_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[81] /* netherrack */),
+            ('S', &[1328] /* rib_armor_trim_smithing_template */),
+        ],
+        result: (1328, 2), // rib_armor_trim_smithing_template
+    },
+    /* recipe/saddle.json（category=equipment）*/
+    ShapedRecipe {
+        id: "saddle",
+        pattern: &[" X ", "X#X"],
+        keys: &[
+            ('#', &[2] /* iron_ingot */),
+            ('X', &[1236] /* leather */),
+        ],
+        result: (1329, 1), // saddle
+    },
+    /* recipe/sandstone.json（category=building）*/
+    ShapedRecipe {
+        id: "sandstone",
+        pattern: &["##", "##"],
+        keys: &[('#', &[34] /* sand */)],
+        result: (836, 1), // sandstone
+    },
+    /* recipe/sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[836, 298] /* sandstone+chiseled_sandstone: sandstone, chiseled_sandstone */)],
+        result: (837, 6), // sandstone_slab
+    },
+    /* recipe/sandstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "sandstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[836, 298, 364] /* sandstone+chiseled_sandstone+cut_sandstone: sandstone, chiseled_sandstone, cut_sandstone */)],
+        result: (838, 4), // sandstone_stairs
+    },
+    /* recipe/sandstone_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "sandstone_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[836] /* sandstone */)],
+        result: (839, 6), // sandstone_wall
+    },
+    /* recipe/scaffolding.json（category=misc）*/
+    ShapedRecipe {
+        id: "scaffolding",
+        pattern: &["I~I", "I I", "I I"],
+        keys: &[
+            ('I', &[172] /* bamboo */),
+            ('~', &[40] /* string */),
+        ],
+        result: (840, 6), // scaffolding
+    },
+    /* recipe/sea_lantern.json（category=building）*/
+    ShapedRecipe {
+        id: "sea_lantern",
+        pattern: &["SCS", "CCC", "SCS"],
+        keys: &[
+            ('C', &[75] /* prismarine_crystals */),
+            ('S', &[1310] /* prismarine_shard */),
+        ],
+        result: (846, 1), // sea_lantern
+    },
+    /* recipe/sentry_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "sentry_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[27] /* cobblestone */),
+            ('S', &[1333] /* sentry_armor_trim_smithing_template */),
+        ],
+        result: (1333, 2), // sentry_armor_trim_smithing_template
+    },
+    /* recipe/shaper_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "shaper_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[928] /* terracotta */),
+            ('S', &[1334] /* shaper_armor_trim_smithing_template */),
+        ],
+        result: (1334, 2), // shaper_armor_trim_smithing_template
+    },
+    /* recipe/shears.json（category=equipment）*/
+    ShapedRecipe {
+        id: "shears",
+        pattern: &[" #", "# "],
+        keys: &[('#', &[2] /* iron_ingot */)],
+        result: (1336, 1), // shears
+    },
+    /* recipe/shield.json（category=equipment）*/
+    ShapedRecipe {
+        id: "shield",
+        pattern: &["WoW", "WWW", " W "],
+        keys: &[
+            ('W', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('o', &[2] /* iron_ingot */),
+        ],
+        result: (1338, 1), // shield
+    },
+    /* recipe/shulker_box.json（category=misc）*/
+    ShapedRecipe {
+        id: "shulker_box",
+        pattern: &["-", "#", "-"],
+        keys: &[
+            ('#', &[151] /* chest */),
+            ('-', &[1339] /* shulker_shell */),
+        ],
+        result: (852, 1), // shulker_box
+    },
+    /* recipe/silence_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "silence_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[57] /* cobbled_deepslate */),
+            ('S', &[1340] /* silence_armor_trim_smithing_template */),
+        ],
+        result: (1340, 2), // silence_armor_trim_smithing_template
+    },
+    /* recipe/slime_block.json（category=redstone）*/
+    ShapedRecipe {
+        id: "slime_block",
+        pattern: &["###", "###", "###"],
+        keys: &[('#', &[1343] /* slime_ball */)],
+        result: (854, 1), // slime_block
+    },
+    /* recipe/smithing_table.json（category=misc）*/
+    ShapedRecipe {
+        id: "smithing_table",
+        pattern: &["@@", "##", "##"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('@', &[2] /* iron_ingot */),
+        ],
+        result: (857, 1), // smithing_table
+    },
+    /* recipe/smoker.json（category=misc）*/
+    ShapedRecipe {
+        id: "smoker",
+        pattern: &[" # ", "#X#", " # "],
+        keys: &[
+            ('#', &[31, 76, 77, 78, 79, 80, 160, 200, 279, 288, 347, 356, 384, 539, 612, 622, 656, 700, 709, 884, 895, 896, 898, 899, 900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 960, 969] /* #logs: log, birch_log, spruce_log, jungle_log, acacia_log, dark_oak_log, acacia_wood, birch_wood, cherry_log, cherry_wood, crimson_hyphae, crimson_stem, dark_oak_wood, jungle_wood, mangrove_log, mangrove_wood, oak_wood, pale_oak_log, pale_oak_wood, spruce_wood, stripped_acacia_log, stripped_acacia_wood, stripped_birch_log, stripped_birch_wood, stripped_cherry_log, stripped_cherry_wood, stripped_crimson_hyphae, stripped_crimson_stem, stripped_dark_oak_log, stripped_dark_oak_wood, stripped_jungle_log, stripped_jungle_wood, stripped_mangrove_log, stripped_mangrove_wood, stripped_oak_log, stripped_oak_wood, stripped_pale_oak_log, stripped_pale_oak_wood, stripped_spruce_log, stripped_spruce_wood, stripped_warped_hyphae, stripped_warped_stem, warped_hyphae, warped_stem */),
+            ('X', &[473] /* furnace */),
+        ],
+        result: (858, 1), // smoker
+    },
+    /* recipe/smooth_quartz_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_quartz_slab",
+        pattern: &["###"],
+        keys: &[('#', &[860] /* smooth_quartz */)],
+        result: (861, 6), // smooth_quartz_slab
+    },
+    /* recipe/smooth_quartz_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_quartz_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[860] /* smooth_quartz */)],
+        result: (862, 4), // smooth_quartz_stairs
+    },
+    /* recipe/smooth_red_sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_red_sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[863] /* smooth_red_sandstone */)],
+        result: (864, 6), // smooth_red_sandstone_slab
+    },
+    /* recipe/smooth_red_sandstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_red_sandstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[863] /* smooth_red_sandstone */)],
+        result: (865, 4), // smooth_red_sandstone_stairs
+    },
+    /* recipe/smooth_sandstone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_sandstone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[866] /* smooth_sandstone */)],
+        result: (867, 6), // smooth_sandstone_slab
+    },
+    /* recipe/smooth_sandstone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_sandstone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[866] /* smooth_sandstone */)],
+        result: (868, 4), // smooth_sandstone_stairs
+    },
+    /* recipe/smooth_stone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "smooth_stone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[869] /* smooth_stone */)],
+        result: (870, 6), // smooth_stone_slab
+    },
+    /* recipe/snout_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "snout_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[213] /* blackstone */),
+            ('S', &[1345] /* snout_armor_trim_smithing_template */),
+        ],
+        result: (1345, 2), // snout_armor_trim_smithing_template
+    },
+    /* recipe/snow.json（category=misc）*/
+    ShapedRecipe {
+        id: "snow",
+        pattern: &["###"],
+        keys: &[('#', &[873] /* snow_block */)],
+        result: (872, 6), // snow
+    },
+    /* recipe/snow_block.json（category=building）*/
+    ShapedRecipe {
+        id: "snow_block",
+        pattern: &["##", "##"],
+        keys: &[('#', &[58] /* snowball */)],
+        result: (873, 1), // snow_block
+    },
+    /* recipe/soul_campfire.json（category=misc）*/
+    ShapedRecipe {
+        id: "soul_campfire",
+        pattern: &[" S ", "S#S", "LLL"],
+        keys: &[
+            ('#', &[82, 83] /* #soul_fire_base_blocks: soul_sand, soul_soil */),
+            ('L', &[31, 76, 77, 78, 79, 80, 160, 200, 279, 288, 347, 356, 384, 539, 612, 622, 656, 700, 709, 884, 895, 896, 898, 899, 900, 901, 902, 903, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915, 916, 917, 960, 969] /* #logs: log, birch_log, spruce_log, jungle_log, acacia_log, dark_oak_log, acacia_wood, birch_wood, cherry_log, cherry_wood, crimson_hyphae, crimson_stem, dark_oak_wood, jungle_wood, mangrove_log, mangrove_wood, oak_wood, pale_oak_log, pale_oak_wood, spruce_wood, stripped_acacia_log, stripped_acacia_wood, stripped_birch_log, stripped_birch_wood, stripped_cherry_log, stripped_cherry_wood, stripped_crimson_hyphae, stripped_crimson_stem, stripped_dark_oak_log, stripped_dark_oak_wood, stripped_jungle_log, stripped_jungle_wood, stripped_mangrove_log, stripped_mangrove_wood, stripped_oak_log, stripped_oak_wood, stripped_pale_oak_log, stripped_pale_oak_wood, stripped_spruce_log, stripped_spruce_wood, stripped_warped_hyphae, stripped_warped_stem, warped_hyphae, warped_stem */),
+            ('S', &[0] /* stick */),
+        ],
+        result: (874, 1), // soul_campfire
+    },
+    /* recipe/soul_lantern.json（category=misc）*/
+    ShapedRecipe {
+        id: "soul_lantern",
+        pattern: &["XXX", "X#X", "XXX"],
+        keys: &[
+            ('#', &[876] /* soul_torch */),
+            ('X', &[1228] /* iron_nugget */),
+        ],
+        result: (875, 1), // soul_lantern
+    },
+    /* recipe/soul_torch.json（category=misc）*/
+    ShapedRecipe {
+        id: "soul_torch",
+        pattern: &["X", "#", "S"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('S', &[82, 83] /* #soul_fire_base_blocks: soul_sand, soul_soil */),
+            ('X', &[1, 1126] /* coal+charcoal: coal, charcoal */),
+        ],
+        result: (876, 4), // soul_torch
+    },
+    /* recipe/spectral_arrow.json（category=equipment）*/
+    ShapedRecipe {
+        id: "spectral_arrow",
+        pattern: &[" # ", "#X#", " # "],
+        keys: &[
+            ('#', &[74] /* glowstone_dust */),
+            ('X', &[38] /* arrow */),
+        ],
+        result: (1346, 2), // spectral_arrow
+    },
+    /* recipe/spire_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "spire_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[784] /* purpur_block */),
+            ('S', &[1347] /* spire_armor_trim_smithing_template */),
+        ],
+        result: (1347, 2), // spire_armor_trim_smithing_template
+    },
+    /* recipe/spruce_boat.json（category=misc）*/
+    ShapedRecipe {
+        id: "spruce_boat",
+        pattern: &["# #", "###"],
+        keys: &[('#', &[90] /* spruce_planks */)],
+        result: (1348, 1), // spruce_boat
     },
     /* recipe/spruce_door.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
@@ -495,12 +4950,39 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         ],
         result: (114, 1), // spruce_fence_gate
     },
+    /* recipe/spruce_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "spruce_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[914] /* stripped_spruce_log */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (880, 6), // spruce_hanging_sign
+    },
     /* recipe/spruce_pressure_plate.json（category=redstone；手写表重叠）*/
     ShapedRecipe {
         id: "spruce_pressure_plate",
         pattern: &["##"],
         keys: &[('#', &[90] /* spruce_planks */)],
         result: (138, 1), // spruce_pressure_plate
+    },
+    /* recipe/spruce_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "spruce_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[914] /* stripped_spruce_log */)],
+        result: (882, 6), // spruce_shelf
+    },
+    /* recipe/spruce_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "spruce_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[90] /* spruce_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (883, 3), // spruce_sign
     },
     /* recipe/spruce_slab.json（category=building；手写表重叠）*/
     ShapedRecipe {
@@ -523,12 +5005,46 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         keys: &[('#', &[90] /* spruce_planks */)],
         result: (126, 2), // spruce_trapdoor
     },
+    /* recipe/spruce_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "spruce_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[77] /* spruce_log */)],
+        result: (884, 3), // spruce_wood
+    },
+    /* recipe/spyglass.json（category=equipment）*/
+    ShapedRecipe {
+        id: "spyglass",
+        pattern: &["#", "X", "X"],
+        keys: &[
+            ('#', &[1081] /* amethyst_shard */),
+            ('X', &[1149] /* copper_ingot */),
+        ],
+        result: (1350, 1), // spyglass
+    },
     /* recipe/stick.json（category=misc；手写表重叠）*/
     ShapedRecipe {
         id: "stick",
         pattern: &["#", "#"],
-        keys: &[('#', &[26, 90, 91, 92, 93, 94] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */)],
+        keys: &[('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */)],
         result: (0, 4), // stick
+    },
+    /* recipe/stick_from_bamboo_item.json（category=misc）*/
+    ShapedRecipe {
+        id: "stick_from_bamboo_item",
+        pattern: &["#", "#"],
+        keys: &[('#', &[172] /* bamboo */)],
+        result: (0, 1), // stick
+    },
+    /* recipe/sticky_piston.json（category=redstone）*/
+    ShapedRecipe {
+        id: "sticky_piston",
+        pattern: &["S", "P"],
+        keys: &[
+            ('P', &[728] /* piston */),
+            ('S', &[1343] /* slime_ball */),
+        ],
+        result: (885, 1), // sticky_piston
     },
     /* recipe/stone_axe.json（category=equipment）*/
     ShapedRecipe {
@@ -536,9 +5052,47 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["XX", "X#", " #"],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[27, 57] /* #stone_tool_materials: cobblestone, cobbled_deepslate */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
         ],
         result: (20, 1), // stone_axe
+    },
+    /* recipe/stone_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "stone_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[889] /* stone_bricks */)],
+        result: (886, 6), // stone_brick_slab
+    },
+    /* recipe/stone_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "stone_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[889] /* stone_bricks */)],
+        result: (887, 4), // stone_brick_stairs
+    },
+    /* recipe/stone_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "stone_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[889] /* stone_bricks */)],
+        result: (888, 6), // stone_brick_wall
+    },
+    /* recipe/stone_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "stone_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[28] /* stone */)],
+        result: (889, 4), // stone_bricks
+    },
+    /* recipe/stone_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "stone_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
+        ],
+        result: (1351, 1), // stone_hoe
     },
     /* recipe/stone_pickaxe.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -546,9 +5100,50 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["XXX", " # ", " # "],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[27, 57] /* #stone_tool_materials: cobblestone, cobbled_deepslate */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
         ],
         result: (14, 1), // stone_pickaxe
+    },
+    /* recipe/stone_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "stone_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[28] /* stone */)],
+        result: (891, 1), // stone_pressure_plate
+    },
+    /* recipe/stone_shovel.json（category=equipment）*/
+    ShapedRecipe {
+        id: "stone_shovel",
+        pattern: &["X", "#", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
+        ],
+        result: (1352, 1), // stone_shovel
+    },
+    /* recipe/stone_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "stone_slab",
+        pattern: &["###"],
+        keys: &[('#', &[28] /* stone */)],
+        result: (892, 6), // stone_slab
+    },
+    /* recipe/stone_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "stone_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
+        ],
+        result: (1353, 1), // stone_spear
+    },
+    /* recipe/stone_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "stone_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[28] /* stone */)],
+        result: (893, 4), // stone_stairs
     },
     /* recipe/stone_sword.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -556,9 +5151,676 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["X", "X", "#"],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[27, 57] /* #stone_tool_materials: cobblestone, cobbled_deepslate */),
+            ('X', &[27, 57, 213] /* #stone_tool_materials: cobblestone, cobbled_deepslate, blackstone */),
         ],
         result: (8, 1), // stone_sword
+    },
+    /* recipe/stonecutter.json（category=misc）*/
+    ShapedRecipe {
+        id: "stonecutter",
+        pattern: &[" I ", "###"],
+        keys: &[
+            ('#', &[28] /* stone */),
+            ('I', &[2] /* iron_ingot */),
+        ],
+        result: (894, 1), // stonecutter
+    },
+    /* recipe/stripped_acacia_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_acacia_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[895] /* stripped_acacia_log */)],
+        result: (896, 3), // stripped_acacia_wood
+    },
+    /* recipe/stripped_birch_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_birch_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[898] /* stripped_birch_log */)],
+        result: (899, 3), // stripped_birch_wood
+    },
+    /* recipe/stripped_cherry_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_cherry_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[900] /* stripped_cherry_log */)],
+        result: (901, 3), // stripped_cherry_wood
+    },
+    /* recipe/stripped_crimson_hyphae.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_crimson_hyphae",
+        pattern: &["##", "##"],
+        keys: &[('#', &[903] /* stripped_crimson_stem */)],
+        result: (902, 3), // stripped_crimson_hyphae
+    },
+    /* recipe/stripped_dark_oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_dark_oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[904] /* stripped_dark_oak_log */)],
+        result: (905, 3), // stripped_dark_oak_wood
+    },
+    /* recipe/stripped_jungle_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_jungle_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[906] /* stripped_jungle_log */)],
+        result: (907, 3), // stripped_jungle_wood
+    },
+    /* recipe/stripped_mangrove_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_mangrove_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[908] /* stripped_mangrove_log */)],
+        result: (909, 3), // stripped_mangrove_wood
+    },
+    /* recipe/stripped_oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[910] /* stripped_oak_log */)],
+        result: (911, 3), // stripped_oak_wood
+    },
+    /* recipe/stripped_pale_oak_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_pale_oak_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[912] /* stripped_pale_oak_log */)],
+        result: (913, 3), // stripped_pale_oak_wood
+    },
+    /* recipe/stripped_spruce_wood.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_spruce_wood",
+        pattern: &["##", "##"],
+        keys: &[('#', &[914] /* stripped_spruce_log */)],
+        result: (915, 3), // stripped_spruce_wood
+    },
+    /* recipe/stripped_warped_hyphae.json（category=building）*/
+    ShapedRecipe {
+        id: "stripped_warped_hyphae",
+        pattern: &["##", "##"],
+        keys: &[('#', &[917] /* stripped_warped_stem */)],
+        result: (916, 3), // stripped_warped_hyphae
+    },
+    /* recipe/target.json（category=redstone）*/
+    ShapedRecipe {
+        id: "target",
+        pattern: &[" R ", "RHR", " R "],
+        keys: &[
+            ('H', &[512] /* hay_block */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (927, 1), // target
+    },
+    /* recipe/tide_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "tide_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[764] /* prismarine */),
+            ('S', &[1355] /* tide_armor_trim_smithing_template */),
+        ],
+        result: (1355, 2), // tide_armor_trim_smithing_template
+    },
+    /* recipe/tinted_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "tinted_glass",
+        pattern: &[" S ", "SGS", " S "],
+        keys: &[
+            ('G', &[475] /* glass */),
+            ('S', &[1081] /* amethyst_shard */),
+        ],
+        result: (931, 2), // tinted_glass
+    },
+    /* recipe/tnt.json（category=redstone）*/
+    ShapedRecipe {
+        id: "tnt",
+        pattern: &["X#X", "#X#", "X#X"],
+        keys: &[
+            ('#', &[34, 68] /* sand+red_sand: sand, red_sand */),
+            ('X', &[39] /* gunpowder */),
+        ],
+        result: (932, 1), // tnt
+    },
+    /* recipe/torch.json（category=misc）*/
+    ShapedRecipe {
+        id: "torch",
+        pattern: &["X", "#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[1, 1126] /* coal+charcoal: coal, charcoal */),
+        ],
+        result: (933, 4), // torch
+    },
+    /* recipe/tripwire_hook.json（category=redstone）*/
+    ShapedRecipe {
+        id: "tripwire_hook",
+        pattern: &["I", "S", "#"],
+        keys: &[
+            ('#', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+            ('I', &[2] /* iron_ingot */),
+            ('S', &[0] /* stick */),
+        ],
+        result: (938, 2), // tripwire_hook
+    },
+    /* recipe/tuff_brick_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "tuff_brick_slab",
+        pattern: &["###"],
+        keys: &[('#', &[945] /* tuff_bricks */)],
+        result: (942, 6), // tuff_brick_slab
+    },
+    /* recipe/tuff_brick_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "tuff_brick_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[945] /* tuff_bricks */)],
+        result: (943, 4), // tuff_brick_stairs
+    },
+    /* recipe/tuff_brick_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "tuff_brick_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[945] /* tuff_bricks */)],
+        result: (944, 6), // tuff_brick_wall
+    },
+    /* recipe/tuff_bricks.json（category=building）*/
+    ShapedRecipe {
+        id: "tuff_bricks",
+        pattern: &["##", "##"],
+        keys: &[('#', &[757] /* polished_tuff */)],
+        result: (945, 4), // tuff_bricks
+    },
+    /* recipe/tuff_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "tuff_slab",
+        pattern: &["###"],
+        keys: &[('#', &[64] /* tuff */)],
+        result: (946, 6), // tuff_slab
+    },
+    /* recipe/tuff_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "tuff_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[64] /* tuff */)],
+        result: (947, 4), // tuff_stairs
+    },
+    /* recipe/tuff_wall.json（category=misc）*/
+    ShapedRecipe {
+        id: "tuff_wall",
+        pattern: &["###", "###"],
+        keys: &[('#', &[64] /* tuff */)],
+        result: (948, 6), // tuff_wall
+    },
+    /* recipe/turtle_helmet.json（category=equipment）*/
+    ShapedRecipe {
+        id: "turtle_helmet",
+        pattern: &["XXX", "X X"],
+        keys: &[('X', &[1362] /* turtle_scute */)],
+        result: (1361, 1), // turtle_helmet
+    },
+    /* recipe/vex_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "vex_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[27] /* cobblestone */),
+            ('S', &[1363] /* vex_armor_trim_smithing_template */),
+        ],
+        result: (1363, 2), // vex_armor_trim_smithing_template
+    },
+    /* recipe/ward_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "ward_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[57] /* cobbled_deepslate */),
+            ('S', &[1364] /* ward_armor_trim_smithing_template */),
+        ],
+        result: (1364, 2), // ward_armor_trim_smithing_template
+    },
+    /* recipe/warped_door.json（category=redstone）*/
+    ShapedRecipe {
+        id: "warped_door",
+        pattern: &["##", "##", "##"],
+        keys: &[('#', &[962] /* warped_planks */)],
+        result: (955, 3), // warped_door
+    },
+    /* recipe/warped_fence.json（category=misc）*/
+    ShapedRecipe {
+        id: "warped_fence",
+        pattern: &["W#W", "W#W"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[962] /* warped_planks */),
+        ],
+        result: (956, 3), // warped_fence
+    },
+    /* recipe/warped_fence_gate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "warped_fence_gate",
+        pattern: &["#W#", "#W#"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('W', &[962] /* warped_planks */),
+        ],
+        result: (957, 1), // warped_fence_gate
+    },
+    /* recipe/warped_fungus_on_a_stick.json（category=misc）*/
+    ShapedRecipe {
+        id: "warped_fungus_on_a_stick",
+        pattern: &["# ", " X"],
+        keys: &[
+            ('#', &[1183] /* fishing_rod */),
+            ('X', &[958] /* warped_fungus */),
+        ],
+        result: (1365, 1), // warped_fungus_on_a_stick
+    },
+    /* recipe/warped_hanging_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "warped_hanging_sign",
+        pattern: &["X X", "###", "###"],
+        keys: &[
+            ('#', &[917] /* stripped_warped_stem */),
+            ('X', &[529] /* iron_chain */),
+        ],
+        result: (959, 6), // warped_hanging_sign
+    },
+    /* recipe/warped_hyphae.json（category=building）*/
+    ShapedRecipe {
+        id: "warped_hyphae",
+        pattern: &["##", "##"],
+        keys: &[('#', &[969] /* warped_stem */)],
+        result: (960, 3), // warped_hyphae
+    },
+    /* recipe/warped_pressure_plate.json（category=redstone）*/
+    ShapedRecipe {
+        id: "warped_pressure_plate",
+        pattern: &["##"],
+        keys: &[('#', &[962] /* warped_planks */)],
+        result: (963, 1), // warped_pressure_plate
+    },
+    /* recipe/warped_shelf.json（category=misc）*/
+    ShapedRecipe {
+        id: "warped_shelf",
+        pattern: &["###", "   ", "###"],
+        keys: &[('#', &[917] /* stripped_warped_stem */)],
+        result: (965, 6), // warped_shelf
+    },
+    /* recipe/warped_sign.json（category=misc）*/
+    ShapedRecipe {
+        id: "warped_sign",
+        pattern: &["###", "###", " X "],
+        keys: &[
+            ('#', &[962] /* warped_planks */),
+            ('X', &[0] /* stick */),
+        ],
+        result: (966, 3), // warped_sign
+    },
+    /* recipe/warped_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "warped_slab",
+        pattern: &["###"],
+        keys: &[('#', &[962] /* warped_planks */)],
+        result: (967, 6), // warped_slab
+    },
+    /* recipe/warped_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "warped_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[962] /* warped_planks */)],
+        result: (968, 4), // warped_stairs
+    },
+    /* recipe/warped_trapdoor.json（category=redstone）*/
+    ShapedRecipe {
+        id: "warped_trapdoor",
+        pattern: &["###", "###"],
+        keys: &[('#', &[962] /* warped_planks */)],
+        result: (970, 2), // warped_trapdoor
+    },
+    /* recipe/waxed_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_chiseled_copper",
+        pattern: &["M", "M"],
+        keys: &[('M', &[984] /* waxed_cut_copper_slab */)],
+        result: (972, 1), // waxed_chiseled_copper
+    },
+    /* recipe/waxed_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "waxed_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[974] /* waxed_copper_block */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (975, 4), // waxed_copper_bulb
+    },
+    /* recipe/waxed_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[974] /* waxed_copper_block */)],
+        result: (980, 4), // waxed_copper_grate
+    },
+    /* recipe/waxed_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[974] /* waxed_copper_block */)],
+        result: (983, 4), // waxed_cut_copper
+    },
+    /* recipe/waxed_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[983] /* waxed_cut_copper */)],
+        result: (984, 6), // waxed_cut_copper_slab
+    },
+    /* recipe/waxed_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[983] /* waxed_cut_copper */)],
+        result: (985, 4), // waxed_cut_copper_stairs
+    },
+    /* recipe/waxed_exposed_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_exposed_chiseled_copper",
+        pattern: &["M", "M"],
+        keys: &[('M', &[998] /* waxed_exposed_cut_copper_slab */)],
+        result: (986, 1), // waxed_exposed_chiseled_copper
+    },
+    /* recipe/waxed_exposed_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "waxed_exposed_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[987] /* waxed_exposed_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (989, 4), // waxed_exposed_copper_bulb
+    },
+    /* recipe/waxed_exposed_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_exposed_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[987] /* waxed_exposed_copper */)],
+        result: (994, 4), // waxed_exposed_copper_grate
+    },
+    /* recipe/waxed_exposed_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_exposed_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[987] /* waxed_exposed_copper */)],
+        result: (997, 4), // waxed_exposed_cut_copper
+    },
+    /* recipe/waxed_exposed_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_exposed_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[997] /* waxed_exposed_cut_copper */)],
+        result: (998, 6), // waxed_exposed_cut_copper_slab
+    },
+    /* recipe/waxed_exposed_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_exposed_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[997] /* waxed_exposed_cut_copper */)],
+        result: (999, 4), // waxed_exposed_cut_copper_stairs
+    },
+    /* recipe/waxed_oxidized_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_chiseled_copper",
+        pattern: &["M", "M"],
+        keys: &[('M', &[1014] /* waxed_oxidized_cut_copper_slab */)],
+        result: (1002, 1), // waxed_oxidized_chiseled_copper
+    },
+    /* recipe/waxed_oxidized_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[1003] /* waxed_oxidized_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (1005, 4), // waxed_oxidized_copper_bulb
+    },
+    /* recipe/waxed_oxidized_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[1003] /* waxed_oxidized_copper */)],
+        result: (1010, 4), // waxed_oxidized_copper_grate
+    },
+    /* recipe/waxed_oxidized_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1003] /* waxed_oxidized_copper */)],
+        result: (1013, 4), // waxed_oxidized_cut_copper
+    },
+    /* recipe/waxed_oxidized_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[1013] /* waxed_oxidized_cut_copper */)],
+        result: (1014, 6), // waxed_oxidized_cut_copper_slab
+    },
+    /* recipe/waxed_oxidized_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_oxidized_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[1013] /* waxed_oxidized_cut_copper */)],
+        result: (1015, 4), // waxed_oxidized_cut_copper_stairs
+    },
+    /* recipe/waxed_weathered_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_weathered_chiseled_copper",
+        pattern: &["M", "M"],
+        keys: &[('M', &[1029] /* waxed_weathered_cut_copper_slab */)],
+        result: (1017, 1), // waxed_weathered_chiseled_copper
+    },
+    /* recipe/waxed_weathered_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "waxed_weathered_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[1018] /* waxed_weathered_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (1020, 4), // waxed_weathered_copper_bulb
+    },
+    /* recipe/waxed_weathered_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_weathered_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[1018] /* waxed_weathered_copper */)],
+        result: (1025, 4), // waxed_weathered_copper_grate
+    },
+    /* recipe/waxed_weathered_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_weathered_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1018] /* waxed_weathered_copper */)],
+        result: (1028, 4), // waxed_weathered_cut_copper
+    },
+    /* recipe/waxed_weathered_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_weathered_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[1028] /* waxed_weathered_cut_copper */)],
+        result: (1029, 6), // waxed_weathered_cut_copper_slab
+    },
+    /* recipe/waxed_weathered_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "waxed_weathered_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[1028] /* waxed_weathered_cut_copper */)],
+        result: (1030, 4), // waxed_weathered_cut_copper_stairs
+    },
+    /* recipe/wayfinder_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "wayfinder_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[928] /* terracotta */),
+            ('S', &[1366] /* wayfinder_armor_trim_smithing_template */),
+        ],
+        result: (1366, 2), // wayfinder_armor_trim_smithing_template
+    },
+    /* recipe/weathered_chiseled_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "weathered_chiseled_copper",
+        pattern: &["#", "#"],
+        keys: &[('#', &[1044] /* weathered_cut_copper_slab */)],
+        result: (1032, 1), // weathered_chiseled_copper
+    },
+    /* recipe/weathered_copper_bulb.json（category=redstone）*/
+    ShapedRecipe {
+        id: "weathered_copper_bulb",
+        pattern: &[" C ", "CBC", " R "],
+        keys: &[
+            ('B', &[1100] /* blaze_rod */),
+            ('C', &[1033] /* weathered_copper */),
+            ('R', &[46] /* redstone */),
+        ],
+        result: (1035, 4), // weathered_copper_bulb
+    },
+    /* recipe/weathered_copper_grate.json（category=building）*/
+    ShapedRecipe {
+        id: "weathered_copper_grate",
+        pattern: &[" M ", "M M", " M "],
+        keys: &[('M', &[1033] /* weathered_copper */)],
+        result: (1040, 4), // weathered_copper_grate
+    },
+    /* recipe/weathered_cut_copper.json（category=building）*/
+    ShapedRecipe {
+        id: "weathered_cut_copper",
+        pattern: &["##", "##"],
+        keys: &[('#', &[1033] /* weathered_copper */)],
+        result: (1043, 4), // weathered_cut_copper
+    },
+    /* recipe/weathered_cut_copper_slab.json（category=building）*/
+    ShapedRecipe {
+        id: "weathered_cut_copper_slab",
+        pattern: &["###"],
+        keys: &[('#', &[1043] /* weathered_cut_copper */)],
+        result: (1044, 6), // weathered_cut_copper_slab
+    },
+    /* recipe/weathered_cut_copper_stairs.json（category=building）*/
+    ShapedRecipe {
+        id: "weathered_cut_copper_stairs",
+        pattern: &["#  ", "## ", "###"],
+        keys: &[('#', &[1043] /* weathered_cut_copper */)],
+        result: (1045, 4), // weathered_cut_copper_stairs
+    },
+    /* recipe/white_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "white_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[1062] /* white_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (1050, 1), // white_banner
+    },
+    /* recipe/white_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "white_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[1062] /* white_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (1051, 1), // white_bed
+    },
+    /* recipe/white_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "white_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[1062] /* white_wool */)],
+        result: (1053, 3), // white_carpet
+    },
+    /* recipe/white_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "white_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[1062] /* white_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1370, 1), // white_harness
+    },
+    /* recipe/white_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "white_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1369] /* white_dye */),
+        ],
+        result: (1058, 8), // white_stained_glass
+    },
+    /* recipe/white_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "white_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[1058] /* white_stained_glass */)],
+        result: (1059, 16), // white_stained_glass_pane
+    },
+    /* recipe/white_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "white_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1369] /* white_dye */),
+        ],
+        result: (1059, 8), // white_stained_glass_pane
+    },
+    /* recipe/white_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "white_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1369] /* white_dye */),
+        ],
+        result: (1060, 8), // white_terracotta
+    },
+    /* recipe/white_wool_from_string.json（category=building）*/
+    ShapedRecipe {
+        id: "white_wool_from_string",
+        pattern: &["##", "##"],
+        keys: &[('#', &[40] /* string */)],
+        result: (1062, 1), // white_wool
+    },
+    /* recipe/wild_armor_trim_smithing_template.json（category=misc）*/
+    ShapedRecipe {
+        id: "wild_armor_trim_smithing_template",
+        pattern: &["#S#", "#C#", "###"],
+        keys: &[
+            ('#', &[3] /* diamond */),
+            ('C', &[627] /* mossy_cobblestone */),
+            ('S', &[1371] /* wild_armor_trim_smithing_template */),
+        ],
+        result: (1371, 2), // wild_armor_trim_smithing_template
+    },
+    /* recipe/wolf_armor.json（category=equipment）*/
+    ShapedRecipe {
+        id: "wolf_armor",
+        pattern: &["X  ", "XXX", "X X"],
+        keys: &[('X', &[1084] /* armadillo_scute */)],
+        result: (1373, 1), // wolf_armor
     },
     /* recipe/wooden_axe.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -566,9 +5828,19 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["XX", "X#", " #"],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[26, 90, 91, 92, 93, 94] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
         ],
         result: (19, 1), // wooden_axe
+    },
+    /* recipe/wooden_hoe.json（category=equipment）*/
+    ShapedRecipe {
+        id: "wooden_hoe",
+        pattern: &["XX", " #", " #"],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (1374, 1), // wooden_hoe
     },
     /* recipe/wooden_pickaxe.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -576,7 +5848,7 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["XXX", " # ", " # "],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[26, 90, 91, 92, 93, 94] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
         ],
         result: (13, 1), // wooden_pickaxe
     },
@@ -586,9 +5858,19 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["X", "#", "#"],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[26, 90, 91, 92, 93, 94] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
         ],
         result: (25, 1), // wooden_shovel
+    },
+    /* recipe/wooden_spear.json（category=equipment）*/
+    ShapedRecipe {
+        id: "wooden_spear",
+        pattern: &["  X", " # ", "#  "],
+        keys: &[
+            ('#', &[0] /* stick */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (1375, 1), // wooden_spear
     },
     /* recipe/wooden_sword.json（category=equipment；手写表重叠）*/
     ShapedRecipe {
@@ -596,14 +5878,89 @@ pub static GEN_SHAPED: [ShapedRecipe; 69] = [
         pattern: &["X", "X", "#"],
         keys: &[
             ('#', &[0] /* stick */),
-            ('X', &[26, 90, 91, 92, 93, 94] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #wooden_tool_materials: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
         ],
         result: (7, 1), // wooden_sword
     },
+    /* recipe/yellow_banner.json（category=misc）*/
+    ShapedRecipe {
+        id: "yellow_banner",
+        pattern: &["###", "###", " | "],
+        keys: &[
+            ('#', &[1077] /* yellow_wool */),
+            ('|', &[0] /* stick */),
+        ],
+        result: (1066, 1), // yellow_banner
+    },
+    /* recipe/yellow_bed.json（category=misc）*/
+    ShapedRecipe {
+        id: "yellow_bed",
+        pattern: &["###", "XXX"],
+        keys: &[
+            ('#', &[1077] /* yellow_wool */),
+            ('X', &[26, 90, 91, 92, 93, 94, 182, 280, 349, 613, 701, 962] /* #planks: planks, spruce_planks, birch_planks, jungle_planks, acacia_planks, dark_oak_planks, bamboo_planks, cherry_planks, crimson_planks, mangrove_planks, pale_oak_planks, warped_planks */),
+        ],
+        result: (1067, 1), // yellow_bed
+    },
+    /* recipe/yellow_carpet.json（category=misc）*/
+    ShapedRecipe {
+        id: "yellow_carpet",
+        pattern: &["##"],
+        keys: &[('#', &[1077] /* yellow_wool */)],
+        result: (1069, 3), // yellow_carpet
+    },
+    /* recipe/yellow_harness.json（category=equipment）*/
+    ShapedRecipe {
+        id: "yellow_harness",
+        pattern: &["LLL", "G#G"],
+        keys: &[
+            ('#', &[1077] /* yellow_wool */),
+            ('G', &[475] /* glass */),
+            ('L', &[1236] /* leather */),
+        ],
+        result: (1380, 1), // yellow_harness
+    },
+    /* recipe/yellow_stained_glass.json（category=building）*/
+    ShapedRecipe {
+        id: "yellow_stained_glass",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[475] /* glass */),
+            ('X', &[1379] /* yellow_dye */),
+        ],
+        result: (1074, 8), // yellow_stained_glass
+    },
+    /* recipe/yellow_stained_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "yellow_stained_glass_pane",
+        pattern: &["###", "###"],
+        keys: &[('#', &[1074] /* yellow_stained_glass */)],
+        result: (1075, 16), // yellow_stained_glass_pane
+    },
+    /* recipe/yellow_stained_glass_pane_from_glass_pane.json（category=misc）*/
+    ShapedRecipe {
+        id: "yellow_stained_glass_pane_from_glass_pane",
+        pattern: &["###", "#$#", "###"],
+        keys: &[
+            ('#', &[476] /* glass_pane */),
+            ('$', &[1379] /* yellow_dye */),
+        ],
+        result: (1075, 8), // yellow_stained_glass_pane
+    },
+    /* recipe/yellow_terracotta.json（category=building）*/
+    ShapedRecipe {
+        id: "yellow_terracotta",
+        pattern: &["###", "#X#", "###"],
+        keys: &[
+            ('#', &[928] /* terracotta */),
+            ('X', &[1379] /* yellow_dye */),
+        ],
+        result: (1076, 8), // yellow_terracotta
+    },
 ];
 
-/// 26.1 crafting_shapeless 可收子集（16 条）。
-pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
+/// 26.1 crafting_shapeless 可收子集（305 条）。
+pub static GEN_SHAPELESS: [ShapelessRecipe; 305] = [
     /* recipe/acacia_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
         id: "acacia_button",
@@ -612,11 +5969,20 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (135, 1), // acacia_button
     },
+    /* recipe/acacia_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "acacia_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1079] /* acacia_boat */,
+        ],
+        result: (1080, 1), // acacia_chest_boat
+    },
     /* recipe/acacia_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "acacia_planks",
         ingredients: &[
-            &[79] /* #acacia_logs: acacia_log */,
+            &[79, 160, 895, 896] /* #acacia_logs: acacia_log, acacia_wood, stripped_acacia_log, stripped_acacia_wood */,
         ],
         result: (93, 4), // acacia_planks
     },
@@ -629,6 +5995,61 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (63, 2), // andesite
     },
+    /* recipe/bamboo_block.json（category=building）*/
+    ShapelessRecipe {
+        id: "bamboo_block",
+        ingredients: &[
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+            &[172] /* bamboo */,
+        ],
+        result: (173, 1), // bamboo_block
+    },
+    /* recipe/bamboo_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "bamboo_button",
+        ingredients: &[
+            &[182] /* bamboo_planks */,
+        ],
+        result: (174, 1), // bamboo_button
+    },
+    /* recipe/bamboo_chest_raft.json（category=misc）*/
+    ShapelessRecipe {
+        id: "bamboo_chest_raft",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1089] /* bamboo_raft */,
+        ],
+        result: (1088, 1), // bamboo_chest_raft
+    },
+    /* recipe/bamboo_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "bamboo_planks",
+        ingredients: &[
+            &[173, 897] /* #bamboo_blocks: bamboo_block, stripped_bamboo_block */,
+        ],
+        result: (182, 2), // bamboo_planks
+    },
+    /* recipe/beetroot_soup.json（category=misc）*/
+    ShapelessRecipe {
+        id: "beetroot_soup",
+        ingredients: &[
+            &[1108] /* bowl */,
+            &[1091] /* beetroot */,
+            &[1091] /* beetroot */,
+            &[1091] /* beetroot */,
+            &[1091] /* beetroot */,
+            &[1091] /* beetroot */,
+            &[1091] /* beetroot */,
+        ],
+        result: (1092, 1), // beetroot_soup
+    },
     /* recipe/birch_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
         id: "birch_button",
@@ -637,13 +6058,330 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (133, 1), // birch_button
     },
+    /* recipe/birch_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "birch_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1093] /* birch_boat */,
+        ],
+        result: (1094, 1), // birch_chest_boat
+    },
     /* recipe/birch_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "birch_planks",
         ingredients: &[
-            &[76] /* #birch_logs: birch_log */,
+            &[76, 200, 898, 899] /* #birch_logs: birch_log, birch_wood, stripped_birch_log, stripped_birch_wood */,
         ],
         result: (91, 4), // birch_planks
+    },
+    /* recipe/black_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "black_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1096] /* black_dye */,
+        ],
+        result: (203, 1), // black_candle
+    },
+    /* recipe/black_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "black_concrete_powder",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (206, 8), // black_concrete_powder
+    },
+    /* recipe/black_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "black_dye",
+        ingredients: &[
+            &[1222] /* ink_sac */,
+        ],
+        result: (1096, 1), // black_dye
+    },
+    /* recipe/black_dye_from_wither_rose.json（category=misc）*/
+    ShapelessRecipe {
+        id: "black_dye_from_wither_rose",
+        ingredients: &[
+            &[1064] /* wither_rose */,
+        ],
+        result: (1096, 1), // black_dye
+    },
+    /* recipe/blaze_powder.json（category=misc）*/
+    ShapelessRecipe {
+        id: "blaze_powder",
+        ingredients: &[
+            &[1100] /* blaze_rod */,
+        ],
+        result: (1099, 2), // blaze_powder
+    },
+    /* recipe/blue_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "blue_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1102] /* blue_dye */,
+        ],
+        result: (220, 1), // blue_candle
+    },
+    /* recipe/blue_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "blue_concrete_powder",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (223, 8), // blue_concrete_powder
+    },
+    /* recipe/blue_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "blue_dye",
+        ingredients: &[
+            &[1234] /* lapis_lazuli */,
+        ],
+        result: (1102, 1), // blue_dye
+    },
+    /* recipe/blue_dye_from_cornflower.json（category=misc）*/
+    ShapelessRecipe {
+        id: "blue_dye_from_cornflower",
+        ingredients: &[
+            &[332] /* cornflower */,
+        ],
+        result: (1102, 1), // blue_dye
+    },
+    /* recipe/blue_ice.json（category=building）*/
+    ShapelessRecipe {
+        id: "blue_ice",
+        ingredients: &[
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+            &[689] /* packed_ice */,
+        ],
+        result: (225, 1), // blue_ice
+    },
+    /* recipe/bone_meal.json（category=misc）*/
+    ShapelessRecipe {
+        id: "bone_meal",
+        ingredients: &[
+            &[37] /* bone */,
+        ],
+        result: (1106, 3), // bone_meal
+    },
+    /* recipe/bone_meal_from_bone_block.json（category=misc）*/
+    ShapelessRecipe {
+        id: "bone_meal_from_bone_block",
+        ingredients: &[
+            &[232] /* bone_block */,
+        ],
+        result: (1106, 9), // bone_meal
+    },
+    /* recipe/book.json（category=misc）*/
+    ShapelessRecipe {
+        id: "book",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[1301] /* paper */,
+            &[1301] /* paper */,
+            &[1236] /* leather */,
+        ],
+        result: (5, 1), // book
+    },
+    /* recipe/bordure_indented_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "bordure_indented_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[953] /* vine */,
+        ],
+        result: (1107, 1), // bordure_indented_banner_pattern
+    },
+    /* recipe/brown_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "brown_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1114] /* brown_dye */,
+        ],
+        result: (244, 1), // brown_candle
+    },
+    /* recipe/brown_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "brown_concrete_powder",
+        ingredients: &[
+            &[1114] /* brown_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (247, 8), // brown_concrete_powder
+    },
+    /* recipe/brown_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "brown_dye",
+        ingredients: &[
+            &[315] /* cocoa_beans */,
+        ],
+        result: (1114, 1), // brown_dye
+    },
+    /* recipe/cherry_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "cherry_button",
+        ingredients: &[
+            &[280] /* cherry_planks */,
+        ],
+        result: (273, 1), // cherry_button
+    },
+    /* recipe/cherry_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "cherry_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1127] /* cherry_boat */,
+        ],
+        result: (1128, 1), // cherry_chest_boat
+    },
+    /* recipe/cherry_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "cherry_planks",
+        ingredients: &[
+            &[279, 288, 900, 901] /* #cherry_logs: cherry_log, cherry_wood, stripped_cherry_log, stripped_cherry_wood */,
+        ],
+        result: (280, 4), // cherry_planks
+    },
+    /* recipe/chest_minecart.json（category=misc）*/
+    ShapelessRecipe {
+        id: "chest_minecart",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1260] /* minecart */,
+        ],
+        result: (1129, 1), // chest_minecart
+    },
+    /* recipe/coal.json（category=misc）*/
+    ShapelessRecipe {
+        id: "coal",
+        ingredients: &[
+            &[306] /* coal_block */,
+        ],
+        result: (1, 9), // coal
+    },
+    /* recipe/copper_ingot.json（category=misc）*/
+    ShapelessRecipe {
+        id: "copper_ingot",
+        ingredients: &[
+            &[321] /* copper_block */,
+        ],
+        result: (1149, 9), // copper_ingot
+    },
+    /* recipe/copper_ingot_from_waxed_copper_block.json（category=misc）*/
+    ShapelessRecipe {
+        id: "copper_ingot_from_waxed_copper_block",
+        ingredients: &[
+            &[974] /* waxed_copper_block */,
+        ],
+        result: (1149, 9), // copper_ingot
+    },
+    /* recipe/copper_nugget.json（category=misc）*/
+    ShapelessRecipe {
+        id: "copper_nugget",
+        ingredients: &[
+            &[1149] /* copper_ingot */,
+        ],
+        result: (1151, 9), // copper_nugget
+    },
+    /* recipe/creeper_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "creeper_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[340] /* creeper_head */,
+        ],
+        result: (1153, 1), // creeper_banner_pattern
+    },
+    /* recipe/crimson_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "crimson_button",
+        ingredients: &[
+            &[349] /* crimson_planks */,
+        ],
+        result: (341, 1), // crimson_button
+    },
+    /* recipe/crimson_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "crimson_planks",
+        ingredients: &[
+            &[347, 356, 902, 903] /* #crimson_stems: crimson_hyphae, crimson_stem, stripped_crimson_hyphae, stripped_crimson_stem */,
+        ],
+        result: (349, 4), // crimson_planks
+    },
+    /* recipe/cyan_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "cyan_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1156] /* cyan_dye */,
+        ],
+        result: (368, 1), // cyan_candle
+    },
+    /* recipe/cyan_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "cyan_concrete_powder",
+        ingredients: &[
+            &[1156] /* cyan_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (371, 8), // cyan_concrete_powder
+    },
+    /* recipe/cyan_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "cyan_dye",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1212] /* green_dye */,
+        ],
+        result: (1156, 2), // cyan_dye
+    },
+    /* recipe/cyan_dye_from_pitcher_plant.json（category=misc）*/
+    ShapelessRecipe {
+        id: "cyan_dye_from_pitcher_plant",
+        ingredients: &[
+            &[729] /* pitcher_plant */,
+        ],
+        result: (1156, 2), // cyan_dye
     },
     /* recipe/dark_oak_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
@@ -653,13 +6391,713 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (136, 1), // dark_oak_button
     },
+    /* recipe/dark_oak_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dark_oak_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1159] /* dark_oak_boat */,
+        ],
+        result: (1160, 1), // dark_oak_chest_boat
+    },
     /* recipe/dark_oak_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "dark_oak_planks",
         ingredients: &[
-            &[80] /* #dark_oak_logs: dark_oak_log */,
+            &[80, 384, 904, 905] /* #dark_oak_logs: dark_oak_log, dark_oak_wood, stripped_dark_oak_log, stripped_dark_oak_wood */,
         ],
         result: (94, 4), // dark_oak_planks
+    },
+    /* recipe/diamond.json（category=misc；手写表重叠）*/
+    ShapelessRecipe {
+        id: "diamond",
+        ingredients: &[
+            &[424] /* diamond_block */,
+        ],
+        result: (3, 9), // diamond
+    },
+    /* recipe/dried_kelp.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dried_kelp",
+        ingredients: &[
+            &[433] /* dried_kelp_block */,
+        ],
+        result: (1168, 9), // dried_kelp
+    },
+    /* recipe/dye_black_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_black_bed",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* blue_bed+brown_bed+cyan_bed+gray_bed+…(共15项): blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (202, 1), // black_bed
+    },
+    /* recipe/dye_black_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_black_carpet",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* blue_carpet+brown_carpet+cyan_carpet+gray_carpet+…(共15项): blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (204, 1), // black_carpet
+    },
+    /* recipe/dye_black_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_black_harness",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* blue_harness+brown_harness+cyan_harness+gray_harness+…(共15项): blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1097, 1), // black_harness
+    },
+    /* recipe/dye_black_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_black_wool",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* blue_wool+brown_wool+cyan_wool+gray_wool+…(共15项): blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (212, 1), // black_wool
+    },
+    /* recipe/dye_blue_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_blue_bed",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[202, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+brown_bed+cyan_bed+gray_bed+…(共15项): black_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (219, 1), // blue_bed
+    },
+    /* recipe/dye_blue_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_blue_carpet",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[204, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+brown_carpet+cyan_carpet+gray_carpet+…(共15项): black_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (221, 1), // blue_carpet
+    },
+    /* recipe/dye_blue_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_blue_harness",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1097, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+brown_harness+cyan_harness+gray_harness+…(共15项): black_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1104, 1), // blue_harness
+    },
+    /* recipe/dye_blue_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_blue_wool",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[212, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+brown_wool+cyan_wool+gray_wool+…(共15项): black_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (231, 1), // blue_wool
+    },
+    /* recipe/dye_brown_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_brown_bed",
+        ingredients: &[
+            &[1114] /* brown_dye */,
+            &[202, 219, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+cyan_bed+gray_bed+…(共15项): black_bed, blue_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (243, 1), // brown_bed
+    },
+    /* recipe/dye_brown_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_brown_carpet",
+        ingredients: &[
+            &[1114] /* brown_dye */,
+            &[204, 221, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+cyan_carpet+gray_carpet+…(共15项): black_carpet, blue_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (245, 1), // brown_carpet
+    },
+    /* recipe/dye_brown_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_brown_harness",
+        ingredients: &[
+            &[1114] /* brown_dye */,
+            &[1097, 1104, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+cyan_harness+gray_harness+…(共15项): black_harness, blue_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1116, 1), // brown_harness
+    },
+    /* recipe/dye_brown_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_brown_wool",
+        ingredients: &[
+            &[1114] /* brown_dye */,
+            &[212, 231, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+cyan_wool+gray_wool+…(共15项): black_wool, blue_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (255, 1), // brown_wool
+    },
+    /* recipe/dye_cyan_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_cyan_bed",
+        ingredients: &[
+            &[1156] /* cyan_dye */,
+            &[202, 219, 243, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+gray_bed+…(共15项): black_bed, blue_bed, brown_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (367, 1), // cyan_bed
+    },
+    /* recipe/dye_cyan_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_cyan_carpet",
+        ingredients: &[
+            &[1156] /* cyan_dye */,
+            &[204, 221, 245, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+gray_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (369, 1), // cyan_carpet
+    },
+    /* recipe/dye_cyan_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_cyan_harness",
+        ingredients: &[
+            &[1156] /* cyan_dye */,
+            &[1097, 1104, 1116, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+gray_harness+…(共15项): black_harness, blue_harness, brown_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1157, 1), // cyan_harness
+    },
+    /* recipe/dye_cyan_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_cyan_wool",
+        ingredients: &[
+            &[1156] /* cyan_dye */,
+            &[212, 231, 255, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+gray_wool+…(共15项): black_wool, blue_wool, brown_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (377, 1), // cyan_wool
+    },
+    /* recipe/dye_gray_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_gray_bed",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[202, 219, 243, 367, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (487, 1), // gray_bed
+    },
+    /* recipe/dye_gray_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_gray_carpet",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[204, 221, 245, 369, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (489, 1), // gray_carpet
+    },
+    /* recipe/dye_gray_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_gray_harness",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[1097, 1104, 1116, 1157, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1210, 1), // gray_harness
+    },
+    /* recipe/dye_gray_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_gray_wool",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[212, 231, 255, 377, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (497, 1), // gray_wool
+    },
+    /* recipe/dye_green_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_green_bed",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[202, 219, 243, 367, 487, 552, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (499, 1), // green_bed
+    },
+    /* recipe/dye_green_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_green_carpet",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[204, 221, 245, 369, 489, 554, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (501, 1), // green_carpet
+    },
+    /* recipe/dye_green_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_green_harness",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1213, 1), // green_harness
+    },
+    /* recipe/dye_green_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_green_wool",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[212, 231, 255, 377, 497, 562, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (509, 1), // green_wool
+    },
+    /* recipe/dye_light_blue_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_light_blue_bed",
+        ingredients: &[
+            &[1243] /* light_blue_dye */,
+            &[202, 219, 243, 367, 487, 499, 564, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (552, 1), // light_blue_bed
+    },
+    /* recipe/dye_light_blue_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_light_blue_carpet",
+        ingredients: &[
+            &[1243] /* light_blue_dye */,
+            &[204, 221, 245, 369, 489, 501, 566, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (554, 1), // light_blue_carpet
+    },
+    /* recipe/dye_light_blue_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_light_blue_harness",
+        ingredients: &[
+            &[1243] /* light_blue_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1244, 1), // light_blue_harness
+    },
+    /* recipe/dye_light_blue_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_light_blue_wool",
+        ingredients: &[
+            &[1243] /* light_blue_dye */,
+            &[212, 231, 255, 377, 497, 509, 574, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (562, 1), // light_blue_wool
+    },
+    /* recipe/dye_light_gray_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_light_gray_bed",
+        ingredients: &[
+            &[1246] /* light_gray_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 581, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (564, 1), // light_gray_bed
+    },
+    /* recipe/dye_light_gray_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_light_gray_carpet",
+        ingredients: &[
+            &[1246] /* light_gray_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 583, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (566, 1), // light_gray_carpet
+    },
+    /* recipe/dye_light_gray_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_light_gray_harness",
+        ingredients: &[
+            &[1246] /* light_gray_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1250, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1247, 1), // light_gray_harness
+    },
+    /* recipe/dye_light_gray_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_light_gray_wool",
+        ingredients: &[
+            &[1246] /* light_gray_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 591, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (574, 1), // light_gray_wool
+    },
+    /* recipe/dye_lime_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_lime_bed",
+        ingredients: &[
+            &[1249] /* lime_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 595, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (581, 1), // lime_bed
+    },
+    /* recipe/dye_lime_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_lime_carpet",
+        ingredients: &[
+            &[1249] /* lime_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 597, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (583, 1), // lime_carpet
+    },
+    /* recipe/dye_lime_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_lime_harness",
+        ingredients: &[
+            &[1249] /* lime_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1254, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1250, 1), // lime_harness
+    },
+    /* recipe/dye_lime_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_lime_wool",
+        ingredients: &[
+            &[1249] /* lime_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 605, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (591, 1), // lime_wool
+    },
+    /* recipe/dye_magenta_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_magenta_bed",
+        ingredients: &[
+            &[1253] /* magenta_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 661, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (595, 1), // magenta_bed
+    },
+    /* recipe/dye_magenta_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_magenta_carpet",
+        ingredients: &[
+            &[1253] /* magenta_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 663, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (597, 1), // magenta_carpet
+    },
+    /* recipe/dye_magenta_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_magenta_harness",
+        ingredients: &[
+            &[1253] /* magenta_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1297, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1254, 1), // magenta_harness
+    },
+    /* recipe/dye_magenta_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_magenta_wool",
+        ingredients: &[
+            &[1253] /* magenta_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 672, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (605, 1), // magenta_wool
+    },
+    /* recipe/dye_orange_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_orange_bed",
+        ingredients: &[
+            &[1296] /* orange_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 715, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, pink_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (661, 1), // orange_bed
+    },
+    /* recipe/dye_orange_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_orange_carpet",
+        ingredients: &[
+            &[1296] /* orange_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 717, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (663, 1), // orange_carpet
+    },
+    /* recipe/dye_orange_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_orange_harness",
+        ingredients: &[
+            &[1296] /* orange_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1305, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, pink_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1297, 1), // orange_harness
+    },
+    /* recipe/dye_orange_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_orange_wool",
+        ingredients: &[
+            &[1296] /* orange_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 727, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, pink_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (672, 1), // orange_wool
+    },
+    /* recipe/dye_pink_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_pink_bed",
+        ingredients: &[
+            &[1304] /* pink_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 773, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, purple_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (715, 1), // pink_bed
+    },
+    /* recipe/dye_pink_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_pink_carpet",
+        ingredients: &[
+            &[1304] /* pink_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 775, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, purple_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (717, 1), // pink_carpet
+    },
+    /* recipe/dye_pink_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_pink_harness",
+        ingredients: &[
+            &[1304] /* pink_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1317, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, purple_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1305, 1), // pink_harness
+    },
+    /* recipe/dye_pink_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_pink_wool",
+        ingredients: &[
+            &[1304] /* pink_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 783, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, purple_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (727, 1), // pink_wool
+    },
+    /* recipe/dye_purple_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_purple_bed",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 798, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, red_bed, yellow_bed, white_bed */,
+        ],
+        result: (773, 1), // purple_bed
+    },
+    /* recipe/dye_purple_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_purple_carpet",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 800, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, red_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (775, 1), // purple_carpet
+    },
+    /* recipe/dye_purple_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_purple_harness",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1326, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, red_harness, yellow_harness, white_harness */,
+        ],
+        result: (1317, 1), // purple_harness
+    },
+    /* recipe/dye_purple_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_purple_wool",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 819, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, red_wool, yellow_wool, white_wool */,
+        ],
+        result: (783, 1), // purple_wool
+    },
+    /* recipe/dye_red_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_red_bed",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 1067, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, yellow_bed, white_bed */,
+        ],
+        result: (798, 1), // red_bed
+    },
+    /* recipe/dye_red_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_red_carpet",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 1069, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, yellow_carpet, white_carpet */,
+        ],
+        result: (800, 1), // red_carpet
+    },
+    /* recipe/dye_red_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_red_harness",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1380, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, yellow_harness, white_harness */,
+        ],
+        result: (1326, 1), // red_harness
+    },
+    /* recipe/dye_red_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_red_wool",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 1077, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, yellow_wool, white_wool */,
+        ],
+        result: (819, 1), // red_wool
+    },
+    /* recipe/dye_white_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_white_bed",
+        ingredients: &[
+            &[1369] /* white_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1067] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, yellow_bed */,
+        ],
+        result: (1051, 1), // white_bed
+    },
+    /* recipe/dye_white_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_white_carpet",
+        ingredients: &[
+            &[1369] /* white_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1069] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, yellow_carpet */,
+        ],
+        result: (1053, 1), // white_carpet
+    },
+    /* recipe/dye_white_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_white_harness",
+        ingredients: &[
+            &[1369] /* white_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1380] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, yellow_harness */,
+        ],
+        result: (1370, 1), // white_harness
+    },
+    /* recipe/dye_white_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_white_wool",
+        ingredients: &[
+            &[1369] /* white_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1077] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, yellow_wool */,
+        ],
+        result: (1062, 1), // white_wool
+    },
+    /* recipe/dye_yellow_bed.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_yellow_bed",
+        ingredients: &[
+            &[1379] /* yellow_dye */,
+            &[202, 219, 243, 367, 487, 499, 552, 564, 581, 595, 661, 715, 773, 798, 1051] /* black_bed+blue_bed+brown_bed+cyan_bed+…(共15项): black_bed, blue_bed, brown_bed, cyan_bed, gray_bed, green_bed, light_blue_bed, light_gray_bed, lime_bed, magenta_bed, orange_bed, pink_bed, purple_bed, red_bed, white_bed */,
+        ],
+        result: (1067, 1), // yellow_bed
+    },
+    /* recipe/dye_yellow_carpet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "dye_yellow_carpet",
+        ingredients: &[
+            &[1379] /* yellow_dye */,
+            &[204, 221, 245, 369, 489, 501, 554, 566, 583, 597, 663, 717, 775, 800, 1053] /* black_carpet+blue_carpet+brown_carpet+cyan_carpet+…(共15项): black_carpet, blue_carpet, brown_carpet, cyan_carpet, gray_carpet, green_carpet, light_blue_carpet, light_gray_carpet, lime_carpet, magenta_carpet, orange_carpet, pink_carpet, purple_carpet, red_carpet, white_carpet */,
+        ],
+        result: (1069, 1), // yellow_carpet
+    },
+    /* recipe/dye_yellow_harness.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "dye_yellow_harness",
+        ingredients: &[
+            &[1379] /* yellow_dye */,
+            &[1097, 1104, 1116, 1157, 1210, 1213, 1244, 1247, 1250, 1254, 1297, 1305, 1317, 1326, 1370] /* black_harness+blue_harness+brown_harness+cyan_harness+…(共15项): black_harness, blue_harness, brown_harness, cyan_harness, gray_harness, green_harness, light_blue_harness, light_gray_harness, lime_harness, magenta_harness, orange_harness, pink_harness, purple_harness, red_harness, white_harness */,
+        ],
+        result: (1380, 1), // yellow_harness
+    },
+    /* recipe/dye_yellow_wool.json（category=building）*/
+    ShapelessRecipe {
+        id: "dye_yellow_wool",
+        ingredients: &[
+            &[1379] /* yellow_dye */,
+            &[212, 231, 255, 377, 497, 509, 562, 574, 591, 605, 672, 727, 783, 819, 1062] /* black_wool+blue_wool+brown_wool+cyan_wool+…(共15项): black_wool, blue_wool, brown_wool, cyan_wool, gray_wool, green_wool, light_blue_wool, light_gray_wool, lime_wool, magenta_wool, orange_wool, pink_wool, purple_wool, red_wool, white_wool */,
+        ],
+        result: (1077, 1), // yellow_wool
+    },
+    /* recipe/emerald.json（category=misc）*/
+    ShapelessRecipe {
+        id: "emerald",
+        ingredients: &[
+            &[436] /* emerald_block */,
+        ],
+        result: (47, 9), // emerald
+    },
+    /* recipe/ender_eye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "ender_eye",
+        ingredients: &[
+            &[1175] /* ender_pearl */,
+            &[1099] /* blaze_powder */,
+        ],
+        result: (1174, 1), // ender_eye
+    },
+    /* recipe/fermented_spider_eye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "fermented_spider_eye",
+        ingredients: &[
+            &[41] /* spider_eye */,
+            &[249] /* brown_mushroom */,
+            &[1354] /* sugar */,
+        ],
+        result: (1179, 1), // fermented_spider_eye
+    },
+    /* recipe/field_masoned_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "field_masoned_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[241] /* bricks */,
+        ],
+        result: (1180, 1), // field_masoned_banner_pattern
+    },
+    /* recipe/fire_charge.json（category=misc）*/
+    ShapelessRecipe {
+        id: "fire_charge",
+        ingredients: &[
+            &[39] /* gunpowder */,
+            &[1099] /* blaze_powder */,
+            &[1, 1126] /* coal+charcoal: coal, charcoal */,
+        ],
+        result: (1181, 3), // fire_charge
+    },
+    /* recipe/firework_rocket_simple.json（category=misc）*/
+    ShapelessRecipe {
+        id: "firework_rocket_simple",
+        ingredients: &[
+            &[39] /* gunpowder */,
+            &[1301] /* paper */,
+        ],
+        result: (1182, 3), // firework_rocket
+    },
+    /* recipe/flint_and_steel.json（category=equipment）*/
+    ShapelessRecipe {
+        id: "flint_and_steel",
+        ingredients: &[
+            &[2] /* iron_ingot */,
+            &[48] /* flint */,
+        ],
+        result: (1184, 1), // flint_and_steel
+    },
+    /* recipe/flower_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "flower_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[673] /* oxeye_daisy */,
+        ],
+        result: (1188, 1), // flower_banner_pattern
+    },
+    /* recipe/furnace_minecart.json（category=misc）*/
+    ShapelessRecipe {
+        id: "furnace_minecart",
+        ingredients: &[
+            &[473] /* furnace */,
+            &[1260] /* minecart */,
+        ],
+        result: (1190, 1), // furnace_minecart
+    },
+    /* recipe/glow_item_frame.json（category=misc）*/
+    ShapelessRecipe {
+        id: "glow_item_frame",
+        ingredients: &[
+            &[1230] /* item_frame */,
+            &[1194] /* glow_ink_sac */,
+        ],
+        result: (1195, 1), // glow_item_frame
+    },
+    /* recipe/gold_ingot_from_gold_block.json（category=misc）*/
+    ShapelessRecipe {
+        id: "gold_ingot_from_gold_block",
+        ingredients: &[
+            &[480] /* gold_block */,
+        ],
+        result: (59, 9), // gold_ingot
     },
     /* recipe/gold_nugget.json（category=misc）*/
     ShapelessRecipe {
@@ -678,6 +7116,89 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (61, 1), // granite
     },
+    /* recipe/gray_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "gray_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1209] /* gray_dye */,
+        ],
+        result: (488, 1), // gray_candle
+    },
+    /* recipe/gray_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "gray_concrete_powder",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (491, 8), // gray_concrete_powder
+    },
+    /* recipe/gray_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "gray_dye",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1209, 2), // gray_dye
+    },
+    /* recipe/gray_dye_from_closed_eyeblossom.json（category=misc）*/
+    ShapelessRecipe {
+        id: "gray_dye_from_closed_eyeblossom",
+        ingredients: &[
+            &[305] /* closed_eyeblossom */,
+        ],
+        result: (1209, 1), // gray_dye
+    },
+    /* recipe/green_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "green_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1212] /* green_dye */,
+        ],
+        result: (500, 1), // green_candle
+    },
+    /* recipe/green_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "green_concrete_powder",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (503, 8), // green_concrete_powder
+    },
+    /* recipe/hay_block.json（category=building）*/
+    ShapelessRecipe {
+        id: "hay_block",
+        ingredients: &[
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+            &[1367] /* wheat */,
+        ],
+        result: (512, 1), // hay_block
+    },
     /* recipe/honey_bottle.json（category=misc；手写表重叠）*/
     ShapelessRecipe {
         id: "honey_bottle",
@@ -690,6 +7211,31 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (144, 4), // honey_bottle
     },
+    /* recipe/hopper_minecart.json（category=misc）*/
+    ShapelessRecipe {
+        id: "hopper_minecart",
+        ingredients: &[
+            &[515] /* hopper */,
+            &[1260] /* minecart */,
+        ],
+        result: (1219, 1), // hopper_minecart
+    },
+    /* recipe/iron_ingot_from_iron_block.json（category=misc）*/
+    ShapelessRecipe {
+        id: "iron_ingot_from_iron_block",
+        ingredients: &[
+            &[528] /* iron_block */,
+        ],
+        result: (2, 9), // iron_ingot
+    },
+    /* recipe/iron_nugget.json（category=misc）*/
+    ShapelessRecipe {
+        id: "iron_nugget",
+        ingredients: &[
+            &[2] /* iron_ingot */,
+        ],
+        result: (1228, 9), // iron_nugget
+    },
     /* recipe/jungle_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
         id: "jungle_button",
@@ -698,13 +7244,422 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (134, 1), // jungle_button
     },
+    /* recipe/jungle_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "jungle_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1231] /* jungle_boat */,
+        ],
+        result: (1232, 1), // jungle_chest_boat
+    },
     /* recipe/jungle_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "jungle_planks",
         ingredients: &[
-            &[78] /* #jungle_logs: jungle_log */,
+            &[78, 539, 906, 907] /* #jungle_logs: jungle_log, jungle_wood, stripped_jungle_log, stripped_jungle_wood */,
         ],
         result: (92, 4), // jungle_planks
+    },
+    /* recipe/lapis_lazuli.json（category=misc）*/
+    ShapelessRecipe {
+        id: "lapis_lazuli",
+        ingredients: &[
+            &[543] /* lapis_block */,
+        ],
+        result: (1234, 9), // lapis_lazuli
+    },
+    /* recipe/light_blue_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_blue_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1243] /* light_blue_dye */,
+        ],
+        result: (553, 1), // light_blue_candle
+    },
+    /* recipe/light_blue_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "light_blue_concrete_powder",
+        ingredients: &[
+            &[1243] /* light_blue_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (556, 8), // light_blue_concrete_powder
+    },
+    /* recipe/light_blue_dye_from_blue_orchid.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_blue_dye_from_blue_orchid",
+        ingredients: &[
+            &[226] /* blue_orchid */,
+        ],
+        result: (1243, 1), // light_blue_dye
+    },
+    /* recipe/light_blue_dye_from_blue_white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_blue_dye_from_blue_white_dye",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1243, 2), // light_blue_dye
+    },
+    /* recipe/light_gray_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1246] /* light_gray_dye */,
+        ],
+        result: (565, 1), // light_gray_candle
+    },
+    /* recipe/light_gray_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "light_gray_concrete_powder",
+        ingredients: &[
+            &[1246] /* light_gray_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (568, 8), // light_gray_concrete_powder
+    },
+    /* recipe/light_gray_dye_from_azure_bluet.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_dye_from_azure_bluet",
+        ingredients: &[
+            &[171] /* azure_bluet */,
+        ],
+        result: (1246, 1), // light_gray_dye
+    },
+    /* recipe/light_gray_dye_from_black_white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_dye_from_black_white_dye",
+        ingredients: &[
+            &[1096] /* black_dye */,
+            &[1369] /* white_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1246, 3), // light_gray_dye
+    },
+    /* recipe/light_gray_dye_from_gray_white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_dye_from_gray_white_dye",
+        ingredients: &[
+            &[1209] /* gray_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1246, 2), // light_gray_dye
+    },
+    /* recipe/light_gray_dye_from_oxeye_daisy.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_dye_from_oxeye_daisy",
+        ingredients: &[
+            &[673] /* oxeye_daisy */,
+        ],
+        result: (1246, 1), // light_gray_dye
+    },
+    /* recipe/light_gray_dye_from_white_tulip.json（category=misc）*/
+    ShapelessRecipe {
+        id: "light_gray_dye_from_white_tulip",
+        ingredients: &[
+            &[1061] /* white_tulip */,
+        ],
+        result: (1246, 1), // light_gray_dye
+    },
+    /* recipe/lime_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "lime_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1249] /* lime_dye */,
+        ],
+        result: (582, 1), // lime_candle
+    },
+    /* recipe/lime_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "lime_concrete_powder",
+        ingredients: &[
+            &[1249] /* lime_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (585, 8), // lime_concrete_powder
+    },
+    /* recipe/lime_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "lime_dye",
+        ingredients: &[
+            &[1212] /* green_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1249, 2), // lime_dye
+    },
+    /* recipe/magenta_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1253] /* magenta_dye */,
+        ],
+        result: (596, 1), // magenta_candle
+    },
+    /* recipe/magenta_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "magenta_concrete_powder",
+        ingredients: &[
+            &[1253] /* magenta_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (599, 8), // magenta_concrete_powder
+    },
+    /* recipe/magenta_dye_from_allium.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_dye_from_allium",
+        ingredients: &[
+            &[162] /* allium */,
+        ],
+        result: (1253, 1), // magenta_dye
+    },
+    /* recipe/magenta_dye_from_blue_red_pink.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_dye_from_blue_red_pink",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1325] /* red_dye */,
+            &[1304] /* pink_dye */,
+        ],
+        result: (1253, 3), // magenta_dye
+    },
+    /* recipe/magenta_dye_from_blue_red_white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_dye_from_blue_red_white_dye",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1325] /* red_dye */,
+            &[1325] /* red_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1253, 4), // magenta_dye
+    },
+    /* recipe/magenta_dye_from_lilac.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_dye_from_lilac",
+        ingredients: &[
+            &[577] /* lilac */,
+        ],
+        result: (1253, 2), // magenta_dye
+    },
+    /* recipe/magenta_dye_from_purple_and_pink.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magenta_dye_from_purple_and_pink",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[1304] /* pink_dye */,
+        ],
+        result: (1253, 2), // magenta_dye
+    },
+    /* recipe/magma_cream.json（category=misc）*/
+    ShapelessRecipe {
+        id: "magma_cream",
+        ingredients: &[
+            &[1099] /* blaze_powder */,
+            &[1343] /* slime_ball */,
+        ],
+        result: (1255, 1), // magma_cream
+    },
+    /* recipe/mangrove_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "mangrove_button",
+        ingredients: &[
+            &[613] /* mangrove_planks */,
+        ],
+        result: (606, 1), // mangrove_button
+    },
+    /* recipe/mangrove_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "mangrove_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1256] /* mangrove_boat */,
+        ],
+        result: (1257, 1), // mangrove_chest_boat
+    },
+    /* recipe/mangrove_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "mangrove_planks",
+        ingredients: &[
+            &[612, 622, 908, 909] /* #mangrove_logs: mangrove_log, mangrove_wood, stripped_mangrove_log, stripped_mangrove_wood */,
+        ],
+        result: (613, 4), // mangrove_planks
+    },
+    /* recipe/melon.json（category=building）*/
+    ShapelessRecipe {
+        id: "melon",
+        ingredients: &[
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+            &[73] /* melon_slice */,
+        ],
+        result: (624, 1), // melon
+    },
+    /* recipe/melon_seeds.json（category=misc）*/
+    ShapelessRecipe {
+        id: "melon_seeds",
+        ingredients: &[
+            &[73] /* melon_slice */,
+        ],
+        result: (625, 1), // melon_seeds
+    },
+    /* recipe/mojang_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "mojang_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[1172] /* enchanted_golden_apple */,
+        ],
+        result: (1262, 1), // mojang_banner_pattern
+    },
+    /* recipe/mossy_cobblestone_from_moss_block.json（category=building）*/
+    ShapelessRecipe {
+        id: "mossy_cobblestone_from_moss_block",
+        ingredients: &[
+            &[27] /* cobblestone */,
+            &[70] /* moss_block */,
+        ],
+        result: (627, 1), // mossy_cobblestone
+    },
+    /* recipe/mossy_cobblestone_from_vine.json（category=building）*/
+    ShapelessRecipe {
+        id: "mossy_cobblestone_from_vine",
+        ingredients: &[
+            &[27] /* cobblestone */,
+            &[953] /* vine */,
+        ],
+        result: (627, 1), // mossy_cobblestone
+    },
+    /* recipe/mossy_stone_bricks_from_moss_block.json（category=building）*/
+    ShapelessRecipe {
+        id: "mossy_stone_bricks_from_moss_block",
+        ingredients: &[
+            &[889] /* stone_bricks */,
+            &[70] /* moss_block */,
+        ],
+        result: (634, 1), // mossy_stone_bricks
+    },
+    /* recipe/mossy_stone_bricks_from_vine.json（category=building）*/
+    ShapelessRecipe {
+        id: "mossy_stone_bricks_from_vine",
+        ingredients: &[
+            &[889] /* stone_bricks */,
+            &[953] /* vine */,
+        ],
+        result: (634, 1), // mossy_stone_bricks
+    },
+    /* recipe/muddy_mangrove_roots.json（category=building）*/
+    ShapelessRecipe {
+        id: "muddy_mangrove_roots",
+        ingredients: &[
+            &[71] /* mud */,
+            &[616] /* mangrove_roots */,
+        ],
+        result: (639, 1), // muddy_mangrove_roots
+    },
+    /* recipe/mushroom_stew.json（category=misc）*/
+    ShapelessRecipe {
+        id: "mushroom_stew",
+        ingredients: &[
+            &[249] /* brown_mushroom */,
+            &[804] /* red_mushroom */,
+            &[1108] /* bowl */,
+        ],
+        result: (1264, 1), // mushroom_stew
+    },
+    /* recipe/music_disc_5.json（category=misc）*/
+    ShapelessRecipe {
+        id: "music_disc_5",
+        ingredients: &[
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+            &[1167] /* disc_fragment_5 */,
+        ],
+        result: (1267, 1), // music_disc_5
+    },
+    /* recipe/nether_wart_block.json（category=building）*/
+    ShapelessRecipe {
+        id: "nether_wart_block",
+        ingredients: &[
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+            &[649] /* nether_wart */,
+        ],
+        result: (650, 1), // nether_wart_block
+    },
+    /* recipe/netherite_ingot.json（category=misc）*/
+    ShapelessRecipe {
+        id: "netherite_ingot",
+        ingredients: &[
+            &[1289] /* netherite_scrap */,
+            &[1289] /* netherite_scrap */,
+            &[1289] /* netherite_scrap */,
+            &[1289] /* netherite_scrap */,
+            &[59] /* gold_ingot */,
+            &[59] /* gold_ingot */,
+            &[59] /* gold_ingot */,
+            &[59] /* gold_ingot */,
+        ],
+        result: (60, 1), // netherite_ingot
+    },
+    /* recipe/netherite_ingot_from_netherite_block.json（category=misc）*/
+    ShapelessRecipe {
+        id: "netherite_ingot_from_netherite_block",
+        ingredients: &[
+            &[651] /* netherite_block */,
+        ],
+        result: (60, 9), // netherite_ingot
     },
     /* recipe/oak_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
@@ -714,13 +7669,410 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (131, 1), // oak_button
     },
+    /* recipe/oak_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "oak_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1293] /* oak_boat */,
+        ],
+        result: (1294, 1), // oak_chest_boat
+    },
     /* recipe/oak_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "oak_planks",
         ingredients: &[
-            &[31] /* #oak_logs: log */,
+            &[31, 656, 910, 911] /* #oak_logs: log, oak_wood, stripped_oak_log, stripped_oak_wood */,
         ],
         result: (26, 4), // planks
+    },
+    /* recipe/orange_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "orange_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1296] /* orange_dye */,
+        ],
+        result: (662, 1), // orange_candle
+    },
+    /* recipe/orange_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "orange_concrete_powder",
+        ingredients: &[
+            &[1296] /* orange_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (665, 8), // orange_concrete_powder
+    },
+    /* recipe/orange_dye_from_open_eyeblossom.json（category=misc）*/
+    ShapelessRecipe {
+        id: "orange_dye_from_open_eyeblossom",
+        ingredients: &[
+            &[659] /* open_eyeblossom */,
+        ],
+        result: (1296, 1), // orange_dye
+    },
+    /* recipe/orange_dye_from_orange_tulip.json（category=misc）*/
+    ShapelessRecipe {
+        id: "orange_dye_from_orange_tulip",
+        ingredients: &[
+            &[671] /* orange_tulip */,
+        ],
+        result: (1296, 1), // orange_dye
+    },
+    /* recipe/orange_dye_from_red_yellow.json（category=misc）*/
+    ShapelessRecipe {
+        id: "orange_dye_from_red_yellow",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[1379] /* yellow_dye */,
+        ],
+        result: (1296, 2), // orange_dye
+    },
+    /* recipe/orange_dye_from_torchflower.json（category=misc）*/
+    ShapelessRecipe {
+        id: "orange_dye_from_torchflower",
+        ingredients: &[
+            &[934] /* torchflower */,
+        ],
+        result: (1296, 1), // orange_dye
+    },
+    /* recipe/packed_ice.json（category=building）*/
+    ShapelessRecipe {
+        id: "packed_ice",
+        ingredients: &[
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+            &[519] /* ice */,
+        ],
+        result: (689, 1), // packed_ice
+    },
+    /* recipe/packed_mud.json（category=building）*/
+    ShapelessRecipe {
+        id: "packed_mud",
+        ingredients: &[
+            &[71] /* mud */,
+            &[1367] /* wheat */,
+        ],
+        result: (690, 1), // packed_mud
+    },
+    /* recipe/pale_oak_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "pale_oak_button",
+        ingredients: &[
+            &[701] /* pale_oak_planks */,
+        ],
+        result: (694, 1), // pale_oak_button
+    },
+    /* recipe/pale_oak_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pale_oak_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1299] /* pale_oak_boat */,
+        ],
+        result: (1300, 1), // pale_oak_chest_boat
+    },
+    /* recipe/pale_oak_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "pale_oak_planks",
+        ingredients: &[
+            &[700, 709, 912, 913] /* #pale_oak_logs: pale_oak_log, pale_oak_wood, stripped_pale_oak_log, stripped_pale_oak_wood */,
+        ],
+        result: (701, 4), // pale_oak_planks
+    },
+    /* recipe/pink_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1304] /* pink_dye */,
+        ],
+        result: (716, 1), // pink_candle
+    },
+    /* recipe/pink_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "pink_concrete_powder",
+        ingredients: &[
+            &[1304] /* pink_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (719, 8), // pink_concrete_powder
+    },
+    /* recipe/pink_dye_from_cactus_flower.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_dye_from_cactus_flower",
+        ingredients: &[
+            &[262] /* cactus_flower */,
+        ],
+        result: (1304, 1), // pink_dye
+    },
+    /* recipe/pink_dye_from_peony.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_dye_from_peony",
+        ingredients: &[
+            &[711] /* peony */,
+        ],
+        result: (1304, 2), // pink_dye
+    },
+    /* recipe/pink_dye_from_pink_petals.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_dye_from_pink_petals",
+        ingredients: &[
+            &[721] /* pink_petals */,
+        ],
+        result: (1304, 1), // pink_dye
+    },
+    /* recipe/pink_dye_from_pink_tulip.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_dye_from_pink_tulip",
+        ingredients: &[
+            &[726] /* pink_tulip */,
+        ],
+        result: (1304, 1), // pink_dye
+    },
+    /* recipe/pink_dye_from_red_white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pink_dye_from_red_white_dye",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1304, 2), // pink_dye
+    },
+    /* recipe/polished_blackstone_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "polished_blackstone_button",
+        ingredients: &[
+            &[737] /* polished_blackstone */,
+        ],
+        result: (742, 1), // polished_blackstone_button
+    },
+    /* recipe/prismarine_bricks.json（category=building）*/
+    ShapelessRecipe {
+        id: "prismarine_bricks",
+        ingredients: &[
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+            &[1310] /* prismarine_shard */,
+        ],
+        result: (767, 1), // prismarine_bricks
+    },
+    /* recipe/pumpkin_pie.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pumpkin_pie",
+        ingredients: &[
+            &[72] /* pumpkin */,
+            &[1354] /* sugar */,
+            &[1103, 1115, 1171] /* #eggs: blue_egg, brown_egg, egg */,
+        ],
+        result: (1314, 1), // pumpkin_pie
+    },
+    /* recipe/pumpkin_seeds.json（category=misc）*/
+    ShapelessRecipe {
+        id: "pumpkin_seeds",
+        ingredients: &[
+            &[72] /* pumpkin */,
+        ],
+        result: (771, 4), // pumpkin_seeds
+    },
+    /* recipe/purple_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "purple_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1316] /* purple_dye */,
+        ],
+        result: (774, 1), // purple_candle
+    },
+    /* recipe/purple_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "purple_concrete_powder",
+        ingredients: &[
+            &[1316] /* purple_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (777, 8), // purple_concrete_powder
+    },
+    /* recipe/purple_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "purple_dye",
+        ingredients: &[
+            &[1102] /* blue_dye */,
+            &[1325] /* red_dye */,
+        ],
+        result: (1316, 2), // purple_dye
+    },
+    /* recipe/rabbit_stew_from_brown_mushroom.json（category=misc）*/
+    ShapelessRecipe {
+        id: "rabbit_stew_from_brown_mushroom",
+        ingredients: &[
+            &[1087] /* baked_potato */,
+            &[1142] /* cooked_rabbit */,
+            &[1108] /* bowl */,
+            &[268] /* carrot */,
+            &[249] /* brown_mushroom */,
+        ],
+        result: (1321, 1), // rabbit_stew
+    },
+    /* recipe/rabbit_stew_from_red_mushroom.json（category=misc）*/
+    ShapelessRecipe {
+        id: "rabbit_stew_from_red_mushroom",
+        ingredients: &[
+            &[1087] /* baked_potato */,
+            &[1142] /* cooked_rabbit */,
+            &[1108] /* bowl */,
+            &[268] /* carrot */,
+            &[804] /* red_mushroom */,
+        ],
+        result: (1321, 1), // rabbit_stew
+    },
+    /* recipe/raw_copper.json（category=misc）*/
+    ShapelessRecipe {
+        id: "raw_copper",
+        ingredients: &[
+            &[794] /* raw_copper_block */,
+        ],
+        result: (45, 9), // raw_copper
+    },
+    /* recipe/raw_gold.json（category=misc）*/
+    ShapelessRecipe {
+        id: "raw_gold",
+        ingredients: &[
+            &[795] /* raw_gold_block */,
+        ],
+        result: (44, 9), // raw_gold
+    },
+    /* recipe/raw_iron.json（category=misc）*/
+    ShapelessRecipe {
+        id: "raw_iron",
+        ingredients: &[
+            &[796] /* raw_iron_block */,
+        ],
+        result: (43, 9), // raw_iron
+    },
+    /* recipe/red_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "red_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1325] /* red_dye */,
+        ],
+        result: (799, 1), // red_candle
+    },
+    /* recipe/red_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "red_concrete_powder",
+        ingredients: &[
+            &[1325] /* red_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (802, 8), // red_concrete_powder
+    },
+    /* recipe/red_dye_from_beetroot.json（category=misc）*/
+    ShapelessRecipe {
+        id: "red_dye_from_beetroot",
+        ingredients: &[
+            &[1091] /* beetroot */,
+        ],
+        result: (1325, 1), // red_dye
+    },
+    /* recipe/red_dye_from_poppy.json（category=misc）*/
+    ShapelessRecipe {
+        id: "red_dye_from_poppy",
+        ingredients: &[
+            &[761] /* poppy */,
+        ],
+        result: (1325, 1), // red_dye
+    },
+    /* recipe/red_dye_from_rose_bush.json（category=misc）*/
+    ShapelessRecipe {
+        id: "red_dye_from_rose_bush",
+        ingredients: &[
+            &[835] /* rose_bush */,
+        ],
+        result: (1325, 2), // red_dye
+    },
+    /* recipe/red_dye_from_tulip.json（category=misc）*/
+    ShapelessRecipe {
+        id: "red_dye_from_tulip",
+        ingredients: &[
+            &[818] /* red_tulip */,
+        ],
+        result: (1325, 1), // red_dye
+    },
+    /* recipe/redstone.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "redstone",
+        ingredients: &[
+            &[820] /* redstone_block */,
+        ],
+        result: (46, 9), // redstone
+    },
+    /* recipe/resin_clump.json（category=misc）*/
+    ShapelessRecipe {
+        id: "resin_clump",
+        ingredients: &[
+            &[827] /* resin_block */,
+        ],
+        result: (832, 9), // resin_clump
+    },
+    /* recipe/skull_banner_pattern.json（category=misc）*/
+    ShapelessRecipe {
+        id: "skull_banner_pattern",
+        ingredients: &[
+            &[1301] /* paper */,
+            &[1065] /* wither_skeleton_skull */,
+        ],
+        result: (1341, 1), // skull_banner_pattern
+    },
+    /* recipe/slime_ball.json（category=misc）*/
+    ShapelessRecipe {
+        id: "slime_ball",
+        ingredients: &[
+            &[854] /* slime_block */,
+        ],
+        result: (1343, 9), // slime_ball
     },
     /* recipe/spruce_button.json（category=redstone；手写表重叠）*/
     ShapelessRecipe {
@@ -730,24 +8082,993 @@ pub static GEN_SHAPELESS: [ShapelessRecipe; 16] = [
         ],
         result: (132, 1), // spruce_button
     },
+    /* recipe/spruce_chest_boat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "spruce_chest_boat",
+        ingredients: &[
+            &[151] /* chest */,
+            &[1348] /* spruce_boat */,
+        ],
+        result: (1349, 1), // spruce_chest_boat
+    },
     /* recipe/spruce_planks.json（category=building；手写表重叠）*/
     ShapelessRecipe {
         id: "spruce_planks",
         ingredients: &[
-            &[77] /* #spruce_logs: spruce_log */,
+            &[77, 884, 914, 915] /* #spruce_logs: spruce_log, spruce_wood, stripped_spruce_log, stripped_spruce_wood */,
         ],
         result: (90, 4), // spruce_planks
     },
+    /* recipe/stone_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "stone_button",
+        ingredients: &[
+            &[28] /* stone */,
+        ],
+        result: (890, 1), // stone_button
+    },
+    /* recipe/sugar_from_honey_bottle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "sugar_from_honey_bottle",
+        ingredients: &[
+            &[144] /* honey_bottle */,
+        ],
+        result: (1354, 3), // sugar
+    },
+    /* recipe/sugar_from_sugar_cane.json（category=misc）*/
+    ShapelessRecipe {
+        id: "sugar_from_sugar_cane",
+        ingredients: &[
+            &[920] /* sugar_cane */,
+        ],
+        result: (1354, 1), // sugar
+    },
+    /* recipe/tnt_minecart.json（category=misc）*/
+    ShapelessRecipe {
+        id: "tnt_minecart",
+        ingredients: &[
+            &[932] /* tnt */,
+            &[1260] /* minecart */,
+        ],
+        result: (1357, 1), // tnt_minecart
+    },
+    /* recipe/trapped_chest.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "trapped_chest",
+        ingredients: &[
+            &[151] /* chest */,
+            &[938] /* tripwire_hook */,
+        ],
+        result: (936, 1), // trapped_chest
+    },
+    /* recipe/warped_button.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "warped_button",
+        ingredients: &[
+            &[962] /* warped_planks */,
+        ],
+        result: (954, 1), // warped_button
+    },
+    /* recipe/warped_planks.json（category=building）*/
+    ShapelessRecipe {
+        id: "warped_planks",
+        ingredients: &[
+            &[916, 917, 960, 969] /* #warped_stems: stripped_warped_hyphae, stripped_warped_stem, warped_hyphae, warped_stem */,
+        ],
+        result: (962, 4), // warped_planks
+    },
+    /* recipe/waxed_chiseled_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_chiseled_copper_from_honeycomb",
+        ingredients: &[
+            &[291] /* chiseled_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (972, 1), // waxed_chiseled_copper
+    },
+    /* recipe/waxed_copper_bars_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_bars_from_honeycomb",
+        ingredients: &[
+            &[320] /* copper_bars */,
+            &[143] /* honeycomb */,
+        ],
+        result: (973, 1), // waxed_copper_bars
+    },
+    /* recipe/waxed_copper_block_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_block_from_honeycomb",
+        ingredients: &[
+            &[321] /* copper_block */,
+            &[143] /* honeycomb */,
+        ],
+        result: (974, 1), // waxed_copper_block
+    },
+    /* recipe/waxed_copper_bulb_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_copper_bulb_from_honeycomb",
+        ingredients: &[
+            &[322] /* copper_bulb */,
+            &[143] /* honeycomb */,
+        ],
+        result: (975, 1), // waxed_copper_bulb
+    },
+    /* recipe/waxed_copper_chain_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_chain_from_honeycomb",
+        ingredients: &[
+            &[323] /* copper_chain */,
+            &[143] /* honeycomb */,
+        ],
+        result: (976, 1), // waxed_copper_chain
+    },
+    /* recipe/waxed_copper_chest_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_chest_from_honeycomb",
+        ingredients: &[
+            &[324] /* copper_chest */,
+            &[143] /* honeycomb */,
+        ],
+        result: (977, 1), // waxed_copper_chest
+    },
+    /* recipe/waxed_copper_door_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_copper_door_from_honeycomb",
+        ingredients: &[
+            &[325] /* copper_door */,
+            &[143] /* honeycomb */,
+        ],
+        result: (978, 1), // waxed_copper_door
+    },
+    /* recipe/waxed_copper_golem_statue_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_golem_statue_from_honeycomb",
+        ingredients: &[
+            &[326] /* copper_golem_statue */,
+            &[143] /* honeycomb */,
+        ],
+        result: (979, 1), // waxed_copper_golem_statue
+    },
+    /* recipe/waxed_copper_grate_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_grate_from_honeycomb",
+        ingredients: &[
+            &[327] /* copper_grate */,
+            &[143] /* honeycomb */,
+        ],
+        result: (980, 1), // waxed_copper_grate
+    },
+    /* recipe/waxed_copper_lantern_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_copper_lantern_from_honeycomb",
+        ingredients: &[
+            &[328] /* copper_lantern */,
+            &[143] /* honeycomb */,
+        ],
+        result: (981, 1), // waxed_copper_lantern
+    },
+    /* recipe/waxed_copper_trapdoor_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_copper_trapdoor_from_honeycomb",
+        ingredients: &[
+            &[331] /* copper_trapdoor */,
+            &[143] /* honeycomb */,
+        ],
+        result: (982, 1), // waxed_copper_trapdoor
+    },
+    /* recipe/waxed_cut_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_cut_copper_from_honeycomb",
+        ingredients: &[
+            &[359] /* cut_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (983, 1), // waxed_cut_copper
+    },
+    /* recipe/waxed_cut_copper_slab_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_cut_copper_slab_from_honeycomb",
+        ingredients: &[
+            &[360] /* cut_copper_slab */,
+            &[143] /* honeycomb */,
+        ],
+        result: (984, 1), // waxed_cut_copper_slab
+    },
+    /* recipe/waxed_cut_copper_stairs_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_cut_copper_stairs_from_honeycomb",
+        ingredients: &[
+            &[361] /* cut_copper_stairs */,
+            &[143] /* honeycomb */,
+        ],
+        result: (985, 1), // waxed_cut_copper_stairs
+    },
+    /* recipe/waxed_exposed_chiseled_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_chiseled_copper_from_honeycomb",
+        ingredients: &[
+            &[447] /* exposed_chiseled_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (986, 1), // waxed_exposed_chiseled_copper
+    },
+    /* recipe/waxed_exposed_copper_bars_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_bars_from_honeycomb",
+        ingredients: &[
+            &[449] /* exposed_copper_bars */,
+            &[143] /* honeycomb */,
+        ],
+        result: (988, 1), // waxed_exposed_copper_bars
+    },
+    /* recipe/waxed_exposed_copper_bulb_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_bulb_from_honeycomb",
+        ingredients: &[
+            &[450] /* exposed_copper_bulb */,
+            &[143] /* honeycomb */,
+        ],
+        result: (989, 1), // waxed_exposed_copper_bulb
+    },
+    /* recipe/waxed_exposed_copper_chain_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_chain_from_honeycomb",
+        ingredients: &[
+            &[451] /* exposed_copper_chain */,
+            &[143] /* honeycomb */,
+        ],
+        result: (990, 1), // waxed_exposed_copper_chain
+    },
+    /* recipe/waxed_exposed_copper_chest_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_chest_from_honeycomb",
+        ingredients: &[
+            &[452] /* exposed_copper_chest */,
+            &[143] /* honeycomb */,
+        ],
+        result: (991, 1), // waxed_exposed_copper_chest
+    },
+    /* recipe/waxed_exposed_copper_door_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_door_from_honeycomb",
+        ingredients: &[
+            &[453] /* exposed_copper_door */,
+            &[143] /* honeycomb */,
+        ],
+        result: (992, 1), // waxed_exposed_copper_door
+    },
+    /* recipe/waxed_exposed_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_from_honeycomb",
+        ingredients: &[
+            &[448] /* exposed_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (987, 1), // waxed_exposed_copper
+    },
+    /* recipe/waxed_exposed_copper_golem_statue_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_golem_statue_from_honeycomb",
+        ingredients: &[
+            &[454] /* exposed_copper_golem_statue */,
+            &[143] /* honeycomb */,
+        ],
+        result: (993, 1), // waxed_exposed_copper_golem_statue
+    },
+    /* recipe/waxed_exposed_copper_grate_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_grate_from_honeycomb",
+        ingredients: &[
+            &[455] /* exposed_copper_grate */,
+            &[143] /* honeycomb */,
+        ],
+        result: (994, 1), // waxed_exposed_copper_grate
+    },
+    /* recipe/waxed_exposed_copper_lantern_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_lantern_from_honeycomb",
+        ingredients: &[
+            &[456] /* exposed_copper_lantern */,
+            &[143] /* honeycomb */,
+        ],
+        result: (995, 1), // waxed_exposed_copper_lantern
+    },
+    /* recipe/waxed_exposed_copper_trapdoor_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_copper_trapdoor_from_honeycomb",
+        ingredients: &[
+            &[457] /* exposed_copper_trapdoor */,
+            &[143] /* honeycomb */,
+        ],
+        result: (996, 1), // waxed_exposed_copper_trapdoor
+    },
+    /* recipe/waxed_exposed_cut_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_cut_copper_from_honeycomb",
+        ingredients: &[
+            &[458] /* exposed_cut_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (997, 1), // waxed_exposed_cut_copper
+    },
+    /* recipe/waxed_exposed_cut_copper_slab_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_cut_copper_slab_from_honeycomb",
+        ingredients: &[
+            &[459] /* exposed_cut_copper_slab */,
+            &[143] /* honeycomb */,
+        ],
+        result: (998, 1), // waxed_exposed_cut_copper_slab
+    },
+    /* recipe/waxed_exposed_cut_copper_stairs_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_cut_copper_stairs_from_honeycomb",
+        ingredients: &[
+            &[460] /* exposed_cut_copper_stairs */,
+            &[143] /* honeycomb */,
+        ],
+        result: (999, 1), // waxed_exposed_cut_copper_stairs
+    },
+    /* recipe/waxed_exposed_lightning_rod_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_exposed_lightning_rod_from_honeycomb",
+        ingredients: &[
+            &[461] /* exposed_lightning_rod */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1000, 1), // waxed_exposed_lightning_rod
+    },
+    /* recipe/waxed_lightning_rod_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_lightning_rod_from_honeycomb",
+        ingredients: &[
+            &[576] /* lightning_rod */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1001, 1), // waxed_lightning_rod
+    },
+    /* recipe/waxed_oxidized_chiseled_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_chiseled_copper_from_honeycomb",
+        ingredients: &[
+            &[674] /* oxidized_chiseled_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1002, 1), // waxed_oxidized_chiseled_copper
+    },
+    /* recipe/waxed_oxidized_copper_bars_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_bars_from_honeycomb",
+        ingredients: &[
+            &[676] /* oxidized_copper_bars */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1004, 1), // waxed_oxidized_copper_bars
+    },
+    /* recipe/waxed_oxidized_copper_bulb_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_bulb_from_honeycomb",
+        ingredients: &[
+            &[677] /* oxidized_copper_bulb */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1005, 1), // waxed_oxidized_copper_bulb
+    },
+    /* recipe/waxed_oxidized_copper_chain_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_chain_from_honeycomb",
+        ingredients: &[
+            &[678] /* oxidized_copper_chain */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1006, 1), // waxed_oxidized_copper_chain
+    },
+    /* recipe/waxed_oxidized_copper_chest_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_chest_from_honeycomb",
+        ingredients: &[
+            &[679] /* oxidized_copper_chest */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1007, 1), // waxed_oxidized_copper_chest
+    },
+    /* recipe/waxed_oxidized_copper_door_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_door_from_honeycomb",
+        ingredients: &[
+            &[680] /* oxidized_copper_door */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1008, 1), // waxed_oxidized_copper_door
+    },
+    /* recipe/waxed_oxidized_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_from_honeycomb",
+        ingredients: &[
+            &[675] /* oxidized_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1003, 1), // waxed_oxidized_copper
+    },
+    /* recipe/waxed_oxidized_copper_golem_statue_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_golem_statue_from_honeycomb",
+        ingredients: &[
+            &[681] /* oxidized_copper_golem_statue */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1009, 1), // waxed_oxidized_copper_golem_statue
+    },
+    /* recipe/waxed_oxidized_copper_grate_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_grate_from_honeycomb",
+        ingredients: &[
+            &[682] /* oxidized_copper_grate */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1010, 1), // waxed_oxidized_copper_grate
+    },
+    /* recipe/waxed_oxidized_copper_lantern_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_lantern_from_honeycomb",
+        ingredients: &[
+            &[683] /* oxidized_copper_lantern */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1011, 1), // waxed_oxidized_copper_lantern
+    },
+    /* recipe/waxed_oxidized_copper_trapdoor_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_copper_trapdoor_from_honeycomb",
+        ingredients: &[
+            &[684] /* oxidized_copper_trapdoor */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1012, 1), // waxed_oxidized_copper_trapdoor
+    },
+    /* recipe/waxed_oxidized_cut_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_cut_copper_from_honeycomb",
+        ingredients: &[
+            &[685] /* oxidized_cut_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1013, 1), // waxed_oxidized_cut_copper
+    },
+    /* recipe/waxed_oxidized_cut_copper_slab_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_cut_copper_slab_from_honeycomb",
+        ingredients: &[
+            &[686] /* oxidized_cut_copper_slab */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1014, 1), // waxed_oxidized_cut_copper_slab
+    },
+    /* recipe/waxed_oxidized_cut_copper_stairs_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_cut_copper_stairs_from_honeycomb",
+        ingredients: &[
+            &[687] /* oxidized_cut_copper_stairs */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1015, 1), // waxed_oxidized_cut_copper_stairs
+    },
+    /* recipe/waxed_oxidized_lightning_rod_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_oxidized_lightning_rod_from_honeycomb",
+        ingredients: &[
+            &[688] /* oxidized_lightning_rod */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1016, 1), // waxed_oxidized_lightning_rod
+    },
+    /* recipe/waxed_weathered_chiseled_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_chiseled_copper_from_honeycomb",
+        ingredients: &[
+            &[1032] /* weathered_chiseled_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1017, 1), // waxed_weathered_chiseled_copper
+    },
+    /* recipe/waxed_weathered_copper_bars_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_bars_from_honeycomb",
+        ingredients: &[
+            &[1034] /* weathered_copper_bars */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1019, 1), // waxed_weathered_copper_bars
+    },
+    /* recipe/waxed_weathered_copper_bulb_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_bulb_from_honeycomb",
+        ingredients: &[
+            &[1035] /* weathered_copper_bulb */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1020, 1), // waxed_weathered_copper_bulb
+    },
+    /* recipe/waxed_weathered_copper_chain_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_chain_from_honeycomb",
+        ingredients: &[
+            &[1036] /* weathered_copper_chain */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1021, 1), // waxed_weathered_copper_chain
+    },
+    /* recipe/waxed_weathered_copper_chest_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_chest_from_honeycomb",
+        ingredients: &[
+            &[1037] /* weathered_copper_chest */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1022, 1), // waxed_weathered_copper_chest
+    },
+    /* recipe/waxed_weathered_copper_door_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_door_from_honeycomb",
+        ingredients: &[
+            &[1038] /* weathered_copper_door */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1023, 1), // waxed_weathered_copper_door
+    },
+    /* recipe/waxed_weathered_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_from_honeycomb",
+        ingredients: &[
+            &[1033] /* weathered_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1018, 1), // waxed_weathered_copper
+    },
+    /* recipe/waxed_weathered_copper_golem_statue_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_golem_statue_from_honeycomb",
+        ingredients: &[
+            &[1039] /* weathered_copper_golem_statue */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1024, 1), // waxed_weathered_copper_golem_statue
+    },
+    /* recipe/waxed_weathered_copper_grate_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_grate_from_honeycomb",
+        ingredients: &[
+            &[1040] /* weathered_copper_grate */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1025, 1), // waxed_weathered_copper_grate
+    },
+    /* recipe/waxed_weathered_copper_lantern_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_lantern_from_honeycomb",
+        ingredients: &[
+            &[1041] /* weathered_copper_lantern */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1026, 1), // waxed_weathered_copper_lantern
+    },
+    /* recipe/waxed_weathered_copper_trapdoor_from_honeycomb.json（category=redstone）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_copper_trapdoor_from_honeycomb",
+        ingredients: &[
+            &[1042] /* weathered_copper_trapdoor */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1027, 1), // waxed_weathered_copper_trapdoor
+    },
+    /* recipe/waxed_weathered_cut_copper_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_cut_copper_from_honeycomb",
+        ingredients: &[
+            &[1043] /* weathered_cut_copper */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1028, 1), // waxed_weathered_cut_copper
+    },
+    /* recipe/waxed_weathered_cut_copper_slab_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_cut_copper_slab_from_honeycomb",
+        ingredients: &[
+            &[1044] /* weathered_cut_copper_slab */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1029, 1), // waxed_weathered_cut_copper_slab
+    },
+    /* recipe/waxed_weathered_cut_copper_stairs_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_cut_copper_stairs_from_honeycomb",
+        ingredients: &[
+            &[1045] /* weathered_cut_copper_stairs */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1030, 1), // waxed_weathered_cut_copper_stairs
+    },
+    /* recipe/waxed_weathered_lightning_rod_from_honeycomb.json（category=building）*/
+    ShapelessRecipe {
+        id: "waxed_weathered_lightning_rod_from_honeycomb",
+        ingredients: &[
+            &[1046] /* weathered_lightning_rod */,
+            &[143] /* honeycomb */,
+        ],
+        result: (1031, 1), // waxed_weathered_lightning_rod
+    },
+    /* recipe/wheat.json（category=misc）*/
+    ShapelessRecipe {
+        id: "wheat",
+        ingredients: &[
+            &[512] /* hay_block */,
+        ],
+        result: (1367, 9), // wheat
+    },
+    /* recipe/white_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "white_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1369] /* white_dye */,
+        ],
+        result: (1052, 1), // white_candle
+    },
+    /* recipe/white_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "white_concrete_powder",
+        ingredients: &[
+            &[1369] /* white_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (1055, 8), // white_concrete_powder
+    },
+    /* recipe/white_dye.json（category=misc）*/
+    ShapelessRecipe {
+        id: "white_dye",
+        ingredients: &[
+            &[1106] /* bone_meal */,
+        ],
+        result: (1369, 1), // white_dye
+    },
+    /* recipe/white_dye_from_lily_of_the_valley.json（category=misc）*/
+    ShapelessRecipe {
+        id: "white_dye_from_lily_of_the_valley",
+        ingredients: &[
+            &[578] /* lily_of_the_valley */,
+        ],
+        result: (1369, 1), // white_dye
+    },
+    /* recipe/wind_charge.json（category=misc）*/
+    ShapelessRecipe {
+        id: "wind_charge",
+        ingredients: &[
+            &[1110] /* breeze_rod */,
+        ],
+        result: (1372, 4), // wind_charge
+    },
+    /* recipe/writable_book.json（category=misc）*/
+    ShapelessRecipe {
+        id: "writable_book",
+        ingredients: &[
+            &[5] /* book */,
+            &[1222] /* ink_sac */,
+            &[1178] /* feather */,
+        ],
+        result: (1376, 1), // writable_book
+    },
+    /* recipe/yellow_candle.json（category=misc）*/
+    ShapelessRecipe {
+        id: "yellow_candle",
+        ingredients: &[
+            &[267] /* candle */,
+            &[1379] /* yellow_dye */,
+        ],
+        result: (1068, 1), // yellow_candle
+    },
+    /* recipe/yellow_concrete_powder.json（category=building）*/
+    ShapelessRecipe {
+        id: "yellow_concrete_powder",
+        ingredients: &[
+            &[1379] /* yellow_dye */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[34] /* sand */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+            &[56] /* gravel */,
+        ],
+        result: (1071, 8), // yellow_concrete_powder
+    },
+    /* recipe/yellow_dye_from_dandelion.json（category=misc）*/
+    ShapelessRecipe {
+        id: "yellow_dye_from_dandelion",
+        ingredients: &[
+            &[379] /* dandelion */,
+        ],
+        result: (1379, 1), // yellow_dye
+    },
+    /* recipe/yellow_dye_from_golden_dandelion.json（category=misc）*/
+    ShapelessRecipe {
+        id: "yellow_dye_from_golden_dandelion",
+        ingredients: &[
+            &[482] /* golden_dandelion */,
+        ],
+        result: (1379, 1), // yellow_dye
+    },
+    /* recipe/yellow_dye_from_sunflower.json（category=misc）*/
+    ShapelessRecipe {
+        id: "yellow_dye_from_sunflower",
+        ingredients: &[
+            &[921] /* sunflower */,
+        ],
+        result: (1379, 2), // yellow_dye
+    },
+    /* recipe/yellow_dye_from_wildflowers.json（category=misc）*/
+    ShapelessRecipe {
+        id: "yellow_dye_from_wildflowers",
+        ingredients: &[
+            &[1063] /* wildflowers */,
+        ],
+        result: (1379, 1), // yellow_dye
+    },
 ];
 
-/// 26.1 smelting 可收子集（6 条；cookingtime 全表 200）。
+/// 26.1 smelting 可收子集（73 条；cookingtime 全表 200）。
 /// blasting/smoking/campfire_cooking 未接线（债，见 ci/recipes-gap.md）。
-pub static GEN_COOKING: [CookingRecipe; 6] = [
+pub static GEN_COOKING: [CookingRecipe; 73] = [
+    /* recipe/baked_potato.json（category=food）*/
+    CookingRecipe {
+        id: "baked_potato",
+        input: &[762] /* potato */,
+        result: (1087, 1), // baked_potato
+        cook_time: 200,
+    },
+    /* recipe/black_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "black_glazed_terracotta",
+        input: &[211] /* black_terracotta */,
+        result: (207, 1), // black_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/blue_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "blue_glazed_terracotta",
+        input: &[230] /* blue_terracotta */,
+        result: (224, 1), // blue_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/brick.json（category=misc）*/
+    CookingRecipe {
+        id: "brick",
+        input: &[69] /* clay_ball */,
+        result: (1112, 1), // brick
+        cook_time: 200,
+    },
+    /* recipe/brown_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "brown_glazed_terracotta",
+        input: &[254] /* brown_terracotta */,
+        result: (248, 1), // brown_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/charcoal.json（category=misc）*/
+    CookingRecipe {
+        id: "charcoal",
+        input: &[31, 76, 77, 78, 79, 80, 160, 200, 279, 288, 384, 539, 612, 622, 656, 700, 709, 884, 895, 896, 898, 899, 900, 901, 904, 905, 906, 907, 908, 909, 910, 911, 912, 913, 914, 915] /* #logs_that_burn: log, birch_log, spruce_log, jungle_log, acacia_log, dark_oak_log, acacia_wood, birch_wood, cherry_log, cherry_wood, dark_oak_wood, jungle_wood, mangrove_log, mangrove_wood, oak_wood, pale_oak_log, pale_oak_wood, spruce_wood, stripped_acacia_log, stripped_acacia_wood, stripped_birch_log, stripped_birch_wood, stripped_cherry_log, stripped_cherry_wood, stripped_dark_oak_log, stripped_dark_oak_wood, stripped_jungle_log, stripped_jungle_wood, stripped_mangrove_log, stripped_mangrove_wood, stripped_oak_log, stripped_oak_wood, stripped_pale_oak_log, stripped_pale_oak_wood, stripped_spruce_log, stripped_spruce_wood */,
+        result: (1126, 1), // charcoal
+        cook_time: 200,
+    },
+    /* recipe/coal_from_smelting_coal_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "coal_from_smelting_coal_ore",
+        input: &[307] /* coal_ore */,
+        result: (1, 1), // coal
+        cook_time: 200,
+    },
+    /* recipe/coal_from_smelting_deepslate_coal_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "coal_from_smelting_deepslate_coal_ore",
+        input: &[411] /* deepslate_coal_ore */,
+        result: (1, 1), // coal
+        cook_time: 200,
+    },
+    /* recipe/cooked_beef.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_beef",
+        input: &[1090] /* beef */,
+        result: (1137, 1), // cooked_beef
+        cook_time: 200,
+    },
+    /* recipe/cooked_chicken.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_chicken",
+        input: &[1130] /* chicken */,
+        result: (1138, 1), // cooked_chicken
+        cook_time: 200,
+    },
+    /* recipe/cooked_cod.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_cod",
+        input: &[1134] /* cod */,
+        result: (1139, 1), // cooked_cod
+        cook_time: 200,
+    },
+    /* recipe/cooked_mutton.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_mutton",
+        input: &[1278] /* mutton */,
+        result: (1140, 1), // cooked_mutton
+        cook_time: 200,
+    },
+    /* recipe/cooked_porkchop.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_porkchop",
+        input: &[1309] /* porkchop */,
+        result: (1141, 1), // cooked_porkchop
+        cook_time: 200,
+    },
+    /* recipe/cooked_rabbit.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_rabbit",
+        input: &[1318] /* rabbit */,
+        result: (1142, 1), // cooked_rabbit
+        cook_time: 200,
+    },
+    /* recipe/cooked_salmon.json（category=food）*/
+    CookingRecipe {
+        id: "cooked_salmon",
+        input: &[1330] /* salmon */,
+        result: (1143, 1), // cooked_salmon
+        cook_time: 200,
+    },
+    /* recipe/copper_ingot_from_smelting_copper_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "copper_ingot_from_smelting_copper_ore",
+        input: &[329] /* copper_ore */,
+        result: (1149, 1), // copper_ingot
+        cook_time: 200,
+    },
+    /* recipe/copper_ingot_from_smelting_deepslate_copper_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "copper_ingot_from_smelting_deepslate_copper_ore",
+        input: &[412] /* deepslate_copper_ore */,
+        result: (1149, 1), // copper_ingot
+        cook_time: 200,
+    },
+    /* recipe/copper_ingot_from_smelting_raw_copper.json（category=misc）*/
+    CookingRecipe {
+        id: "copper_ingot_from_smelting_raw_copper",
+        input: &[45] /* raw_copper */,
+        result: (1149, 1), // copper_ingot
+        cook_time: 200,
+    },
+    /* recipe/copper_nugget_from_smelting.json（category=misc）*/
+    CookingRecipe {
+        id: "copper_nugget_from_smelting",
+        input: &[153, 154, 152, 1148, 155, 1152, 1147, 1146, 1150, 1145] /* copper_pickaxe+copper_shovel+copper_axe+copper_hoe+…(共12项): copper_pickaxe, copper_shovel, copper_axe, copper_hoe, copper_sword, copper_spear, copper_helmet, copper_chestplate, copper_leggings, copper_boots */,
+        result: (1151, 1), // copper_nugget
+        cook_time: 200,
+    },
+    /* recipe/cracked_deepslate_bricks.json（category=blocks）*/
+    CookingRecipe {
+        id: "cracked_deepslate_bricks",
+        input: &[410] /* deepslate_bricks */,
+        result: (333, 1), // cracked_deepslate_bricks
+        cook_time: 200,
+    },
+    /* recipe/cracked_deepslate_tiles.json（category=blocks）*/
+    CookingRecipe {
+        id: "cracked_deepslate_tiles",
+        input: &[422] /* deepslate_tiles */,
+        result: (334, 1), // cracked_deepslate_tiles
+        cook_time: 200,
+    },
+    /* recipe/cracked_nether_bricks.json（category=blocks）*/
+    CookingRecipe {
+        id: "cracked_nether_bricks",
+        input: &[645] /* nether_bricks */,
+        result: (335, 1), // cracked_nether_bricks
+        cook_time: 200,
+    },
+    /* recipe/cracked_polished_blackstone_bricks.json（category=blocks）*/
+    CookingRecipe {
+        id: "cracked_polished_blackstone_bricks",
+        input: &[741] /* polished_blackstone_bricks */,
+        result: (336, 1), // cracked_polished_blackstone_bricks
+        cook_time: 200,
+    },
+    /* recipe/cracked_stone_bricks.json（category=blocks）*/
+    CookingRecipe {
+        id: "cracked_stone_bricks",
+        input: &[889] /* stone_bricks */,
+        result: (337, 1), // cracked_stone_bricks
+        cook_time: 200,
+    },
+    /* recipe/cyan_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "cyan_glazed_terracotta",
+        input: &[376] /* cyan_terracotta */,
+        result: (372, 1), // cyan_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/deepslate.json（category=blocks）*/
+    CookingRecipe {
+        id: "deepslate",
+        input: &[57] /* cobbled_deepslate */,
+        result: (406, 1), // deepslate
+        cook_time: 200,
+    },
+    /* recipe/diamond_from_smelting_deepslate_diamond_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "diamond_from_smelting_deepslate_diamond_ore",
+        input: &[413] /* deepslate_diamond_ore */,
+        result: (3, 1), // diamond
+        cook_time: 200,
+    },
     /* recipe/diamond_from_smelting_diamond_ore.json（category=misc）*/
     CookingRecipe {
         id: "diamond_from_smelting_diamond_ore",
         input: &[30] /* diamond_ore */,
         result: (3, 1), // diamond
+        cook_time: 200,
+    },
+    /* recipe/dried_kelp_from_smelting.json（category=food）*/
+    CookingRecipe {
+        id: "dried_kelp_from_smelting",
+        input: &[540] /* kelp */,
+        result: (1168, 1), // dried_kelp
+        cook_time: 200,
+    },
+    /* recipe/emerald_from_smelting_deepslate_emerald_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "emerald_from_smelting_deepslate_emerald_ore",
+        input: &[414] /* deepslate_emerald_ore */,
+        result: (47, 1), // emerald
+        cook_time: 200,
+    },
+    /* recipe/emerald_from_smelting_emerald_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "emerald_from_smelting_emerald_ore",
+        input: &[437] /* emerald_ore */,
+        result: (47, 1), // emerald
+        cook_time: 200,
+    },
+    /* recipe/glass.json（category=blocks）*/
+    CookingRecipe {
+        id: "glass",
+        input: &[34, 68] /* #smelts_to_glass: sand, red_sand */,
+        result: (475, 1), // glass
+        cook_time: 200,
+    },
+    /* recipe/gold_ingot_from_smelting_deepslate_gold_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "gold_ingot_from_smelting_deepslate_gold_ore",
+        input: &[415] /* deepslate_gold_ore */,
+        result: (59, 1), // gold_ingot
+        cook_time: 200,
+    },
+    /* recipe/gold_ingot_from_smelting_gold_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "gold_ingot_from_smelting_gold_ore",
+        input: &[481] /* gold_ore */,
+        result: (59, 1), // gold_ingot
+        cook_time: 200,
+    },
+    /* recipe/gold_ingot_from_smelting_nether_gold_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "gold_ingot_from_smelting_nether_gold_ore",
+        input: &[646] /* nether_gold_ore */,
+        result: (59, 1), // gold_ingot
         cook_time: 200,
     },
     /* recipe/gold_ingot_from_smelting_raw_gold.json（category=misc）*/
@@ -760,8 +9081,36 @@ pub static GEN_COOKING: [CookingRecipe; 6] = [
     /* recipe/gold_nugget_from_smelting.json（category=misc）*/
     CookingRecipe {
         id: "gold_nugget_from_smelting",
-        input: &[17, 11] /* golden_pickaxe+golden_shovel+golden_axe+golden_hoe+…(共12项): golden_pickaxe, golden_sword */,
+        input: &[17, 1206, 1197, 1202, 11, 1207, 1201, 1200, 1204, 1198, 1203, 1205] /* golden_pickaxe+golden_shovel+golden_axe+golden_hoe+…(共12项): golden_pickaxe, golden_shovel, golden_axe, golden_hoe, golden_sword, golden_spear, golden_helmet, golden_chestplate, golden_leggings, golden_boots, golden_horse_armor, golden_nautilus_armor */,
         result: (88, 1), // gold_nugget
+        cook_time: 200,
+    },
+    /* recipe/gray_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "gray_glazed_terracotta",
+        input: &[496] /* gray_terracotta */,
+        result: (492, 1), // gray_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/green_dye.json（category=misc）*/
+    CookingRecipe {
+        id: "green_dye",
+        input: &[261] /* cactus */,
+        result: (1212, 1), // green_dye
+        cook_time: 200,
+    },
+    /* recipe/green_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "green_glazed_terracotta",
+        input: &[508] /* green_terracotta */,
+        result: (504, 1), // green_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/iron_ingot_from_smelting_deepslate_iron_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "iron_ingot_from_smelting_deepslate_iron_ore",
+        input: &[416] /* deepslate_iron_ore */,
+        result: (2, 1), // iron_ingot
         cook_time: 200,
     },
     /* recipe/iron_ingot_from_smelting_iron_ore.json（category=misc）*/
@@ -778,11 +9127,214 @@ pub static GEN_COOKING: [CookingRecipe; 6] = [
         result: (2, 1), // iron_ingot
         cook_time: 200,
     },
+    /* recipe/iron_nugget_from_smelting.json（category=misc）*/
+    CookingRecipe {
+        id: "iron_nugget_from_smelting",
+        input: &[15, 23, 21, 1226, 9, 1229, 1225, 1224, 1227, 1223, 1124, 1123, 1125, 1122] /* iron_pickaxe+iron_shovel+iron_axe+iron_hoe+…(共16项): iron_pickaxe, iron_shovel, iron_axe, iron_hoe, iron_sword, iron_spear, iron_helmet, iron_chestplate, iron_leggings, iron_boots, chainmail_helmet, chainmail_chestplate, chainmail_leggings, chainmail_boots */,
+        result: (1228, 1), // iron_nugget
+        cook_time: 200,
+    },
+    /* recipe/lapis_lazuli_from_smelting_deepslate_lapis_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "lapis_lazuli_from_smelting_deepslate_lapis_ore",
+        input: &[417] /* deepslate_lapis_ore */,
+        result: (1234, 1), // lapis_lazuli
+        cook_time: 200,
+    },
+    /* recipe/lapis_lazuli_from_smelting_lapis_ore.json（category=misc）*/
+    CookingRecipe {
+        id: "lapis_lazuli_from_smelting_lapis_ore",
+        input: &[544] /* lapis_ore */,
+        result: (1234, 1), // lapis_lazuli
+        cook_time: 200,
+    },
+    /* recipe/leaf_litter.json（category=blocks）*/
+    CookingRecipe {
+        id: "leaf_litter",
+        input: &[35, 157, 170, 197, 278, 381, 471, 536, 611, 699, 881] /* #leaves: leaves, acacia_leaves, azalea_leaves, birch_leaves, cherry_leaves, dark_oak_leaves, flowering_azalea_leaves, jungle_leaves, mangrove_leaves, pale_oak_leaves, spruce_leaves */,
+        result: (547, 1), // leaf_litter
+        cook_time: 200,
+    },
+    /* recipe/light_blue_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "light_blue_glazed_terracotta",
+        input: &[561] /* light_blue_terracotta */,
+        result: (557, 1), // light_blue_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/light_gray_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "light_gray_glazed_terracotta",
+        input: &[573] /* light_gray_terracotta */,
+        result: (569, 1), // light_gray_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/lime_dye_from_smelting.json（category=misc）*/
+    CookingRecipe {
+        id: "lime_dye_from_smelting",
+        input: &[847] /* sea_pickle */,
+        result: (1249, 1), // lime_dye
+        cook_time: 200,
+    },
+    /* recipe/lime_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "lime_glazed_terracotta",
+        input: &[590] /* lime_terracotta */,
+        result: (586, 1), // lime_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/magenta_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "magenta_glazed_terracotta",
+        input: &[604] /* magenta_terracotta */,
+        result: (600, 1), // magenta_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/nether_brick.json（category=misc）*/
+    CookingRecipe {
+        id: "nether_brick",
+        input: &[81] /* netherrack */,
+        result: (1281, 1), // nether_brick
+        cook_time: 200,
+    },
+    /* recipe/netherite_scrap.json（category=misc）*/
+    CookingRecipe {
+        id: "netherite_scrap",
+        input: &[87] /* ancient_debris */,
+        result: (1289, 1), // netherite_scrap
+        cook_time: 200,
+    },
+    /* recipe/orange_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "orange_glazed_terracotta",
+        input: &[670] /* orange_terracotta */,
+        result: (666, 1), // orange_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/pink_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "pink_glazed_terracotta",
+        input: &[725] /* pink_terracotta */,
+        result: (720, 1), // pink_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/popped_chorus_fruit.json（category=misc）*/
+    CookingRecipe {
+        id: "popped_chorus_fruit",
+        input: &[1131] /* chorus_fruit */,
+        result: (1308, 1), // popped_chorus_fruit
+        cook_time: 200,
+    },
+    /* recipe/purple_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "purple_glazed_terracotta",
+        input: &[782] /* purple_terracotta */,
+        result: (778, 1), // purple_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/quartz.json（category=misc）*/
+    CookingRecipe {
+        id: "quartz",
+        input: &[647] /* nether_quartz_ore */,
+        result: (89, 1), // quartz
+        cook_time: 200,
+    },
+    /* recipe/red_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "red_glazed_terracotta",
+        input: &[817] /* red_terracotta */,
+        result: (803, 1), // red_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/redstone_from_smelting_deepslate_redstone_ore.json（category=blocks）*/
+    CookingRecipe {
+        id: "redstone_from_smelting_deepslate_redstone_ore",
+        input: &[418] /* deepslate_redstone_ore */,
+        result: (46, 1), // redstone
+        cook_time: 200,
+    },
+    /* recipe/redstone_from_smelting_redstone_ore.json（category=blocks）*/
+    CookingRecipe {
+        id: "redstone_from_smelting_redstone_ore",
+        input: &[822] /* redstone_ore */,
+        result: (46, 1), // redstone
+        cook_time: 200,
+    },
+    /* recipe/resin_brick.json（category=misc）*/
+    CookingRecipe {
+        id: "resin_brick",
+        input: &[832] /* resin_clump */,
+        result: (1327, 1), // resin_brick
+        cook_time: 200,
+    },
+    /* recipe/smooth_basalt.json（category=blocks）*/
+    CookingRecipe {
+        id: "smooth_basalt",
+        input: &[86] /* basalt */,
+        result: (859, 1), // smooth_basalt
+        cook_time: 200,
+    },
+    /* recipe/smooth_quartz.json（category=blocks）*/
+    CookingRecipe {
+        id: "smooth_quartz",
+        input: &[788] /* quartz_block */,
+        result: (860, 1), // smooth_quartz
+        cook_time: 200,
+    },
+    /* recipe/smooth_red_sandstone.json（category=blocks）*/
+    CookingRecipe {
+        id: "smooth_red_sandstone",
+        input: &[810] /* red_sandstone */,
+        result: (863, 1), // smooth_red_sandstone
+        cook_time: 200,
+    },
+    /* recipe/smooth_sandstone.json（category=blocks）*/
+    CookingRecipe {
+        id: "smooth_sandstone",
+        input: &[836] /* sandstone */,
+        result: (866, 1), // smooth_sandstone
+        cook_time: 200,
+    },
+    /* recipe/smooth_stone.json（category=blocks）*/
+    CookingRecipe {
+        id: "smooth_stone",
+        input: &[28] /* stone */,
+        result: (869, 1), // smooth_stone
+        cook_time: 200,
+    },
+    /* recipe/sponge.json（category=blocks）*/
+    CookingRecipe {
+        id: "sponge",
+        input: &[1048] /* wet_sponge */,
+        result: (878, 1), // sponge
+        cook_time: 200,
+    },
     /* recipe/stone.json（category=blocks）*/
     CookingRecipe {
         id: "stone",
         input: &[27] /* cobblestone */,
         result: (28, 1), // stone
+        cook_time: 200,
+    },
+    /* recipe/terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "terracotta",
+        input: &[304] /* clay */,
+        result: (928, 1), // terracotta
+        cook_time: 200,
+    },
+    /* recipe/white_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "white_glazed_terracotta",
+        input: &[1060] /* white_terracotta */,
+        result: (1056, 1), // white_glazed_terracotta
+        cook_time: 200,
+    },
+    /* recipe/yellow_glazed_terracotta.json（category=blocks）*/
+    CookingRecipe {
+        id: "yellow_glazed_terracotta",
+        input: &[1076] /* yellow_terracotta */,
+        result: (1072, 1), // yellow_glazed_terracotta
         cook_time: 200,
     },
 ];

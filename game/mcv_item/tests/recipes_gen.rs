@@ -74,10 +74,12 @@ fn from_pattern(rows: &[&str], keys: &[(char, u16)]) -> Vec<u16> {
 
 #[test]
 fn gen_tables_shape_and_determinism_lock() {
-    // 表规模（ci/gen-recipes.py 输出摘要；改表须同步此锁）。
-    assert_eq!(GEN_SHAPED.len(), 69, "GEN_SHAPED 规模");
-    assert_eq!(GEN_SHAPELESS.len(), 16, "GEN_SHAPELESS 规模");
-    assert_eq!(GEN_COOKING.len(), 6, "GEN_COOKING 规模");
+    // 表规模（ci/gen-recipes.py 输出摘要；改表须同步此锁）。#144 物品地基波
+    // 注册全量后：shaped 708/708、shapeless 305/322（余 17 = components 债）、
+    // smelting 73/73 —— 缺物品挡住配方清零。
+    assert_eq!(GEN_SHAPED.len(), 708, "GEN_SHAPED 规模");
+    assert_eq!(GEN_SHAPELESS.len(), 305, "GEN_SHAPELESS 规模");
+    assert_eq!(GEN_COOKING.len(), 73, "GEN_COOKING 规模");
     // 配方 id 严格升序（文件名字典序 = 生成确定性；26.1 RecipeMap 插入序）。
     let sorted = |ids: Vec<&str>| ids.windows(2).all(|w| w[0] < w[1]);
     assert!(
@@ -297,15 +299,28 @@ fn smelting_ore_entries_from_handwritten_table() {
 
 #[test]
 fn smelting_negatives_known_gaps() {
-    // 反例 stone→cobble：26.1 无 stone 入 smelting 出 cobblestone 的配方
-    // （stone 的 smelting 产物 smooth_stone 未注册——缺口报告）。
-    assert_eq!(crafting::smelt_result(STONE_ITEM), None);
-    // log → charcoal：charcoal 未注册（缺口报告），torch 的 charcoal 备选同因窄化。
-    assert_eq!(crafting::smelt_result(LOG), None);
-    // raw_copper → copper_ingot：产物未注册（缺口报告 top1，挡 6 条）。
-    assert_eq!(crafting::smelt_result(mcv_item::RAW_COPPER), None);
-    // 未注册输入（sand → glass，glass 未注册）。
-    assert_eq!(crafting::smelt_result(mcv_item::SAND_ITEM), None);
+    // stone → smooth_stone（smooth_stone.json；#144 前产物未注册时为负例）。
+    assert_eq!(
+        crafting::smelt_result(STONE_ITEM),
+        Some((id("smooth_stone"), 1))
+    );
+    // 反例：钻石成品无熔炼配方（26.1 全表无 input=diamond 的 smelting）。
+    assert_eq!(crafting::smelt_result(DIAMOND_ITEM), None);
+    // #144 物品地基波转正后，旧负例全部变正（产物已注册）：
+    // log → charcoal（charcoal.json）；raw_copper → copper_ingot（缺口报告
+    // 旧 top1）；sand → glass（glass.json）。
+    assert_eq!(
+        crafting::smelt_result(mcv_item::LOG),
+        Some((id("charcoal"), 1))
+    );
+    assert_eq!(
+        crafting::smelt_result(mcv_item::RAW_COPPER),
+        Some((id("copper_ingot"), 1))
+    );
+    assert_eq!(
+        crafting::smelt_result(mcv_item::SAND_ITEM),
+        Some((id("glass"), 1))
+    );
 }
 
 // ---- 手写表 ∪ 生成表一致性（#137 不回归的强锁）-------------------------------
@@ -473,7 +488,9 @@ fn snapshot() -> &'static Snapshot {
 #[test]
 fn gap_report_exists_and_names_known_gaps() {
     let gap = &snapshot().gap;
-    // 已知缺口例（任务书点名 + 生成摘要 top）：
+    // #144 物品地基波把 ITEMS 扩到 1381 后，缺物品挡路配方清零：
+    // 任务书点名的抽验例（旧缺口 top：torch/furnace/bread/charcoal/wheat/
+    // copper_ingot）全部转正，挡路物品表必须为空表头。
     for item in [
         "torch",
         "furnace",
@@ -482,8 +499,20 @@ fn gap_report_exists_and_names_known_gaps() {
         "wheat",
         "copper_ingot",
     ] {
-        assert!(gap.contains(item), "缺口报告缺已知挡路物品 {item}");
+        assert!(
+            !gap.contains(&format!("| {item} | ")),
+            "{item} 已注册，不得再出现在挡路物品表"
+        );
     }
+    assert!(
+        gap.contains("| crafting_shaped | 708 | 708 | 0 |"),
+        "shaped 缺物品跳过必须为 0"
+    );
+    assert!(
+        gap.contains("| crafting_shapeless | 322 | 305 | 0 |"),
+        "shapeless 缺物品跳过必须为 0（余 17 = components 债）"
+    );
+    assert!(gap.contains("| smelting | 73 | 73 | 0 |"), "smelting 全收");
     // 债机制登记（blasting/campfire 本波不接线；stonecutting 275 条）。
     assert!(gap.contains("blasting"), "缺口报告缺 blasting 债");
     assert!(gap.contains("campfire_cooking"), "缺口报告缺 campfire 债");
