@@ -444,6 +444,11 @@ fn floor_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
         }
     }
     h.advance_to(Stage::TerrainReady);
+    // 刀 4a 门谓词重接（sim_safe ready = status ≥ Full，原版 FULL 级
+    // chunk，ChunkLevel.java:35-43）：物理门用例只走 fixed_step（不走
+    // stream，advance_status_by_level 无从推进），fixture 按 movement.rs
+    // ::enter_playing 的刀 3b 双记账位先例置位真实就绪终态。
+    h.advance_status(ChunkStatus::Full);
     h
 }
 

@@ -1244,26 +1244,57 @@ impl GameRuntime {
     }
 
     /// 模拟安全半径：以 `pc` 为中心最大 r ≥ 0，使 Chebyshev ≤r 的环全部
-    /// ≥TerrainReady（体素已在）；玩家本块未就位返回 **-1**（物理门：
-    /// 整步冻结，26.1 玩家实体在区块就绪前不参与物理）。返回值同时
-    /// 导出钳制矩形（[`Self::clamp_to_sim_area`]），玩家 AABB 查询的列
-    /// 恒真体素。
+    /// **status ≥ Full**（原版实体物理门 = FULL 级 chunk：ChunkLevel.java
+    /// :35-43 fullStatus，level ≤ 33 → FULL；Full 证据链 = worldgen commit
+    /// + 3×3 邻域光照齐，见 [`Self::advance_status_by_level`]）；玩家本块
+    /// 未就位返回 **-1**（物理门：整步冻结，26.1 玩家实体在区块就绪前
+    /// 不参与物理）。返回值同时导出钳制矩形（[`Self::clamp_to_sim_area`]），
+    /// 玩家 AABB 查询的列恒真体素。
+    ///
+    /// r = min(票环派生值, stage 证据环)（刀 4a）：
+    /// - 票环派生（O(1)）：玩家块为 sim 单锚点 + view_dist 方环加载票，
+    ///   级别场闭式 level(d) = (31 − sim_dist) + d（两票种在级别场恰好
+    ///   相切——环内 sim 锚点传播 ≤ 31 自持、环外与加载票 +1/环重合，
+    ///   见 [`Self::refresh_player_tickets`] 与 [`crate::ticket`] 模块
+    ///   注释）。Full 授权域 level ≤ 33（ChunkLevel.java:17-19
+    ///   generationStatus）⟺ d ≤ sim_dist + (FULL − ENTITY_TICKING)。
+    ///   授权域外的块 status 永远推不到 Full（推进器不授权），环扫描
+    ///   必然自止于此——上界由票级别场解析给出，一查即得（sim_dist
+    ///   ≤ 31 时精确；更大视距该值只是放宽的上界，证据门照常兜底）。
+    /// - stage 证据环：status=Full 是否真已达成（体素+光照证据）只有
+    ///   流式管线知道，级别场无法作证——逐环早退扫描保留（派单书
+    ///   允许式）。相对刀 3 旧扫描（stage≥TerrainReady + unload_dist
+    ///   上界）的差异面：已 TerrainReady 但 status 未推进/未授权的
+    ///   过渡态，新值更小——收紧方向安全（钳制更早生效），对拍见
+    ///   `sim_safe_ticket_predicate_is_sound_subset_of_legacy_scan`。
     pub fn sim_safe_radius(&self, pc: ChunkPos) -> i32 {
         let ready = |c: ChunkPos| {
             self.chunks
                 .get(&c)
-                .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8))
         };
         if !ready(pc) {
             return -1;
         }
-        let max_r = self.unload_dist();
+        let max_r = self.sim_dist() + (ticket::FULL_LEVEL - ticket::ENTITY_TICKING_LEVEL);
         let mut r = 0;
         while r < max_r {
             let n = r + 1;
-            let all =
-                (-n..=n).all(|dx| (-n..=n).all(|dz| ready(ChunkPos::new(pc.x + dx, pc.z + dz))));
-            if !all {
+            // 只扫新入环的周界（内环上一轮已验证全就位）；周界累计
+            // O(max_r²)，旧形状每轮重扫整个正方形是 O(max_r³)。
+            let mut ring_ok = true;
+            'ring: for dx in -n..=n {
+                for dz in -n..=n {
+                    if dx.abs() != n && dz.abs() != n {
+                        continue;
+                    }
+                    if !ready(ChunkPos::new(pc.x + dx, pc.z + dz)) {
+                        ring_ok = false;
+                        break 'ring;
+                    }
+                }
+            }
+            if !ring_ok {
                 break;
             }
             r = n;
@@ -2566,15 +2597,17 @@ impl GameRuntime {
         // .java:110-117，ChunkMap.move :1071-1096 随区块迁移），物理恒跑在
         // 已加载真体素上；界外列查询得 VOID_AIR（Level.java:361-363）而非
         // 石头。本仓生成异步，用「门 + 钳制」实现同一不变量：玩家所在
-        // 区块未 TerrainReady（超时放行前沿/重生后 IO 未回）则整步冻结
-        // （原版：玩家实体在区块就绪前不参与物理），就绪后步末再钳回
-        // 已就位矩形（clamp_to_sim_area，见流式分层节注释）。
+        // 区块 status 未达 Full（刀 4a 谓词重接：FULL 级证据链 =
+        // worldgen commit + 邻域光照齐，ChunkLevel.java:35-43；超时放行
+        // 前沿/重生后 IO 未回）则整步冻结（原版：玩家实体在区块就绪前
+        // 不参与物理），就绪后步末再钳回已就位矩形（clamp_to_sim_area，
+        // 见流式分层节注释）。
         let pc = ChunkPos::new(
             (self.player.pos.x / 16.0).floor() as i32,
             (self.player.pos.z / 16.0).floor() as i32,
         );
         // 投放等待期不必算安全半径（本块必然未就位，且省掉生成高峰期的
-        // 每步 O(rd²) 环扫描）。
+        // 每步环扫描）。
         let r_safe = if awaiting_spawn {
             -1
         } else {
@@ -6016,6 +6049,161 @@ mod tests {
                 rt.chunks[&pos].advance_status(ChunkStatus::Full);
             }
         }
+    }
+
+    // ---- 刀 4a：sim_safe_radius 谓词重接（status≥Full + 票环上界）----
+
+    /// 旧实现复刻（刀 3 及更早：谓词 = stage≥TerrainReady、上界 =
+    /// unload_dist、全方环重扫形状）——仅供对拍测试引用。
+    fn legacy_sim_safe_scan(rt: &GameRuntime, pc: ChunkPos) -> i32 {
+        let ready = |c: ChunkPos| {
+            rt.chunks
+                .get(&c)
+                .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+        };
+        if !ready(pc) {
+            return -1;
+        }
+        let max_r = rt.unload_dist();
+        let mut r = 0;
+        while r < max_r {
+            let n = r + 1;
+            let all =
+                (-n..=n).all(|dx| (-n..=n).all(|dz| ready(ChunkPos::new(pc.x + dx, pc.z + dz))));
+            if !all {
+                break;
+            }
+            r = n;
+        }
+        r
+    }
+
+    /// 确定性 LCG（对拍可复现，不引 rand 依赖）。
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            self.0
+        }
+        fn below(&mut self, n: u64) -> u64 {
+            self.next() % n
+        }
+    }
+
+    /// 新旧 sim_safe 对拍（随机区块位形）。合法性（soundness）：新 ≤ 旧
+    /// ——新 ready 集（status≥Full）是旧证据集（stage≥TerrainReady）的
+    /// 子集（生产不变量：Full 推进要求 stage ≥ LightLocalReady），且票环
+    /// 上界 sim_dist+2 比旧 unload_dist 紧一环——新实现永不比旧实现
+    /// 「多声称」就位环（无新增真空触达）。new < old 时差异必须落入两个
+    /// 显式差异面之一（无未解释缝隙）：谓词收紧面 = 环 ≤ old 内存在
+    /// 「stage 已就绪但 status < Full」的块（worldgen 完成、证据链未齐/
+    /// 未授权的过渡态）；票环上界面 = old > sim_dist + (FULL −
+    /// ENTITY_TICKING)，即旧扫描可触及 level=34 晕圈环（仅授权 Light），
+    /// 票 Full 授权域不含它。
+    #[test]
+    fn sim_safe_ticket_predicate_is_sound_subset_of_legacy_scan() {
+        for seed in [1u64, 0xDEAD_BEEF, 2026_1011, 777] {
+            for &rd in &[2i32, 4, 8] {
+                let mut rt = headless_rt("safecmp");
+                rt.render_dist = rd;
+                let pc = ChunkPos::new(13, -5);
+                let mut rng = Lcg(seed);
+                let reach = rd + 5; // 覆盖旧上界（rd+4）外一环
+                for dx in -reach..=reach {
+                    for dz in -reach..=reach {
+                        if rng.below(100) < 30 {
+                            continue; // 30% 缺席
+                        }
+                        let pos = ChunkPos::new(pc.x + dx, pc.z + dz);
+                        let h = Arc::new(ChunkHandle::new(pos));
+                        match rng.below(100) {
+                            0..=59 => {}
+                            60..=89 => h.advance_to(Stage::TerrainReady),
+                            _ => h.advance_to(Stage::LightLocalReady),
+                        }
+                        // status 生成保持生产 plausible：Full 只落在
+                        // LightLocalReady 之上（advance_status_by_level 的
+                        // 证据门），避免测试自造生产不可达位形。
+                        match rng.below(100) {
+                            0..=39 => {}
+                            40..=69 => h.advance_status(ChunkStatus::Surface),
+                            70..=89 => h.advance_status(ChunkStatus::Light),
+                            _ => {
+                                if (h.stage() as u8) >= (Stage::LightLocalReady as u8) {
+                                    h.advance_status(ChunkStatus::Full);
+                                }
+                            }
+                        }
+                        rt.chunks.insert(pos, h);
+                    }
+                }
+                let new_r = rt.sim_safe_radius(pc);
+                let old_r = legacy_sim_safe_scan(&rt, pc);
+                assert!(
+                    new_r <= old_r,
+                    "seed={seed} rd={rd}: 新 {new_r} > 旧 {old_r}，新实现不得超出旧证据集"
+                );
+                if new_r < old_r {
+                    let cap = rt.sim_dist() + (ticket::FULL_LEVEL - ticket::ENTITY_TICKING_LEVEL);
+                    let cap_face = old_r > cap;
+                    let mut tightening_witness = false;
+                    'find: for dx in -old_r..=old_r {
+                        for dz in -old_r..=old_r {
+                            if let Some(h) = rt.chunks.get(&ChunkPos::new(pc.x + dx, pc.z + dz))
+                                && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+                                && (h.status() as u8) < (ChunkStatus::Full as u8)
+                            {
+                                tightening_witness = true;
+                                break 'find;
+                            }
+                        }
+                    }
+                    assert!(
+                        cap_face || tightening_witness,
+                        "seed={seed} rd={rd}: 缝隙 new={new_r} old={old_r} 不属任何登记差异面"
+                    );
+                }
+            }
+        }
+    }
+
+    /// -1 整步冻结语义（刀 4a 保留的计划锁死项）：本块缺席或体素已备但
+    /// status 未推进 → -1；fixed_step 在 -1 上整步冻结（不位移、不坠）。
+    /// 谓词收紧面（TerrainReady 不再放行）单独断言——证据链未齐就是未就绪。
+    #[test]
+    fn sim_safe_freeze_on_missing_or_unproven_own_chunk() {
+        let mut rt = headless_rt("freeze4a");
+        rt.phase = GamePhase::Playing;
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        let pc = ChunkPos::new(0, 0);
+        assert_eq!(rt.sim_safe_radius(pc), -1, "区块缺席必须 -1");
+        let h = Arc::new(ChunkHandle::new(pc));
+        h.advance_to(Stage::TerrainReady);
+        rt.chunks.insert(pc, h);
+        assert_eq!(
+            rt.sim_safe_radius(pc),
+            -1,
+            "TerrainReady 但 status 未推进：证据链未齐，谓词收紧后仍 -1"
+        );
+        rt.input.forward = true;
+        let before = rt.player.pos;
+        for _ in 0..60 {
+            rt.fixed_step(1.0 / 60.0);
+        }
+        assert_eq!(
+            rt.player.pos, before,
+            "-1 必须整步冻结（隐形墙/坠虚空前哨）"
+        );
+        rt.chunks[&pc].advance_status(ChunkStatus::Full);
+        assert_eq!(
+            rt.sim_safe_radius(pc),
+            0,
+            "本块 Full 后解冻，至少本块可动（邻环缺席截断）"
+        );
     }
 
     // ---- 触摸挖掘端到端（任务板 #93 优先项回归锁）----
