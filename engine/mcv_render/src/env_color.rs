@@ -259,7 +259,7 @@ mod tests {
     /// Timelines.java:87-118 — 晨昏带：白天隐身、傍晚 alpha 峰值 0.996。
     #[test]
     fn sunrise_sunset_windows() {
-        let (c, a) = sunrise_sunset(6_000);
+        let (_, a) = sunrise_sunset(6_000);
         assert!(a.abs() < 1e-6, "正午隐身 alpha={a}");
         let (_, dusk) = sunrise_sunset(12_800);
         assert!((dusk - 0.996).abs() < 0.01, "傍晚峰值 {dusk}");
