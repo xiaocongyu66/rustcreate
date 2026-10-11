@@ -198,8 +198,8 @@ mod tests {
         // `hudProjection.setupPerspective(0.05F, 100.0F, hudFov, width, height)`，
         // Camera.java:221-223 `calculateHudFov` = 固定 70.0F，
         // Projection.java:69-72 `setPerspective(fov·π/180, w/h, …)`）：
-        //与世界 fov/near 解耦——疾跑/速度 FOV 变化不缩放手部。
-        let mut cam = camera();
+        // 与世界 fov/near 解耦——疾跑/速度 FOV 变化不缩放手部。
+        let cam = camera();
         // fov_y=1.2 rad ≈ 68.75° ≠ 70°、near 0.1 ≠ 0.05、far 256 ≠ 100。
         let hud = cam.hud_proj();
         let world = cam.proj();
