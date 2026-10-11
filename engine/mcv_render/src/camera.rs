@@ -122,7 +122,9 @@ pub fn view_bob_matrix(bob: f32, backwards_walk_dist: f32) -> Mat4 {
     let c = (backwards_walk_dist * PI).cos();
     Mat4::from_translation(Vec3::new(s * bob * 0.5, -(c * bob).abs(), 0.0))
         * Mat4::from_rotation_z((s * bob * 3.0).to_radians())
-        * Mat4::from_rotation_x(((c - 0.2) * bob).abs() * 5.0f32.to_radians())
+        * Mat4::from_rotation_x(
+            ((backwards_walk_dist * PI - 0.2).cos() * bob).abs() * 5.0f32.to_radians(),
+        )
 }
 
 #[cfg(test)]
@@ -190,6 +192,15 @@ mod tests {
         );
         // 静止（bob=0）= 恒等：不走路时任何 walkDist 都不产生位移。
         assert!(view_bob_matrix(0.0, -12.5).abs_diff_eq(Mat4::IDENTITY, 1e-9));
+        // 全矩阵锁：bid=−0.25、bob=0.1 三因子常数
+        // （θz = sin(−0.25π)·0.1·3 = −0.212132°；
+        //   θx = |cos(−0.25π − 0.2)|·0.1·5 = 0.275969°——−0.2 在 **cos 括号内**
+        //   （:347 `cos(f*π − 0.2F)`），曾误写 (cos−0.2)·bob 得 0.2536° 未被
+        //   平移断言抓到，此锁防再犯）。
+        let expected = Mat4::from_translation(Vec3::new(-0.03535534, -0.07071068, 0.0))
+            * Mat4::from_rotation_z(-0.212_132_0f32.to_radians())
+            * Mat4::from_rotation_x(0.275_968_5f32.to_radians());
+        assert!(m.abs_diff_eq(expected, 1e-5), "bob 全矩阵对原版常数");
     }
 
     #[test]
