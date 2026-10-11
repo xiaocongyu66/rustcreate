@@ -6199,6 +6199,9 @@ mod tests {
                 .entry(pos)
                 .or_insert_with(|| lit_chunk(dx, dz, 69))
                 .advance_to(Stage::Uploaded);
+            // 刀 3b 门谓词解耦后 fixture 双记账位同步置位（见
+            // fill_neighborhood 注释）：关屏延迟段走门放行，需 status。
+            rt.chunks[&pos].advance_status(ChunkStatus::Full);
             let p = rt.loading_progress();
             assert!((0.0..=1.0).contains(&p), "进度钳制 0..1：{p}（{dx},{dz}）");
             assert!(p >= last, "进度单调不减：{p} < {last}");

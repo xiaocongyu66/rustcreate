@@ -795,7 +795,10 @@ fn player_ticket_throttle_caps_inflight_generation() {
     let mut rt = headless("throttle");
     rt.render_dist = 4;
     let mut max_inflight = 0usize;
-    for _ in 0..40 {
+    // 300 帧：liveness 尾断言只要求 ≥1 块就绪；CI 争用下单块 worldgen 实测
+    // 可达数十帧（flap 测注释：49 块窗曾超 600 帧），40 帧余量不足，按
+    // timeout 类断言 2 倍余量原则放宽。
+    for _ in 0..300 {
         rt.stream();
         max_inflight = max_inflight.max(rt.inflight_generation_count());
         std::thread::sleep(Duration::from_millis(2));
@@ -809,7 +812,7 @@ fn player_ticket_throttle_caps_inflight_generation() {
         .values()
         .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
         .count();
-    assert!(terrain_ready > 0, "节流不得停摆加载（40 帧 0 块就绪）");
+    assert!(terrain_ready > 0, "节流不得停摆加载（300 帧 0 块就绪）");
 }
 
 /// 卸载队列积压门（原版 ChunkMap.java:489-495：unloadQueue ≥2000 忽略
