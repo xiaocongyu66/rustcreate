@@ -102,4 +102,23 @@ mod tests {
         let d = cam.dir();
         assert!((d.x - 1.0).abs() < 1e-5, "yaw 90° looks toward +X: {d}");
     }
+
+    #[test]
+    fn view_bob_matrix_matches_vanilla_and_zeroes_when_still() {
+        // 26.1 GameRenderer.bobView（GameRenderer.java:336-348）：
+        // T(sin(bID·π)·bob·0.5, −|cos(bID·π)·bob|, 0)·Rz(sin(bID·π)·bob·3°)
+        // ·Rx(|cos(bID·π−0.2)·bob|·5°)。取 bid=−0.25、bob=0.1：
+        // sin=−0.70711、cos=0.70711 → T=(−0.03536,−0.07071,0)。
+        let m = view_bob_matrix(0.1, -0.25);
+        let t = m.w_axis.truncate();
+        assert!((t.x + 0.035355).abs() < 1e-4, "bob 位移 x {t}");
+        assert!((t.y + 0.070711).abs() < 1e-4, "bob 位移 y（下沉）{t}");
+        assert!(t.z.abs() < 1e-6, "bob 不做前后位移（公式 z=0）{t}");
+        assert!(
+            !m.abs_diff_eq(Mat4::IDENTITY, 1e-6),
+            "行走中 bob 矩阵必须 ≠ 静止（用户症状「走路不晃」回归锁）"
+        );
+        // 静止（bob=0）= 恒等：不走路时任何 walkDist 都不产生位移。
+        assert!(view_bob_matrix(0.0, -12.5).abs_diff_eq(&Mat4::IDENTITY, 1e-9));
+    }
 }

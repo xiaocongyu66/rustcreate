@@ -6499,6 +6499,42 @@ mod tests {
     }
 
     #[test]
+    fn walking_bob_state_accumulates_and_standing_stays_zero() {
+        // 26.1 行走 bob 链（审计 #4「走路不晃」直接根因）：
+        // LocalPlayer.java:989 walkDist += len(Δx,Δz)·0.6（每 tick）；
+        // AbstractClientPlayer.java:84-87 tBob = min(0.1, |Δv|水平)，门 =
+        // onGround；ClientAvatarState.java:77 bob += (tBob−bob)·0.4。
+        let mut rt = playing_rt("bob-walk");
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::new(4.317, 0.0, 0.0); // 满速走 m/s
+        rt.player.on_ground = true;
+        let (b0, bid0) = rt.hand_bob();
+        assert_eq!((b0, bid0), (0.0, 0.0), "未走时 bob 幅度与相位都为 0");
+        // 走一 tick：位移 0.216 格进 walk_dist、速度幅度进 bob。
+        rt.player.pos.x += 4.317 / 20.0;
+        rt.fixed_step(1.0 / 20.0);
+        let (b, bid) = rt.hand_bob();
+        assert!(
+            b > 0.0,
+            "行走必须积累 bob 幅度（0.4 插值收敛，首 tick = 0.1·0.4 = 0.04），got {b}"
+        );
+        assert!(
+            bid < 0.0,
+            "walkDist 必须随位移增长且 bID 取负（got {bid}）——bID 恒 0 即 bobView 无相位源"
+        );
+        // 停步：门关（tBob=0）后幅度按 0.6/tick 收敛回 0。
+        rt.player.vel = Vec3::ZERO;
+        for _ in 0..40 {
+            rt.fixed_step(1.0 / 20.0);
+        }
+        let (b_end, _) = rt.hand_bob();
+        assert!(
+            b_end < 1e-4,
+            "静止 40 tick 后 bob 幅度必须收敛归零（got {b_end}）"
+        );
+    }
+
+    #[test]
     fn loading_state_blocks_input_and_transition_until_ready() {
         let mut rt = headless_rt("gate");
         // 构造即加载态（26.1 doWorldLoad 先 setScreen(LevelLoadingScreen)）。
