@@ -1179,7 +1179,8 @@ impl GameRuntime {
         self.render_dist.min(3)
     }
 
-    // ---- 流式分层：模拟区 / 请求环 / 卸载环（fix/stream-collision）----
+    // ---- 流式分层：模拟区 / 请求环 / 卸载环（fix/stream-collision；
+    // 刀 3 起全部由票级别派生承载，见 [`crate::ticket`]）----
     //
     // 原版三层距离（审计 stream-arch §1）：加载 ticket 半径 = viewDistance
     // （DistanceManager.java:43, :319-321），模拟半径独立字段默认 10
@@ -1188,10 +1189,13 @@ impl GameRuntime {
     // tick（ServerLevel.java:419），客户端收发环另有 vd+2 缓冲
     // （ChunkTrackingView.java:71-80），FULL 之外还有生成晕圈
     // （ChunkLevel.java:14-15）。本仓单进程一体，分层落地为：
-    //   请求环 = 模拟半径 sim_dist = rd+1（含原版 +1 支撑环），
+    //   请求环 = 模拟半径 sim_dist = rd+1（含原版 +1 支撑环）= 票发放
+    //   半径 view_dist（refresh_player_tickets），
     //   可见网格半径 ≤ sim_dist（remesh 环过滤，杜绝「看得见却穿透」），
-    //   卸载阈值 = unload_dist = rd+4（迟滞带 3 环 ≥ 2，消除边界翻动；
-    //   旧值 rd+2 与请求环仅隔 1 环，是「动一下就换一批块」的直接来源），
+    //   卸载 = 票级别 > MAX_LEVEL（ChunkMap.java:376-381），级别场边界
+    //   = view_dist + RADIUS + 2 = rd+4 ≡ 旧自研 unload_dist（迟滞带 3 环
+    //   ≥ 2，消除边界翻动；旧值 rd+2 与请求环仅隔 1 环，是「动一下就换
+    //   一批块」的直接来源），
     //   玩家物理恒走真体素（sim_safe_radius 门 + clamp_to_sim_area 钳制）。
     // 模拟环 ≫ 一步最远位移：钳制保证玩家与最近未就位区块恒隔 ≥1 整区块
     // （16 格），而单个固定步（1/60 s）最大位移（疾跑 5.6 m/s、创造冲刺
@@ -1331,14 +1335,45 @@ impl GameRuntime {
     }
 
     /// 出生点邻域（玩家所在区块为中心、半径 [`Self::load_radius`]）的
+    /// 加载门就绪统计（刀 3b 解耦点①）：`(已就绪数, 总数)`。就绪 =
+    /// **status ≥ Surface**（worldgen commit / 读盘完成——世界生成完成度，
+    /// 原版 LevelLoadTracker 等服务器侧区块就绪的映射；status 由
+    /// advance_status_by_level 按票级别派生维护）。网格/上传（stage
+    /// Uploaded）**另判**——见 [`Self::loading_progress_parts`]（显示指标，
+    /// 不再挡进世界）。
+    pub fn load_gate_parts(&self) -> (usize, usize) {
+        let r = self.load_radius();
+        let center = ChunkPos::new(
+            (self.player.pos.x / 16.0).floor() as i32,
+            (self.player.pos.z / 16.0).floor() as i32,
+        );
+        let mut ready = 0usize;
+        let total = ((2 * r + 1) * (2 * r + 1)) as usize;
+        for dx in -r..=r {
+            for dz in -r..=r {
+                if self
+                    .chunks
+                    .get(&ChunkPos::new(center.x + dx, center.z + dz))
+                    .is_some_and(|h| (h.status() as u8) >= (mcv_core::ChunkStatus::Surface as u8))
+                {
+                    ready += 1;
+                }
+            }
+        }
+        (ready, total)
+    }
+
     /// 加载统计：`(已就绪数, 总数)`。就绪 = 状态机走到 [`Stage::Uploaded`]
     /// （网格已建并上传 GPU；真实网格器建网格成功处推进该状态，无头路径
     /// 由测试手工推进——见 mobs_runtime.rs:44 同款用法）。
     ///
-    /// 进度语义对应 26.1 `LevelLoadProgressTracker` 的 currentChunks/
-    /// totalChunks 分段分数（:62-70），本仓无服务端权重段
-    /// （PREPARE_SERVER_WEIGHT/LOAD_PLAYER_CHUNKS 是服务器启动编排，
-    /// 单进程一体不存在），直接用就绪区块占比。
+    /// 刀 3b 解耦点①后本统计是**网格侧显示指标**（加载画面的进度百分比、
+    /// 超时补载测试的就绪判据），不再是加载门谓词——门改读
+    /// [`Self::load_gate_parts`]（status ≥ Surface）。进度语义对应 26.1
+    /// `LevelLoadProgressTracker` 的 currentChunks/totalChunks 分段分数
+    /// （:62-70），本仓无服务端权重段（PREPARE_SERVER_WEIGHT/
+    /// LOAD_PLAYER_CHUNKS 是服务器启动编排，单进程一体不存在），直接用
+    /// 就绪区块占比。
     pub fn loading_progress_parts(&self) -> (usize, usize) {
         let r = self.load_radius();
         let center = ChunkPos::new(
@@ -1373,6 +1408,19 @@ impl GameRuntime {
     /// 显示用平滑进度（LevelLoadingScreen.java:84 每 tick lerp 0.2）。
     pub fn loading_progress_smoothed(&self) -> f32 {
         self.smoothed_progress
+    }
+
+    /// 在途生成请求数（pending_generate 集合大小）。对应原版
+    /// ThrottlingChunkTaskDispatcher.chunkPositionsInExecution 的规模
+    /// （:13；getDebugStatus :39-46 暴露同类运行时状态）。
+    pub fn inflight_generation_count(&self) -> usize {
+        self.req_frames.len()
+    }
+
+    /// 卸载复活缓存积压数（原版 ChunkMap.pendingUnloads / unloadQueue
+    /// 的规模；hasWork/积压门 ChunkMap.java:465-498 消费同类状态）。
+    pub fn pending_unload_count(&self) -> usize {
+        self.pending_unloads.len()
     }
 
     /// 加载画面的区块状态网格数据（26.1 `ChunkLoadStatusView` 等价）：
@@ -1413,7 +1461,11 @@ impl GameRuntime {
         }
         // 邻域首次全就绪 → 记账 ClientLevelReady(readyAt)
         // （LevelLoadTracker.java:107、WaitingForPlayerChunk.tick :117-120）。
-        let (ready, total) = self.loading_progress_parts();
+        // 刀 3b 解耦点①：门谓词从 stage==Uploaded 改 status ≥ Surface
+        // （世界生成完成度；原版等服务器侧 FULL/区块就绪，网格上传是
+        // 客户端侧后续流水不挡进世界）。Spawn 态语义归出生门（出生投放
+        // 块仍以出生列及邻域 TerrainReady 为门，现状映射）。
+        let (ready, total) = self.load_gate_parts();
         let all_ready = ready >= total;
         if all_ready && self.load_ready_at.is_none() {
             self.load_ready_at = Some(self.game_ticks);
@@ -1693,16 +1745,26 @@ impl GameRuntime {
     }
 
     /// Request missing chunks in a spiral around the player (a few per call),
-    /// unload far ones.
+    /// unload far ones. 每帧一次（帧驱动流式调度）。
     ///
-    /// 分层与迟滞（fix/stream-collision，参数依据见 [`Self::sim_dist`] 节
-    /// 头注释）：请求环 `sim_dist`（=rd+1）→ 卸载阈值 `unload_dist`
-    /// （=rd+4，迟滞 3 环）；卸载每帧 ≤4 块（原版 processUnloads 时间片，
-    /// ChunkMap.java:477-498）且先进 `pending_unloads` 复活缓存
-    /// （ChunkMap.java:388-392），重进环原位复活、不重 IO 不重生成；
-    /// 在途（Empty）请求 5s 驻留不撤回（对齐 ticket 释放等 future，
-    /// DistanceManager.java:87-104）。IO 全部预算化：卸载写盘每帧 ≤2、
-    /// 脏块写回每帧 ≤2（app.rs 30s 全量存盘退化为兜底扫描）。
+    /// 刀 3b 票驱动重写（预算迁原版语义，机制对照见各段注释）：
+    /// - 请求 = 玩家票任务 pop，受在途生成集合 ≤4 节流
+    ///   （ThrottlingChunkTaskDispatcher.java:13-14,:29-31；上限 4 =
+    ///   DistanceManager.java:55）；worker TaskPool 不设帧预算（原版
+    ///   worldgen/light dispatcher 无节流，ChunkMap.java:195-196）。
+    /// - 卸载 = 票级别 > MAX_LEVEL（ChunkMap.java:376-381，迟滞=票级别
+    ///   语义），每帧 ≤4 时间片（ChunkMap.java:477-498）+ 复活缓存
+    ///   （ChunkMap.java:385-392）；积压门 48（原版 2000 按本仓规模缩减，
+    ///   ChunkMap.java:489-495——登记裁剪债）。
+    /// - 在途（Empty）请求 300 帧（≈5s）驻留不撤回——**与原版差异=债**：
+    ///   原版无此机制（ticket 释放等 future，DistanceManager.java:87-104
+    ///   是最近似对应物）；本仓防「请求→出环撤回→回环重请求→再生成」
+    ///   乒乓的实测有效机制，保留。
+    /// - 加载门 = status ≥ Surface（世界生成完成度），网格/上传另判
+    ///   （解耦点①，见 load_gate_parts）；出生投放门维持出生列及邻域
+    ///   TerrainReady 现状映射（Spawn 态语义归出生门）。
+    /// - IO 预算化：读盘 ≤4/帧、卸载写盘常态 ≤2/帧（积压超门追加）、
+    ///   脏块写回 ≤2/帧（app.rs 30s 全量存盘退化为兜底扫描）。
     pub fn stream(&mut self) {
         let center = ChunkPos::new(
             (self.player.pos.x / 16.0).floor() as i32,
@@ -1782,12 +1844,22 @@ impl GameRuntime {
             }
             evicted += 1;
         }
-        // 复活缓存落盘预算：每帧把最前 ≤2 块脏数据写盘；超容量从最旧端
-        // 强制落盘后丢弃（有界内存）。
+        // 复活缓存落盘：常态每帧把最前 ≤2 块脏数据写盘；积压门与硬顶见下
+        // （超限从最旧端强制落盘后出队，有界内存）。
         let mut pend = std::mem::take(&mut self.pending_unloads);
+        // 卸载队列积压门（刀 3b，原版 ChunkMap.java:489-495）：unloadQueue
+        // 积压 ≥2000 时忽略 haveTime 强制排空 size−2000。本仓对应物 =
+        // pending_unloads 超门即从最旧端强制落盘后出队（无 SAVE 位的条目
+        // 本就无数据可丢，直接出队），保证队列有界且只进不滞。原版 2000 按
+        // 本仓规模缩减（活动集 ≤ 数百块、复活缓存容量 64）取 48 = 容量
+        // 3/4——**登记为裁剪债**（比例缩减，机制等价：时间片让位于积压）。
+        // 常态落盘时间片 2/帧之外，积压期追加「len − GATE」个落盘名额
+        // （同一「强制排空」在脏数据侧的体现）；64 硬顶保留为最终兜底。
+        const UNLOAD_BACKLOG_GATE: usize = 48;
+        let save_budget = 2usize + pend.len().saturating_sub(UNLOAD_BACKLOG_GATE);
         let mut saved = 0usize;
         for (_, h) in pend.iter_mut() {
-            if saved >= 2 {
+            if saved >= save_budget {
                 break;
             }
             if h.dirty() & mcv_core::dirty::SAVE != 0
@@ -1796,6 +1868,15 @@ impl GameRuntime {
             {
                 saved += 1;
             }
+        }
+        while pend.len() > UNLOAD_BACKLOG_GATE {
+            let (pos, h) = pend.remove(0);
+            if h.dirty() & mcv_core::dirty::SAVE != 0
+                && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+            {
+                self.save_handle_io(&h);
+            }
+            log::debug!("pending_unloads backlog gate, flushed {pos:?}");
         }
         while pend.len() > 64 {
             let (pos, h) = pend.remove(0);
@@ -1833,14 +1914,47 @@ impl GameRuntime {
             }
         }
 
-        // request in ring order; bounded per frame。
+        // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
+        // 段之前：先释放完成任务的在途名额，本帧的 pop 才能把名额补给新
+        // 任务（原版 release→popTasks 的衔接；帧驱动下同帧先收后发）。
+        while let Ok(result) = self.scheduler.results().try_recv() {
+            match result {
+                mcv_worldgen::GenResult::Terrain(Ok(out)) => {
+                    self.req_frames.remove(&out.pos);
+                    if let Some(handle) = self.chunks.get(&out.pos) {
+                        mcv_worldgen::commit_terrain(handle, out);
+                    }
+                }
+                mcv_worldgen::GenResult::Terrain(Err((pos, rc))) => {
+                    self.req_frames.remove(&pos);
+                    log::error!("terrain gen failed at {pos:?}: {rc}");
+                }
+            }
+        }
+
+        // request in ring order; ticket-driven pop（刀 3b）。
         // 多请求一圈支撑环（sim_dist = render_dist+1，原版 view distance
         // +1 边界块）：可见最外环的网格需要 3×3 邻域在册，只请求到
         // render_dist 时外环永远凑不齐邻居、永远建不了网格——真机上渲染
         // 边缘呈永久残缺带，玩家移动时残带随视野推进逐块翻新（症状：往右
         // 动一点就换一批块）。
-        let mut budget = 4;
-        'outer: for r in 0..=self.sim_dist() {
+        //
+        // 票驱动节流（原版 ThrottlingChunkTaskDispatcher）：在途生成集合
+        // （pending_generate = req_frames 键集）达到 MAX_CHUNKS_IN_EXECUTION
+        // 前不再 pop 新玩家票任务（ThrottlingChunkTaskDispatcher.java:29-31
+        // popTasks；集合本身 :13；上限 4 = DistanceManager.java:55 构造参
+        // 数）。环序遍历 = 优先级队列按距离出队的等价序（近优先）。三条
+        // 填充路径的预算切分（对照原版）：
+        // - 复活：即时、无预算（原版 updateChunkScheduling 里 pendingUnloads
+        //   命中即原位复活，ChunkMap.java:385-388）；
+        // - 读盘：保留 4/帧时间片（原版 IO 走独立 executor 不入节流器；
+        //   本仓同步 IO 在主线程，无预算会尖刺——自研债）。IO 片耗尽的
+        //   miss 不得绕过读盘直发生成（存档会被生成结果覆盖）；
+        // - 生成：受在途名额约束；worker TaskPool 本身不设帧预算（原版
+        //   worldgen/light dispatcher 无节流，ChunkMap.java:195-196）。
+        let mut pops = ticket::MAX_CHUNKS_IN_EXECUTION.saturating_sub(self.req_frames.len());
+        let mut io_budget = 4usize;
+        for r in 0..=self.sim_dist() {
             for dx in -r..=r {
                 for dz in -r..=r {
                     if dx.abs() != r && dz.abs() != r {
@@ -1858,32 +1972,26 @@ impl GameRuntime {
                         continue;
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
-                    if self.try_load_saved(&handle) {
-                        self.chunks.insert(pos, handle);
+                    if io_budget > 0 {
+                        if self.try_load_saved(&handle) {
+                            io_budget -= 1;
+                            self.chunks.insert(pos, handle);
+                            continue;
+                        }
                     } else {
-                        self.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
-                        self.scheduler.request(pos);
-                        self.req_frames.insert(pos, self.stream_frame);
+                        // IO 时间片耗尽：本帧跳过该 miss（未验存档前不得
+                        // 直发生成），留待下帧。
+                        continue;
                     }
-                    budget -= 1;
-                    if budget == 0 {
-                        break 'outer;
+                    if pops == 0 {
+                        // 在途满：停发新票任务（节流器核心语义），继续扫
+                        // 复活/读盘命中——二者不受节流。
+                        continue;
                     }
-                }
-            }
-        }
-        // drain completed terrain（结果到达即解除在途驻留记账）
-        while let Ok(result) = self.scheduler.results().try_recv() {
-            match result {
-                mcv_worldgen::GenResult::Terrain(Ok(out)) => {
-                    self.req_frames.remove(&out.pos);
-                    if let Some(handle) = self.chunks.get(&out.pos) {
-                        mcv_worldgen::commit_terrain(handle, out);
-                    }
-                }
-                mcv_worldgen::GenResult::Terrain(Err((pos, rc))) => {
-                    self.req_frames.remove(&pos);
-                    log::error!("terrain gen failed at {pos:?}: {rc}");
+                    self.chunks.insert(pos, handle);
+                    self.scheduler.request(pos);
+                    self.req_frames.insert(pos, self.stream_frame);
+                    pops -= 1;
                 }
             }
         }
@@ -5901,6 +6009,11 @@ mod tests {
                     .entry(pos)
                     .or_insert_with(|| lit_chunk(dx, dz, 69));
                 rt.chunks[&pos].advance_to(Stage::Uploaded);
+                // 刀 3b 门谓词解耦（stage==Uploaded → status ≥ Surface）后，
+                // 手工 fixture 必须双记账位同步置位（生产管线中 advance_
+                // status_by_level 每 stream 帧按票级别授权推进；本 fixture
+                // 绕过 stream，需镜像真实终态：级别 ≤33 邻域齐 → Full）。
+                rt.chunks[&pos].advance_status(ChunkStatus::Full);
             }
         }
     }

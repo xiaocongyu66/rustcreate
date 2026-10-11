@@ -6,7 +6,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
+use mcv_core::{BlockId, ChunkHandle, ChunkPos, ChunkStatus, Stage};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
 
 /// 唯一临时存档目录（测试并行安全）。
@@ -71,6 +71,9 @@ fn enter_playing(rt: &mut GameRuntime) {
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
+            // 刀 3b 门谓词解耦（stage==Uploaded → status ≥ Surface）后，
+            // fixture 双记账位同步置位（见 tests/runtime.rs::finish_loading）。
+            rt.chunks[&pos].advance_status(ChunkStatus::Full);
         }
     }
     for _ in 0..60 {
@@ -173,6 +176,7 @@ fn loading_phase_gates_movement_input() {
     rt.touch.enabled = true;
     rt.touch.stick_vec = (0.0, -56.0); // 触屏摇杆满偏（进场后走满速）
     // 邻域 49 块顶到 Uploaded（门开条件；同 enter_playing 的就绪路径）。
+    // 刀 3b 门谓词解耦后 fixture 同步置位 status（见 enter_playing 注释）。
     for dx in -3i32..=3 {
         for dz in -3i32..=3 {
             let pos = ChunkPos::new(dx, dz);
@@ -180,6 +184,7 @@ fn loading_phase_gates_movement_input() {
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
+            rt.chunks[&pos].advance_status(ChunkStatus::Full);
         }
     }
     let mut guard = 0;

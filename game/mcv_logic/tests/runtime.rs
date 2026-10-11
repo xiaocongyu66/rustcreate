@@ -6,7 +6,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
+use mcv_core::{BlockId, ChunkHandle, ChunkPos, ChunkStatus, Stage};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
 
 /// 唯一临时存档目录（测试并行安全）。
@@ -37,7 +37,10 @@ fn wait_terrain(rt: &mut GameRuntime, pos: ChunkPos) {
 /// = Mth.square(7)，LevelLoadProgressTracker.java:15）全部顶到 Uploaded
 /// 并步进到游玩态。真实路径 = 网格建好上传后 stream 推进 Uploaded
 /// （game.rs mesh 循环 advance_to）；无头 NullMesher 不产网格，按
-/// mobs_runtime.rs:44 同款手工推进。
+/// mobs_runtime.rs:44 同款手工推进。刀 3b 门谓词解耦（stage==Uploaded →
+/// status ≥ Surface）后，fixture 同步置位 status（生产管线中
+/// advance_status_by_level 按票级别授权推进；本 fixture 绕过 stream，
+/// 镜像真实终态：级别 ≤33 邻域齐 → Full）。
 fn finish_loading(rt: &mut GameRuntime) {
     rt.player.pos = Vec3::new(8.3, 70.0, 8.5);
     rt.player.vel = Vec3::ZERO;
@@ -48,6 +51,7 @@ fn finish_loading(rt: &mut GameRuntime) {
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
+            rt.chunks[&pos].advance_status(ChunkStatus::Full);
         }
     }
     for _ in 0..10 {

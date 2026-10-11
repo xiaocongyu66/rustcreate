@@ -6,7 +6,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use glam::Vec3;
-use mcv_core::{BlockId, ChunkHandle, ChunkPos, Stage};
+use mcv_core::{BlockId, ChunkHandle, ChunkPos, ChunkStatus, Stage};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime, WORLD_MIN_Y};
 
 /// 唯一临时存档目录（测试并行安全）。
@@ -34,7 +34,8 @@ fn wait_terrain(rt: &mut GameRuntime, pos: ChunkPos) {
 }
 
 /// 加载态收尾：出生点邻域 49 块顶到 Uploaded 并步进到游玩态
-/// （同 tests/runtime.rs::finish_loading 模式）。
+/// （同 tests/runtime.rs::finish_loading 模式；刀 3b 门谓词解耦后 fixture
+/// 同步置位 status——见 runtime.rs 同名 helper 注释）。
 fn finish_loading(rt: &mut GameRuntime) {
     rt.player.vel = Vec3::ZERO;
     for dx in -3i32..=3 {
@@ -44,6 +45,7 @@ fn finish_loading(rt: &mut GameRuntime) {
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
+            rt.chunks[&pos].advance_status(ChunkStatus::Full);
         }
     }
     for _ in 0..10 {

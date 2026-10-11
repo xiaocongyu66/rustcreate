@@ -20,7 +20,8 @@ use std::time::Duration;
 
 use glam::Vec3;
 use mcv_core::{
-    BlockId, BlockPos, ChunkHandle, ChunkPos, Stage, WORLD_MAX_Y, WORLD_MIN_Y, dirty, vidx,
+    BlockId, BlockPos, ChunkHandle, ChunkPos, ChunkStatus, Stage, WORLD_MAX_Y, WORLD_MIN_Y, dirty,
+    vidx,
 };
 use mcv_game::VoxelAccess;
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime, WorldView};
@@ -324,9 +325,11 @@ fn timeout_release_keeps_streaming_catchup() {
         "超时后必须放行"
     );
     // 放行不是停摆：流式补载继续推进，出生点 7×7 邻域（半径 3，26.1
-    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。
+    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。预算 1200→2400 帧（刀 3b
+    // 派单书指令：timeout 类断言留 2 倍余量——本测在 main 抖红过一次；门
+    // 谓词改 status 后就绪时点更早，此值纯为 runner 争用兜底）。
     let mut ready = false;
-    for _ in 0..1200u32 {
+    for _ in 0..2400u32 {
         rt.stream();
         emulate_upload(&mut rt);
         let (done, total) = rt.loading_progress_parts();
@@ -336,7 +339,7 @@ fn timeout_release_keeps_streaming_catchup() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ready, "超时放行后出生邻域未在 1200 帧内补载就绪");
+    assert!(ready, "超时放行后出生邻域未在 2400 帧内补载就绪");
 }
 
 /// 提取 `from` 的 `side` 边快照（mcv_light 边协议，0=+X 1=-X 2=+Z 3=-Z）。
@@ -773,5 +776,118 @@ fn y_out_of_bounds_never_wraps() {
         hm[(4 << 4) | 4],
         (WORLD_MAX_Y - 1) as i16,
         "顶盖遮光 heightmap 饱和钳列顶（绕回低槽 = 出生/碰撞错位）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 刀 3b：票驱动预算（原版语义）回归锁。
+// ---------------------------------------------------------------------------
+
+/// 玩家票任务节流：在途生成集合（pending_generate = req_frames）达到
+/// MAX_CHUNKS_IN_EXECUTION(4) 前不发新请求——ThrottlingChunkTaskDispatcher
+/// .java:13-14,:29-31（集合 :13、popTasks 门 :30）、上限 4 =
+/// DistanceManager.java:55 构造参数。在途规模经
+/// [`GameRuntime::inflight_generation_count`]（getDebugStatus :39-46 同类
+/// 运行时状态暴露）。恒 ≤4 是节流器的硬不变量；不断言下界（快机同帧
+/// drain 会清零，与节流语义无关）。加载照常推进（liveness 尾断言）。
+#[test]
+fn player_ticket_throttle_caps_inflight_generation() {
+    let mut rt = headless("throttle");
+    rt.render_dist = 4;
+    let mut max_inflight = 0usize;
+    for _ in 0..40 {
+        rt.stream();
+        max_inflight = max_inflight.max(rt.inflight_generation_count());
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(
+        max_inflight <= mcv_logic::ticket::MAX_CHUNKS_IN_EXECUTION,
+        "在途生成集合峰值 {max_inflight} 超过节流上限 4（票任务 pop 未受限）"
+    );
+    let terrain_ready = rt
+        .chunks
+        .values()
+        .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+        .count();
+    assert!(terrain_ready > 0, "节流不得停摆加载（40 帧 0 块就绪）");
+}
+
+/// 卸载队列积压门（原版 ChunkMap.java:489-495：unloadQueue ≥2000 忽略
+/// haveTime 强制排空 size−2000；本仓 pending_unloads 门 = 48，比例缩减登记
+/// 为裁剪债）：超门即从最旧端强制落盘后出队（脏数据侧另有 2+(len−48) 落盘
+/// 名额）。无门时 4/帧淘汰 vs 2/帧落盘会让缓存逐帧涨到 64 硬顶；有门时
+/// 出队后恒 ≤48。积压规模经 [`GameRuntime::pending_unload_count`]
+/// （ChunkMap.hasWork 消费同类状态）。
+#[test]
+fn unload_backlog_gate_bounds_pending_queue() {
+    let mut rt = headless("backlog");
+    rt.render_dist = 2; // sim=3，unload=6：13×13 手工装配对 rd=2 足够供淘汰
+    for dx in -6..=6 {
+        for dz in -6..=6 {
+            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+        }
+    }
+    rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
+    rt.stream();
+    // 反复远跳制造持续淘汰流：每帧 ≤4 块进复活缓存。
+    let mut max_pending = 0usize;
+    for step in 0..40u32 {
+        rt.player.pos = Vec3::new(8.5 + 200.0 * step as f32, 5.0, 8.5);
+        rt.stream();
+        max_pending = max_pending.max(rt.pending_unload_count());
+    }
+    assert!(
+        max_pending <= 56,
+        "积压门失效：复活缓存峰值 {max_pending} 逼近/达到 64 硬顶 \
+        （门 = 48 + 单帧淘汰流 ≤4 的余量）"
+    );
+}
+
+/// 加载门解耦（刀 3b 解耦点①）：门谓词从 stage==Uploaded 改 status ≥
+/// Surface——世界生成完成度即放行，网格/上传（stage Uploaded）不再挡进
+/// 世界（原版 LevelLoadTracker 等服务器侧区块就绪，网格是客户端后续
+/// 流水）。无头 NullMesher 恒不产网格 → 全程无 Uploaded；窗内全部
+/// status ≥ Surface（advance_status_by_level 按票级别授权推进）后 40 固定
+/// 步内必转 Playing（新世界 closeDelay 10 tick = 30 步，余量 10）。
+#[test]
+fn load_gate_opens_on_worldgen_status_without_upload() {
+    let mut rt = headless("gate-status");
+    rt.render_dist = 4;
+    // 投放窗半径 = load_radius = min(rd,3) = 3（门统计窗口同源）。
+    let r = 3i32;
+    // 等投放窗（±3）全部到 status ≥ Surface（与投放同源的票级别授权推进；
+    // TerrainReady 证据由 worldgen commit 落下）。
+    let mut ok = false;
+    for _ in 0..3000u32 {
+        rt.stream();
+        let ready = (-r..=r).all(|dx| {
+            (-r..=r).all(|dz| {
+                rt.chunks
+                    .get(&ChunkPos::new(dx, dz))
+                    .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Surface as u8))
+            })
+        });
+        if ready {
+            ok = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert!(ok, "投放窗未在预算内到 status ≥ Surface（status 记账断裂）");
+    // 门开判定：40 固定步内转 Playing，且全程无任何块 Uploaded（证明
+    // 放行不依赖网格上传——解耦生效）。
+    for _ in 0..40 {
+        rt.fixed_step(1.0 / 60.0);
+        if rt.phase == GamePhase::Playing {
+            break;
+        }
+    }
+    assert_eq!(rt.phase, GamePhase::Playing, "status 就绪后门未放行");
+    assert!(
+        rt.chunks
+            .values()
+            .all(|h| (h.stage() as u8) < (Stage::Uploaded as u8)),
+        "本测须全程无 Uploaded（NullMesher）：出现 Uploaded = fixture 污染，\
+         解耦证明失效"
     );
 }
