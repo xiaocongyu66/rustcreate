@@ -207,6 +207,20 @@ mod tests {
         assert_eq!(shape_of_name("cobblestone_wall"), 9);
         assert_eq!(shape_of_name("wall_torch"), 0); // 贴墙火把非墙（_wall 后缀）
         assert_eq!(shape_of_name("oak_wall_sign"), 0);
-        assert_eq!(shape_of_name("stone_pressure_plate"), 0); // plate ≠ pane
+        // M 波 #138：dispatch 全表——柵栏门/门/按钮/压力板/梯子/雪层出模板
+        // 形状（原 0=Cube 全盒占位）。编号 ≥10：golden 锁规则
+        // （mcv_mesher/tests/golden.rs）允许「Rust ≥6 且黄金列冻结 0」。
+        assert_eq!(shape_of_name("oak_fence_gate"), 10);
+        assert_eq!(shape_of_name("nether_brick_fence_gate"), 10);
+        assert_eq!(shape_of_name("oak_door"), 11);
+        assert_eq!(shape_of_name("copper_door"), 11);
+        assert_eq!(shape_of_name("oak_button"), 12);
+        assert_eq!(shape_of_name("polished_blackstone_button"), 12);
+        assert_eq!(shape_of_name("stone_pressure_plate"), 13); // plate ≠ pane
+        assert_eq!(shape_of_name("heavy_weighted_pressure_plate"), 13);
+        assert_eq!(shape_of_name("ladder"), 14);
+        assert_eq!(shape_of_name("snow"), 15); // 原版 "snow" = 雪层（SnowLayerBlock）
+        assert_eq!(shape_of_name("oak_trapdoor"), 7); // trapdoor 先于 _door 词根
+        assert_eq!(shape_of_name("snow_grass"), 0); // 旧草方块雪顶态保持整块
     }
 }
