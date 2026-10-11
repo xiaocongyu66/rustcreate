@@ -1158,3 +1158,53 @@ fn glass_tunnel_blocker_dug_on_dark_side_pulls_via_reverse_sync() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// 129-L/L0（129-C 嫌疑 1+7）：整片水体跨区块边界的形状此前零覆盖（既有
+// 用例全为平地/顶板/隧道）。判据=原版播种（ChunkSkyLightSources.java:
+// 140-148，水 damp=1 截源柱）+ 129-C §6 正午浅水亮度：深度 d≤10 的水格
+// sky=15-d≥5（light_curve ≈0.18，海底可见）。
+// ---------------------------------------------------------------------------
+
+/// 海洋切片跨块边同步后水柱光保持、幂等无乒乓（黑带回归门）。
+#[test]
+fn ocean_pair_edge_sync_keeps_water_column_and_is_idempotent() {
+    let mut p = PairWorld::flat(39);
+    // A(0,0)/B(1,0)：海床石 y<=39（flat 已铺），水体 y40..=55，其上空气。
+    for gx in 0..32usize {
+        for z in 0..16usize {
+            for y in 40..=55i32 {
+                p.set(gx, y, z, WATER);
+            }
+        }
+    }
+    p.rebuild_heightmaps();
+    p.init_and_pair();
+
+    // 跨界两列浅水（深度 1..=10）：边同步不得回撤水柱（129-C §1 黑带）。
+    for gx in [15usize, 16usize] {
+        for d in 1..=10usize {
+            let y = 55 - d as i32;
+            assert!(
+                sky_p(&p, gx, y, 8) >= 5,
+                "跨界列 gx={gx} 深度{d} y={y} sky<5（边同步回撤水柱）"
+            );
+        }
+        // 深水 d=15 仍在递减序列上（14,13,…,0），不得错位。
+        assert_eq!(sky_p(&p, gx, 40, 8), 0, "gx={gx} 深水底");
+    }
+
+    // 幂等：整边重放两相（REMOVE+ADD）→ 光照字节零变化（#119 乒乓门）。
+    let before: Vec<u8> = p
+        .chunks
+        .iter()
+        .flat_map(|w| w.light.iter().copied())
+        .collect();
+    p.sync_edges(vec![(CHUNK_A, SIDE_PLUS_X), (CHUNK_B, SIDE_MINUS_X)]);
+    let after: Vec<u8> = p
+        .chunks
+        .iter()
+        .flat_map(|w| w.light.iter().copied())
+        .collect();
+    assert_eq!(before, after, "第二轮边同步必须零变化（边协议幂等）");
+}

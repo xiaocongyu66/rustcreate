@@ -671,6 +671,118 @@ fn shape_faces_cull_against_opaque_neighbours() {
     );
 }
 
+/// 129-L/L0（129-C §5 首要根因复现）：贴实心的水面对照原版两条判据——
+/// FluidRenderer.java:290 `renderCondition && !isFaceOccludedByNeighbor(...)`
+/// 被满块遮蔽形邻域遮住的流体面不发射（isFaceOccludedByState :36-47：满块
+/// 遮蔽形下除 +Y 外全遮，+Y 仅流体高度满 1.0 才遮）；:430-432 流体面取光 =
+/// max(自身格, 上格)。修复前：贴石底面照发且取光采对面石格（实心内恒 0）
+/// →「黑水皮」与亮沙顶面共面，LessEqual 深度 tie 逐帧翻转（水下黑影闭环）。
+#[test]
+fn water_faces_against_floor_culled_and_lit_per_vanilla() {
+    // 海洋切片：y<=9 石海床，y=10..=12 水（手工光照 sky 12,11,10——
+    // init 水柱序列由 light.rs:640 锁定，此处直填），y=13 空气 15。
+    let ocean = || -> Chunk {
+        let stone = id_of("stone");
+        let water = id_of("water");
+        let mut vox = Box::new([0u16; VOL]);
+        let mut light = Box::new([0u8; VOL]);
+        for x in 0..16usize {
+            for z in 0..16usize {
+                for y in 0..=9i32 {
+                    vox[mcv_core::vidx(x, y, z)] = stone;
+                }
+                for y in 10..=12i32 {
+                    vox[mcv_core::vidx(x, y, z)] = water;
+                    light[mcv_core::vidx(x, y, z)] = (12 - (y - 10)) << 4;
+                }
+                light[mcv_core::vidx(x, 13, z)] = 15 << 4;
+            }
+        }
+        (vox, light)
+    };
+    let mesher = Mesher::new();
+    let center = ocean();
+    let side = ocean(); // 8 邻同构：跨界侧面水对水剔除，只剩顶/底候选
+    let buf = mesher
+        .build(&full9(&center, &side), mcv_mesher::MESH_WATER)
+        .unwrap();
+    let verts = decode(&buf);
+    assert!(!verts.is_empty(), "水 pass 必须仍有几何（顶面在）");
+    for (i, v) in verts.iter().enumerate() {
+        let face = v.flags & 7;
+        // (a) FluidRenderer.java:290：贴满块（海床）的底面不发射。
+        assert!(
+            face != 3 || v.pos[1] != 10.0,
+            "顶点 {i}: 水底面贴海床仍发射且共面（:290 应遮蔽）"
+        );
+        // (b) :430-432 取光 max(自身,上)：任何发射面 sky 不得为 0
+        //（黑水皮复现值；正午浅水渲染亮度 ≈0.18，见 129-C §6）。
+        assert!(v.sky > 0, "顶点 {i}: 水面对实心邻域取到 0 光 → 黑水皮");
+    }
+    // 顶面保留（原版 0.8889 高度不遮 +Y）。
+    assert!(
+        verts.iter().any(|v| v.flags & 7 == 2),
+        "水顶面应保留（水体可见性回归门 water_pass_emits_vertices 同款）"
+    );
+}
+
+/// 129-L/L1 判据钉：流体面取光采「自身格+上格取 max」（FluidRenderer.java
+/// :168 顶面 / :234 侧面——sideLightCoords 在水平循环外一次采样、:204 底面
+/// getLightCoords(pos.below())=max(下格,自身)、:430-432 定义），**不采水平
+/// 邻格**。暗邻格（玻璃后暗室/暗玻璃本身）不得再染黑亮水格的面。
+#[test]
+fn water_face_light_takes_own_and_above_not_dark_neighbour() {
+    let mesher = Mesher::new();
+    let water = id_of("water");
+    let glass = id_of("glass");
+    let side = chunk(0, 0xF0); // 邻区块全亮空气
+
+    // 场景 A：暗玻璃贴侧。玻璃非满块遮蔽形（原版 occluder 空）→ +X 面
+    // 仍发射；取光应 max(自身 10, 上格 15)=15，而非玻璃格 0。
+    let mut c = chunk(0, 0);
+    put(&mut c.0, 8, 8, 8, water);
+    put(&mut c.0, 9, 8, 8, glass);
+    c.1[mcv_core::vidx(8, 8, 8)] = 10 << 4;
+    c.1[mcv_core::vidx(8, 9, 8)] = 15 << 4;
+    let buf = mesher
+        .build(&full9(&c, &side), mcv_mesher::MESH_WATER)
+        .unwrap();
+    let verts = decode(&buf);
+    assert!(
+        verts.iter().any(|v| v.flags & 7 == 0),
+        "+X 面应发射（玻璃非遮蔽体，:38-39 空遮蔽形不挡）"
+    );
+    for v in &verts {
+        let face = v.flags & 7;
+        if face == 3 {
+            // 底面 = max(下格 0, 自身 10)：场景 A 非其判据主体，只须非 0。
+            assert!(v.sky >= 10, "底面取光不得为 0");
+        } else {
+            // 顶/侧面 = max(自身 10, 上格 15) = 15（暗邻格不得入样）。
+            assert_eq!(v.sky, 15, "面档 {face}: 取光应为 max(自身,上)=15");
+        }
+    }
+
+    // 场景 B：暗玻璃贴底。底面取光 = getLightCoords(pos.below())
+    //（:204）= max(下格 0, 下格上方=自身 10) = 10。
+    let mut c2 = chunk(0, 0);
+    put(&mut c2.0, 8, 8, 8, water);
+    put(&mut c2.0, 8, 7, 8, glass);
+    c2.1[mcv_core::vidx(8, 8, 8)] = 10 << 4;
+    c2.1[mcv_core::vidx(8, 9, 8)] = 15 << 4;
+    let buf2 = mesher
+        .build(&full9(&c2, &side), mcv_mesher::MESH_WATER)
+        .unwrap();
+    let bottom: Vec<_> = decode(&buf2)
+        .into_iter()
+        .filter(|v| v.flags & 7 == 3 && v.pos[1] == 8.0)
+        .collect();
+    assert!(!bottom.is_empty(), "贴玻璃底面应发射（玻璃非遮蔽体）");
+    for v in &bottom {
+        assert_eq!(v.sky, 10, "底面取光应为 max(下格,自身)=10");
+    }
+}
+
 /// 水 pass 回归（2026-10-10 真机「水不可见」审计 H1 配套）：水体必须产出
 /// 非空顶点+索引（游戏层曾只传索引丢弃顶点，水从未上传 GPU）。2×2×2 水
 /// 浮在空气中：每个水面 quad 都要出（贪心合并后 ≤24），顶点必须 >0。

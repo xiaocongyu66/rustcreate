@@ -6906,6 +6906,105 @@ mod tests {
         );
         assert_eq!(rt.hotbar.slots[0].count, 2, "拒放不消耗");
     }
+
+    /// 129-L/L0（129-C §1 漏洞 A——「编辑后黑带」复现）：from 端未完成本地
+    /// 布光（TerrainReady，读盘块 game.rs:2316 / 生成块等 init 席位
+    /// :2082-2106，光数组全零）的 pull 任务，extract_edge 抽出全零边，
+    /// REMOVE 相按 `s > n+1` 把已亮块边界格清零成黑带（原版跨 section
+    /// decrease 携带编辑前波前等级，BlockLightEngine.java:91-105，从不拿
+    /// 「未初始化=0」当波前）。修复判据：sync_light_edges 对 from 补
+    /// ≥LightLocalReady 门（对齐 to 侧 :424 门语义），未就绪跳过、就绪后
+    /// 由 border_synced 成对同步（:2121-2157）双向补收。
+    #[test]
+    fn edit_pull_from_unlit_neighbour_never_retracts_lit_chunk() {
+        // 构造 C：已布光，+X 边界列含水柱（C 报场景：玩家在水边编辑）。
+        fn lit_ocean_edge() -> Arc<ChunkHandle> {
+            let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
+            {
+                let mut vg = h.voxels.write().unwrap();
+                for y in 0..=20usize {
+                    for zz in 0..16usize {
+                        for xx in 0..16usize {
+                            vg[lidx(xx, y, zz)] = BlockId(STONE);
+                        }
+                    }
+                }
+                for y in 21..=24usize {
+                    for zz in 0..16usize {
+                        for xx in 12..16usize {
+                            vg[lidx(xx, y, zz)] = BlockId(5); // water
+                        }
+                    }
+                }
+            }
+            let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
+                h.voxels.read().unwrap().as_slice(),
+            ));
+            *h.heightmap.write().unwrap() = hm;
+            {
+                let vg = h.voxels.read().unwrap();
+                let mut lg = h.light.write().unwrap();
+                let hg = h.heightmap.read().unwrap();
+                let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+                let mut view = mcv_light::LightChunk {
+                    voxels,
+                    light: &mut lg[..],
+                    heightmap: &hg[..],
+                };
+                mcv_light::init(&mut view);
+            }
+            h.advance_to(Stage::LightLocalReady);
+            h
+        }
+
+        // 两组世界仅差一处：邻块 N 是否在册。同一编辑（水中放石）后 C 的
+        // 光照必须逐字节一致——pull(from=N) 不得引入任何额外变化。
+        // 组 A（C 报时序）：N 在册但停 TerrainReady（体素已到、光未 init，
+        // 等 init 席位 game.rs:2082-2106）；pull 抽到全零边。
+        let mut with_n = HashMap::new();
+        with_n.insert(ChunkPos::new(0, 0), lit_ocean_edge());
+        let n = Arc::new(ChunkHandle::new(ChunkPos::new(1, 0)));
+        {
+            let mut vg = n.voxels.write().unwrap();
+            for y in 0..=20usize {
+                for zz in 0..16usize {
+                    for xx in 0..16usize {
+                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                    }
+                }
+            }
+        }
+        n.advance_to(Stage::TerrainReady);
+        with_n.insert(ChunkPos::new(1, 0), n);
+        // 组 B（基线）：N 缺席，pull 无从抽边 = 纯本地重光照终态
+        //（审计草案「N 缺席前」口径）。N 就绪后由成对同步补收真实边值，
+        // 本地重光照终态即正当终态。
+        let mut without_n = HashMap::new();
+        without_n.insert(ChunkPos::new(0, 0), lit_ocean_edge());
+
+        // 前置：两组边界水柱一致且已亮（浅水 sky≥5，129-C §6）。
+        for (tag, m) in [("with_n", &with_n), ("without_n", &without_n)] {
+            let c = &m[&ChunkPos::new(0, 0)];
+            assert!(
+                c.light.read().unwrap()[lidx(15, 22, 8)] >> 4 >= 5,
+                "{tag}: 前置边界水柱应已亮"
+            );
+        }
+
+        // 同一编辑：C 贴边格水中放石 → relight 派发 pull+push。
+        edit(&with_n, BlockPos::new(15, 22, 8), 5, STONE);
+        edit(&without_n, BlockPos::new(15, 22, 8), 5, STONE);
+
+        let lit = |m: &HashMap<ChunkPos, Arc<ChunkHandle>>| {
+            m[&ChunkPos::new(0, 0)].light.read().unwrap().to_vec()
+        };
+        assert_eq!(
+            lit(&with_n),
+            lit(&without_n),
+            "from 未 init 的 pull 任务改写了已亮块的光（黑带）；\
+             N 在册(组A) 与 N 缺席(组B) 的 C 光照应逐字节一致"
+        );
+    }
 }
 
 #[cfg(test)]
