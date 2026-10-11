@@ -2390,29 +2390,23 @@ fn wood_family_samples_render_thin_templates() {
         "木色像素缺失（{wood}px）：log/木板族样本列未画出或贴图接线回归"
     );
 
-    // (b) 树叶绿系：地平线上方（草皮不可达区）的绿像素须来自树叶簇。
-    let mut leaf_band = 0u64;
-    for y in 0..78u32 {
-        for x in 0..extent.width {
-            let o = ((y * extent.width + x) * 4) as usize;
-            let (r, g, b) = (
-                thin_px[o] as i32,
-                thin_px[o + 1] as i32,
-                thin_px[o + 2] as i32,
-            );
-            if g > r + 5 && g > b + 5 {
-                leaf_band += 1;
+    // (b) 树叶绿系占比：对帧差（带叶 vs 掘叶）定位树叶像素——其中带叶帧
+    // 呈绿主导的像素即树叶绿系（草皮整片绿主导无法按带隔离，帧差是唯一
+    // 干净的树叶掩码）。
+    let (leaf_diff, _) = a_diff_pixels(&thin_px, &noleaf_px);
+    let mut leaf_green = 0u64;
+    for (a, b) in thin_px.chunks(4).zip(noleaf_px.chunks(4)) {
+        if a[0] != b[0] || a[1] != b[1] || a[2] != b[2] {
+            let (r, g, bl) = (a[0] as i32, a[1] as i32, a[2] as i32);
+            if g > r && g >= bl {
+                leaf_green += 1;
             }
         }
     }
     assert!(
-        leaf_band > 40,
-        "地平线上方树叶绿像素缺失（{leaf_band}px）：leaves 列未画出或 tint 断裂"
-    );
-    let (leaf_diff, _) = a_diff_pixels(&thin_px, &noleaf_px);
-    assert!(
-        leaf_diff > 300,
-        "树叶簇差分像素缺失（{leaf_diff}）：树叶列对帧无贡献"
+        leaf_diff > 300 && leaf_green > 200,
+        "树叶绿系像素缺失（差分 {leaf_diff}px、其中绿主导 {leaf_green}px）：\
+         leaves 列未画出或 tint 断裂"
     );
 
     // (c) 薄板签名：柵栏门（4px 板）vs 同格整块木板——薄板上下透出背景。

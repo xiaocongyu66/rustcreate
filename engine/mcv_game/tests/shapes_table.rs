@@ -393,9 +393,19 @@ fn assert_bbox_eq(_id: u16, name: &str, what: &str, r: Option<[f32; 6]>, s: Opti
 /// mesher 渲染顶点包围盒 == blockshapes 拾取盒包围盒。
 /// 豁免：非固体 Cube（signs/rails/花草占位族——渲染全盒、原版本无对应
 /// 拾取形，模板债不在本对拍内）；Torch（渲染 0.4..0.6 柱是黄金冻结的
-/// C++ 近似，outline=column(4,0,10)=0.375..0.625，BaseTorchBlock.java:16）。
+/// C++ 近似，outline=column(4,0,10)=0.375..0.625，BaseTorchBlock.java:16）；
+/// INVISIBLE_GEOM 隐形族（barrier/light/…——ci/gen-blocks.py INVISIBLE_GEOM，
+/// mesher 不产几何而 barrier 等仍有整格碰撞拾取，渲染盒恒 None 属预期）。
 #[test]
 fn render_aabb_matches_pick_aabb_for_every_block() {
+    const INVISIBLE: [&str; 6] = [
+        "barrier",
+        "light",
+        "cave_air",
+        "void_air",
+        "structure_void",
+        "bubble_column",
+    ];
     let w = EmptyWorld;
     let mut checked = 0usize;
     for (i, def) in mcv_core::BLOCKS.iter().enumerate() {
@@ -405,6 +415,9 @@ fn render_aabb_matches_pick_aabb_for_every_block() {
         }
         if sh == Shape::Torch {
             continue; // 黄金冻结渲染近似，记名豁免
+        }
+        if INVISIBLE.contains(&def.name) {
+            continue; // 隐形族：不产渲染几何（barrier 有拾取盒属预期）
         }
         let r = render_bbox(i as u16, 0);
         let s = shape_bbox(&w, i as u16, RayTarget::Pick);
