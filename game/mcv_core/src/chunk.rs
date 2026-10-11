@@ -14,7 +14,7 @@
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::{BlockId, CHUNK_VOL, ChunkPos, WORLD_MIN_Y};
+use crate::{BlockId, CHUNK_SY, CHUNK_VOL, ChunkPos, WORLD_MIN_Y};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -225,6 +225,7 @@ impl ChunkHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{WORLD_MAX_Y, vidx};
 
     /// status 阶梯单调：只进不退，回退/同级推进是 no-op（CAS 模式同
     /// `advance_to`，且允许跨档直进——合并档先例见 [`ChunkStatus`] 文档）。
