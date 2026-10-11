@@ -19,7 +19,10 @@
 //! 这里统一用 `noise3_ImproveXZ`，2D 通道取 y=0 平面切片（输出同为归一
 //! [-1,1] 量级，晶格方向一致），倍频种子以自有 splitmix 域盐派生；第二层
 //! 独立种子以一层种子的 splitmix 终混派生（等价 26.1 的第二次 fork：
-//! 种子材料不同即统计独立，确定性不依赖具体派生式）。
+//! 种子材料不同即统计独立，确定性不依赖具体派生式）。内核四阶 falloff 的
+//! 单倍频 σ 高于 ImprovedNoise，逐倍频乘
+//! [`OS2S_TO_IMPROVED_SIGMA`] 校准回原版统计（地形保真波 T2 主修，
+//! 证据链见该常数文档）。
 
 /// splitmix64 终混合（复用 legacy 内核同源常数）。
 #[must_use]
@@ -126,9 +129,13 @@ impl NormalNoise {
                 let nx = wrap(x * factor);
                 let ny = wrap(y * factor);
                 let nz = wrap(z * factor);
-                value += amp
-                    * crate::os2s::smooth::noise3_ImproveXZ(seed as i64, nx, ny, nz) as f64
-                    * value_factor;
+                value +=
+                    amp * kernel_octave(crate::os2s::smooth::noise3_ImproveXZ(
+                        seed as i64,
+                        nx,
+                        ny,
+                        nz,
+                    )) * value_factor;
             }
             factor *= 2.0;
             value_factor /= 2.0;
@@ -142,6 +149,30 @@ impl NormalNoise {
 fn wrap(x: f64) -> f64 {
     let d = 3.355_443_2_e7_f64;
     x - (x / d + 0.5).floor() * d
+}
+
+/// OS2S 内核 → 原版 ImprovedNoise 的 σ 校准因子（地形保真波 T2 主修）。
+///
+/// NormalNoise 的 value_factor 归一（NormalNoise.java:63
+/// `0.16666666666666666 / expectedDeviation(...)`，:71-72
+/// `0.1·(1+1/(span+1))`）以**原版 ImprovedNoise 倍频统计**为基准标定
+/// （气候通道表 NoiseData.java:80-81：continentalness/erosion firstOctave -9，
+/// 经 ShiftedNoise xz_scale 0.25 采样，NoiseRouterData.java:89-96）。内核替换为
+/// vendored OpenSimplex2S（`noise3_ImproveXZ`，四阶 falloff）后，单倍频 σ 从
+/// 0.26991（ImprovedNoise 结构 40 万样本实测）变为 0.35946（OS2S 12 万样本
+/// 实测，两口径同分布均匀采样、2026-10-11 移植复算）——全通道 σ 系统性
+/// ×1.3317：Ocean 占比 35.71% 越带、平原窗占比 0.024<0.10（quality.rs T2
+/// 主门双红的真实环节：波长/shift×4 均已对齐，唯归一基准错配）。
+/// 本因子按 σ 比值 0.26991/0.35946 = 0.750854 把内核输出校准回原版倍频
+/// 统计，使 value_factor 归一恢复设计语义。BlendedNoise 倍频（vanilla 同为
+/// ImprovedNoise 栈）同用此因子（[`crate::vanilla::blended`]）。
+pub const OS2S_TO_IMPROVED_SIGMA: f64 = 0.750_9;
+
+/// 内核单倍频输出 → f64（含 σ 校准；见 [`OS2S_TO_IMPROVED_SIGMA`]）。
+#[inline]
+#[must_use]
+pub(crate) fn kernel_octave(n: f32) -> f64 {
+    f64::from(n) * OS2S_TO_IMPROVED_SIGMA
 }
 
 #[cfg(test)]

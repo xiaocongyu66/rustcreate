@@ -28,6 +28,7 @@
 //!   湿度/侵蚀/weirdness 全段（FULL_RANGE）；
 //! - beach：coast 段 × 未冻结温度段 1..3（OBB.java:922-925 pickBeachBiome：
 //!   0→SNOWY_BEACH、4→DESERT，本子集缺席的群系由最近点自然回落）。
+//!
 //! 未收进 10 群系的气候元组（JUNGLE/BADLANDS/…）不注册、不会选出；六参数
 //! 含义与取最近机制逐一保留。
 
@@ -161,9 +162,6 @@ const UNFROZEN: Param = Param::span(-0.45, 1.0);
 const RIVER_WEIRD: Param = Param::span(-0.05, 0.05);
 /// 谷带外切片（内陆/滩的 weirdness 两段；10 群系子集内不区分正负切片）。
 const WEIRD_OUTSIDE: [(f64, f64); 2] = [(-1.0, -0.05), (0.05, 1.0)];
-// 段内探针（单测用「注册点必中」断言的坐标，取段界中值）。
-const T_MID: [f64; 5] = [-0.725, -0.3, 0.025, 0.375, 0.775];
-const H_MID: [f64; 5] = [-0.675, -0.225, 0.0, 0.2, 0.65];
 
 /// 内陆气候元组 -> 群系（MIDDLE_BIOMES[温度段][湿度段] 语义的 10 群系收窄）。
 const MIDDLE: [[Option<Biome>; 5]; 5] = [
@@ -330,6 +328,11 @@ pub fn pick_biome(table: &[(ParameterPoint, Biome)], t: &TargetPoint) -> Biome {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 段内探针（「注册点必中」断言的坐标，取段界中值；仅测试消费，
+    // 置于测试模块避免 lib 目标 dead_code）。
+    const T_MID: [f64; 5] = [-0.725, -0.3, 0.025, 0.375, 0.775];
+    const H_MID: [f64; 5] = [-0.675, -0.225, 0.0, 0.2, 0.65];
 
     /// 10 群系全部注册。
     #[test]
