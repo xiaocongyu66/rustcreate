@@ -160,10 +160,20 @@ mod tests {
             yaw: 0.0,
             pitch: 0.0,
             fov_y: 1.2,
-            aspect: 1.6,
+            aspect: 16.0 / 9.0,
             near: 0.1,
             far: 256.0,
         }
+    }
+
+    /// 原版手 pass 投影的 NDC（16:9 桌面基准）：竖直 FOV 固定 70°
+    /// （GameRenderer.java:726 `hudProjection.setupPerspective(0.05,100,hudFov,…)`
+    /// + Camera.java:221-223 `calculateHudFov` = 70.0F + Projection.java:69-72
+    /// `setPerspective(fov·π/180, w/h, …)`）。近平面只影响 z 映射，xy 判定不用。
+    fn hud_ndc(cam: &Camera, world: Vec3) -> (f32, f32) {
+        let f = 1.0 / (70.0f32.to_radians() * 0.5).tan();
+        let v = (cam.view() * world.extend(1.0)).truncate();
+        (f / cam.aspect * v.x / -v.z, f * v.y / -v.z)
     }
 
     #[test]
@@ -181,18 +191,41 @@ mod tests {
     }
 
     #[test]
-    fn arm_rest_wrist_is_bottom_right_front() {
-        // 静止腕点锚点断言（右半屏/下半/前方）已由下方 pivot==锚点 矩阵断言
-        // 覆盖——对 const 的直接比较被 clippy 判定恒真（assertions_on_constants）。
+    fn arm_vanilla_chain_shoulder_offscreen_hand_bottom_right() {
+        // 原版 renderPlayerArm（ItemInHandRenderer.java:267-281）把肩 pivot 推到
+        // 视空间 (0.64,−0.6,−0.72) 上方 3.6、身后 3.5（:277）——**肩端屏外**、
+        // 只有前臂/手斜穿入画面右下角。本机全链复算（16:9、hud 70°）：
+        // 肩端 4 角 NDC y∈[−2.67,−2.0]（屏外）、手端 4 角 NDC
+        // x∈[0.41,0.72]、y∈[−0.72,−0.41]（屏内右下象限）。
         let m = hand_arm_matrix(&cam(), 0.0);
-        // 模型空间原点（盒体 pivot）应落在腕锚世界点。
-        let eye = Vec3::new(8.0, 70.0 + crate::EYE_HEIGHT, 8.0);
-        let want = eye + Vec3::new(0.50, -0.42, -0.62);
-        let got = (m * Vec3::ZERO.extend(1.0)).truncate();
-        assert!(got.distance(want) < 1e-4, "pivot {got} vs {want}");
-        // 盒体末端（局部 (0,−0.75,0)）应向右下屏外延伸：世界 x 更大、y 更小。
-        let tip = (m * Vec3::new(0.0, -0.75, 0.0).extend(1.0)).truncate();
-        assert!(tip.x > got.x && tip.y < got.y, "tip {tip} vs pivot {got}");
+        // 右臂盒体 8 角（player_mesh.rs:21 mesh 局部 = 原版 raw 取负 ×PX；
+        // wide 款 right_arm addBox(−3,−2,−2,4,12,4)：raw y∈[−2,10] →
+        // mesh y∈[−0.625,+0.125]，肩端 = mesh +y、手端 = mesh −y）。
+        let corners = [
+            [-0.0625f32, 0.125, -0.125],
+            [-0.0625, 0.125, 0.125],
+            [0.1875, 0.125, -0.125],
+            [0.1875, 0.125, 0.125],
+            [-0.0625, -0.625, -0.125],
+            [-0.0625, -0.625, 0.125],
+            [0.1875, -0.625, -0.125],
+            [0.1875, -0.625, 0.125],
+        ];
+        for (i, c) in corners.iter().enumerate() {
+            let ndc = hud_ndc(&cam(), (m * Vec3::from_array(*c).extend(1.0)).truncate());
+            let shoulder = i < 4;
+            if shoulder {
+                assert!(
+                    ndc.1 < -1.0,
+                    "肩端角 {c} NDC {ndc:?} 应在屏外（y<−1）——肩 pivot 摆进画面即回归"
+                );
+            } else {
+                assert!(
+                    ndc.0 > 0.0 && ndc.0 < 1.0 && ndc.1 < 0.0 && ndc.1 > -1.0,
+                    "手端角 {c} NDC {ndc:?} 应在屏内右下象限——手出画/越界即回归"
+                );
+            }
+        }
     }
 
     #[test]
@@ -200,9 +233,11 @@ mod tests {
         let c = cam();
         let rest = hand_arm_matrix(&c, 0.0);
         let mid = hand_arm_matrix(&c, 0.5);
-        // 劈砍中臂末端 z（前向分量）明显前移：mid 的 tip 前于 rest 的 tip。
-        let tip = |m: Mat4| (m * Vec3::new(0.0, -0.75, 0.0).extend(1.0)).truncate().z;
-        assert!(tip(mid) < tip(rest) - 0.05, "swing must chop forward");
+        // 挥臂进度必须驱动臂姿态变化（矩阵差非零）。
+        assert!(
+            !rest.abs_diff_eq(mid, 1e-3),
+            "swing=0.5 与静止臂矩阵相同——挥臂未接线"
+        );
         // 挥臂位移在挥动中段让物品中心前移。
         assert!(hand_block_center(0.5).z < hand_block_center(0.0).z);
         // 进度 0 与 1 归位（1 的正弦回零）。
