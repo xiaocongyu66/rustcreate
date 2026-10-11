@@ -19,8 +19,9 @@ fn crossing_fires_with_int_plus_one() {
     // 过门即触发并按 (int)moveDist + 1 重置（Entity.java:1188-1190）：
     // moveDist=1.05 → 新阈值 2.0。
     assert_eq!(step_gate(1.05, 1.0), Some(2.0));
-    // moveDist=1.99 仍 → (int)1.99+1 = 2.0。
-    assert_eq!(step_gate(1.99, 2.0), Some(2.0));
+    // moveDist=1.99（初阈值 1.0 下的大步跳变）仍 → (int)1.99+1 = 2.0——
+    // 小数部分不影响取整加一；1.99 < 2.0 时未过门不触发（严格 >）。
+    assert_eq!(step_gate(1.99, 1.0), Some(2.0));
     // 跨两格：moveDist=2.4 → 3.0。
     assert_eq!(step_gate(2.4, 1.0), Some(3.0));
 }
