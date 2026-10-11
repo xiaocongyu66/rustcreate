@@ -843,10 +843,22 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                         let mut visible = false;
                         let mut wave = 0u8;
                         if water_pass {
-                            // 水 vs 水（或哨兵）不出面（mesher.cpp:716-724）
+                            // 水 vs 水（或哨兵）不出面（mesher.cpp:716-724）。
+                            // 129-L/L2：贴满块遮蔽邻域的面按原版剔除——
+                            // FluidRenderer.java:290 `renderCondition &&
+                            // !isFaceOccludedByNeighbor(...)`；isFaceOccludedByState
+                            //（:36-47）取邻态面遮蔽形：空形（玻璃/叶/冰等
+                            // 非遮蔽体）不遮；满块形（本仓 `opaque` ⟺
+                            // solidRender 满块 occlusionShape，gen-blocks.py:
+                            // 563 / BlockBehaviour.java:512-513）下除 +Y 外
+                            // 全遮（底/侧贴石不再发射），+Y 仅流体高度满
+                            // 1.0 才遮——可发射顶面高 <1.0（原版 0.8889，
+                            // 仓内空气上 0.9 波面），顶面保留。全表无
+                            // 「opaque 且非立方」项（部分遮蔽形第三分支
+                            // Shapes.blockOccludes 在仓内方块集无实例）。
                             if id == t.water_id && nb < BARRIER && (nb & ID_MASK) != t.water_id {
-                                visible = true;
-                                if face == FACE_PY {
+                                visible = face == FACE_PY || !is_opaque(nb);
+                                if visible && face == FACE_PY {
                                     wave = u8::from((nb & ID_MASK) == 0);
                                 }
                             }
