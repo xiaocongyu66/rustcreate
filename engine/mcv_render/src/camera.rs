@@ -1,6 +1,7 @@
 //! Camera math (wgpu clip space: z in [0, 1]).
 
 use glam::{Mat4, Vec3};
+use std::f32::consts::PI;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Camera {
@@ -11,6 +12,12 @@ pub struct Camera {
     pub aspect: f32,
     pub near: f32,
     pub far: f32,
+    /// 行走 bob 矩阵（视空间，[`view_bob_matrix`] 产出；静止 = IDENTITY）。
+    /// 原版把它乘进世界投影矩阵（GameRenderer.java:684-691
+    /// `projectionMatrix.mul(bobStack)`）并同乘手 pass 的 poseStack
+    /// （:360-362）——本仓统一放进 view_proj 的 view 与 proj 之间
+    /// （bob 是视空间刚体变换，P·bob·V ≡ 对视空间先 bob 再投影）。
+    pub bob: Mat4,
 }
 
 impl Camera {
@@ -51,9 +58,34 @@ impl Camera {
         ])
     }
 
+    /// 视投影（含行走 bob）：`proj · bob · view`（原版 GameRenderer.java
+    /// :684-691 把 bobStack 乘进投影矩阵；手 pass 经同一入口吃到同一 bob，
+    /// :360-362）。静止（bob=IDENTITY）时与旧 view_proj 完全同值。
     pub fn view_proj(&self) -> Mat4 {
-        self.proj() * self.view()
+        self.proj() * self.bob * self.view()
     }
+}
+
+/// 视空间行走 bob 矩阵（26.1 `GameRenderer.bobView`，GameRenderer.java
+/// :336-348 全文照抄）：
+///
+/// ```text
+/// T(sin(bID·π)·bob·0.5, −|cos(bID·π)·bob|, 0)
+///   · Rz(sin(bID·π)·bob·3°)
+///   · Rx(|cos(bID·π − 0.2)·bob|·5°)
+/// ```
+///
+/// - `bob`：插值后摆幅 0..=0.1（ClientAvatarState.java:76-78 的 0.4 收敛 +
+///   AbstractClientPlayer.java:84-87 的 min(0.1,|Δv|) 门与 onGround 门）；
+/// - `backwards_walk_dist`：bID = −(walkDist + Δ·partialTicks)
+///   （ClientAvatarState.java:89-92）；
+/// - 平移上限 0.1 格、rotZ ≤0.3°、rotX ≤0.5°（bob 上限 0.1）。
+pub fn view_bob_matrix(bob: f32, backwards_walk_dist: f32) -> Mat4 {
+    let s = (backwards_walk_dist * PI).sin();
+    let c = (backwards_walk_dist * PI).cos();
+    Mat4::from_translation(Vec3::new(s * bob * 0.5, -(c * bob).abs(), 0.0))
+        * Mat4::from_rotation_z((s * bob * 3.0).to_radians())
+        * Mat4::from_rotation_x(((c - 0.2) * bob).abs() * 5.0f32.to_radians())
 }
 
 #[cfg(test)]
@@ -69,6 +101,7 @@ mod tests {
             aspect: 1.6,
             near: 0.1,
             far: 256.0,
+            bob: Mat4::IDENTITY,
         }
     }
 

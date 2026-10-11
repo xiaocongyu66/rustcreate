@@ -99,6 +99,7 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = vec![];
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -175,6 +176,7 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = vec![];
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -320,6 +322,7 @@ fn terrain_sky_and_hud_render() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
 
     // HUD: solid white bar + glyph 'A' (65).
@@ -449,6 +452,7 @@ fn terrain_multi_array_grass_render() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -516,6 +520,7 @@ fn mining_crack_and_outline_darken_target() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -663,6 +668,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
 
     // opaque：近岸草地（y=100，z 8..16）+ 塘底泥土（y=99.5，z 0..8）。
@@ -911,6 +917,7 @@ fn gles_fallback_world_frame_smoke() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -984,6 +991,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 512.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let empty_hud: &[HudQuad] = &[];
     let mut frame = |cloud_on: bool| -> Vec<u8> {
@@ -1079,6 +1087,7 @@ fn cjk_text_stays_within_line_box() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let scene = Scene {
         camera: &camera,
@@ -1162,6 +1171,7 @@ fn celestial_sun_texture_paints_core() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 512.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let scene = Scene {
@@ -1235,6 +1245,7 @@ fn missing_assets_never_paint_fake_pixels() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let scene = Scene {
         camera: &camera,
@@ -1297,6 +1308,7 @@ fn missing_assets_never_paint_fake_pixels() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 512.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud_b = vec![
         HudQuad {
@@ -1425,6 +1437,7 @@ fn four_mobs_paint_with_vanilla_textures() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
 
     // 同一 renderer 渲两帧对比（闭包只管提交与回读）。
@@ -1596,6 +1609,7 @@ fn first_person_hand_paints_bottom_right() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
 
     fn frame(
@@ -1841,6 +1855,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -1923,6 +1938,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -2097,6 +2113,7 @@ fn staging_upload_flush_contract() {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);

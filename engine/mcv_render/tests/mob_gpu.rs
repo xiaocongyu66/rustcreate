@@ -113,6 +113,7 @@ fn camera() -> Camera {
         aspect: 320.0 / 240.0,
         near: 0.1,
         far: 256.0,
+        bob: glam::Mat4::IDENTITY,
     }
 }
 

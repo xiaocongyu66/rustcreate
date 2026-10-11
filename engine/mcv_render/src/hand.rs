@@ -197,6 +197,7 @@ mod tests {
             aspect: 16.0 / 9.0,
             near: 0.1,
             far: 256.0,
+            bob: glam::Mat4::IDENTITY,
         }
     }
 

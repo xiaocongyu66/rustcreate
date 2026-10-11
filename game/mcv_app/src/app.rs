@@ -2523,6 +2523,7 @@ impl AppState {
             aspect: mw / mh,
             near: 0.1,
             far: 256.0,
+            bob: glam::Mat4::IDENTITY,
         };
         let (sun, day) = mcv_render::sun_state(6_000);
         let scene = mcv_render::Scene {

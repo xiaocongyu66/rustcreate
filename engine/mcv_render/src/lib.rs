@@ -19,7 +19,7 @@ pub mod player_mesh;
 pub mod text;
 pub mod unifont;
 
-pub use camera::Camera;
+pub use camera::{Camera, view_bob_matrix};
 pub use cloud::{CloudSettings, Clouds};
 pub use gpu::{
     BatchingStats, FrameStats, FrameUniforms, HudQuad, MobInstance, PlayerUniforms, RenderChunk,

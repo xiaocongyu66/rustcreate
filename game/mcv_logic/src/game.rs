@@ -604,6 +604,16 @@ pub struct GameRuntime {
     swinging: bool,
     /// 挥臂计时（tick 制，0..=SWING_TICKS；连续制推进按 dt*20 折算帧间平滑）。
     swing_time: f32,
+    /// 行走 bob 状态（26.1 ClientAvatarState walkDist/walkDistO/bob/bobO，
+    /// ClientAvatarState.java:76-92）：bobView 的相位源与幅度源，每 on_tick
+    /// 推进一次、渲染帧经 [`GameRuntime::hand_bob`] 插值。
+    walk_dist: f32,
+    walk_dist_o: f32,
+    bob: f32,
+    bob_o: f32,
+    /// 上一 tick 边界的脚底位置（水平位移计量用，LocalPlayer.java:989 的
+    /// `Mth.length(deltaX, deltaZ)`）。
+    bob_prev_pos: Vec3,
     spawn_cooldown: u32,
     pub player_xp: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
@@ -938,6 +948,11 @@ impl GameRuntime {
             mine: MineMachine::default(),
             swinging: false,
             swing_time: 0.0,
+            walk_dist: 0.0,
+            walk_dist_o: 0.0,
+            bob: 0.0,
+            bob_o: 0.0,
+            bob_prev_pos: Vec3::ZERO,
             spawn_cooldown: 0,
             player_xp: 0,
             hotbar,
@@ -975,6 +990,9 @@ impl GameRuntime {
             was_in_water: false,
             fire_ticks: 0,
         };
+        // 行走 bob 的位移计量基准 = 出生点（首个 tick 只计量构造后的真实位移，
+        // 防把 ZERO→出生点的一次性差值灌进 walkDist）。
+        rt.bob_prev_pos = rt.player.pos;
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
         // 被动组件（WanderState/AnimState）也要注册：mob 渲染收集器
@@ -1797,6 +1815,9 @@ impl GameRuntime {
     }
 
     pub fn camera(&self, aspect: f32) -> Camera {
+        // 行走 bob：bobView 矩阵乘进投影侧（GameRenderer.java:684-691 世界 +
+        // :360-362 手 pass 同源一份；本仓统一在 Camera::view_proj 里乘）。
+        let (bob, bid) = self.hand_bob();
         let mut cam = Camera {
             pos: self.player.pos,
             yaw: self.player.yaw,
@@ -1805,6 +1826,7 @@ impl GameRuntime {
             aspect,
             near: 0.1,
             far: (self.render_dist * 16) as f32 * 1.6,
+            bob: mcv_render::view_bob_matrix(bob, bid),
         };
         if self.cam_type != CameraType::FirstPerson {
             // 视眼 = pos + EYE_HEIGHT；第三人称沿视线平移，遇方块拉近
@@ -2504,6 +2526,27 @@ impl GameRuntime {
             // 雨粒子：tick 后按天气强度在世界里补原版 RAIN 粒子
             // （原版同为 tick 尾客户端生成，LevelRenderer.java:1164）。
             self.spawn_rain_particles();
+            // ---- 行走 bob 状态（26.1 LocalPlayer.aiStep → updateBob 链）----
+            // LocalPlayer.java:989 walkDist += Mth.length(Δx,Δz)·0.6（每 tick）；
+            // AbstractClientPlayer.java:84-87 tBob = min(0.1, |Δv|水平)，
+            // 门 = onGround && !dying && !swimming（本仓无游泳态，登记
+            // KNOWN-DIVERGENCE；rideTick resetBob :70-73 无骑乘）；
+            // ClientAvatarState.java:76-78 bobO=bob、bob += (tBob−bob)·0.4。
+            self.walk_dist_o = self.walk_dist;
+            self.bob_o = self.bob;
+            let moved = self.player.pos - self.bob_prev_pos;
+            self.walk_dist += (moved.x * moved.x + moved.z * moved.z).sqrt() * 0.6;
+            self.bob_prev_pos = self.player.pos;
+            let t_bob = if self.player.on_ground && !self.dead {
+                (self.player.vel.x * self.player.vel.x + self.player.vel.z * self.player.vel.z)
+                    .sqrt()
+                    / 20.0
+            } else {
+                0.0
+            };
+            // vel 是 m/s，原版 deltaMovement 是格/tick：/20 换算（满速走
+            // 4.317/20 = 0.216 ≥ 0.1 → 封顶）。
+            self.bob += (t_bob.min(0.1) - self.bob) * 0.4;
         }
         if self.phase == GamePhase::Loading {
             // 加载态 = 26.1 LevelLoadingScreen 盖在游戏上（Screen 非 null）：
@@ -4317,6 +4360,18 @@ impl GameRuntime {
         } else {
             0.0
         }
+    }
+
+    /// 行走 bob 渲染参数（渲染帧插值）：`(bob, backwardsInterpolatedWalkDistance)`。
+    /// 26.1 ClientAvatarState.java:85-87 `getInterpolatedBob`
+    /// （lerp(bobO, bob, partialTicks)）与 :89-92
+    /// `getBackwardsInterpolatedWalkDistance`（bID = −(walkDist + Δ·t)——
+    /// 注意 walkDist 本身不做 o→cur 插值，原版直接取当前值加外推差）。
+    pub fn hand_bob(&self) -> (f32, f32) {
+        let f = self.tick_frac;
+        let bob = self.bob_o + (self.bob - self.bob_o) * f;
+        let wd = self.walk_dist + (self.walk_dist - self.walk_dist_o) * f;
+        (bob, -wd)
     }
 
     /// 第一人称手持物（渲染层数据）：选中槽 Block 物品 = 缩小方块（取

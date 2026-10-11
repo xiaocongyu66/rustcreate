@@ -61,6 +61,7 @@ mod tests {
             aspect: 1.6,
             near: 0.1,
             far: 256.0,
+            bob: glam::Mat4::IDENTITY,
         };
         let f = Frustum::from_view_proj(&cam.view_proj());
         assert!(f.intersects_aabb(Vec3::new(-1.0, 0.0, -12.0), Vec3::new(1.0, 2.0, -10.0)));
