@@ -9,7 +9,7 @@ pub mod tint;
 pub mod tool;
 
 pub use chunk::dirty;
-pub use chunk::{ChunkHandle, Stage};
+pub use chunk::{ChunkHandle, ChunkStatus, SECTION_COUNT, SECTION_VOL, Stage, section_view};
 pub use pool::{TaskPool, world_worker_count};
 pub use shape::Shape;
 
