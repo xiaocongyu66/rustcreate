@@ -255,7 +255,7 @@ fn trunk_dark_oak<R: Rng, S: BlockSetter>(
     for ox in -1..=2 {
         for oz in -1..=2 {
             if (ox < 0 || ox > 1 || oz < 0 || oz > 1) && rng.next_int(3) == 0 {
-                let length = rng.next_int(3) + 2; // :76 → 2..4
+                let length = rng.next_int(3) as i32 + 2; // :76 → 2..4
                 for by in 0..length {
                     scribe.place_log(Pos::new(origin.x + ox, ey - by - 1, origin.z + oz));
                 }
