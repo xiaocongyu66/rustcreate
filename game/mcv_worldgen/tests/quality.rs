@@ -34,6 +34,12 @@ use mcv_worldgen::vanilla as wg;
 
 /// 1) 群系占比：512×512 列网格（区块级稀疏采样），各群系 2%-35%。
 ///
+/// 地形保真波 T2 重锚（2026-10-11）：气候 xz_scale 还原 0.25（波长 2048 格）
+/// 后，±2048 窗只覆盖 1 个波长、群系出现与否强依赖窗口落位 → 窗扩 ±8192
+///（stride 16→64，样本数不变 65536）。点表同步升级为 OBB span 平铺分区表
+/// （src/vanilla/biomes.rs 头注）：/root/audit/_sim3.py 移植复算校准，
+/// 10 群系 3.8%-29.5%（seed 0x2a/0x7EA20B1），带 2%-35% 原样保留。
+///
 /// River 一度实测 1.76% 越下界——裁决为**修生成器**（非放松本带）：26.1 的
 /// river 是 weirdness 谷地带 span(-0.05,0.05)（OverworldBiomeBuilder.java:217
 /// addValleys）在特定 cont/erosion 组合的细条带（:753-815），其占比由
@@ -44,7 +50,7 @@ use mcv_worldgen::vanilla as wg;
 #[test]
 fn biome_distribution_in_bands() {
     let mut counts = std::collections::HashMap::new();
-    let stride = 16_i32; // 每 16 列采一列 ≈ 每 2×2 区块网格采样
+    let stride = 64_i32; // 每 64 列采一列：±8192 格 ≈ 8 个大陆度波长
     let half = 128;
     let mut total = 0usize;
     for dz in -half..half {

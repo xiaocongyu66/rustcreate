@@ -53,14 +53,6 @@ pub const SEA: i32 = crate::vanilla::SEA;
 pub const MIN_Y: i32 = crate::vanilla::MIN_Y;
 /// GLOBAL_OFFSET（NoiseRouterData.registerTerrainNoises）。
 const GLOBAL_OFFSET: f64 = -0.50375;
-/// 表面基准偏置（v6 原生归一，作用于 density 的 offset 通道——表面零点
-/// `surface_mc = 128 + 128·offset` 与实际 density 零跨界共用此值，不可拆）。
-/// 旧值 0.2 = 「26.1 海平面 63（归一 0.33）重标到自研 96（0.375）」的组合
-/// 常数；v6 恒等映射后按「海面样条档（spline ≈ −0.0713，旧基准下
-/// offset_sea = −0.375 = spline − 0.50375 + 0.2 反推）落 mc 63」重解：
-/// BIAS = 63−128)/128 − spline_sea + 0.50375 = 0.0671875。
-/// 平原落点 SEA+5 ~ SEA+12 由 tests/quality.rs 海陆带复核。
-const BACKBONE_BIAS: f64 = 0.0671875;
 /// 顶部开口渐隐带（对应 slide 顶封的简化）。
 pub const ENTRANCE_FADE: i32 = 14;
 /// noodle 关闭哨兵（rangeChoice 的「未雕刻」常量）。
@@ -491,7 +483,11 @@ impl Orchestrator {
     pub fn column_state(&self, block_x: i32, block_z: i32) -> ColumnState {
         let sample = self.climate.sample(block_x, block_z);
         let c = sample.spline_climate();
-        let offset = self.offset_spline.eval(&c) + GLOBAL_OFFSET + BACKBONE_BIAS;
+        // offset 通道唯一常数是 GLOBAL_OFFSET（NoiseRouterData.java:152-160
+        // `add(constant(-0.50375), spline(overworldOffset))`）；旧 BACKBONE_BIAS
+        // 解常数（0.2 → v6 重解 0.0671875）随气候波长还原一并删除——地形保真
+        // 波 T2（triage ②：整体抬升掩膜波长错误、扭曲岸线与平原落点带）。
+        let offset = self.offset_spline.eval(&c) + GLOBAL_OFFSET;
         let factor = self.factor_spline.eval(&c);
         let unscaled_jag = self.jag_spline.eval(&c);
         // 地表零点：yClampGradient(-64,320,+1.5,-1.5) 与 offset 抵消处

@@ -2,22 +2,26 @@
 //! ShiftedNoise 编排与 `worldgen/noise/*.json` 的噪声参数表。
 //!
 //! 编排语义（引用机制 ≠ 搬运代码）：
-//! - SHIFT（DEFAULT_SHIFT）：firstOctave -3、amplitudes [1,1,1,0]，2D 采样；
-//! - 通道值 = noise.getValue(blockX·xzScale + shiftX, ·, blockZ·xzScale + shiftZ)
-//!   （DensityFunctions.ShiftedNoise.compute）；
+//! - SHIFT（DEFAULT_SHIFT）：firstOctave -3、amplitudes [1,1,1,0]，2D 采样，
+//!   求值坐标 ×0.25 且输出 **×4 乘子**（`DensityFunctions.java:1058-1060`
+//!   ShiftNoise.compute = `noise(x·0.25, y·0.25, z·0.25)·4`）；
+//! - 通道值 = noise.getValue(blockX·0.25 + shiftX, ·, blockZ·0.25 + shiftZ)
+//!   （DensityFunctions.ShiftedNoise.compute，xzScale = 0.25）；
 //! - continentalness / erosion / ridge(weirdness) 与 temperature / vegetation
 //!   共用同一 SHIFT 偏移（NoiseRouterData:89-97/325-331）。
 //!
-//! 波长取舍（NOTES-terrain §7，防小区域地形全平）：26.1 原生大陆度/侵蚀
-//! 波长 2048 格（xzScale 0.25）、山脊 512（0.25:512 保持 4:1）。本世界可
-//! 步行尺度上限 256 格：一律 ÷8 压缩且保持通道间相对比例
-//! （2048:2048:512 → 256:256:64，xzScale 2.0），同 seed 确定性测试锁定。
+//! 波长真相（地形保真波 T2 还原，任务卡 #122 / triage ①）：xzScale 0.25 ×
+//! firstOctave −9 ⇒ 大陆度/侵蚀波长 2048 格、山脊 512、温度 4096（−10 首层）
+//! ——原版生存的大地貌尺度。旧「可步行尺度 ÷8 压缩（XS=2.0）」取舍随世界
+//! 升 384 作废：÷8 后盆带每 ~256 格穿越一遍，平原窗占比 0.054 vs 原版口径
+//! 0.41（/root/audit/_sim3.py 移植复算）。
 
 use crate::vanilla::noise::{NormalNoise, noise_seed, splitmix64};
 use crate::vanilla::spline::Climate;
 
-/// 温度/湿度通道 2D 压缩后的采样缩放（= 0.25 ÷8）。
-const XS: f64 = 2.0;
+/// 五参数/温湿度通道采样缩放（26.1 overworld 各通道 json `xz_scale: 0.25`，
+/// NoiseRouterData.java:90/93/96/325-328）。
+const XS: f64 = 0.25;
 
 /// 每列气候快照（供样条求值与群系选择）。
 #[derive(Clone, Copy, Debug)]
@@ -103,9 +107,10 @@ impl ClimateSampler {
     pub fn sample(&self, block_x: i32, block_z: i32) -> ClimateSample {
         let bx = f64::from(block_x);
         let bz = f64::from(block_z);
-        // SHIFT 通道自身：2D 采样（y = 0 切片）
-        let sx = self.shift_x.get_value(bx * XS, 0.0, bz * XS);
-        let sz = self.shift_z.get_value(bx * XS, 0.0, bz * XS);
+        // SHIFT 通道自身：2D 采样（y = 0 切片）+ ShiftNoise.compute 的 ×4 乘子
+        //（DensityFunctions.java:1058-1060）。
+        let sx = self.shift_x.get_value(bx * XS, 0.0, bz * XS) * 4.0;
+        let sz = self.shift_z.get_value(bx * XS, 0.0, bz * XS) * 4.0;
         let continents = self
             .continentalness
             .get_value(bx * XS + sx, 0.0, bz * XS + sz);
@@ -165,22 +170,24 @@ mod tests {
         }
     }
 
-    /// 分块尺度上气候轴确有变化（≠ 全平）：256 格窗口内 continentalness
-    /// 跨越 0 两侧。
+    /// 分块尺度上气候轴确有变化（≠ 全平）：±4096 格网格（256 格步距）上
+    /// continentalness 跨越 0 两侧。窗口随 T2 波长还原同步扩——原 384 格
+    /// 路径只有 0.2 个大陆度波长（2048 格），恢复原版尺度后不具代表性。
     #[test]
     fn continentalness_varies_across_region() {
         let s = ClimateSampler::new(7);
         let mut saw_neg = false;
         let mut saw_pos = false;
-        for k in 0..24_i32 {
-            let v = s.sample(k * 16, k * 31).continents;
-            if v < -0.1 {
-                saw_neg = true;
-            }
-            if v > 0.1 {
-                saw_pos = true;
+        for dz in -16..16 {
+            for dx in -16..16 {
+                let v = s.sample(dx * 256, dz * 256).continents;
+                saw_neg |= v < -0.1;
+                saw_pos |= v > 0.1;
             }
         }
-        assert!(saw_neg && saw_pos, "continentalness 退化常数（海陆不可分）");
+        assert!(
+            saw_neg && saw_pos,
+            "continentalness 退化常数（±4096 网格未跨 0）"
+        );
     }
 }

@@ -12,12 +12,24 @@
 //!   （OverworldBiomeBuilder.addSurfaceBiome）；surface 目标取地形深度
 //!   depth = 0（地表/地表上方）。
 //!
-//! 点表取舍（验收报告说明）：只需覆盖 10 群系。气候元组取 26.1 实际波段
-//! （OverworldBiomeBuilder 的 temperatures/humidities/erosions 段、
-//!   continentalness 段带与 weirdness 切片带）的**波段中点**，即
-//!   MIDDLE_BIOMES[温度段][湿度段] 语义收窄到本任务群系集：未收进 10
-//!   群系的气候元组（SNOWY_TAIGA/JUNGLE/BADLANDS/…）不注册、不会选出；
-//!   六参数含义与取最近机制逐一保留。
+//! 点表形态（地形保真波 T2 重锚）：**span 平铺分区表**。旧表把每段收缩成
+//! 波段中点单点——XS=2.0 的高频下靠采样密度掩盖，恢复原版 xz_scale 0.25
+//! 后 Ocean 1.1%/Beach 1.9% 越带（triage ④/审计 B2：点化是结构性降级）。
+//! 现按 26.1 OverworldBiomeBuilder 的段界原值平铺参数空间：
+//! - 温度/湿度：5×5 段界（OBB.java:67-79，span 原值）；
+//! - 大陆度：deepOcean [-1.05,-0.455]/ocean [-0.455,-0.19]/coast
+//!   [-0.19,-0.11]/inland [-0.11,1.0]（OBB.java:70-79；near/mid/far 三段在
+//!   10 群系子集内同 MIDDLE 矩阵，并作一段）；
+//! - 侵蚀：MIDDLE_BIOMES 选择只依赖 temp/hum 下标（OBB pickMiddleBiome），
+//!   内陆元组侵蚀取 FULL 段；
+//! - weirdness：谷带切片 [-0.05,0.05]（OBB addValleys，RIVER 对 erosions[0..6]
+//!   即全侵蚀段注册）专属河；滩/内陆取谷带外两段；
+//! - ocean：每温度段注册（OBB.java:202-209 addOcean，OCEANS 表 :72-75），
+//!   湿度/侵蚀/weirdness 全段（FULL_RANGE）；
+//! - beach：coast 段 × 未冻结温度段 1..3（OBB.java:922-925 pickBeachBiome：
+//!   0→SNOWY_BEACH、4→DESERT，本子集缺席的群系由最近点自然回落）。
+//! 未收进 10 群系的气候元组（JUNGLE/BADLANDS/…）不注册、不会选出；六参数
+//! 含义与取最近机制逐一保留。
 
 /// 本世界支持的群系（10 个，任务拍板）。
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -125,36 +137,33 @@ const fn sq(v: i64) -> i64 {
     v * v
 }
 
-// 26.1 气候波段中点（OverworldBiomeBuilder 段界的中值）：
-// 温度 5 段：[-1,-0.45,-0.15,0.2,0.55,1]；湿度 5 段：[-1,-0.35,-0.1,0.1,0.3,1]。
-const T_MID: [Param; 5] = [
-    Param::point(-0.725),
-    Param::point(-0.3),
-    Param::point(0.025),
-    Param::point(0.375),
-    Param::point(0.775),
+// 26.1 OBB 段界（OverworldBiomeBuilder.java:67-79 逐值转写）：
+// 温度 5 段 [-1,-0.45,-0.15,0.2,0.55,1]、湿度 5 段 [-1,-0.35,-0.1,0.1,0.3,1]。
+const T_SPANS: [(f64, f64); 5] = [
+    (-1.0, -0.45),
+    (-0.45, -0.15),
+    (-0.15, 0.2),
+    (0.2, 0.55),
+    (0.55, 1.0),
 ];
-const H_MID: [Param; 5] = [
-    Param::point(-0.675),
-    Param::point(-0.225),
-    Param::point(0.0),
-    Param::point(0.2),
-    Param::point(0.65),
+const H_SPANS: [(f64, f64); 5] = [
+    (-1.0, -0.35),
+    (-0.35, -0.1),
+    (-0.1, 0.1),
+    (0.1, 0.3),
+    (0.3, 1.0),
 ];
+// 大陆度/侵蚀/weirdness 段（OBB.java:70-79 + addValleys/pickBeachBiome）。
 const FULL: Param = Param::span(-1.0, 1.0);
-const MID: Param = Param::point(0.0);
-
-// 大陆度波段中点（OverworldBiomeBuilder 段界）：
-// ocean [-0.455,-0.19]、coast [-0.19,-0.11]、内陆（near..far 收窄为一点）。
-const OCEAN_C: Param = Param::point(-0.3225);
-const COAST_C: Param = Param::point(-0.15);
-const INLAND_C: Param = Param::point(0.165);
-// 侵蚀中段点（内陆元组共用的第 4 参数点）。
-const E_INLAND: Param = Param::point(-0.08625);
-// weirdness 切片带中点：负切片 (-1,0)、正切片 (0,1)、河流带 [-0.05,0.05]。
-const WEIRD_NEG: Param = Param::point(-0.5);
-const WEIRD_POS: Param = Param::point(0.5);
-const RIVER_WEIRD: Param = Param::point(0.0);
+/// UNFROZEN_RANGE（OBB.java:81 = span(temperatures[1], temperatures[4])）。
+const UNFROZEN: Param = Param::span(-0.45, 1.0);
+/// 谷带切片（OBB addValleys 调用点：span(-0.05, 0.05)）。
+const RIVER_WEIRD: Param = Param::span(-0.05, 0.05);
+/// 谷带外切片（内陆/滩的 weirdness 两段；10 群系子集内不区分正负切片）。
+const WEIRD_OUTSIDE: [(f64, f64); 2] = [(-1.0, -0.05), (0.05, 1.0)];
+// 段内探针（单测用「注册点必中」断言的坐标，取段界中值）。
+const T_MID: [f64; 5] = [-0.725, -0.3, 0.025, 0.375, 0.775];
+const H_MID: [f64; 5] = [-0.675, -0.225, 0.0, 0.2, 0.65];
 
 /// 内陆气候元组 -> 群系（MIDDLE_BIOMES[温度段][湿度段] 语义的 10 群系收窄）。
 const MIDDLE: [[Option<Biome>; 5]; 5] = [
@@ -211,63 +220,93 @@ const fn climate_point(
         erosion,
         depth: Param::point(depth),
         weirdness,
-        // offset 取 26.1 inland 表的 0.01（surface 类全表同值 → 常量项）。
+        // offset 取 26.1 inland 表的 0.01（surface 类全表同值 → 常量项；
+        // 段平铺后边界带不靠 offset 仲裁）。
         offset: 100,
     }
 }
 
-/// 群系点表：内陆按 MIDDLE 展开（温度段 × 湿度段中点，双向 weird 切片），
-/// 海/滩/河为专属气候元组；每元组 depth 0.0 / 1.0 各一份。
+/// 群系点表（span 平铺分区，见模块头注）：ocean → river → beach → MIDDLE，
+/// 每元组 depth 0.0 / 1.0 各一份（addSurfaceBiome 双注册）。注册序即平局序
+///（fitness 同为 offset² 时首个最小者胜）。
 #[must_use]
 pub fn biome_point_table() -> Vec<(ParameterPoint, Biome)> {
     let mut v = Vec::new();
-    for (ti, row) in MIDDLE.iter().enumerate() {
-        for (hi, cell) in row.iter().enumerate() {
-            if let Some(b) = cell {
-                for w in [WEIRD_NEG, WEIRD_POS] {
-                    v.push((
-                        climate_point(T_MID[ti], H_MID[hi], INLAND_C, E_INLAND, w, 0.0),
-                        *b,
-                    ));
-                    v.push((
-                        climate_point(T_MID[ti], H_MID[hi], INLAND_C, E_INLAND, w, 1.0),
-                        *b,
-                    ));
-                }
+    // ocean：每温度段 × deep/ocean 大陆度段（OBB.java:202-209、OCEANS :72-75、
+    // deepOceanContinentalness/oceanContinentalness :70-71）。
+    for &(t_lo, t_hi) in T_SPANS.iter() {
+        for &(c_lo, c_hi) in [(-1.05, -0.455), (-0.455, -0.19)].iter() {
+            for d in [0.0_f64, 1.0] {
+                v.push((
+                    climate_point(
+                        Param::span(t_lo, t_hi),
+                        FULL,
+                        Param::span(c_lo, c_hi),
+                        FULL,
+                        FULL,
+                        d,
+                    ),
+                    Biome::Ocean,
+                ));
             }
         }
     }
-    // ocean：temp2 段、cont ocean 带中点
-    for w in [WEIRD_NEG, WEIRD_POS] {
-        for d in [0.0_f64, 1.0] {
-            v.push((
-                climate_point(T_MID[2], H_MID[2], OCEAN_C, FULL, w, d),
-                Biome::Ocean,
-            ));
-        }
-    }
-    // beach：temp1/temp2 段、cont coast 带中点
-    for t in [1usize, 2] {
-        for d in [0.0_f64, 1.0] {
-            v.push((
-                climate_point(T_MID[t], H_MID[2], COAST_C, FULL, MID, d),
-                Biome::Beach,
-            ));
-        }
-    }
-    // river：weirdness 河流带点、侵蚀中段点、temp2 段
+    // river：谷带切片 × 全侵蚀段（OBB addValleys 对 erosions[0..6] 注册
+    // RIVER）× coast..farInland 大陆度段 × UNFROZEN 温度段。
     for d in [0.0_f64, 1.0] {
         v.push((
             climate_point(
-                T_MID[2],
-                H_MID[2],
-                INLAND_C,
-                Param::point(0.0875),
+                UNFROZEN,
+                FULL,
+                Param::span(-0.19, 1.0),
+                FULL,
                 RIVER_WEIRD,
                 d,
             ),
             Biome::River,
         ));
+    }
+    // beach：coast 段 × 未冻结温度段 1..3（pickBeachBiome，OBB.java:922-925）×
+    // 谷带外 weirdness（谷带切片在 coast 段属 river，OBB addValleys 同点）。
+    for &(t_lo, t_hi) in T_SPANS[1..4].iter() {
+        for &(w_lo, w_hi) in WEIRD_OUTSIDE.iter() {
+            for d in [0.0_f64, 1.0] {
+                v.push((
+                    climate_point(
+                        Param::span(t_lo, t_hi),
+                        FULL,
+                        Param::span(-0.19, -0.11),
+                        FULL,
+                        Param::span(w_lo, w_hi),
+                        d,
+                    ),
+                    Biome::Beach,
+                ));
+            }
+        }
+    }
+    // 内陆：温度段 × 湿度段（MIDDLE 矩阵 = MIDDLE_BIOMES[ti][hi] 语义）×
+    // inland 大陆度段 × 全侵蚀 × 谷带外 weirdness。
+    for (ti, row) in MIDDLE.iter().enumerate() {
+        for (hi, cell) in row.iter().enumerate() {
+            if let Some(b) = cell {
+                for &(w_lo, w_hi) in WEIRD_OUTSIDE.iter() {
+                    for d in [0.0_f64, 1.0] {
+                        v.push((
+                            climate_point(
+                                Param::span(T_SPANS[ti].0, T_SPANS[ti].1),
+                                Param::span(H_SPANS[hi].0, H_SPANS[hi].1),
+                                Param::span(-0.11, 1.0),
+                                FULL,
+                                Param::span(w_lo, w_hi),
+                                d,
+                            ),
+                            *b,
+                        ));
+                    }
+                }
+            }
+        }
     }
     v
 }
@@ -304,29 +343,30 @@ mod tests {
         }
     }
 
-    /** 点集取最近语义：以 ocean 参数点自身为目标必得 ocean；
-    以 desert 参数点为目标必得 desert（fitness=0 精确命中）。 */
+    /** 点集取最近语义：目标落在某注册 span 组内（六参数全含）时 fitness 只剩
+    offset²，必中该组群系；跨段目标按区间距离仲裁。 */
     #[test]
     fn nearest_semantics_hits_exact_climate() {
         let table = biome_point_table();
-        // 对准点表注册的 ocean 元组（temp2/veg2、weird 切片 ±0.5）——
-        // 查询落在注册点上 fitness=0 必中 Ocean（Climate.java findValue 语义）。
+        // ocean 探针：temp2 段中值 × ocean 大陆度段中值 × 谷带外 weirdness——
+        // 全部落进 ocean 注册 span（Climate.java findValue 语义）。
         let ocean = TargetPoint {
-            temperature: T_MID[2].min,
-            humidity: H_MID[2].min,
-            continentalness: OCEAN_C.min,
-            erosion: MID.min,
+            temperature: q_probe(T_MID[2]),
+            humidity: q_probe(H_MID[2]),
+            continentalness: q_probe(-0.3225),
+            erosion: 0,
             depth: 0,
-            weirdness: WEIRD_NEG.min,
+            weirdness: q_probe(-0.5),
         };
         assert_eq!(pick_biome(&table, &ocean), Biome::Ocean);
+        // desert 探针：temp4 段中值 × 内陆 × 正切片。
         let desert = TargetPoint {
-            temperature: T_MID[4].min,
-            humidity: H_MID[2].min,
-            continentalness: INLAND_C.min,
-            erosion: E_INLAND.min,
+            temperature: q_probe(T_MID[4]),
+            humidity: q_probe(H_MID[2]),
+            continentalness: q_probe(0.165),
+            erosion: 0,
             depth: 0,
-            weirdness: WEIRD_POS.min,
+            weirdness: q_probe(0.5),
         };
         assert_eq!(pick_biome(&table, &desert), Biome::Desert);
     }
@@ -336,13 +376,18 @@ mod tests {
     fn tie_goes_to_first() {
         let table = biome_point_table();
         let t = TargetPoint {
-            temperature: T_MID[0].min,
-            humidity: H_MID[0].min,
-            continentalness: INLAND_C.min,
-            erosion: E_INLAND.min,
+            temperature: q_probe(T_MID[0]),
+            humidity: q_probe(H_MID[0]),
+            continentalness: q_probe(0.165),
+            erosion: 0,
             depth: 0,
-            weirdness: WEIRD_POS.min,
+            weirdness: q_probe(0.5),
         };
         assert_eq!(pick_biome(&table, &t), Biome::SnowyPlains);
+    }
+
+    /// f64 → 量化坐标（测试探针用；与 Param::point 同式）。
+    const fn q_probe(v: f64) -> i64 {
+        (v * Q as f64) as i64
     }
 }
