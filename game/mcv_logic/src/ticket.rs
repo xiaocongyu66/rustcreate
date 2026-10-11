@@ -331,10 +331,11 @@ mod tests {
         assert_eq!(t.level_of_type(TicketType::PlayerSimulation, a), 21);
         // b 有自票（21，替换后）+ 邻票传播（21+1=22）→ min = 21。
         assert_eq!(t.level_of_type(TicketType::PlayerSimulation, b), 21);
+        // c 无自票：收 a（21+2=23）与 b（21+1=22）的传播 → min = 22。
         assert_eq!(
             t.level_of_type(TicketType::PlayerSimulation, c),
-            23,
-            "自票 21 + Chebyshev 2"
+            22,
+            "最近票 b@Chebyshev 1：21+1"
         );
         assert_eq!(
             t.level_of_type(TicketType::PlayerLoading, a),
