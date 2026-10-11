@@ -205,6 +205,7 @@ fn wrap(x: f64) -> f64 {
 /// 移植复算）：
 /// - 体积口径：ImprovedNoise 0.27106 / OS2S 0.36002 → 比 **0.75291**（3D）；
 /// - y=0 切片口径：0.26555 / 0.36010 → 比 **0.73744**（2D）。
+///
 /// 气候全通道是 2D 切片采样（climate.rs y=0；vanilla ShiftedNoise/
 /// ShiftNoise.compute 亦 y·0.25 归零，NoiseRouterData.java:89-97），走
 /// [`Self::new_slice_2d`] 选切片常数；3D 通道（洞穴/山脊/base_3d）走体积
