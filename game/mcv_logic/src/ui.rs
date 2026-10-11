@@ -314,6 +314,12 @@ fn is_fuel(item: u16) -> bool {
     burn_duration(item) > 0
 }
 
+impl Default for FurnaceScreen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FurnaceScreen {
     pub fn new() -> Self {
         Self {
@@ -330,15 +336,15 @@ impl FurnaceScreen {
 
     /// `Container.setItem(0)`（AFBE:292-302）：写入 + limitSize + 品变时
     /// cookingTotalTime=getTotalCookTime（无配方 orElse 200，:252-255）、
-    /// cookingTimer=0。同品补量（数量变化）不重置（isSameItemSameComponents）。
+    /// cookingTimer=0。同品补量（数量变化）不重置（isSameItemSameComponents，
+    /// 判定先于 limitSize，:293-296；数量不计入判据）。
     fn set_input(&mut self, st: ItemStack) {
-        let old = self.input.clone();
+        let same = same_stack(&self.input, &st);
         let mut st = st;
         if !st.is_empty() {
             // limitSize（AFBE:296）：数量钳到物品堆叠上限。
             st.count = st.count.min(Hotbar::max_stack(st.item));
         }
-        let same = same_stack(&old, &st);
         self.input = st;
         if !same {
             self.cook_total = mcv_item::crafting::find_cooking(self.input.item)
