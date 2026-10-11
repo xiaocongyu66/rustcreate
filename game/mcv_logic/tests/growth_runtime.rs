@@ -187,7 +187,15 @@ fn grass_world_random_tick_leaves_voxels_untouched() {
 fn sapling_light_gate_then_tree_at_spot() {
     let mut rt = GameRuntime::new_headless(7, tmp_world("gate"), GameMode::Survival);
     enter_playing(&mut rt);
-    // 满场 STAGE=1 oak 苗（y=65，立地在石面 y=64）。
+    // 苗场立地换土面（26.1 SaplingBlock canSurvive/mayPlaceOn = 土族，决策核
+    // tree_ground_ok 同门——石面立苗是原版不可能态；原 fixture 石面自相矛
+    // 盾，CI run 38185214311「log=0」根因）。
+    for z in 2..22 {
+        for x in 2..22 {
+            set_cell(&mut rt, BlockPos::new(x, 64, z), BlockId(ids::DIRT));
+        }
+    }
+    // 满场 STAGE=1 oak 苗（y=65，立地在土面 y=64）。
     for z in 2..22 {
         for x in 2..22 {
             let p = BlockPos::new(x, 65, z);
@@ -216,7 +224,8 @@ fn sapling_light_gate_then_tree_at_spot() {
         logs > 0,
         "敞空 STAGE=1 苗群 400 tick 内应长出树（log={logs}）"
     );
-    // ③ 树基 = 苗原位：y=65 行的每根 log 其下必为非 log 立地（石面）。
+    // ③ 树基 = 苗原位：y=65 行的每根 log 其下必为立地（TreeConfiguration
+    //    .java:20-26 基下 dirt 恒放 → place_dirt 打底后恒 DIRT）。
     let h = rt.chunks[&ChunkPos::new(0, 0)].clone();
     let v = h.voxels.read().unwrap();
     let mut bases = 0usize;
@@ -224,7 +233,11 @@ fn sapling_light_gate_then_tree_at_spot() {
         for x in 0..16usize {
             if v[vidx(x, 65, z)].id() == 6 {
                 bases += 1;
-                assert_eq!(v[vidx(x, 64, z)].id(), 1, "树基下方应是石面（非悬空）");
+                assert_eq!(
+                    v[vidx(x, 64, z)].id(),
+                    ids::DIRT,
+                    "树基下方应是土（place_dirt 打底，非悬空）"
+                );
             }
         }
     }
