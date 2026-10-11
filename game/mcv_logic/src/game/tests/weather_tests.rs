@@ -10,9 +10,7 @@
 //! - 档内恢复走 ServerLevel.java:273 构造期 prepareWeather（:687-694）：
 //!   raining → rainLevel=1.0、thundering → thunderLevel=1.0。
 
-use super::{
-    ChunkPos, GameMode, GameRuntime, Vec3, headless_rt, lit_chunk, spawn_rain_particles, spawn_rng,
-};
+use super::{ChunkPos, GameMode, GameRuntime, Vec3, headless_rt, lit_chunk, spawn_rng};
 
 /// 天气状态随 level.meta 往返（W1 红测试）：退出重进后 raining/thundering
 /// 必须从存档恢复（等价 WeatherData SavedData 落盘/读回）。旧实现天气
@@ -97,7 +95,7 @@ fn old_meta_without_weather_stays_clear() {
 /// 三态断言装配：3×3 实心区块（floor_top=69 → heightmap 首空 70）+ 满雨
 /// （set_for_test 只置状态位；rainLevel 以 0.01/tick 爬满，生成数公式
 /// :232 用 rainLevel²）。
-fn rainy_rt(tag: &str, feet_y: f64) -> GameRuntime {
+fn rainy_rt(tag: &str, feet_y: f32) -> GameRuntime {
     let mut rt = headless_rt(tag);
     for dx in -1i32..=1 {
         for dz in -1i32..=1 {
