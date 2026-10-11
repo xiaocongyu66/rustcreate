@@ -131,8 +131,10 @@ per_chunk_bytes={PER_CHUNK_BYTES} resident_bytes={total} ({mib:.1} MiB) budget={
 }
 
 fn main() {
-    // 派单 #115 预算门：vd8 ≤ 120 MiB（实测 ~101.7）、vd6 ≤ 70 MiB（实测
-    // ~63.4）。桌面默认 8 与移动端默认 6（options.rs，刀 5b）各锁一档。
+    // 派单 #115 预算门：vd8 ≤ 120 MiB（实测 106 648 064 B ≈ 101.7）、
+    // vd6 ≤ 70 MiB（实测 66 470 400 B ≈ 63.4）——run 38114958737 实测
+    // 与 v6 算式逐字节吻合。桌面默认 8 与移动端默认 6（options.rs，
+    // 刀 5b）各锁一档。
     let (n8, b8) = run_case("vd8", 8, 120);
     let (n6, b6) = run_case("vd6", 6, 70);
     eprintln!(

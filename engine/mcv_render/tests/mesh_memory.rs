@@ -14,8 +14,9 @@
 //! 断言语义 = 合成场景回归门（catch 记账量级突变/泄漏），不是真机内存
 //! 保证——真实地形（树冠/洞穴/水）网格更大，真机侧以 render-stats 日志
 //! 的 resident_kb/pool_kb 取证（docs/real-machine-checklist.md）。断言数
-//! 按派单纪律「实跑一轮取实测值后定断言数并留 2 倍余量」：首跑暂定
-//! 派单估值 40 MiB，实测后按 2× 实测收紧并在注释登记实测值与 run 号。
+//! 按派单纪律「实跑一轮取实测值后定断言数并留 2 倍余量」：首跑 run
+//! 38114958737 实测 48.34 MiB（40 MiB 暂定门如约触发取证红），收紧为
+//! 2× 实测 = 96 MiB（MESH_BUDGET_MIB 注释登记实测值与 run 号）。
 
 use std::f32::consts::TAU;
 
@@ -30,8 +31,11 @@ const RD: i32 = 8;
 const RING: i32 = RD + 1;
 /// 网格块数 = (2*RING+1)² = 19² = 361。
 const MESH_CHUNKS: usize = ((2 * RING + 1) * (2 * RING + 1)) as usize;
-/// 首跑暂定预算（派单估值 40 MiB）；实测后按 2× 实测收紧（注释登记）。
-const MESH_BUDGET_MIB: u64 = 40;
+/// 首跑暂定派单估值 40 MiB → 实测后按「2× 实测」收紧：run 38114958737
+/// （7a35424，lavapipe，361 块）实测 resident_bytes = cpu_pool_bytes =
+/// **50 690 400 B ≈ 48.34 MiB**（draw_entries=51，批均 ~7.1 块），断言
+/// 取整 96 MiB ≈ 2×。超门 = 记账量级突变/泄漏回归。
+const MESH_BUDGET_MIB: u64 = 96;
 /// 海平面：高度场 60..71 起伏，65 以下成水域（水 pass 有真实输入）。
 const SEA_LEVEL: i32 = 65;
 
