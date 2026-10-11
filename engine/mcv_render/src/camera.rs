@@ -152,6 +152,6 @@ mod tests {
             "行走中 bob 矩阵必须 ≠ 静止（用户症状「走路不晃」回归锁）"
         );
         // 静止（bob=0）= 恒等：不走路时任何 walkDist 都不产生位移。
-        assert!(view_bob_matrix(0.0, -12.5).abs_diff_eq(&Mat4::IDENTITY, 1e-9));
+        assert!(view_bob_matrix(0.0, -12.5).abs_diff_eq(Mat4::IDENTITY, 1e-9));
     }
 }
