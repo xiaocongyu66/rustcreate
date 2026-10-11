@@ -2945,7 +2945,9 @@ impl AppState {
         renderer.draw_frame(&view, &sp.depth, &scene);
         // #80 结构性指标（真机取证通路，不进 HUD 像素）：~1 Hz 一行，
         // 合批 draw 收敛（entries/chunks）与 staging 上传带宽（staged KB、
-        // fallback 笔数恒 0 = 环容量足够）。
+        // fallback 笔数恒 0 = 环容量足够）。#115 刀 5a 起带网格域字节
+        // 记账（resident_kb = GPU 驻留、pool_kb = CPU 留存无 LRU 池）——
+        // 真机 Mali 预算取证行，口径表见 docs/memory-budget.md。
         let log_due = self
             .stats_log
             .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
@@ -2954,7 +2956,7 @@ impl AppState {
             let st = renderer.last_frame_stats();
             let ms = runtime.mesh_stats();
             log::info!(
-                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={}",
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={}",
                 st.opaque_draws,
                 st.water_draws,
                 ms.draw_entries,
@@ -2964,6 +2966,8 @@ impl AppState {
                 ms.staged_uploads,
                 ms.staged_bytes / 1024,
                 ms.fallback_uploads,
+                ms.resident_bytes / 1024,
+                ms.cpu_pool_bytes / 1024,
             );
         }
         renderer.queue().present(frame);

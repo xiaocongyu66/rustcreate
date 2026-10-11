@@ -22,3 +22,9 @@ mcv_save.workspace = true
 mcv_entity.workspace = true
 mcv_item.workspace = true
 mcv_audio.workspace = true
+
+# 刀 5a（#115）：内存预算断言走 harness = false——stdout 不经测试
+# harness 捕获，CI 绿跑也落日志，实测值（K5-MEAS 行）才可取证。
+[[test]]
+name = "memory_budget"
+harness = false

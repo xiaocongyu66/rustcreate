@@ -18,3 +18,14 @@ image.workspace = true
 
 [dev-dependencies]
 pollster.workspace = true
+# 刀 5a（#115）：网格域字节实测走真 mcv_mesher 产线通路（纯测试依赖，
+# 不反向进入游戏层——mcv_mesher 只依赖 mcv_core，无 wgpu/winit）。
+mcv_mesher.workspace = true
+
+# 网格域内存预算断言（#115 刀 5a）：harness = false——stdout 不经测试
+# harness 捕获，CI 绿跑也落日志，实测值（K5-MEAS 行）才可取证；
+# gpu-tests 关闭（workspace test job / lint）时整个 target 不参与构建。
+[[test]]
+name = "mesh_memory"
+harness = false
+required-features = ["gpu-tests"]

@@ -116,6 +116,10 @@ struct PendingUpload {
 }
 
 /// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
+/// 刀 5a（#115）起携带网格域字节记账（两个字段在 `batching_stats()`
+/// 调用时按池/条目现算——调用频度 ~1 Hz（render-stats 日志），线性扫
+/// 在册网格远低于帧预算；不在 build/unload/重建三处热路径上做增量记账，
+/// 免「漏补一处即虚账」的分散状态，也无锁无失败路径）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BatchingStats {
     /// 池内已上传网格的区块数。
@@ -126,6 +130,14 @@ pub struct BatchingStats {
     pub batch_rebuilds: u64,
     /// 重建累计写出的顶点+索引字节数。
     pub rebuild_bytes: u64,
+    /// GPU 侧驻留网格字节总量 = Σ条目(vertex_buf+index_buf+water_index_buf)
+    /// 缓冲尺寸（#115 刀 5a；批次成员共享缓冲，按整缓冲尺寸计——wgpu
+    /// 分配粒度 4B 对齐的放大含在内，是驱动侧真实占用量）。
+    pub resident_bytes: u64,
+    /// CPU 侧留存网格字节 = Σ池内 [`PoolMesh`] 顶点+索引字节（#80 无 LRU
+    /// 池：它是合批重建的数据源，常驻不回收——按派单要求计入内存预算面，
+    /// 全表见 docs/memory-budget.md）。
+    pub cpu_pool_bytes: u64,
 }
 
 /// 池内单块网格的 CPU 字节（合批重建的数据源）：opaque 顶点 + opaque 局部
@@ -223,10 +235,31 @@ impl MeshUploader {
         &self.entries
     }
 
-    /// 合批结构性统计（HUD/日志用）。
+    /// 合批结构性统计（HUD/日志用）。字节记账现算，见 [`BatchingStats`]。
     pub fn batching_stats(&self) -> BatchingStats {
+        let resident_bytes: u64 = self
+            .entries
+            .iter()
+            .map(|e| {
+                e.vertex_buf.size()
+                    + e.index_buf.size()
+                    + e.water_index_buf.as_ref().map_or(0, |b| b.size())
+            })
+            .sum();
+        // 与 batch_joinable 的 mesh_bytes 同一公式（逻辑字节，不含分配对齐）。
+        let cpu_pool_bytes: u64 = self
+            .pool
+            .values()
+            .map(|m| {
+                m.vbytes.len() as u64
+                    + m.water_vbytes.len() as u64
+                    + 4 * (m.opaque_idx.len() as u64 + m.water_idx.len() as u64)
+            })
+            .sum();
         BatchingStats {
             draw_entries: self.entries.len(),
+            resident_bytes,
+            cpu_pool_bytes,
             ..self.stats
         }
     }

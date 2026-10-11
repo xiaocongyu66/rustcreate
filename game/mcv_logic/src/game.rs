@@ -74,6 +74,10 @@ pub struct MeshStats {
     pub staged_bytes: u64,
     /// 一次性兜底笔数（超槽容量/环耗尽）。
     pub fallback_uploads: u64,
+    /// GPU 侧驻留网格字节总量（#115 刀 5a；含批次共享缓冲的分配对齐）。
+    pub resident_bytes: u64,
+    /// CPU 侧留存网格字节（#80 无 LRU 池，计入内存预算面）。
+    pub cpu_pool_bytes: u64,
 }
 
 /// Abstraction over the C++ mesher so the runtime wiring can land before
@@ -171,6 +175,8 @@ impl ChunkMesher for RustMesher {
             staged_uploads: u.staged_uploads,
             staged_bytes: u.staged_bytes,
             fallback_uploads: u.fallback_uploads,
+            resident_bytes: b.resident_bytes,
+            cpu_pool_bytes: b.cpu_pool_bytes,
         }
     }
 }
