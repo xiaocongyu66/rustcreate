@@ -133,7 +133,7 @@ fn spawn_search_leaves_blocked_chunk_via_spiral() {
         let mut vg = h.voxels.write().unwrap();
         for z in 0..16usize {
             for x in 0..16usize {
-                vg[lidx(x, 70, z)] = BlockId(GLASS);
+                vg.set_flat(lidx(x, 70, z), BlockId(GLASS));
             }
         }
     }
@@ -158,7 +158,7 @@ fn all_ocean_window_falls_back_above_water_surface() {
         for y in 21..=30usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    vg[lidx(x, y, z)] = BlockId(WATER);
+                    vg.set_flat(lidx(x, y, z), BlockId(WATER));
                 }
             }
         }
@@ -205,12 +205,15 @@ fn worldgen_spawn_never_buries_or_submerges() {
         let fz = p.z.floor() as i32;
         let id_at = |wx: i32, wy: i32, wz: i32| -> u16 {
             let h = &rt.chunks[&ChunkPos::new(wx.div_euclid(16), wz.div_euclid(16))];
-            h.voxels.read().unwrap()[lidx(
-                wx.rem_euclid(16) as usize,
-                wy as usize,
-                wz.rem_euclid(16) as usize,
-            )]
-            .id()
+            h.voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(
+                    wx.rem_euclid(16) as usize,
+                    wy as usize,
+                    wz.rem_euclid(16) as usize,
+                ))
+                .id()
         };
         // a：脚 + 头两格 passable —— 不埋实体、不泡流体。
         for y in [fy, fy + 1] {

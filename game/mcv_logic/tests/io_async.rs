@@ -39,12 +39,12 @@ fn terrain_chunk(pos: ChunkPos, save: bool) -> Arc<ChunkHandle> {
         for y in -64..=-63 {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    vg[vidx(xx, y, zz)] = BlockId(1);
+                    vg.set_flat(vidx(xx, y, zz), BlockId(1));
                 }
             }
         }
     }
-    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     h.advance_to(Stage::TerrainReady);
     if save {
@@ -167,7 +167,11 @@ fn edit_during_inflight_write_wins_on_disk() {
     // ≥1」断言误当语义锁。单块直投后投递与回执消化解耦，断言升级为精确
     // 计数 + 投递即清位；stream 预算写回的 liveness 面仍由本测收敛段
     // （pump 到在途归零）覆盖。
-    handle.voxels.write().unwrap()[vidx(0, -63, 0)] = BlockId(42);
+    handle
+        .voxels
+        .write()
+        .unwrap()
+        .set_flat(vidx(0, -63, 0), BlockId(42));
     handle.mark_dirty(dirty::SAVE);
     rt.save_dirty(Some(pos));
     assert_eq!(
@@ -178,7 +182,11 @@ fn edit_during_inflight_write_wins_on_disk() {
     assert_eq!(handle.dirty() & dirty::SAVE, 0, "投递即清 SAVE 位");
 
     // 竞态窗内再编辑 B（置 SAVE）→ 完成回执后下轮以新快照重写。
-    handle.voxels.write().unwrap()[vidx(1, -62, 0)] = BlockId(43);
+    handle
+        .voxels
+        .write()
+        .unwrap()
+        .set_flat(vidx(1, -62, 0), BlockId(43));
     handle.mark_dirty(dirty::SAVE);
     let done = pump(
         &mut rt,
@@ -246,8 +254,8 @@ fn async_load_restores_saved_chunk() {
     assert!(loaded, "投递读应在预算内回填 TerrainReady");
     let h = &rt.chunks[&pos];
     let vg = h.voxels.read().unwrap();
-    assert_eq!(vg[vidx(0, -64, 0)], BlockId(1), "体素 = 盘上内容");
-    assert_eq!(vg[vidx(0, 100, 0)], BlockId(0));
+    assert_eq!(vg.get_flat(vidx(0, -64, 0)), BlockId(1), "体素 = 盘上内容");
+    assert_eq!(vg.get_flat(vidx(0, 100, 0)), BlockId(0));
     drop(vg);
     let hm = h.heightmap.read().unwrap();
     // recompute_heightmap 语义 = 首个非遮光格绝对 y = 遮光顶(-63) + 1。

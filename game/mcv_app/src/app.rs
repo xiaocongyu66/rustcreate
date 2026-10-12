@@ -3368,7 +3368,10 @@ mod tests {
         // 朝 +x。Uploaded 阶段体素才对 WorldView 可见（stage 门）。
         let h = std::sync::Arc::new(mcv_core::ChunkHandle::new(mcv_core::ChunkPos::new(0, 0)));
         for y in 66..=72 {
-            h.voxels.write().unwrap()[mcv_core::vidx(11, y, 9)] = mcv_core::BlockId(1);
+            h.voxels
+                .write()
+                .unwrap()
+                .set_flat(mcv_core::vidx(11, y, 9), mcv_core::BlockId(1));
         }
         h.advance_to(mcv_core::Stage::Uploaded);
         rt.chunks_mut().insert(mcv_core::ChunkPos::new(0, 0), h);

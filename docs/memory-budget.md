@@ -10,15 +10,22 @@ v6 世界域：384 高（`WORLD_MIN_Y=-64`，`mcv_core/src/lib.rs:26`），
 16×16×384 = 98304 格/块（`CHUNK_VOL`，lib.rs:19）。每块 resident =
 `ChunkHandle` 三个数组（`game/mcv_core/src/chunk.rs:134-159`）：
 
-| 数组 | 类型 | 字节 |
+| 数组 | 类型 | 字节（最坏上界） |
 |---|---|---|
-| voxels | `Box<[BlockId; 98304]>`（u16 平铺） | 98304×2 = 196 608 |
+| voxels | `VoxelStore`（E7a palette 压缩，24×16³ section；档位 0/4/5-8/16bit 对齐原版 Strategy.java:33-48） | 24×4096×2 = 196 608（global 16bit 顶档；典型地形 ≪ 此，见下） |
 | light | `Box<[u8; 98304]>` | 98 304 |
 | heightmap | `Box<[i16; 256]>` | 512 |
-| **合计** | | **295 424 B ≈ 288.5 KiB/块** |
+| **合计** | | **≤ 295 424 B ≈ 288.5 KiB/块（最坏上界；平铺同值）** |
 
-算式锁：`memory_budget.rs:40` `PER_CHUNK_BYTES` + 断言 `== 295424`
-—— 世界尺寸/类型宽度任何漂移都会先红这里，预算表必须重算。
+E7a 起 voxels 驻留 = `VoxelStore::resident_bytes()`（打包 long 数据 +
+palette 表实测口径）：全空气 section 0bit（0 B 数据）、2..16 值 section
+4bit（2 KiB）、17..256 值 5-8bit（2.7-4 KiB）、>256 值才回退 16bit
+（8 KiB）——多数真实生成柱 ≈ 4-16 KiB vs 平铺 192 KiB。
+
+算式锁（E7a 改版）：`memory_budget.rs` `PER_CHUNK_BYTES == 295424`
+仍锁最坏上界；新增实测口径 = Σ `voxels.resident_bytes()` + light +
+heightmap，配套两道新门：全空气柱 voxels ≤ 1024 B（0bit 生效硬证）
+与 vanilla 后端典型生成柱 ≤ 32 KiB。
 
 **稳态口径**：预算门只锁「静止稳态」——在册集 = 请求环 =
 `sim_dist = rd+1`（`game.rs` stream 螺旋 `0..=sim_dist`，含 +1 支撑环 =
@@ -27,10 +34,14 @@ v6 世界域：384 高（`WORLD_MIN_Y=-64`，`mcv_core/src/lib.rs:26`），
 
 ### 视距 → 块数 → 字节（静止稳态）
 
-| 视距 rd | 请求环 (2(rd+1)+1)² | resident 块数 | resident 字节 | 预算门 |
+| 视距 rd | 请求环 (2(rd+1)+1)² | resident 块数 | 平铺基线（E7a 前实测） | E7a 预算门 |
 |---|---|---|---|---|
-| 8（桌面默认） | 19² = 361 | 361 | 361×295424 = **106 648 064 B ≈ 101.7 MiB** | ≤ 120 MiB |
-| 6（Android 默认） | 15² = 225 | 225 | 225×295424 = **66 470 400 B ≈ 63.4 MiB** | ≤ 70 MiB |
+| 8（桌面默认） | 19² = 361 | 361 | 106 648 064 B ≈ 101.7 MiB | **≤ 60 MiB** |
+| 6（Android 默认） | 15² = 225 | 225 | 66 470 400 B ≈ 63.4 MiB | **≤ 35 MiB** |
+
+E7a 收紧依据：voxels palette 化后 light（96 KiB/块）成为主体，
+361×(~106 KiB) ≈ 37 MiB、225×~106 KiB ≈ 23 MiB，门留 ~1.6× 地形
+波动余量。实测落 CI `K5-MEAS`/`K5-MEAS-VOX` 行（voxels 分项单列）。
 
 实测（CI `K5-MEAS` 行，run 38114958737 / 7a35424，test job）：
 
@@ -51,10 +62,11 @@ v6 世界域：384 高（`WORLD_MIN_Y=-64`，`mcv_core/src/lib.rs:26`），
 - 块存储 palette：原版 `PalettedContainer.java:25-29`（`Data` =
   Configuration + BitStorage + Palette）+ `Strategy.java:8-16`（0 bit
   单值 / 1-4 bit 线性 / 5-8 bit HashMap / 全局）与 `:33-47` 块态档位
-  —— 常见地形 palette 4 bit ≈ 12 KiB/块存储（另加 light）vs 本仓
-  u16 平铺 192 KiB。**palette 压缩列待做**（26.1 本就 palette，不算
-  发明；本仓 voxels u16 平铺是重构期简化）—— 登记后续刀，收益估算
-  ~6-16×/块，届时本表与两道预算门同步重算。
+  —— 常见地形 palette 4 bit ≈ 12 KiB/块存储（另加 light）。
+  **E7a 已落地**（`mcv_core::VoxelStore`）：档位表/copyFrom 换档/只升
+  不降逐项对齐原版；偏差登记=global 档位宽 16（值域全域 u16）、盘
+  格式仍平铺 u16（save/load 一次编解码，盘 palette 化 = 债）、无 env
+  回滚开关（存储表示无法双路，回退 = 分支 revert）。
 
 ## 2. 网格域（mesh）
 

@@ -119,8 +119,7 @@ fn terrain_chunk(pos: ChunkPos, seed: u64) -> Arc<ChunkHandle> {
     let scene = scene_voxels(seed);
     {
         let mut vg = h.voxels.write().unwrap();
-        let ids: &mut [u16] = bytemuck::cast_slice_mut(&mut vg[..]);
-        ids.copy_from_slice(&scene);
+        *vg = mcv_core::VoxelStore::from_flat_u16(&scene);
     }
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&scene);
     h.advance_to(Stage::TerrainReady);
@@ -388,8 +387,7 @@ fn pattern_chunk(pos: ChunkPos) -> Arc<ChunkHandle> {
     let scene = pattern_voxels();
     {
         let mut vg = h.voxels.write().unwrap();
-        let ids: &mut [u16] = bytemuck::cast_slice_mut(&mut vg[..]);
-        ids.copy_from_slice(&scene);
+        *vg = mcv_core::VoxelStore::from_flat_u16(&scene);
     }
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&scene);
     h.advance_to(Stage::TerrainReady);
@@ -489,12 +487,12 @@ fn floor_chunk(pos: ChunkPos, floor_top: i32) -> Arc<ChunkHandle> {
         for y in WORLD_MIN_Y..=floor_top {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    vg[vidx(x, y, z)] = BlockId(1);
+                    vg.set_flat(vidx(x, y, z), BlockId(1));
                 }
             }
         }
     }
-    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     h.advance_to(Stage::TerrainReady);
     h
@@ -518,9 +516,11 @@ fn game_parallel_light_cross_border_torch_exact_values() {
             let h = floor_chunk(p, 20);
             if p == ChunkPos::new(0, 0) {
                 // 火把贴 +X 边界（在布光前写体素——快照所见即所得）。
-                h.voxels.write().unwrap()[vidx(15, 21, 8)] = BlockId(TORCH);
-                let ids: Vec<u16> =
-                    bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+                h.voxels
+                    .write()
+                    .unwrap()
+                    .set_flat(vidx(15, 21, 8), BlockId(TORCH));
+                let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
                 *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
             }
             rt.chunks_mut().insert(p, h);

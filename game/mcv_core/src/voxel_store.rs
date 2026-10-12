@@ -215,14 +215,18 @@ impl VoxelSection {
             data: Self::new_data(new_bits),
             pal: new_pal,
         };
-        // copyFrom：旧 palette 项数 → 旧 id 的直址映射表（≤257 项，
-        // Global 档无表：旧 id = 值本身，映射在闭包里现算）。
+        // copyFrom（PalettedContainer.java:312-319 同构）：按旧存储
+        // 扫描序把值灌入新 palette。旧档有表时用「旧 id → 新 id」
+        // 直址表去重（≤256 项）；新档是 Global 时无表可建（新 id =
+        // 值本身，u16 全值域塞不进 i16 直址表），逐格透传即可。
         let old_len = match &old_pal {
             Pal::Single(_) => 1,
             Pal::Linear(v) => v.len(),
             Pal::Hash { vals, .. } => vals.len(),
             Pal::Global => 0,
         };
+        debug_assert_ne!(old_len, 0, "Global 是顶档，不可能作为重建的源档");
+        let to_global = new_bits == GLOBAL_BITS;
         let mut remap: Vec<i16> = vec![-1; old_len.max(1)];
         for idx in 0..SEC_SIZE {
             let id = if old_bits == 0 {
@@ -230,10 +234,9 @@ impl VoxelSection {
             } else {
                 Self::packed_get_ref(old_bits, &old_data, idx)
             };
-            let mapped: u64 = if old_len == 0 {
-                // Global 旧档：id 即值，直接入新表（升档到 Global 时
-                // 不会走到本分支——Global 是顶档，防御保留）。
-                id
+            let mapped = if to_global {
+                debug_assert!(old_len > 0);
+                Self::value_of_ref(&old_pal, id) as u64
             } else {
                 let slot = &mut remap[id as usize];
                 if *slot < 0 {

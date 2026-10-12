@@ -118,8 +118,7 @@ fn snapshot_neighborhood(handles: &[Arc<ChunkHandle>; 9]) -> (Vec<u16>, Vec<u8>)
     let mut voxels = vec![0u16; 9 * vol];
     let mut lights = vec![0xF0; 9 * vol]; // sky=15 until light wires in
     for (i, h) in handles.iter().enumerate() {
-        voxels[i * vol..(i + 1) * vol]
-            .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
+        voxels[i * vol..(i + 1) * vol].copy_from_slice(&h.voxels.read().unwrap().decode_column());
         lights[i * vol..(i + 1) * vol].copy_from_slice(&h.light.read().unwrap()[..]);
     }
     (voxels, lights)
@@ -283,7 +282,11 @@ impl VoxelAccess for WorldView<'_> {
             return BlockId(0); // terrain not committed yet — same treatment
         }
         let [lx, _, lz] = p.local();
-        chunk.voxels.read().unwrap()[mcv_core::vidx(lx, p.y, lz)]
+        chunk
+            .voxels
+            .read()
+            .unwrap()
+            .get_flat(mcv_core::vidx(lx, p.y, lz))
     }
 
     /// 真实光照（原「恒 15」M4 死桩已清）：返回 sky/block 较亮者的
@@ -405,7 +408,7 @@ fn relight_block_edit(
         return;
     };
     {
-        let ids: Vec<u16> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        let ids: Vec<u16> = handle.voxels.read().unwrap().decode_column();
         *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     }
     if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
@@ -417,9 +420,9 @@ fn relight_block_edit(
         let vg = handle.voxels.read().unwrap();
         let mut lg = handle.light.write().unwrap();
         let hg = handle.heightmap.read().unwrap();
-        let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+        let voxels = vg.decode_column();
         let mut view = mcv_light::LightChunk {
-            voxels,
+            voxels: &voxels,
             light: &mut lg[..],
             heightmap: &hg[..],
         };
@@ -515,9 +518,9 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
             let vg = from.voxels.read().unwrap();
             let mut lg = from.light.write().unwrap();
             let hg = from.heightmap.read().unwrap();
-            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let voxels = vg.decode_column();
             let view = mcv_light::LightChunk {
-                voxels,
+                voxels: &voxels,
                 light: &mut lg[..],
                 heightmap: &hg[..],
             };
@@ -530,9 +533,9 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
                 let vg = to.voxels.read().unwrap();
                 let mut lg = to.light.write().unwrap();
                 let hg = to.heightmap.read().unwrap();
-                let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+                let voxels = vg.decode_column();
                 let mut view = mcv_light::LightChunk {
-                    voxels,
+                    voxels: &voxels,
                     light: &mut lg[..],
                     heightmap: &hg[..],
                 };
@@ -2500,8 +2503,11 @@ impl GameRuntime {
             return false;
         }
         // 主线程锁内快照（唯一碰 RwLock 的点，拷贝 ~50µs 量级）。
-        let ids: Box<[u16]> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice())
-            .to_vec()
+        let ids: Box<[u16]> = handle
+            .voxels
+            .read()
+            .unwrap()
+            .decode_column()
             .into_boxed_slice();
         let hm: Box<[i16; 256]> = Box::new(**handle.heightmap.read().unwrap());
         let seq = self.io_seq.wrapping_add(1);
@@ -2670,10 +2676,9 @@ impl GameRuntime {
                 return false;
             }
         };
-        let voxels = handle.voxels.read().unwrap();
-        let ids = bytemuck::cast_slice(voxels.as_slice());
+        let ids = handle.voxels.read().unwrap().decode_column();
         let hm = handle.heightmap.read().unwrap();
-        if let Err(e) = region.save_chunk(local, ids, &hm) {
+        if let Err(e) = region.save_chunk(local, &ids, &hm) {
             log::error!("chunk save failed {pos:?}: {e}");
             return false;
         }
@@ -3107,8 +3112,12 @@ impl GameRuntime {
                 // 全窗无合法列（窗口全海洋）：26.1 fixupSpawnHeight
                 // （PlayerSpawnFinder.java:89-104）兜底——建议列 (8,8)
                 // 最高实体/流体顶 +1，海面即落在水面之上，不再埋入。
-                let voxels = handle.voxels.read().unwrap();
-                Vec3::new(8.5, fixup_spawn_feet_y(&voxels[..], 8, 8) as f32, 8.5)
+                let decoded = handle.voxels.read().unwrap().decode_column();
+                Vec3::new(
+                    8.5,
+                    fixup_spawn_feet_y(bytemuck::cast_slice(&decoded), 8, 8) as f32,
+                    8.5,
+                )
             });
             self.player.pos = slot;
             self.spawned = true;
@@ -3160,7 +3169,7 @@ impl GameRuntime {
                     let voxels_locked = handle.voxels.read().unwrap();
                     let mut light_locked = handle.light.write().unwrap();
                     let hm_locked = handle.heightmap.read().unwrap();
-                    let voxels: Vec<u16> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
+                    let voxels: Vec<u16> = voxels_locked.decode_column();
                     let hm: Vec<i16> = hm_locked.to_vec();
                     let mut view = mcv_light::LightChunk {
                         voxels: &voxels,
@@ -3332,7 +3341,7 @@ impl GameRuntime {
             let (voxels, heightmap) = {
                 let vg = handle.voxels.read().unwrap();
                 let hg = handle.heightmap.read().unwrap();
-                (bytemuck::cast_slice(vg.as_slice()).to_vec(), hg.to_vec())
+                (vg.decode_column(), hg.to_vec())
             };
             sched.submit(mcv_light::LightJob {
                 pos: *pos,
@@ -4759,7 +4768,8 @@ impl GameRuntime {
                         let [lx, _, lz] = pos.local();
                         let idx = mcv_core::vidx(lx, pos.y, lz);
                         let mut v = h.voxels.write().unwrap();
-                        v[idx] = crate::growth::with_crop_age(v[idx], new_age);
+                        let cur = v.get_flat(idx);
+                        v.set_flat(idx, crate::growth::with_crop_age(cur, new_age));
                         drop(v);
                         h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
                     }
@@ -4769,7 +4779,8 @@ impl GameRuntime {
                         let [lx, _, lz] = pos.local();
                         let idx = mcv_core::vidx(lx, pos.y, lz);
                         let mut v = h.voxels.write().unwrap();
-                        v[idx] = crate::growth::with_sapling_stage(v[idx], 1);
+                        let cur = v.get_flat(idx);
+                        v.set_flat(idx, crate::growth::with_sapling_stage(cur, 1));
                         drop(v);
                         h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
                     }
@@ -4793,8 +4804,12 @@ impl GameRuntime {
         let base_idx = mcv_core::vidx(lx, pos.y, lz);
         // 清苗（growTree 先清位再 place；本仓 place_tree 恒成功 → 无回植
         // 分支，TreeGrower.java:171-175 的失败恢复不适用）。
-        let old = handle.voxels.read().unwrap()[base_idx];
-        handle.voxels.write().unwrap()[base_idx] = BlockId(0);
+        let old = handle.voxels.read().unwrap().get_flat(base_idx);
+        handle
+            .voxels
+            .write()
+            .unwrap()
+            .set_flat(base_idx, BlockId(0));
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
         let mut edits: Vec<(BlockPos, u16, u16)> = vec![(pos, old.0, 0)];
         // 树投影写手：跨界裁剪同 TREES-2 ④（苗所属块 16×16 柱内才落格），
@@ -4818,11 +4833,11 @@ impl GameRuntime {
                 let h = self.chunks.get(&self.base).expect("base chunk held");
                 let [lx, _, lz] = p.local();
                 let idx = mcv_core::vidx(lx, y, lz);
-                let cur = h.voxels.read().unwrap()[idx];
+                let cur = h.voxels.read().unwrap().get_flat(idx);
                 if !crate::growth::tree_write_gate(slot, cur) {
                     return;
                 }
-                h.voxels.write().unwrap()[idx] = BlockId(id);
+                h.voxels.write().unwrap().set_flat(idx, BlockId(id));
                 self.edits.push((p, cur.0, id));
             }
         }
@@ -5524,7 +5539,7 @@ impl GameRuntime {
         if let Some(handle) = self.chunks.get(&target.chunk()) {
             let [lx, _, lz] = target.local();
             let idx = mcv_core::vidx(lx, target.y, lz);
-            let old_id = handle.voxels.read().unwrap()[idx];
+            let old_id = handle.voxels.read().unwrap().get_flat(idx);
             // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
             // 网格与碰撞按 mcv_core::BlockId::state 读取。
             let st = placement_state(
@@ -5533,7 +5548,11 @@ impl GameRuntime {
                 self.input.sneak,
                 self.player.yaw,
             );
-            handle.voxels.write().unwrap()[idx] = new_id.with_state(st);
+            handle
+                .voxels
+                .write()
+                .unwrap()
+                .set_flat(idx, new_id.with_state(st));
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
             // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
             //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
@@ -5793,11 +5812,11 @@ impl GameRuntime {
         };
         let [lx, _, lz] = target.local();
         let idx = mcv_core::vidx(lx, target.y, lz);
-        let old = handle.voxels.read().unwrap()[idx];
+        let old = handle.voxels.read().unwrap().get_flat(idx);
         if old.0 == 0 {
             return;
         }
-        handle.voxels.write().unwrap()[idx] = BlockId(0);
+        handle.voxels.write().unwrap().set_flat(idx, BlockId(0));
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
         // 熔炉会话兜底（vanilla 炉毁经 BaseContainerBlockEntity.preRemoveSide
         // Effects/Containers.dropContents 落内容）：会话炉方块被毁即关屏归还，
@@ -7432,17 +7451,21 @@ fn find_spawn_slot(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, radius: i32) ->
             && let Some(h) = chunks.get(&ChunkPos::new(ox, oz))
             && (h.stage() as u8) >= (Stage::TerrainReady as u8)
         {
-            let voxels = h.voxels.read().unwrap();
+            let voxels_g = h.voxels.read().unwrap();
+            // spawn 判定保持平铺 &[BlockId] 纯函数口径（测试锁零改动）：
+            // 每块一次整段 decode（spawn 搜索一次性，非热路径）。
+            let voxels_raw = voxels_g.decode_column();
+            let voxels: &[BlockId] = bytemuck::cast_slice(&voxels_raw);
             let hm = h.heightmap.read().unwrap();
             if ox == 0
                 && oz == 0
-                && let Some(y) = spawn_column_feet_y(&voxels[..], &hm[..], 8, 8)
+                && let Some(y) = spawn_column_feet_y(voxels, &hm[..], 8, 8)
             {
                 return Some(Vec3::new(8.5, y as f32, 8.5));
             }
             for lx in 0..16usize {
                 for lz in 0..16usize {
-                    if let Some(y) = spawn_column_feet_y(&voxels[..], &hm[..], lx, lz) {
+                    if let Some(y) = spawn_column_feet_y(voxels, &hm[..], lx, lz) {
                         return Some(Vec3::new(
                             (ox * 16) as f32 + lx as f32 + 0.5,
                             y as f32,
@@ -7482,13 +7505,8 @@ fn fixup_spawn_feet_y(voxels: &[BlockId], lx: usize, lz: usize) -> i32 {
     mcv_core::WORLD_MIN_Y + 1 // 空列回落世界底+1（旧 `1` 的绝对 y 对应位）
 }
 
-fn load_voxels(ids: &[u16]) -> Box<[BlockId; mcv_core::CHUNK_VOL]> {
-    debug_assert_eq!(ids.len(), mcv_core::CHUNK_VOL);
-    bytemuck::cast_slice::<u16, BlockId>(ids)
-        .to_vec()
-        .into_boxed_slice()
-        .try_into()
-        .unwrap_or_else(|_| panic!("wrong voxel slice length"))
+fn load_voxels(ids: &[u16]) -> mcv_core::VoxelStore {
+    mcv_core::VoxelStore::from_flat_u16(ids)
 }
 
 /// 放置时按形状计算状态 nibble（写进体素 bit12-15，规则见 mcv_core）。
@@ -8001,22 +8019,20 @@ mod tests {
             for y in 0..=floor_top {
                 for zz in 0..16usize {
                     for xx in 0..16usize {
-                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                        vg.set_flat(lidx(xx, y, zz), BlockId(STONE));
                     }
                 }
             }
         }
-        let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
-            handle.voxels.read().unwrap().as_slice(),
-        ));
+        let hm = mcv_worldgen::recompute_heightmap(&handle.voxels.read().unwrap().decode_column());
         *handle.heightmap.write().unwrap() = hm;
         {
             let vg = handle.voxels.read().unwrap();
             let mut lg = handle.light.write().unwrap();
             let hg = handle.heightmap.read().unwrap();
-            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let voxels = vg.decode_column();
             let mut view = mcv_light::LightChunk {
-                voxels,
+                voxels: &voxels,
                 light: &mut lg[..],
                 heightmap: &hg[..],
             };
@@ -8036,7 +8052,10 @@ mod tests {
     fn edit(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, at: BlockPos, old: u16, new: u16) {
         let h = &chunks[&at.chunk()];
         let [lx, _, lz] = at.local();
-        h.voxels.write().unwrap()[mcv_core::vidx(lx, at.y, lz)] = BlockId(new);
+        h.voxels
+            .write()
+            .unwrap()
+            .set_flat(mcv_core::vidx(lx, at.y, lz), BlockId(new));
         let mut queue = Vec::new();
         relight_block_edit(chunks, at, old, new, &mut queue);
         sync_light_edges(chunks, &mut queue);
@@ -8651,13 +8670,22 @@ mod tests {
     fn put_block(rt: &mut GameRuntime, at: BlockPos, id: u16) {
         let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
         let [lx, _, lz] = at.local();
-        handle.voxels.write().unwrap()[mcv_core::vidx(lx, at.y, lz)] = BlockId(id);
+        handle
+            .voxels
+            .write()
+            .unwrap()
+            .set_flat(mcv_core::vidx(lx, at.y, lz), BlockId(id));
     }
 
     fn voxel(rt: &GameRuntime, at: BlockPos) -> u16 {
         let handle = rt.chunks.get(&at.chunk()).expect("目标区块在册");
         let [lx, _, lz] = at.local();
-        handle.voxels.read().unwrap()[mcv_core::vidx(lx, at.y, lz)].0
+        handle
+            .voxels
+            .read()
+            .unwrap()
+            .get_flat(mcv_core::vidx(lx, at.y, lz))
+            .0
     }
 
     #[test]
@@ -9173,7 +9201,10 @@ mod tests {
     /// 把脚下方格 (8,69,8) 写成指定方块（lit_chunk 装配的石柱地表）。
     fn set_under_player(rt: &mut GameRuntime, id: u16) {
         let h = &rt.chunks[&ChunkPos::new(0, 0)];
-        h.voxels.write().unwrap()[lidx(8, 69, 8)] = BlockId(id);
+        h.voxels
+            .write()
+            .unwrap()
+            .set_flat(lidx(8, 69, 8), BlockId(id));
     }
 
     /// 俯视脚下：pitch 取鼠标 clamp 下限 −1.55（≈88.8°，camera 约定
@@ -9209,7 +9240,11 @@ mod tests {
         assert_eq!(rt.mine.progress, 0.0, "无限硬度不得推进进度");
         assert_eq!(rt.mine.per_tick, 0.0);
         assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(8, 69, 8)),
             BlockId(BEDROCK),
             "生存 400 tick 后基岩仍在"
         );
@@ -9218,7 +9253,11 @@ mod tests {
         rt.mode = GameMode::Creative;
         rt.on_left_press();
         assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 69, 8)],
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(8, 69, 8)),
             BlockId(0),
             "创造必须能破基岩（26.1 实况：instabuild 先于硬度判定）"
         );
@@ -9241,10 +9280,19 @@ mod tests {
         rt.player.vel = Vec3::ZERO;
         look_down(&mut rt);
         let v = |rt: &GameRuntime, x: usize, y: usize, z: usize| -> u16 {
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(x, y, z)].id()
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(x, y, z))
+                .id()
         };
         let set = |rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: u16| {
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(x, y, z)] = BlockId(id);
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .write()
+                .unwrap()
+                .set_flat(lidx(x, y, z), BlockId(id));
         };
         // ① 空气目标：俯视命中 (8,69,8) 石顶 → 目标格 (8,70,8) 空气，
         //    成功放置并消耗（回归基线）。
@@ -9289,7 +9337,11 @@ mod tests {
         look_down(&mut rt);
         rt.interact(true);
         assert_eq!(
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(8, 70, 8)],
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(8, 70, 8)),
             BlockId(0),
             "玩家占格不可放置"
         );
@@ -9313,10 +9365,19 @@ mod tests {
         rt.player.vel = Vec3::ZERO;
         look_down(&mut rt);
         let v = |rt: &GameRuntime, x: usize, y: usize, z: usize| -> u16 {
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(x, y, z)].id()
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .read()
+                .unwrap()
+                .get_flat(lidx(x, y, z))
+                .id()
         };
         let set = |rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: u16| {
-            rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(x, y, z)] = BlockId(id);
+            rt.chunks[&ChunkPos::new(0, 0)]
+                .voxels
+                .write()
+                .unwrap()
+                .set_flat(lidx(x, y, z), BlockId(id));
         };
         // 千块表 id：short_grass = 907（Cross）、雪层 snow = 930。
         const SHORT_GRASS: u16 = 907;
@@ -9467,29 +9528,27 @@ mod tests {
                 for y in 0..=20usize {
                     for zz in 0..16usize {
                         for xx in 0..16usize {
-                            vg[lidx(xx, y, zz)] = BlockId(STONE);
+                            vg.set_flat(lidx(xx, y, zz), BlockId(STONE));
                         }
                     }
                 }
                 for y in 21..=24usize {
                     for zz in 0..16usize {
                         for xx in 12..16usize {
-                            vg[lidx(xx, y, zz)] = BlockId(5); // water
+                            vg.set_flat(lidx(xx, y, zz), BlockId(5)); // water
                         }
                     }
                 }
             }
-            let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
-                h.voxels.read().unwrap().as_slice(),
-            ));
+            let hm = mcv_worldgen::recompute_heightmap(&h.voxels.read().unwrap().decode_column());
             *h.heightmap.write().unwrap() = hm;
             {
                 let vg = h.voxels.read().unwrap();
                 let mut lg = h.light.write().unwrap();
                 let hg = h.heightmap.read().unwrap();
-                let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+                let voxels = vg.decode_column();
                 let mut view = mcv_light::LightChunk {
-                    voxels,
+                    voxels: &voxels,
                     light: &mut lg[..],
                     heightmap: &hg[..],
                 };
@@ -9511,7 +9570,7 @@ mod tests {
             for y in 0..=20usize {
                 for zz in 0..16usize {
                     for xx in 0..16usize {
-                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                        vg.set_flat(lidx(xx, y, zz), BlockId(STONE));
                     }
                 }
             }
@@ -9570,7 +9629,7 @@ mod tests {
                 for y in y0..=y1 {
                     for zz in 0..16usize {
                         for xx in 0..16usize {
-                            vg[lidx(xx, y as usize, zz)] = BlockId(STONE);
+                            vg.set_flat(lidx(xx, y as usize, zz), BlockId(STONE));
                         }
                     }
                 }
@@ -9581,17 +9640,15 @@ mod tests {
             }
             solid(225, 226); // 顶盖
         }
-        let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
-            handle.voxels.read().unwrap().as_slice(),
-        ));
+        let hm = mcv_worldgen::recompute_heightmap(&handle.voxels.read().unwrap().decode_column());
         *handle.heightmap.write().unwrap() = hm;
         {
             let vg = handle.voxels.read().unwrap();
             let mut lg = handle.light.write().unwrap();
             let hg = handle.heightmap.read().unwrap();
-            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let voxels = vg.decode_column();
             let mut view = mcv_light::LightChunk {
-                voxels,
+                voxels: &voxels,
                 light: &mut lg[..],
                 heightmap: &hg[..],
             };

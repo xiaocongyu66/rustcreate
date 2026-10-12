@@ -17,7 +17,7 @@ fn stone_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
         for ly in 0..64usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    vox[mcv_core::vidx(x, ly as i32, z)] = BlockId(1); // stone
+                    vox.set_flat(mcv_core::vidx(x, ly as i32, z), BlockId(1)); // stone
                 }
             }
         }
@@ -133,8 +133,8 @@ fn wander_does_not_clip_walls() {
         // 两堵墙：x=2 与 x=13（y 64..80 全高），羊被夹在中间走廊。
         for y in 64..80usize {
             for z in 0..16usize {
-                vox[mcv_core::vidx(2, y as i32, z)] = BlockId(1);
-                vox[mcv_core::vidx(13, y as i32, z)] = BlockId(1);
+                vox.set_flat(mcv_core::vidx(2, y as i32, z), BlockId(1));
+                vox.set_flat(mcv_core::vidx(13, y as i32, z), BlockId(1));
             }
         }
     }

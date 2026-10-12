@@ -170,7 +170,11 @@ impl VoxelAccess for ChunkWorld<'_> {
             return BlockId(1); // 界外按缺格保守实心（v6 绝对域，防越界索引）
         }
         let [lx, _, lz] = p.local();
-        chunk.voxels.read().unwrap()[mcv_core::vidx(lx, p.y, lz)]
+        chunk
+            .voxels
+            .read()
+            .unwrap()
+            .get_flat(mcv_core::vidx(lx, p.y, lz))
     }
 
     fn light(&self, _p: BlockPos) -> u8 {

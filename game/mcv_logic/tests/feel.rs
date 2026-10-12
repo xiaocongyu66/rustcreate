@@ -293,7 +293,7 @@ fn wall_between_player_and_mob_blocks_attack() {
         let mut v = h.voxels.write().unwrap();
         for ly in 0..256usize {
             for lz in 0..16usize {
-                v[mcv_core::vidx(3, ly as i32, lz)] = BlockId(1);
+                v.set_flat(mcv_core::vidx(3, ly as i32, lz), BlockId(1));
             }
         }
     }
@@ -349,7 +349,7 @@ fn floor_chunk(floor_max_x: i32) -> Arc<ChunkHandle> {
         for x in 0..floor_max_x {
             for z in 0..16 {
                 for y in 0..=9usize {
-                    v[mcv_core::vidx(x as usize, y as i32, z)] = BlockId(1);
+                    v.set_flat(mcv_core::vidx(x as usize, y as i32, z), BlockId(1));
                 }
             }
         }
@@ -473,7 +473,7 @@ fn walk_up_half_slab_without_jumping() {
         let slab = id_of("oak_slab");
         let mut v = h.voxels.write().unwrap();
         for z in 0..16usize {
-            v[mcv_core::vidx(5, 10, z)] = BlockId(slab); // state 0 = 下半砖
+            v.set_flat(mcv_core::vidx(5, 10, z), BlockId(slab)); // state 0 = 下半砖
         }
     }
     let chunks = walk_world(h);
@@ -514,7 +514,7 @@ fn full_block_still_blocks_walking() {
     {
         let mut v = h.voxels.write().unwrap();
         for z in 0..16usize {
-            v[mcv_core::vidx(5, 10, z)] = BlockId(1); // 整块石头
+            v.set_flat(mcv_core::vidx(5, 10, z), BlockId(1)); // 整块石头
         }
     }
     let chunks = walk_world(h);

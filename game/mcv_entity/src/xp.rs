@@ -164,7 +164,11 @@ impl mcv_game::VoxelAccess for VoxelView<'_> {
             return mcv_core::BlockId(1);
         }
         let [lx, _, lz] = p.local();
-        chunk.voxels.read().unwrap()[mcv_core::vidx(lx, p.y, lz)]
+        chunk
+            .voxels
+            .read()
+            .unwrap()
+            .get_flat(mcv_core::vidx(lx, p.y, lz))
     }
     fn light(&self, _p: mcv_core::BlockPos) -> u8 {
         15

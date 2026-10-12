@@ -14,7 +14,7 @@ fn stone_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
         let mut vox = h.voxels.write().unwrap();
         for ly in 0..64usize {
             for i in 0..256usize {
-                vox[mcv_core::vidx(i & 15, ly as i32, i >> 4)] = BlockId(1);
+                vox.set_flat(mcv_core::vidx(i & 15, ly as i32, i >> 4), BlockId(1));
             }
         }
     }

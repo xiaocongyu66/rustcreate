@@ -15,7 +15,7 @@
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::{BlockId, CHUNK_SY, CHUNK_VOL, ChunkPos, WORLD_MIN_Y};
+use crate::{BlockId, CHUNK_SY, CHUNK_VOL, ChunkPos, VoxelStore, WORLD_MIN_Y};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -137,7 +137,11 @@ pub struct ChunkHandle {
     /// worldgen 完成度阶梯（[`ChunkStatus`]），与 stage 正交的独立记账位。
     status: AtomicU8,
     dirty: AtomicU8,
-    pub voxels: RwLock<Box<[BlockId; CHUNK_VOL]>>,
+    /// E7a 起 palette 压缩驻留（[`VoxelStore`]，24×16³ section，
+    /// 原版档位语义 0/4/5-8/16bit）；对外读写走 get/set/get_flat/
+    /// set_flat，整段消费走 decode_column，装载走 from_flat_u16
+    /// （盘格式仍是平铺 u16，见 `VoxelStore` 模块注释）。
+    pub voxels: RwLock<VoxelStore>,
     /// 地表高度图，索引 `(z<<4)|x`；值 = 首个非遮光格**绝对 y**
     /// （v6：i16 承载 -64..320；全空列 = WORLD_MIN_Y 哨兵，见
     /// `mcv_worldgen::recompute_heightmap`）。
@@ -152,7 +156,7 @@ impl ChunkHandle {
             stage: AtomicU8::new(Stage::Empty as u8),
             status: AtomicU8::new(ChunkStatus::Empty as u8),
             dirty: AtomicU8::new(0),
-            voxels: RwLock::new(Box::new([BlockId(0); CHUNK_VOL])),
+            voxels: RwLock::new(VoxelStore::new()),
             heightmap: RwLock::new(Box::new([WORLD_MIN_Y as i16; 256])),
             light: RwLock::new(Box::new([0; CHUNK_VOL])),
         }

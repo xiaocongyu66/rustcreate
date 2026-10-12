@@ -48,14 +48,14 @@ fn build_flat(rt: &mut GameRuntime) {
         for y in 0..64usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    v[vidx(x, y as i32, z)] = BlockId(1);
+                    v.set_flat(vidx(x, y as i32, z), BlockId(1));
                 }
             }
         }
         for y in 64..96usize {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    v[vidx(x, y as i32, z)] = BlockId(0);
+                    v.set_flat(vidx(x, y as i32, z), BlockId(0));
                 }
             }
         }
@@ -119,7 +119,7 @@ fn run_ticks(rt: &mut GameRuntime, steps: usize) {
 fn set_cell(rt: &mut GameRuntime, p: BlockPos, id: BlockId) {
     let h = rt.chunks.get(&p.chunk()).unwrap().clone();
     let [lx, _, lz] = p.local();
-    h.voxels.write().unwrap()[vidx(lx, p.y, lz)] = id;
+    h.voxels.write().unwrap().set_flat(vidx(lx, p.y, lz), id);
     h.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
 }
 
@@ -140,7 +140,7 @@ fn shade_column(rt: &mut GameRuntime, x: i32, z: i32, from_y: i32) {
 fn get_cell(rt: &mut GameRuntime, p: BlockPos) -> BlockId {
     let h = rt.chunks.get(&p.chunk()).unwrap().clone();
     let [lx, _, lz] = p.local();
-    h.voxels.read().unwrap()[vidx(lx, p.y, lz)]
+    h.voxels.read().unwrap().get_flat(vidx(lx, p.y, lz))
 }
 
 fn count_id(rt: &mut GameRuntime, chunk: ChunkPos, id: u16) -> usize {
@@ -231,10 +231,10 @@ fn sapling_light_gate_then_tree_at_spot() {
     let mut bases = 0usize;
     for z in 0..16usize {
         for x in 0..16usize {
-            if v[vidx(x, 65, z)].id() == 6 {
+            if v.get_flat(vidx(x, 65, z)).id() == 6 {
                 bases += 1;
                 assert_eq!(
-                    v[vidx(x, 64, z)].id(),
+                    v.get_flat(vidx(x, 64, z)).id(),
                     ids::DIRT,
                     "树基下方应是土（place_dirt 打底，非悬空）"
                 );

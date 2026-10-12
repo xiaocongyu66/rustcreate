@@ -107,7 +107,10 @@ pub fn generate_terrain_with(
 /// Commits a terrain result into a chunk handle (stage Empty -> TerrainReady).
 pub fn commit_terrain(handle: &Arc<ChunkHandle>, out: TerrainOutput) {
     debug_assert_eq!(handle.pos, out.pos);
-    *handle.voxels.write().unwrap() = out.voxels.0;
+    // E7a：worldgen 仍是平铺 u16 产出（同 seed 同字节的确定性门
+    // 不动），入库时一次 encode 成 palette 驻留。
+    *handle.voxels.write().unwrap() =
+        mcv_core::VoxelStore::from_flat_u16(out.voxels.as_u16_slice());
     *handle.heightmap.write().unwrap() = out.heightmap;
     handle.mark_dirty(mcv_core::dirty::SAVE);
     handle.advance_to(Stage::TerrainReady);

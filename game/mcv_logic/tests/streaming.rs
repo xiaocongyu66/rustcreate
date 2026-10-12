@@ -48,7 +48,7 @@ fn lit_custom(
     x: i32,
     z: i32,
     floor_top: usize,
-    decorate: impl FnOnce(&mut [BlockId]),
+    decorate: impl FnOnce(&mut mcv_core::VoxelStore),
 ) -> Arc<ChunkHandle> {
     let h = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
     {
@@ -56,21 +56,21 @@ fn lit_custom(
         for y in 0..=floor_top {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    vg[vidx(xx, y as i32, zz)] = BlockId(1);
+                    vg.set_flat(vidx(xx, y as i32, zz), BlockId(1));
                 }
             }
         }
-        decorate(&mut vg[..]);
+        decorate(&mut vg);
     }
-    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     {
         let vg = h.voxels.read().unwrap();
         let mut lg = h.light.write().unwrap();
         let hg = h.heightmap.read().unwrap();
-        let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+        let voxels = vg.decode_column();
         let mut view = mcv_light::LightChunk {
-            voxels,
+            voxels: &voxels,
             light: &mut lg[..],
             heightmap: &hg[..],
         };
@@ -373,9 +373,9 @@ fn extract_edge(from: &ChunkHandle, side: u8) -> [u8; mcv_light::EDGE_CELLS] {
     let vg = from.voxels.read().unwrap();
     let mut lg = from.light.write().unwrap();
     let hg = from.heightmap.read().unwrap();
-    let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+    let voxels = vg.decode_column();
     let view = mcv_light::LightChunk {
-        voxels,
+        voxels: &voxels,
         light: &mut lg[..],
         heightmap: &hg[..],
     };
@@ -390,9 +390,9 @@ fn apply_edge_pair(to: &ChunkHandle, edge: &[u8; mcv_light::EDGE_CELLS], side: u
         let vg = to.voxels.read().unwrap();
         let mut lg = to.light.write().unwrap();
         let hg = to.heightmap.read().unwrap();
-        let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+        let voxels = vg.decode_column();
         let mut view = mcv_light::LightChunk {
-            voxels,
+            voxels: &voxels,
             light: &mut lg[..],
             heightmap: &hg[..],
         };
@@ -422,7 +422,7 @@ fn paired_edge_sync_is_idempotent() {
         // y=50 全尺寸顶板：其下腔体对外封闭（±Z/+X 无邻块可进光）。
         for z in 0..16usize {
             for x in 0..16usize {
-                vg[vidx(x, 50, z)] = BlockId(1);
+                vg.set_flat(vidx(x, 50, z), BlockId(1));
             }
         }
     });
@@ -464,7 +464,7 @@ fn floor_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
         for y in 0..5usize {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    v[vidx(xx, y as i32, zz)] = BlockId(1);
+                    v.set_flat(vidx(xx, y as i32, zz), BlockId(1));
                 }
             }
         }
@@ -490,7 +490,10 @@ fn unloaded_columns_read_as_air_not_stone() {
     );
     // Empty 态（已入册、体素未 commit）：即便数组里有数据也按空气读。
     let h = Arc::new(ChunkHandle::new(ChunkPos::new(0, 0)));
-    h.voxels.write().unwrap()[vidx(3, 4, 5)] = BlockId(1);
+    h.voxels
+        .write()
+        .unwrap()
+        .set_flat(vidx(3, 4, 5), BlockId(1));
     chunks.into_iter().for_each(drop); // 借用检查占位（下方重新构造）
     let mut chunks2: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
     chunks2.insert(ChunkPos::new(0, 0), h.clone());
@@ -780,7 +783,7 @@ fn y_out_of_bounds_never_wraps() {
     {
         let mut v = h.voxels.write().unwrap();
         for y in WORLD_MIN_Y..WORLD_MAX_Y {
-            v[vidx(4, y, 4)] = BlockId(1); // 全柱石头，顶格 = WORLD_MAX_Y−1
+            v.set_flat(vidx(4, y, 4), BlockId(1)); // 全柱石头，顶格 = WORLD_MAX_Y−1
         }
     }
     let mut chunks: HashMap<ChunkPos, Arc<ChunkHandle>> = HashMap::new();
@@ -807,7 +810,7 @@ fn y_out_of_bounds_never_wraps() {
         "y<WORLD_MIN_Y 必须空气（旧行为绕回列顶）"
     );
     // heightmap 饱和：全柱遮光（含列顶）→ 钳到 WORLD_MAX_Y−1，不得绕回。
-    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
     let hm = mcv_worldgen::recompute_heightmap(&ids);
     assert_eq!(
         hm[(4 << 4) | 4],

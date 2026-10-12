@@ -352,8 +352,7 @@ fn game_dispatch_records_and_routes_hi_priority() {
     let mut voxels = vec![0u16; 9 * vol];
     let mut lights = vec![0xF0u8; 9 * vol]; // 与 snapshot_neighborhood 同款初值
     for (i, (_, h)) in handles.iter().enumerate() {
-        voxels[i * vol..(i + 1) * vol]
-            .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
+        voxels[i * vol..(i + 1) * vol].copy_from_slice(&h.voxels.read().unwrap().decode_column());
         lights[i * vol..(i + 1) * vol].copy_from_slice(&h.light.read().unwrap()[..]);
     }
     let slots = neighborhood_slots(&voxels, &lights);
@@ -377,7 +376,7 @@ fn lit_floor_chunk(pos: ChunkPos, floor_top: i32) -> Arc<ChunkHandle> {
         for y in mcv_core::WORLD_MIN_Y..=floor_top {
             for z in 0..16usize {
                 for x in 0..16usize {
-                    vg[vidx(x, y, z)] = mcv_core::BlockId(1);
+                    vg.set_flat(vidx(x, y, z), mcv_core::BlockId(1));
                 }
             }
         }
