@@ -44,6 +44,7 @@
 //! 素材或 `sounds.json` 缺失时所有播放调用都是 no-op
 //! (仅首次告警),不会 panic。
 pub mod decode;
+pub mod events;
 pub mod loader;
 pub mod mixer;
 pub mod table;

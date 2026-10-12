@@ -164,6 +164,13 @@ struct AppState {
     splash: &'static str,
     /// splash 动画时间基准
     menu_t0: Option<std::time::Instant>,
+    /// App 级菜单音频（本波 #143 UI 点击音）：单一输出设备所有权链——
+    /// 菜单期由 App 持有（主菜单/设置/键位屏的按钮音），进世界转手给
+    /// runtime（enter_game），退世界收回（quit_to_menu）。None=尚未打开
+    /// 或已转手；游戏内屏（暂停/死亡）的按钮音走 runtime.audio（同设备）。
+    menu_audio: Option<mcv_audio::AudioManager>,
+    /// 音频后端打开失败（无声卡/无素材）后的不再重试旗标：点击静默降级。
+    menu_audio_dead: bool,
     /// 界面语言：0=English 1=中文
     set_lang: usize,
     /// 渲染云（官方 CloudStatus）：0=OFF 1=FAST 2=FANCY
@@ -1225,6 +1232,40 @@ impl AppState {
         p.is_dir().then_some(p)
     }
 
+    /// UI 按钮按下音（本波 #143）。26.1：`AbstractWidget.mouseClicked`
+    /// （AbstractWidget.java:106-118）命中即 `playDownSound` →
+    /// `playButtonClickSound`（:163-166）`forUI(UI_BUTTON_CLICK, 1.0F)`
+    /// （SoundEvents.java:1636 "ui.button.click"）；滑杆松开同音
+    /// （AbstractSliderButton.onRelease :153-155）。世界列表行同音
+    /// （WorldSelectionList.java:579/:594）。
+    ///
+    /// 设备路由：有 runtime（暂停/死亡屏）复用 `runtime.audio`（与游戏
+    /// 行为音同设备同主增益）；纯菜单屏（runtime 已退出/未进世界）用
+    /// App 级 `menu_audio`——未开则惰性开一次，开失败（无声卡/无素材）
+    /// 置 dead 不再重试，点击静默。
+    fn play_ui_click(&mut self) {
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.audio.play_ui(mcv_audio::events::UI_BUTTON_CLICK, 1.0);
+            return;
+        }
+        if self.menu_audio.is_none() && !self.menu_audio_dead {
+            match self.sounds_dir().map(|d| mcv_audio::AudioManager::open(d)) {
+                Some(Ok(a)) => self.menu_audio = Some(a),
+                Some(Err(e)) => {
+                    self.menu_audio_dead = true;
+                    log::warn!("audio unavailable (menu ui): {e}");
+                }
+                None => {
+                    self.menu_audio_dead = true;
+                    log::warn!("audio unavailable (menu ui): sounds dir not found");
+                }
+            }
+        }
+        if let Some(a) = self.menu_audio.as_mut() {
+            a.play_ui(mcv_audio::events::UI_BUTTON_CLICK, 1.0);
+        }
+    }
+
     /// 当前界面语言。
     fn lang(&self) -> crate::i18n::Lang {
         if self.set_lang == 1 {
@@ -1384,11 +1425,24 @@ impl AppState {
     fn enter_game(&mut self, mut runtime: GameRuntime) {
         runtime.render_dist = self.set_dist;
         runtime.sens = self.set_sens;
-        // 音频后端：无声卡/无素材时保持 silent 降级，不阻塞进游戏
+        // 音频后端：无声卡/无素材时保持 silent 降级，不阻塞进游戏。
+        // 设备所有权链（本波 #143）：菜单期 App 级 menu_audio 若已开，
+        // 直接转手给 runtime（避免双输出设备）；否则此处新开，失败置
+        // dead 不再重试（菜单点击音一并静默降级）。
         if let Some(dir) = self.sounds_dir() {
-            match mcv_audio::AudioManager::open(&dir) {
-                Ok(a) => runtime.set_audio(a),
-                Err(e) => log::warn!("audio unavailable ({dir:?}): {e}"),
+            let opened = match self.menu_audio.take() {
+                Some(a) => Some(a),
+                None => match mcv_audio::AudioManager::open(&dir) {
+                    Ok(a) => Some(a),
+                    Err(e) => {
+                        self.menu_audio_dead = true;
+                        log::warn!("audio unavailable ({dir:?}): {e}");
+                        None
+                    }
+                },
+            };
+            if let Some(a) = opened {
+                runtime.set_audio(a);
             }
         }
         runtime.load_meta();
@@ -1408,6 +1462,13 @@ impl AppState {
         if let Some(mut runtime) = self.runtime.take() {
             runtime.save_dirty(None);
             runtime.save_meta();
+            // 设备所有权链（本波 #143）：把 AudioManager 收回 App 级菜单
+            // 音频（主菜单/设置按钮音续用同一输出设备）；runtime 留
+            // silent 空壳走到 drop。收回后再取 save_dir，避免借用交织。
+            self.menu_audio = Some(std::mem::replace(
+                &mut runtime.audio,
+                mcv_audio::AudioManager::silent(mcv_audio::default_sounds_dir()),
+            ));
             let dir = runtime.save_dir.clone();
             drop(runtime);
             if delete {
@@ -1482,6 +1543,14 @@ impl AppState {
             kb.take_events()
         };
         for ev in events {
+            // 按钮按下 / 滑杆松开都播 UI 点击音（AbstractWidget.java:106-118
+            // → playButtonClickSound :163-166；滑杆松开同音
+            // AbstractSliderButton.onRelease :153-155）。
+            match ev {
+                mcv_ui::widget::UiEvent::Click { .. }
+                | mcv_ui::widget::UiEvent::SliderRelease { .. } => self.play_ui_click(),
+                _ => {}
+            }
             let mcv_ui::widget::UiEvent::Click { id } = ev else {
                 continue;
             };
@@ -1525,12 +1594,18 @@ impl AppState {
                 px >= *bx && px <= bx + bw && py >= *by && py <= by + bh
             });
             if let Some((idx, ..)) = hit {
+                // 世界行按下音（WorldSelectionList.java:579：forUI
+                // (UI_BUTTON_CLICK, 1.0F)，先音后交互同 mouseClicked 序）。
+                self.play_ui_click();
                 let idx = *idx;
                 self.on_world_pick(idx);
                 return;
             }
         }
         if let Some(id) = self.hit_menu(x, y) {
+            // 按下沿音（AbstractWidget.mouseClicked :106-118：命中即
+            // playDownSound，先音后 onClick；:163-166 音量 1.0F）。
+            self.play_ui_click();
             if id == "quit" {
                 self.quit_requested = true;
                 if let Some(w) = self.window.as_ref() {

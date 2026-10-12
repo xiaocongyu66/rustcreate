@@ -13,8 +13,8 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, Health, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath, MobTicks,
-    PhysBody, Yaw, spawn_mob,
+    AiAction, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath,
+    MobTicks, PhysBody, PickupReq, Yaw, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
@@ -1418,7 +1418,9 @@ impl GameRuntime {
         }
         let pos = [p.pos.x, p.pos.y, p.pos.z];
         // 26.1 sounds.json 事件:变体随机交给音效表按权重抽取。
-        self.audio.play_event("entity.player.hurt", pos, pos, 1.0);
+        // 消费点 LivingEntity.java:2019 playSound(hurtSound, …)。
+        self.audio
+            .play_event(mcv_audio::events::PLAYER_HURT, pos, pos, 1.0);
     }
 
     /// 死亡界面「重生」：满状态回出生点上方（FoodData 全新实例 = 满食 +
@@ -3083,12 +3085,59 @@ impl GameRuntime {
             }
         }
         // 掉落物拾取结算：入栏走 Hotbar::add（give 路径唯一），满栏剩余留地。
+        // 拾取确认音（26.1 客户端 take 实体包处理 ClientPacketListener.java:
+        // 1002-1013：ITEM_PICKUP、volume 0.2、pitch (rand−rand)×1.4 + 2.0，
+        // 位置 = 被拾实体）。结算内部会 despawn 满收实体——先经读侧
+        // `read()` 非消费快照候选（含实体句柄/位姿/没收前 count；同 tick 已
+        // 被合并/到期的实体在此处 get_ref 即 None，与 settle 的跳过门一致），
+        // 结算后按「收走即响」过滤：满收 despawn → get_ref None；部分入栏 →
+        // count 变小（对应原版部分拾取也发 take 包）。
+        let pickup_reqs: Vec<PickupReq> = self
+            .mobs_app
+            .events
+            .channel::<PickupReq>()
+            .read()
+            .copied()
+            .collect();
+        let mut pickup_hits: Vec<(mcv_ecs::Entity, [f32; 3], u8)> = Vec::new();
+        for r in pickup_reqs {
+            let Some(d) = self.mobs_app.world.get_ref::<ItemDrop>(r.e).map(|d| *d) else {
+                continue;
+            };
+            if d.count == 0 {
+                continue;
+            }
+            let Some(b) = self.mobs_app.world.get_ref::<PhysBody>(r.e).map(|b| *b) else {
+                continue;
+            };
+            pickup_hits.push((r.e, [b.pos.x, b.pos.y, b.pos.z], d.count));
+        }
         mcv_entity::settle_pickups(
             &mut self.mobs_app.world,
             &mut self.mobs_app.events,
             &mut self.hotbar,
             self.player.sel_slot,
         );
+        for (e, pos, pre_count) in pickup_hits {
+            let collected = self
+                .mobs_app
+                .world
+                .get_ref::<ItemDrop>(e)
+                .is_none_or(|d| d.count < pre_count);
+            if !collected {
+                continue;
+            }
+            let r1 = (fast_rand() % 1024) as f32 / 1024.0;
+            let r2 = (fast_rand() % 1024) as f32 / 1024.0;
+            let listener = [self.player.pos.x, self.player.pos.y, self.player.pos.z];
+            self.audio.play_event_pitched(
+                mcv_audio::events::ITEM_PICKUP,
+                pos,
+                listener,
+                0.2,
+                2.0 + (r1 - r2) * 1.4,
+            );
+        }
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
         // 出生投放前暂停（pos=ZERO 是「待投放」哨兵，26.1 里玩家实体在
@@ -3173,9 +3222,9 @@ impl GameRuntime {
                     .min(1.0)
                     * 0.2;
                 let event = if speed < 0.25 {
-                    "entity.player.splash"
+                    mcv_audio::events::PLAYER_SPLASH
                 } else {
-                    "entity.player.splash.high_speed"
+                    mcv_audio::events::PLAYER_SPLASH_HIGH_SPEED
                 };
                 let r1 = (fast_rand() % 1024) as f32 / 1024.0;
                 let r2 = (fast_rand() % 1024) as f32 / 1024.0;
@@ -3282,9 +3331,9 @@ impl GameRuntime {
                         // dmg>4 → big_fall 否则 small_fall）。
                         let p = self.player.pos;
                         let event = if dmg > 4.0 {
-                            "entity.player.big_fall"
+                            mcv_audio::events::PLAYER_FALL_BIG
                         } else {
-                            "entity.player.small_fall"
+                            mcv_audio::events::PLAYER_FALL_SMALL
                         };
                         self.audio
                             .play_event(event, [p.x, p.y, p.z], [p.x, p.y, p.z], 1.0);
@@ -3633,6 +3682,19 @@ impl GameRuntime {
                         player_owned: true,
                     },
                 );
+                // 放箭音（BowItem.releaseUsing BowItem.java:46-55：ARROW_SHOOT
+                // = "entity.arrow.shoot"（SoundEvents.java:111），volume 1.0、
+                // pitch = 1.0/(rand×0.4 + 1.2) + pow×0.5；rand 取本仓 fast_rand
+                // 1024 档近似，同溅落音 jitter 惯例）。
+                let r = (fast_rand() % 1024) as f32 / 1024.0;
+                let pitch = 1.0 / (r * 0.4 + 1.2) + rel.power * 0.5;
+                self.audio.play_event_pitched(
+                    mcv_audio::events::ARROW_SHOOT,
+                    [eye.x, eye.y, eye.z],
+                    [eye.x, eye.y, eye.z],
+                    1.0,
+                    pitch,
+                );
             }
         }
 
@@ -3654,7 +3716,7 @@ impl GameRuntime {
             };
             let food = held.and_then(mcv_item::food::food_properties);
             let can_eat = food.is_some_and(|f| self.can_eat_now(f));
-            if let Some(done) = mcv_item::food::step_eating(
+            match mcv_item::food::step_eating(
                 self.input.placing,
                 self.on_tick,
                 held,
@@ -3662,7 +3724,8 @@ impl GameRuntime {
                 can_eat,
                 &mut self.eat_hold,
             ) {
-                self.finish_eating(done);
+                Some(done) => self.finish_eating(done),
+                None => self.eat_chew_tick(food),
             }
         }
 
@@ -4270,7 +4333,7 @@ impl GameRuntime {
             self.cancel_mining();
         }
         // 耐久只在命中时消耗（26.1 useOnEnemy 语义）；破损清槽并播放
-        // random.break（缺事件时加载器自带节流 no-op）。
+        // 耐久破碎音（缺事件时加载器自带节流 no-op）。
         if struck {
             // 命中 exhaustion 0.1（Player.java:996 causeFoodExhaustion(0.1F)，
             // player_attack.json 同口径）；创造豁免（abilities.invulnerable 门）。
@@ -4283,11 +4346,18 @@ impl GameRuntime {
                 .hurt(1, &mut || 0);
             if broke {
                 self.hotbar.slots[self.player.sel_slot % 9] = mcv_item::ItemStack::empty();
-                self.audio.play_event(
-                    "random.break",
+                // 26.1 耐久破碎音（LivingEntity.breakItem :1412-1420：BREAK_SOUND
+                // 默认 ITEM_BREAK（DataComponents.java:423 / SoundEvents.java:897
+                // "entity.item.break"），volume 0.8、pitch 0.8 + random×0.4）。
+                // 旧接线写 1.20 前的 "random.break"——26.1 sounds.json 已无此
+                // 事件，实为静默死音，本波按原版事件名/音量/音高对齐。
+                let r = (fast_rand() % 1024) as f32 / 1024.0;
+                self.audio.play_event_pitched(
+                    mcv_audio::events::ITEM_BREAK,
                     [eye.x, eye.y, eye.z],
                     [eye.x, eye.y, eye.z],
-                    1.0,
+                    0.8,
+                    0.8 + r * 0.4,
                 );
             }
         }
@@ -4718,6 +4788,46 @@ impl GameRuntime {
         true
     }
 
+    /// 进食咀嚼拍（step_eating 未完食的每个固定步调用；仅 on_tick 节拍发
+    /// 声）。26.1 节拍门 `shouldEmitParticlesAndSounds`（Consumable.java:
+    /// 119-124）：`已吃 > (int)(total×0.21875)` 且 `remaining % 4 == 0`——
+    /// `remaining` 用**本拍自增前**的已吃数（本仓 s.ticks 已含本拍，故
+    /// used = ticks−1，与原版 onUseTick 先播后减的序一致）。音量/音高与完
+    /// 食拍同式：GENERIC_EAT（Consumable.java:42 默认 sound）音量
+    /// nextBoolean ? 0.5 : 1.0（:105/:109 EAT 分支）、音高
+    /// triangle(1.0, 0.2)（:106/:110；RandomSource.java:63-65）；3D 于实体
+    /// 足底（LivingEntity.playSound → Player.java:397-398）。调用链：
+    /// LivingEntity.updateUsingItem :3408 → ItemStack.onUseTick
+    /// （ItemStack.java:1094-1098）→ Consumable.emitParticlesAndSounds
+    /// :104-117。本仓无 DRINK 动画食物（mcv_item 食物表无饮食物），饮音
+    /// 分支不接（音量 0.5 / 音高 randomBetween(0.9,1.0) :107-108）。
+    fn eat_chew_tick(&mut self, food: Option<&mcv_item::food::FoodProperties>) {
+        if !self.on_tick {
+            return;
+        }
+        let Some(e) = self.eat_hold.as_ref() else {
+            return;
+        };
+        let total = food.map_or(u32::from(mcv_item::food::DEFAULT_EAT_TICKS), |f| {
+            f.consume_ticks()
+        });
+        let used = e.ticks.saturating_sub(1);
+        let remaining = total.saturating_sub(used);
+        let wait = (total as f32 * 0.21875) as u32;
+        if remaining % 4 != 0 || used <= wait {
+            return;
+        }
+        let (vol, pitch) = eat_volume_pitch();
+        let p = self.player.pos;
+        self.audio.play_event_pitched(
+            mcv_audio::events::GENERIC_EAT,
+            [p.x, p.y, p.z],
+            [p.x, p.y, p.z],
+            vol,
+            pitch,
+        );
+    }
+
     /// 完食结算（`FoodProperties.onConsume` FoodProperties.java:40-49 +
     /// `Consumable.onConsume` Consumable.java:78-94）：
     /// FoodData.eat（nutrition 回饥饿、饱和走公式与溢出钳）→ 效果概率掷 →
@@ -4726,6 +4836,17 @@ impl GameRuntime {
         let Some(food) = mcv_item::food::food_properties(item) else {
             return;
         };
+        // 完食拍发声（Consumable.onConsume :77-79 → emitParticlesAndSounds
+        // :104-117：GENERIC_EAT、音量/音高同咀嚼拍）。
+        let (vol, pitch) = eat_volume_pitch();
+        let p = self.player.pos;
+        self.audio.play_event_pitched(
+            mcv_audio::events::GENERIC_EAT,
+            [p.x, p.y, p.z],
+            [p.x, p.y, p.z],
+            vol,
+            pitch,
+        );
         // FoodData.eat(int, float)（FoodData.java:24-26；溢出规则 :19-22）。
         mcv_item::food::eat(
             &mut self.player.hunger,
@@ -4863,7 +4984,9 @@ impl GameRuntime {
             // destroySpeed != 0 的方块每次成功挖掘扣 1，与掉落门**解耦**——
             // 木镐挖钻石矿不掉落但照样耗；硬度 0（花草）不扣。耐久耗尽即销毁
             // （ItemStack.java:466-468 applyDamage → shrink(1)），清槽 +
-            // random.break 同攻击段（:2987-2999）。
+            // 耐久破碎音同攻击段（LivingEntity.breakItem :1412-1420：
+            // ITEM_BREAK、volume 0.8、pitch 0.8 + random×0.4；旧接线
+            // "random.break" 是 26.1 已删事件名，本波对齐）。
             let cost = mcv_item::mining::mine_durability_cost(old, held.as_ref());
             if cost > 0 {
                 let broke = self
@@ -4873,11 +4996,13 @@ impl GameRuntime {
                 if broke {
                     self.hotbar.slots[self.player.sel_slot % 9] = mcv_item::ItemStack::empty();
                     let eye = self.player.pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
-                    self.audio.play_event(
-                        "random.break",
+                    let r = (fast_rand() % 1024) as f32 / 1024.0;
+                    self.audio.play_event_pitched(
+                        mcv_audio::events::ITEM_BREAK,
                         [eye.x, eye.y, eye.z],
                         [eye.x, eye.y, eye.z],
-                        1.0,
+                        0.8,
+                        0.8 + r * 0.4,
                     );
                 }
             }
@@ -6280,6 +6405,17 @@ fn fast_rand() -> u32 {
     let v = C.fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed);
     let z = (v ^ (v >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
     ((z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB) >> 33) as u32
+}
+
+/// 进食音量/音高（Consumable.java:105-110 EAT 分支：音量
+/// `nextBoolean ? 0.5 : 1.0`；音高 `triangle(1.0, 0.2)` =
+/// 1.0 + (r1−r2)×0.2，RandomSource.java:63-65。随机源取本仓 fast_rand
+/// 1024 档近似，同溅落音 jitter 惯例）。
+fn eat_volume_pitch() -> (f32, f32) {
+    let vol = if fast_rand() % 2 == 0 { 0.5 } else { 1.0 };
+    let r1 = (fast_rand() % 1024) as f32 / 1024.0;
+    let r2 = (fast_rand() % 1024) as f32 / 1024.0;
+    (vol, 1.0 + (r1 - r2) * 0.2)
 }
 
 fn spawn_rng() -> impl FnMut() -> u32 {
