@@ -47,18 +47,19 @@ fn hi_drains_before_lo() {
         let _ = gate_rx.recv(); // gate：等主线程把全部任务提交完
     }));
     let (tx, rx) = mpsc::channel::<u8>();
-    pool.spawn_lo(Box::new(move || {
-        let _ = tx.send(1);
-    }));
-    pool.spawn_lo(Box::new(move || {
-        let _ = tx.send(2);
-    }));
-    pool.spawn_hi(Box::new(move || {
-        let _ = tx.send(3);
-    }));
-    pool.spawn_hi(Box::new(move || {
-        let _ = tx.send(4);
-    }));
+    for v in [1u8, 2] {
+        let tx = tx.clone();
+        pool.spawn_lo(Box::new(move || {
+            let _ = tx.send(v);
+        }));
+    }
+    for v in [3u8, 4] {
+        let tx = tx.clone();
+        pool.spawn_hi(Box::new(move || {
+            let _ = tx.send(v);
+        }));
+    }
+    drop(tx);
     gate_tx.send(()).expect("gate 任务丢失");
     let got: Vec<u8> = (0..4)
         .map(|_| rx.recv_timeout(WAIT).expect("任务未被执行"))
