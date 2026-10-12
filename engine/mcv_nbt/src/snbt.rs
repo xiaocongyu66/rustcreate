@@ -212,7 +212,7 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                 }
                 let raw: String = self.s[start..self.pos].iter().collect();
-                Ok(parse_bare(&raw).unwrap_or_else(|| NbtValue::String(raw)))
+                Ok(parse_bare(&raw).unwrap_or(NbtValue::String(raw)))
             }
             other => Err(self.err_here(&format!("expected a value, got {other:?}"))),
         }

@@ -15,24 +15,28 @@ pub(crate) fn encode_into(s: &str, out: &mut Vec<u8>) {
     for c in s.chars() {
         match c {
             '\u{0001}'..='\u{007f}' => out.push(c as u8),
-            // U+0000 与 2/3 字节形式:mutf8 与 UTF-8 仅在 U+0000 上分叉,
-            // 其余 code point 字节完全一致,直接走 UTF-8 编码。
+            // U+0000:mutf8 独有的双字节形式(Java writeUTF 实物口径)。
+            '\u{0}' => out.extend_from_slice(&[0xc0, 0x80]),
+            // 2/3 字节与 UTF-8 同形;补充平面走标准 4 字节(见模块头
+            // NBT-UTF8-CESU 债:原版为 CESU-8 surrogate 对)。
             c => {
-                let mut buf = [0u8; 3];
+                let mut buf = [0u8; 4];
                 out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
             }
         }
     }
 }
 
-/// modified UTF-8 字节数(U+0000 计 2)。
+/// modified UTF-8 字节数(U+0000 计 2;续字节并入首字节计数)。
 pub(crate) fn encoded_len(s: &str) -> usize {
     s.bytes().fold(0usize, |n, b| {
         n + match b {
+            0x80..=0xbf => 0,
             0 => 2,
-            1..=0x7f => 1,
+            0x01..=0x7f => 1,
             0xc0..=0xdf => 2,
-            _ => 3,
+            0xe0..=0xef => 3,
+            _ => 4,
         }
     })
 }

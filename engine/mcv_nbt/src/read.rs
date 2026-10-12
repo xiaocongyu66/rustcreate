@@ -3,6 +3,7 @@
 //! - List:元素类型字节 + i32 长度 + 逐元素 payload(无名字)。
 //! - Compound:键值对循环,End(0) 终止。
 //! - 字符串:u16 长度 + modified UTF-8。
+//!
 //! 压缩嗅探:0x1F 0x8B → GZIP、0x78 → ZLIB、否则 RAW。
 
 use std::io::Read;
@@ -58,16 +59,17 @@ fn read_i64<R: PayloadRead + ?Sized>(r: &mut R) -> Result<i64, NbtError> {
     Ok(i64::from_be_bytes(b))
 }
 
+/// 原版 `DataInput.readUTF`/`skipBytes(readUnsignedShort)` 口径:字符串
+/// 长度是无符号 u16。
+fn read_u16<R: PayloadRead + ?Sized>(r: &mut R) -> Result<u16, NbtError> {
+    let mut b = [0u8; 2];
+    r.read_exact(&mut b)?;
+    Ok(u16::from_be_bytes(b))
+}
+
 /// 跳读名字字段(原版 readUnnamedTag 里的 skipString)。
 fn skip_name<R: PayloadRead + ?Sized>(r: &mut R) -> Result<(), NbtError> {
-    let len = read_i16(r)?;
-    if len < 0 {
-        return Err(NbtError::TooLarge {
-            what: "string length",
-            got: len as i64,
-            max: i16::MAX as i64,
-        });
-    }
+    let len = read_u16(r)?;
     let mut buf = vec![0u8; len as usize];
     r.read_exact(&mut buf)
 }
@@ -77,14 +79,7 @@ fn read_string<R: PayloadRead + ?Sized>(
     acc: &mut NbtAccounter,
 ) -> Result<String, NbtError> {
     acc.account(STRING_SELF_SIZE, 1, "string tag count")?;
-    let len = read_i16(r)?;
-    if len < 0 {
-        return Err(NbtError::TooLarge {
-            what: "string length",
-            got: len as i64,
-            max: i16::MAX as i64,
-        });
-    }
+    let len = read_u16(r)?;
     acc.account(2, len as u64, "string chars")?;
     let mut buf = vec![0u8; len as usize];
     r.read_exact(&mut buf)?;

@@ -102,7 +102,7 @@ fn string_length_quota_triggers() {
     let mut acc = NbtAccounter::new(48, 8);
     let mut b: Vec<u8> = vec![10, 0, 0]; // 根
     b.extend([8, 0, 1, b'k']); // String 键 "k"
-    b.extend(65535i16.to_be_bytes()); // 值声明 65535 字节
+    b.extend(65535u16.to_be_bytes()); // 值声明 65535 字节
     let r = mcv_nbt::read_raw_with(&b, &mut acc);
     // 记账(2×65535)先爆 TooLarge(48 配额)。
     assert!(matches!(r, Err(NbtError::TooLarge { .. })), "{r:?}");
