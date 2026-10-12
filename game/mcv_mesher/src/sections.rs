@@ -76,8 +76,11 @@ impl KindProducts {
         // ⇒ 锚 section 升序 ⇒ 桶内已按序，桶间按 section 升序拼接即可。
         // axis1：层 = 全局 y 行（0..384），桶键层号只存低 4 位，
         // section = y>>4 唯一定位（y 面 quad 不跨 y 层）。
-        for dir in 0..2usize {
-            for axis in [0usize, 2] {
+        // 嵌套必须 = build_pass 的 axis 外层（0 → 1 → 2，每轴内 dir 0/1）：
+        // axis0 两向后接 axis1 两向，再接 axis2 两向——dir 外层会交换
+        // (axis,dir) 段间字节序，直呼等价锁当场即红。
+        for axis in [0usize, 2] {
+            for dir in 0..2usize {
                 for layer in 0..16usize {
                     let tag = (axis | (dir << 2) | (layer << 3)) as u8;
                     for sec in self.sections.iter() {
@@ -85,9 +88,13 @@ impl KindProducts {
                     }
                 }
             }
-            for ylayer in 0..mcv_core::CHUNK_SY {
-                let tag = (1 | (dir << 2) | ((ylayer & 15) << 3)) as u8;
-                self.sections[ylayer >> 4].append_bucket(tag, &mut out);
+            if axis == 0 {
+                for dir in 0..2usize {
+                    for ylayer in 0..mcv_core::CHUNK_SY {
+                        let tag = (1 | (dir << 2) | ((ylayer & 15) << 3)) as u8;
+                        self.sections[ylayer >> 4].append_bucket(tag, &mut out);
+                    }
+                }
             }
         }
         // 形状段整柱序 = 全部贪心之后（build_into 的 emit_shapes 位序），
