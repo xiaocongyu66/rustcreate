@@ -141,6 +141,15 @@ fn main() {
         "②(A) 重建轮后峰值 {} B 越界 {bound} B",
         st.live_vertex_peak_bytes
     );
+    // (B) 收尾：清场回空 uploader（否则 (C) 的隔格坐标会落进 (B) 的
+    // 8 成员批次，账目混合）。顺带实证：节奏末卸载池/条目清零。
+    for cx in 0..ROW {
+        up.unload(ChunkPos { x: cx, z: 0 });
+    }
+    up.flush();
+    let st = up.batching_stats();
+    assert_eq!(st.cpu_pool_bytes, 0, "②(B) 收尾卸载后池未清零");
+    assert!(up.entries().is_empty(), "②(B) 收尾卸载后条目未清空");
 
     // (C) 释放路径：重建（不 flush）后立即卸载——当前世代的在途拷贝
     //     必须当场摘除（chunk 死亡 = 句柄失效，无人再绘），瞬态字节严格
