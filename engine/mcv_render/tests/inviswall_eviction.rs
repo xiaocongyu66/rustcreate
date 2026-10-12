@@ -20,9 +20,9 @@
 //! 无 GPU 环境（workspace test job）无 adapter → 打印 SKIP 跳过；
 //! render-headless（lavapipe）必跑。不用 wgpu 截图，纯计数/字节断言。
 
-use mcv_core::{vidx, CHUNK_VOL};
-use mcv_mesher::{Mesher, Slot, MESH_OPAQUE, MESH_WATER};
-use mcv_render::gpu::{MeshUploader, CPU_POOL_BUDGET_BYTES};
+use mcv_core::{CHUNK_VOL, vidx};
+use mcv_mesher::{MESH_OPAQUE, MESH_WATER, Mesher, Slot};
+use mcv_render::gpu::{CPU_POOL_BUDGET_BYTES, MeshUploader};
 
 const RING: i32 = 9; // 与 mesh_memory 的 RD=8 网格环同径（19²=361）
 const SEA: i32 = 63;
@@ -34,7 +34,8 @@ fn device_queue_opt() -> Option<(wgpu::Device, wgpu::Queue)> {
         compatible_surface: None,
         force_fallback_adapter: false,
         apply_limit_buckets: false,
-    }))?;
+    }))
+    .ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("inviswall-eviction"),
         required_features: wgpu::Features::empty(),

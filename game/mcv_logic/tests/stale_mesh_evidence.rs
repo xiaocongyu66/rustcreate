@@ -21,10 +21,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mcv_core::{vidx, BlockId, ChunkHandle, ChunkPos, Stage, VoxelStore, CHUNK_VOL, WORLD_MIN_Y};
+use mcv_core::{BlockId, CHUNK_VOL, ChunkHandle, ChunkPos, Stage, VoxelStore, WORLD_MIN_Y, vidx};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
-use mcv_mesher::{neighborhood_slots, MeshDone, MeshResults, Mesher, MESH_OPAQUE, MESH_WATER};
-use mcv_worldgen::{generate_terrain_with, TerrainBackend};
+use mcv_mesher::{MESH_OPAQUE, MESH_WATER, MeshDone, MeshResults, Mesher, neighborhood_slots};
+use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 fn temp_dir(tag: &str) -> PathBuf {
     use std::hash::{Hash, Hasher};
