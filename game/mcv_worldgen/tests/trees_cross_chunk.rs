@@ -136,7 +136,7 @@ fn boundary_trees_complete_on_both_sides() {
                 // 且（修复前）无人补齐的部分。
                 let mut cross = false;
                 for &(wx, wy, wz, id) in &writes {
-                    if wy < mcv_core::WORLD_MIN_Y || wy >= mcv_core::WORLD_MAX_Y {
+                    if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&wy) {
                         continue;
                     }
                     let (ncx, ncz) = (wx.div_euclid(16), wz.div_euclid(16));
