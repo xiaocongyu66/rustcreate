@@ -5,7 +5,7 @@
 //! 走 render-headless job（lavapipe，gpu-tests feature），纯 headless
 //! 路径（MeshUploader::build_chunk/unload/flush），不开窗口不截图。
 //!
-//! 断言全部走计数/字节统计（evicted_chunks/evicted_bytes/
+//! 断言全部走计数/字节统计（trimmed_chunks/trimmed_bytes/evicted_chunks/
 //! live_vertex_peak_bytes/transient_bytes），不靠墙钟：
 //! - ②（本文件先行段）：重建窗口「新旧批并存」的顶点字节峰值
 //!   live_vertex_peak_bytes ≤ 稳态驻留 × 1.5 + 常数（治理 = 先摘旧批再
@@ -15,16 +15,20 @@
 //!   两个像素测即此语义）——被替换世代的在途拷贝必须保留到 flush 送达，
 //!   只有「从未出册的世代」（同调用内 push+rebuild 的内部世代）与「chunk
 //!   死亡（卸载/逐出）」才允许摘除拷贝。
-//! - ①：只 build 不 unload 的滞留场景下，池字节必须被预算门控住
-//!   （≤ CPU_POOL_BUDGET_BYTES，越界由 LRU 逐出，逐出有计数实证）；
-//!   全量 unload + flush 后池/条目/瞬态清零。
+//! - ①（#174 改版口径）：只 build 不 unload 的滞留场景下，池字节必须被
+//!   预算门控住（≤ CPU_POOL_BUDGET_BYTES）；越界只修剪**保留环外**
+//!   （默认锚点 (0,0)、半径 DEFAULT_RETENTION_RADIUS=11）的远场滞留，
+//!   修剪有计数实证（trimmed_chunks ≥ 1）且被逐块入 remesh 债账；
+//!   环内盲逐出警报面 evicted_chunks 恒 0（隐形墙契约）；
+//!   全量 unload + flush 后池/条目/瞬态/债账清零。
 //! - 释放路径：卸载即摘当前世代在途拷贝（句柄失效语义），瞬态字节严格
 //!   下降；池与条目清零。
 
 use mcv_core::ChunkPos;
 use mcv_render::gpu::{MeshUploader, TERRAIN_STRIDE};
 
-/// ① 预算门控的预算（集中定义在 gpu.rs，依据 RD=8 稳态实测 +25%）。
+/// ① 预算门控的预算（集中定义在 gpu.rs；#174 重标定 = 合成稳态 48.34
+/// MiB × 2 = 96 MiB，旧 60 MiB 按无洞穴合成场标定已被洞穴实测证伪）。
 const BUDGET: u64 = mcv_render::gpu::CPU_POOL_BUDGET_BYTES;
 /// 滞留场景单块顶点字节：200_000 顶点 × 24B ≈ 4.8 MiB（> MAX_BATCH_BYTES
 /// 4 MiB → 恒单块批次，字节记账最直白）。
@@ -182,20 +186,22 @@ fn main() {
     assert!(up.entries().is_empty(), "②(C) 卸载后条目未清空");
     up.flush();
 
-    // ================= ① CPU 网格字节有界回收 =================
-    // 只 build 不 unload 的滞留场景：18 块 × 4.8 MiB ≈ 86 MiB > 60 MiB
-    // 预算，越界部分必须由 LRU 逐出（原版 processUnloads 的兜底类比：
-    // 越界驻留 = 该卸未卸）。
+    // ================= ① CPU 网格字节有界回收（#174 改版口径） ==========
+    // 只 build 不 unload 的滞留场景：24 块 × 4.8 MB ≈ 115 MB > 96 MiB
+    // 预算。默认锚点 (0,0)、保留半径 11 → 块 0..=11 在环内（绝对保护，
+    // 合计 ≈ 55 MiB < 预算，池门控可达标），块 ≥12 在环外——越预算部分
+    // 必须由**环外远场修剪**释放（原版 processUnloads 距离驱动卸载的
+    // 本仓等价物），且逐出转入 remesh 债账（drain 前 meshed 记账不减）。
     let mut uploader = MeshUploader::new(device, queue);
     let big = fake_verts(BIG_VERTS);
-    let n_big = 18;
+    let n_big = 24;
     for i in 0..n_big {
         uploader.build_chunk(origin(i, 0), &big, &idx, None);
         uploader.flush();
         let st = uploader.batching_stats();
         assert!(
             st.cpu_pool_bytes <= BUDGET,
-            "① 第 {i} 块 build 后 CPU 池 {} B 超预算 {BUDGET} B（越界必须由 LRU 逐出，不许无界驻留）",
+            "① 第 {i} 块 build 后 CPU 池 {} B 超预算 {BUDGET} B（环外滞留必须由修剪释放，不许无界驻留）",
             st.cpu_pool_bytes
         );
     }
@@ -203,18 +209,39 @@ fn main() {
     let mib = st.cpu_pool_bytes as f64 / (1024.0 * 1024.0);
     eprintln!(
         "K-MEM ① leak-churn: built={n_big} pool={} B ({mib:.2} MiB) budget={BUDGET} B \
-         evicted_chunks={} evicted_bytes={} entries={}",
-        st.cpu_pool_bytes, st.evicted_chunks, st.evicted_bytes, st.draw_entries
+         trimmed_chunks={} trimmed_bytes={} evicted_chunks={} debt_chunks={} entries={}",
+        st.cpu_pool_bytes,
+        st.trimmed_chunks,
+        st.trimmed_bytes,
+        st.evicted_chunks,
+        st.debt_chunks,
+        st.draw_entries
     );
     assert!(
-        st.evicted_chunks >= 1,
-        "① 越预算场景逐出计数恒 0（释放路径未接线，cpu_pool_bytes 靠运气达标不算实证）"
+        st.trimmed_chunks >= 1,
+        "① 越预算场景环外修剪计数恒 0（释放路径未接线，cpu_pool_bytes 靠运气达标不算实证）"
     );
+    // 修剪量级：池稳在预算附近 → 环外仅留预算内尾部 ~21 块在场，
+    // 至少 3 块被剪（实测 4；取 3 留平局判据的 ±1 余量）。
     assert!(
-        st.evicted_bytes >= (n_big as u64 - 14) * BIG_BYTES as u64,
-        "① 逐出字节统计与越界量级不符（记账漂移）"
+        st.trimmed_bytes >= 3 * BIG_BYTES as u64,
+        "① 修剪字节统计与越界量级不符（记账漂移）"
     );
-    // 释放路径：全量 unload + flush → 池/条目/瞬态清零。
+    // 隐形墙契约警报面：环内块被盲逐出 = #174 回归，必须恒 0。
+    assert_eq!(
+        st.evicted_chunks, 0,
+        "① 保留环内出现逐出（近场失明，隐形墙回归——修剪只许发生在环外）"
+    );
+    // 债账在场：修剪未 drain 前 committed 记账不丢（inviswall 契约同式）。
+    assert_eq!(
+        st.meshed_chunks as u64, n_big,
+        "① 修剪后 committed 记账（池+债）应仍等于 build 总数"
+    );
+    assert_eq!(
+        st.debt_chunks as u64, st.trimmed_chunks,
+        "① 债账条数与修剪计数不一致"
+    );
+    // 释放路径：全量 unload + flush → 池/条目/瞬态/债账清零。
     for i in 0..n_big {
         uploader.unload(ChunkPos { x: i, z: 0 });
     }
@@ -223,6 +250,7 @@ fn main() {
     assert_eq!(st.cpu_pool_bytes, 0, "① 全量 unload 后池未清零");
     assert_eq!(st.draw_entries, 0, "① 全量 unload 后条目未清零");
     assert_eq!(st.meshed_chunks, 0, "① 块数记账漂移");
+    assert_eq!(st.debt_chunks, 0, "① 全量 unload 后债账未销");
     assert_eq!(st.transient_bytes, 0, "① flush 后瞬态滞留未清零");
 
     eprintln!("K-MEM render-mem: all assertions ok");
