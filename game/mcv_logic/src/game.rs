@@ -840,6 +840,9 @@ pub struct GameRuntime {
     bob_prev_pos: Vec3,
     spawn_cooldown: u32,
     pub player_xp: u32,
+    /// 经验球拾取节流（tick，26.1 `Player.takeXpDelay`：Player.java:156 字段、
+    /// :237-238 每 tick −1；命中置 2 在 [`Self::settle_xp_pickups`]）。
+    take_xp_delay: u32,
     /// 9 格快捷栏(vanilla Inventory 子集):放置消耗选中槽 Block 物品、
     /// 生存破坏掉落入栏、攻击武器 = 选中槽(方块按拳头)。
     pub hotbar: mcv_item::Hotbar,
@@ -1569,6 +1572,7 @@ impl GameRuntime {
             bob_prev_pos: Vec3::ZERO,
             spawn_cooldown: 0,
             player_xp: 0,
+            take_xp_delay: 0,
             hotbar,
             touch: TouchState::default(),
             mode,
@@ -1614,6 +1618,8 @@ impl GameRuntime {
         rt.bob_prev_pos = rt.player.pos;
         mcv_entity::register_mob_components(&mut rt.mobs_app.world);
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
+        // 经验球组件（#128-3，与掉落物同 World 分区：xp 系统按 XpOrb 过滤）。
+        mcv_entity::register_xp_components(&mut rt.mobs_app.world);
         // 被动组件（WanderState/AnimState）也要注册：mob 渲染收集器
         // （mob_render::collect_mob_instances_in）read 全部五类组件，未注册
         // 类型 read 会 panic。游戏内被动怪经 spawn_mob 装配（无这两组件，
@@ -1643,6 +1649,18 @@ impl GameRuntime {
             mcv_ecs::Stage::Fixed,
             "item_pickup",
             mcv_entity::item_pickup_system,
+        );
+        // 经验球（#128-3）：物理/寿命 + 拾取几何（吸收/节流在 settle 侧，
+        // takeXpDelay 是玩家状态不入 ECS）。
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "xp_orb_physics",
+            mcv_entity::xp_orb_physics_system,
+        );
+        rt.mobs_app.add_system(
+            mcv_ecs::Stage::Fixed,
+            "xp_orb_pickup",
+            mcv_entity::xp_orb_pickup_system,
         );
         rt
     }
@@ -3890,6 +3908,12 @@ impl GameRuntime {
                 2.0 + (r1 - r2) * 1.4,
             );
         }
+        // 经验球拾取结算（#128-3，26.1 ExperienceOrb.playerTouch :274-291）：
+        // `takeXpDelay == 0` 门（节流，Player.java:237-238 每 tick −1）内
+        // 逐球吸收——命中置 takeXpDelay=2（:278）、值入玩家经验账
+        // （giveExperiencePoints 等价，入 player_xp 计数）→ 球销毁（count--→
+        // discard）。每 tick 至多一只：命中当拍即置延迟，同拍后续事件跳过。
+        self.settle_xp_pickups();
 
         // ---- 玩家物理（mcv_game::step，60 Hz 固定步）----
         // 出生投放前暂停（pos=ZERO 是「待投放」哨兵，26.1 里玩家实体在
@@ -4455,6 +4479,11 @@ impl GameRuntime {
         if self.on_tick && self.eat_cooldown > 0 {
             self.eat_cooldown -= 1;
         }
+        // 经验球拾取节流（26.1 Player.tick :237-238 `takeXpDelay--`；
+        // 命中置 2 在 settle_xp_pickups）。
+        if self.on_tick && self.take_xp_delay > 0 {
+            self.take_xp_delay -= 1;
+        }
         // 按住右键的重触发（原版 Minecraft.handleKeybinds：rightClickDelay
         // 到 0 且 use 键仍按住 → startUseItem；try_begin_eating 内部自带
         // 工作台拦截与可吃门，非食物空转零成本）。
@@ -4499,6 +4528,38 @@ impl GameRuntime {
         }
         // E0：fixed_step 总窗口收账（纯记账）。
         self.timing_frame.fixed_step_us += step_t0.elapsed().as_micros() as u64;
+    }
+
+    /// 经验球拾取结算（#128-3，26.1 `ExperienceOrb.playerTouch` :274-291）：
+    /// `takeXpDelay == 0` 门内逐事件吸收——命中即置
+    /// [`TAKE_XP_DELAY_TICKS`](mcv_entity::TAKE_XP_DELAY_TICKS)=2（:278，
+    /// fixed_step on_tick 每 tick −1 对应 Player.java:237-238）、值入玩家
+    /// 经验账（`giveExperiencePoints` 等价，player_xp 计数）、球 discard
+    /// （count--→0）。每 tick 至多一只：延迟当拍生效，同拍后续事件全跳过。
+    fn settle_xp_pickups(&mut self) {
+        let reqs: Vec<mcv_entity::XpOrbPickup> = self
+            .mobs_app
+            .events
+            .channel::<mcv_entity::XpOrbPickup>()
+            .take();
+        for req in reqs {
+            // 节流门（原版 takeXpDelay == 0 才进 playerTouch）。
+            if self.take_xp_delay > 0 {
+                continue;
+            }
+            // 句柄带代校验：已被销毁/到期的球直接跳过（同 settle_pickups 纪律）。
+            if self
+                .mobs_app
+                .world
+                .get_ref::<mcv_entity::XpOrb>(req.e)
+                .is_none()
+            {
+                continue;
+            }
+            self.take_xp_delay = mcv_entity::TAKE_XP_DELAY_TICKS;
+            self.player_xp += u32::from(req.value);
+            self.mobs_app.world.despawn(req.e);
+        }
     }
 
     /// 玩家箭命中 mob 结算（`arrow_system` 事件 → 伤害/击退/击杀掉落）。
@@ -5359,7 +5420,17 @@ impl GameRuntime {
             self.toggle_furnace_screen(hit);
             return;
         }
-        let target = BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2]);
+        // replaceClicked（26.1 BlockPlaceContext.java:29-30 构造置位
+        // `replaceClicked = clicked.canBeReplaced()`；:51-53 getClickedPos 取
+        // `replaceClicked ? 被点格 : 被点格+命中面`；:55-57 canPlace 直通真
+        // ）——准星点中的可替换方块（草/雪层/火族，拾取形状可命中）就地
+        // 替换该格本身，而非偏移到命中面邻格。水/岩浆无拾取形状（pick_boxes
+        // 拒流体），点不中 → 走邻格路径由下方可替换门覆盖。
+        let target = if self.block_at(hit).def().is_replaceable() {
+            hit
+        } else {
+            BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2])
+        };
         // y 出界拒绝（coords 审计 P2：界外索引绕回同列另一端——显示≠
         // 真实）；原版 build 高度界外不可放置/破坏。v6：界门走绝对域。
         if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&target.y) {
@@ -5369,9 +5440,10 @@ impl GameRuntime {
         // BlockPlaceContext.java:55-57 → `BlockState.canBeReplaced`
         // BlockBehaviour.java:270-272/819-829：空气 ∥ Properties.replaceable
         // ——雪层/植被/火/水岩浆族；判据表实现见 `BlockDef::is_replaceable`）。
-        // 原版 canPlace 失败即整个 useOn 中止——不放方块、不消耗手持
-        // （ItemStack.useOn → place 返回 FAIL 路径 shrink 不到），故本门置于
-        // 体素写与 take_one 之前：实心格点右键 = 无事发生。
+        // replaceClicked 命中时 target=被点格本身恒可替换、门直通（上方）；
+        // 邻格路径照旧。原版 canPlace 失败即整个 useOn 中止——不放方块、
+        // 不消耗手持（ItemStack.useOn → place 返回 FAIL 路径 shrink 不到），
+        // 故本门置于体素写与 take_one 之前：实心格点右键 = 无事发生。
         if !self.block_at(target).def().is_replaceable() {
             return;
         }
@@ -5651,6 +5723,15 @@ impl GameRuntime {
         Some((eating.ticks as f32 / total.max(1) as f32).min(1.0))
     }
 
+    /// 26.1 `LivingEntity.isUsingItem` 的本仓等价（使用在账 = 进食中 ∥ 弓
+    /// 蓄力中）：`Minecraft.handleKeybinds` 周期 use 的第三道门
+    /// （Minecraft.java:2036 `keyUse.isDown() && rightClickDelay == 0 &&
+    /// !this.player.isUsingItem()`）——app 层 rightClickDelay 周期机的
+    /// busy 输入。
+    pub fn using_item(&self) -> bool {
+        self.eat_progress().is_some() || self.bow_hold.is_some()
+    }
+
     /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落/耐久/exhaustion
     /// （26.1 destroyBlock 三段拆门：掉落与记账走 `hasCorrectToolForDrops`，
     /// 耐久走 `mineBlock` 独立段）+ break 音效。挖掘进度完成与创造秒破共用。
@@ -5743,6 +5824,27 @@ impl GameRuntime {
                             &mut rng,
                         );
                     }
+                }
+                // 方块经验（#128-3，26.1 同门链：`if (changed && canDestroy)
+                // playerDestroy` ServerPlayerGameMode.java:287-296 →
+                // dropResources Block.java:404-415 `spawnAfterBreak(..., true)`
+                // :412 → DropExperienceBlock.java:30-37 → tryDropExperience
+                // Block.java:619-624 → popExperience :449-453 →
+                // ExperienceOrb.award :187-196）。位置 = Vec3.atCenterOf 方块
+                // 精确中心（无 popResource 的 ±0.25 抖动）；矿石族区间表在
+                // mcv_item::block_experience，0（铁/金/铜矿）不生成。
+                let xp = mcv_item::block_experience(old, &mut rng);
+                if xp > 0 {
+                    mcv_entity::award(
+                        &mut self.mobs_app.world,
+                        Vec3::new(
+                            target.x as f32 + 0.5,
+                            target.y as f32 + 0.5,
+                            target.z as f32 + 0.5,
+                        ),
+                        xp,
+                        &mut rng,
+                    );
                 }
             }
             // 耐久段（ServerPlayerGameMode.java:296 itemStack.mineBlock →
@@ -9246,13 +9348,15 @@ mod tests {
                 "球值必须是拆分桶值（ExperienceOrb.java:346-369），got {v}"
             );
         }
-        // 创造：无掉落门 → 无经验球（同物品掉落共门）。
+        // 创造：无掉落门 → 不新增经验球（同物品掉落共门；生存球仍在场，
+        // 只锁「不新增」）。
         rt.mode = GameMode::Creative;
+        let orbs_before = rt.mobs_app.world.read::<mcv_entity::XpOrb>().iter().count();
         set_under_player(&mut rt, LAPIS_ORE);
         rt.destroy_block(BlockPos::new(8, 69, 8));
         assert_eq!(
             rt.mobs_app.world.read::<mcv_entity::XpOrb>().iter().count(),
-            0,
+            orbs_before,
             "创造破坏不产经验球"
         );
     }

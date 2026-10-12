@@ -9,7 +9,7 @@ pub mod food;
 pub mod inventory;
 pub mod mining;
 
-pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, drops_for_block};
+pub use inventory::{HOTBAR_SLOTS, Hotbar, MAIN_SLOTS, block_experience, drops_for_block};
 pub use mining::ToolKind;
 
 use mcv_core::BlockId;

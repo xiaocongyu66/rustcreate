@@ -620,3 +620,42 @@ pub fn drops_for_block(id: BlockId, rng: &mut impl FnMut() -> u32) -> Vec<ItemSt
     }
     out
 }
+
+/// 方块经验掉落表（任务 #128-3，矿石族先行）：26.1 `DropExperienceBlock`
+/// 注册行的 `xpRange` 采样（DropExperienceBlock.java:24-37 `spawnAfterBreak`
+/// → `tryDropExperience` Block.java:619-624 `xpRange.sample(...)`；调用方
+/// 门 = `hasCorrectToolForDrops` 同物品掉落共门，ServerPlayerGameMode.java:
+/// 287-296）。区间行号逐一锚定 Blocks.java / RedStoneOreBlock.java 注册处；
+/// 表外方块恒 0（非 DropExperienceBlock 语义）。
+///
+/// 登记债：`EnchantmentHelper.processBlockExperience`（EnchantmentHelper.
+/// java:102-106）的附魔修正（丝之触挖矿石 0 经验）未建模——本仓无方块经验
+/// 附魔效果面，采样值直出；folklore 级其它经验源（熔炉/刷怪笼等）归上游波。
+pub fn block_experience(id: BlockId, rng: &mut impl FnMut() -> u32) -> u32 {
+    let name = mcv_core::BLOCKS[id.id() as usize].name;
+    // (注册名, Uniform 区间)——`UniformInt.of(lo, hi)` 闭区间含两界。
+    const ORE_XP: [(&str, u32, u32); 12] = [
+        ("coal_ore", 0, 2),               // Blocks.java:282
+        ("deepslate_coal_ore", 0, 2),     // Blocks.java:287
+        ("nether_gold_ore", 0, 1),        // Blocks.java:292
+        ("lapis_ore", 2, 5),              // Blocks.java:520
+        ("deepslate_lapis_ore", 2, 5),    // Blocks.java:525
+        ("diamond_ore", 3, 7),            // Blocks.java:1024
+        ("deepslate_diamond_ore", 3, 7),  /* Blocks.java:1029 */
+        ("emerald_ore", 3, 7),            // Blocks.java:2177
+        ("deepslate_emerald_ore", 3, 7),  /* Blocks.java:2182 */
+        ("nether_quartz_ore", 2, 5),      // Blocks.java:2376
+        ("redstone_ore", 1, 5),           // RedStoneOreBlock.java:97
+        ("deepslate_redstone_ore", 1, 5), /* Blocks.java:1585-1586 同 RedStoneOreBlock::new */
+    ];
+    let Some((_, lo, hi)) = ORE_XP.iter().find(|(n, _, _)| *n == name) else {
+        // iron/gold/copper 族显式 ConstantInt.of(0)（Blocks.java:262-277、
+        // :5208-5211），其余方块非 DropExperienceBlock → 恒 0。
+        return 0;
+    };
+    if hi > lo {
+        lo + rng() % (hi - lo + 1)
+    } else {
+        *lo
+    }
+}

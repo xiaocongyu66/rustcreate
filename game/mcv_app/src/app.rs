@@ -2997,7 +2997,10 @@ impl AppState {
             let use_gate = self.screen == Screen::InGame
                 && runtime.phase == mcv_logic::game::GamePhase::Playing
                 && !runtime.dead;
-            let busy = runtime.eat_progress().is_some();
+            // busy = isUsingItem（Minecraft.java:2036 第三门）：进食与弓蓄力
+            // 都算在账使用态（#128-1——旧只查进食，蓄力中周期 use 会打穿
+            // right_use 中途开工作台/熔炉屏）。
+            let busy = runtime.using_item();
             if self
                 .use_repeat
                 .step(use_gate && (self.right_use_held || touch_held), busy)
@@ -3385,7 +3388,7 @@ mod tests {
         let mut uses = 1usize;
         for _ in 0..60 {
             rt.fixed_step(1.0 / 60.0);
-            if u.step(true, rt.eat_progress().is_some()) {
+            if u.step(true, rt.using_item()) {
                 rt.interact(true);
                 uses += 1;
             }

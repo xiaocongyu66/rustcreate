@@ -99,7 +99,7 @@ impl mcv_game::VoxelAccess for ChunkVoxels<'_> {
 /// MC 初速：水平 rand×0.2−0.1、竖直 +0.2（块/tick，ItemEntity.java:66
 /// 构造器）→ 引擎 m/s 需 ×20（块/tick × tick/s）。rng 复用 game.rs 的
 /// 确定性 fast_rand 链，测试可控。
-fn initial_vel(rng: &mut impl FnMut() -> u32) -> Vec3 {
+pub(crate) fn initial_vel(rng: &mut impl FnMut() -> u32) -> Vec3 {
     let r = |rng: &mut dyn FnMut() -> u32| rng() as f32 / u32::MAX as f32;
     Vec3::new(
         (r(rng) - 0.5) * 0.2 * 20.0,
@@ -190,7 +190,7 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
 
 /// 玩家碰撞盒外扩（x/z [`PICKUP_INFLATE_XZ`]、y [`PICKUP_INFLATE_Y`]，
 /// MC Player.java:454 `inflate(1.0, 0.5, 1.0)`）后的盒（pos = 脚底中心）。
-fn player_box(pos: Vec3) -> (Vec3, Vec3) {
+pub(crate) fn player_pickup_box(pos: Vec3) -> (Vec3, Vec3) {
     let h = mcv_game::Player::HALF;
     (
         Vec3::new(
@@ -214,7 +214,7 @@ pub fn item_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
         .resources
         .get::<DropWorld>()
         .expect("item_pickup：DropWorld 快照未注入 Resources");
-    let (pmin, pmax) = player_box(dw.player_pos);
+    let (pmin, pmax) = player_pickup_box(dw.player_pos);
     let world: &mcv_ecs::World = ctx.world;
     let events = &mut *ctx.events;
     let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());

@@ -14,6 +14,7 @@ pub mod items;
 pub mod passive;
 pub mod pathfinding;
 pub mod spawner;
+pub mod xp;
 
 pub use ai::{AiAction, Brain, MobAiTable, MobState, Percept, ai_table};
 pub use arrow::{BOW_MIN_POWER, crit_bonus, hit_damage, mob_base_damage, ranged_power, triangle};
@@ -42,3 +43,8 @@ pub use passive::{
 };
 pub use pathfinding::{BASE_FALL_DISTANCE, Path, PathParams, find_path, max_fall_distance};
 pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};
+pub use xp::{
+    TAKE_XP_DELAY_TICKS, XP_ORB_DESPAWN_AGE, XP_ORB_GRAVITY_SCALE, XP_ORB_HALF, XpOrb, XpOrbPickup,
+    award, get_experience_value, register_xp_components, spawn_xp_orb, xp_orb_physics_system,
+    xp_orb_pickup_system,
+};
