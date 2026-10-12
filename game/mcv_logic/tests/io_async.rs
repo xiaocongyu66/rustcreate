@@ -141,8 +141,10 @@ fn write_failure_keeps_dirty_bit_then_retry_clears() {
 fn edit_during_inflight_write_wins_on_disk() {
     let dir = temp_dir("race");
     let mut rt = headless_io("race", dir.clone());
-    rt.render_dist = 1; // 缩环降噪：预算写回不被生成脏集淹没
-    let pos = ChunkPos::new(-2, 7);
+    // 缩环降噪：预算写回不被生成脏集淹没。pos 取 Chebyshev 3 < rd+4=5
+    //（卸载迟滞边界），保证断言窗口内不被驱逐出活动表。
+    rt.render_dist = 1;
+    let pos = ChunkPos::new(1, 3);
     let handle = terrain_chunk(pos, true);
     rt.chunks.insert(pos, handle.clone());
 
