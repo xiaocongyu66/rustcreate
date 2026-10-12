@@ -490,6 +490,17 @@ impl MeshUploader {
                 .min_by_key(|(k, m)| (-dist(k), m.last_use))
                 .map(|(k, _)| *k);
             let Some(key) = victim else { return };
+            // 警报面实物写侧：上面的过滤已排除环内块，故此分支在当前实现
+            // 下不可达。它的存在是让 `evicted_chunks` 名副其实——若将来
+            // 重构把过滤改漏、环内块被静默修剪（= #174 隐形墙复现），此处
+            // 计数 + 止损退出，让 render-stats 的 evicted>0 与红锁可观测，
+            // 而不是靠巧合恒 0 自证安全。
+            debug_assert!(dist(&key) > radius, "保留环内块漏入逐出候选 {key:?}");
+            if dist(&key) <= radius {
+                self.stats.evicted_chunks += 1;
+                self.stats.evicted_bytes += mesh_bytes(self.pool.get(&key).unwrap());
+                break;
+            }
             let freed = mesh_bytes(self.pool.get(&key).expect("victim 必在池中"));
             self.stats.trimmed_chunks += 1;
             self.stats.trimmed_bytes += freed;
