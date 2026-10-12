@@ -1626,10 +1626,11 @@ impl AppState {
         let (mut q, rects) = match self.screen {
             Screen::Crafting => match &self.craft {
                 Some(c) => {
-                    let mut q = crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover);
+                    let (mut q, hot) =
+                        crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover);
                     // #152：悬停物品名 tooltip（ACS:195-204 extractTooltip）。
                     q.extend(self.craft_tooltip_quads());
-                    q
+                    (q, hot)
                 }
                 None => (Vec::new(), Vec::new()),
             },
