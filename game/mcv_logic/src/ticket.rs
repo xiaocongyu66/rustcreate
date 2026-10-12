@@ -64,6 +64,27 @@ pub const NOT_LOADED: u8 = (MAX_LEVEL + 1) as u8;
 /// dispatcher 无节流（ChunkMap.java:195-196）。
 pub const MAX_CHUNKS_IN_EXECUTION: usize = 4;
 
+/// E2 在途名额调参位（蓝图 docs/engine-roadmap.md §3 E2）：名额 =
+/// `max(4, workers)`。原版硬上限 4 是**与池大小无关的常量**
+/// （DistanceManager.java:55 `new ThrottlingChunkTaskDispatcher(…, 4)`）；
+/// 本仓生成任务跑在 [`mcv_core::world_worker_count`]（=
+/// `clamp(cpu−1, 1, max.bg.threads)`，Util.java:187-189）上——名额 4 <
+/// worker 数时在途集合喂不满池（如 12 核机 workers=11 而在途恒 ≤ 4，
+/// 7 个 worker 永久空转）。
+///
+/// **与原版的裁剪差异（显式登记）**：原版名额恒 4、与 executor 线程数
+/// 解耦；本仓名额下限仍锚定原版 4，但随池扩到 worker 数——纯吞吐调参，
+/// 不改票级别/卸载/节流机制本身（ThrottlingChunkTaskDispatcher 的
+/// pop 门语义原样保留）。
+///
+/// 消费侧接线为 E2 遗留债：game.rs 票驱动请求环当前仍读
+/// [`MAX_CHUNKS_IN_EXECUTION`]，改读本函数（传
+/// `mcv_core::pool::world_worker_count()`）属下一波 game.rs 文件面
+/// （本波红线禁触）。
+pub fn in_flight_quota(workers: usize) -> usize {
+    MAX_CHUNKS_IN_EXECUTION.max(workers)
+}
+
 /// 票种（本仓接入的两类玩家票；原版 TicketType 子集）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TicketType {
@@ -409,6 +430,22 @@ mod tests {
         assert!(
             !is_loaded(rt.tickets.level(out) as i32),
             "rd+5 环必须已在票级别上不可加载（卸载候选域）"
+        );
+    }
+
+    /// E2 名额调参位语义锁：下限 = 原版 4（DistanceManager.java:55），
+    /// workers > 4 时随池扩到 workers（喂满池；与原版「恒 4」的裁剪差异
+    /// 已登记于 [`in_flight_quota`] 注释）。
+    #[test]
+    fn in_flight_quota_floors_at_vanilla_four() {
+        assert_eq!(in_flight_quota(0), 4);
+        assert_eq!(in_flight_quota(1), 4);
+        assert_eq!(in_flight_quota(4), 4, "workers ≤ 4 时与原版恒等");
+        assert_eq!(in_flight_quota(5), 5);
+        assert_eq!(
+            in_flight_quota(11),
+            11,
+            "大核机必须能喂满池（原版恒 4 会饿死 7 个 worker）"
         );
     }
 }
