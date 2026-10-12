@@ -234,7 +234,7 @@ fn main() {
     );
     // 债账在场：修剪未 drain 前 committed 记账不丢（inviswall 契约同式）。
     assert_eq!(
-        st.meshed_chunks as u64, n_big,
+        st.meshed_chunks as u64, n_big as u64,
         "① 修剪后 committed 记账（池+债）应仍等于 build 总数"
     );
     assert_eq!(
