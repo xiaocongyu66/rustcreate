@@ -132,13 +132,9 @@ struct StagingSlot {
 }
 
 /// 一笔待上传拷贝：目标缓冲 + 数据（flush 时写入 staging 并记 copy）。
-/// `serial` = 目标缓冲所属绘制条目的世代号（本波 ②）：条目被替换/删除时
-/// 按世代 purge 掉指向旧缓冲的拷贝——旧缓冲的拷贝既泄 CPU 字节，又经
-/// `dst` 克隆把 GPU 缓冲钉在内存里（dead-buffer pinning）。
 struct PendingUpload {
     dst: wgpu::Buffer,
     bytes: Vec<u8>,
-    serial: u64,
 }
 
 /// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
@@ -172,9 +168,13 @@ pub struct BatchingStats {
     /// 当前待 flush 的 staging 拷贝滞留字节（uploads 的 CPU 字节增量
     /// 记账，本波 ② 瞬态放大记账分子）。
     pub transient_bytes: u64,
-    /// [`BatchingStats::transient_bytes`] 的历史峰值：重建窗口新旧批
-    /// 并存的瞬态放大上界的实证值。
+    /// [`BatchingStats::transient_bytes`] 的历史峰值。
     pub transient_peak_bytes: u64,
+    /// GPU 顶点字节账（在册条目 + 重建窗口内已建未入册的新批缓冲）的
+    /// 历史峰值——「重建期间新旧批并存」的实证值（本波 ②）：治理后峰值
+    /// 应 ≤ 稳态驻留 + 单批字节（先摘旧再建新），治理前 = 稳态 + 旧+新
+    /// 双批并存。
+    pub live_vertex_peak_bytes: u64,
 }
 
 /// 池内单块网格的 CPU 字节（合批重建的数据源）：opaque 顶点 + opaque 局部
@@ -201,6 +201,12 @@ fn mesh_bytes(m: &PoolMesh) -> u64 {
     m.vbytes.len() as u64
         + m.water_vbytes.len() as u64
         + 4 * (m.opaque_idx.len() as u64 + m.water_idx.len() as u64)
+}
+
+/// 绘制条目的 GPU 缓冲字节（顶点 + 索引 + 水索引，②「新旧批并存」记账
+/// 口径，与 [`BatchingStats::resident_bytes`] 同式）。
+fn entry_gpu_bytes(e: &RenderChunk) -> u64 {
+    e.vertex_buf.size() + e.index_buf.size() + e.water_index_buf.as_ref().map_or(0, |b| b.size())
 }
 
 /// 网格上传器：游戏层只交出顶点/索引字节，拿回 [`RenderChunk`]。
@@ -237,18 +243,13 @@ pub struct MeshUploader {
     /// `uploads` 的 CPU 字节增量记账（本波 ② 瞬态放大：重建窗口新旧批
     /// 并存时，被替换批次的滞留拷贝也在此计量）。
     uploads_bytes: u64,
-    /// 绘制条目世代号表（与 `entries` 下标平行，本波 ②）：每次建/重建
-    /// 条目发新世代，`PendingUpload.serial` 据此识别「目标缓冲已死的拷贝」
-    /// 并摘除。
-    entry_serial: Vec<u64>,
-    next_serial: u64,
+    /// GPU 顶点字节账（②「新旧批并存」实证分子）：在册条目缓冲字节 +
+    /// 重建函数体内尚未替换入册的新批缓冲字节（并存窗口）。峰值见
+    /// [`BatchingStats::live_vertex_peak_bytes`]。
+    live_vertex_bytes: u64,
     /// LRU 时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，逐出
     /// 取最旧。
     use_clock: u64,
-    /// 重建窗口的占位条目（本波 ②「先摘旧批再建新批」）：旧缓冲先于新
-    /// 分配释放，GPU 顶点字节瞬态峰值不叠旧批。占位只在重建函数体内
-    /// 瞬时存在（同步替换，帧间不可见），缓冲仅 4B×2。
-    placeholder: RenderChunk,
     upload_stats: UploadStats,
 }
 
@@ -279,28 +280,6 @@ impl MeshUploader {
                 state: SlotState::Mapping,
             });
         }
-        // 占位条目（②）：小缓冲对，仅重建函数体内瞬时替换用。
-        let ph_vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-placeholder"),
-            size: 4,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ph_ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-placeholder"),
-            size: 4,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let placeholder = RenderChunk {
-            origin: [0.0; 3],
-            vertex_buf: ph_vb,
-            index_buf: ph_ib,
-            opaque_range: 0..0,
-            water_index_buf: None,
-            water_parts: Vec::new(),
-            aabb: (Vec3::ZERO, Vec3::ZERO),
-        };
         Self {
             device,
             queue,
@@ -312,39 +291,32 @@ impl MeshUploader {
             mapped_mailbox: mailbox,
             uploads: Vec::new(),
             uploads_bytes: 0,
-            entry_serial: Vec::new(),
-            next_serial: 0,
+            live_vertex_bytes: 0,
             use_clock: 0,
-            placeholder,
             upload_stats: UploadStats::default(),
         }
     }
 
-    /// 攒入待 flush 拷贝（盖条目世代号）并做瞬态记账（峰值即重建窗口
-    /// 瞬态放大的实证值）。
-    fn queue_uploads(&mut self, mut ups: Vec<PendingUpload>, serial: u64) {
-        for u in &mut ups {
-            u.serial = serial;
-        }
+    /// 攒入待 flush 拷贝并做瞬态记账（峰值即重建窗口瞬态放大的实证值）。
+    fn queue_uploads(&mut self, ups: Vec<PendingUpload>) {
         self.uploads_bytes += ups.iter().map(|u| u.bytes.len() as u64).sum::<u64>();
         self.stats.transient_bytes = self.uploads_bytes;
         self.stats.transient_peak_bytes = self.stats.transient_peak_bytes.max(self.uploads_bytes);
         self.uploads.extend(ups);
     }
 
-    /// 摘除指向某世代条目缓冲的在途拷贝（②）：条目被替换/删除后，这些
-    /// 拷贝的目标缓冲已死——字节是纯泄漏，`dst` 克隆还钉着 GPU 缓冲。
-    fn purge_uploads(&mut self, serial: u64) {
-        let mut freed = 0u64;
-        self.uploads.retain(|u| {
-            let keep = u.serial != serial;
-            if !keep {
-                freed += u.bytes.len() as u64;
-            }
-            keep
-        });
-        self.uploads_bytes -= freed;
-        self.stats.transient_bytes = self.uploads_bytes;
+    /// 入册一个绘制条目到 GPU 顶点字节账（② 并存记账公共入口）。
+    fn track_entry_in(&mut self, e: &RenderChunk) {
+        self.live_vertex_bytes += entry_gpu_bytes(e);
+        self.stats.live_vertex_peak_bytes = self
+            .stats
+            .live_vertex_peak_bytes
+            .max(self.live_vertex_bytes);
+    }
+
+    /// 出册一个绘制条目（② 并存记账）。
+    fn track_entry_out(&mut self, e: &RenderChunk) {
+        self.live_vertex_bytes -= entry_gpu_bytes(e);
     }
 
     /// 池内 CPU 网格逻辑字节总量（预算门控与 cpu_pool_bytes 同一公式）。
@@ -380,15 +352,7 @@ impl MeshUploader {
 
     /// 合批结构性统计（HUD/日志用）。字节记账现算，见 [`BatchingStats`]。
     pub fn batching_stats(&self) -> BatchingStats {
-        let resident_bytes: u64 = self
-            .entries
-            .iter()
-            .map(|e| {
-                e.vertex_buf.size()
-                    + e.index_buf.size()
-                    + e.water_index_buf.as_ref().map_or(0, |b| b.size())
-            })
-            .sum();
+        let resident_bytes: u64 = self.entries.iter().map(entry_gpu_bytes).sum();
         // 与 batch_joinable / 预算门控同一公式（逻辑字节，不含分配对齐）。
         let cpu_pool_bytes = self.pool_bytes();
         BatchingStats {
@@ -569,10 +533,9 @@ impl MeshUploader {
         if self.batch_members[bi].is_empty() {
             // 顺序保持的移除：后续条目槽位前移一次，与旧 per-chunk retain
             // 的槽位漂移同级。
-            self.purge_uploads(self.entry_serial[bi]);
+            self.track_entry_out(&self.entries[bi]);
             self.batch_members.remove(bi);
             self.entries.remove(bi);
-            self.entry_serial.remove(bi);
         } else {
             self.rebuild_batch(bi);
         }
@@ -662,12 +625,10 @@ impl MeshUploader {
                     let members = vec![key];
                     let (entry, bytes, uploads) = self.build_batch_entry(&members);
                     self.stats.rebuild_bytes += bytes;
-                    let serial = self.next_serial;
-                    self.next_serial += 1;
-                    self.queue_uploads(uploads, serial);
+                    self.queue_uploads(uploads);
+                    self.track_entry_in(&entry);
                     self.batch_members.push(members);
                     self.entries.push(entry);
-                    self.entry_serial.push(serial);
                     self.batch_members.len() - 1
                 }
             };
@@ -705,22 +666,17 @@ impl MeshUploader {
 
     /// 原位重建第 bi 个批次（成员表不变，数据源为池内最新字节）。
     ///
-    /// ② 先摘旧再建新：按旧世代摘除在途拷贝（连带解开旧 GPU 缓冲的
-    /// dead-buffer pinning），占位条目替换令旧缓冲先于新分配释放——
-    /// 重建窗口内新旧批顶点字节不并存，瞬态峰值 = 单批新字节。占位仅在
-    /// 本函数体内瞬时存在（同步替换、无帧穿插），不产生「重建窗口空帧」。
+    /// ② 并存记账如实反映本函数生命周期：新批建成时旧批仍在条目表上
+    /// （并存窗口双计），入册替换后旧批随引用消失释放。
     fn rebuild_batch(&mut self, bi: usize) {
         self.stats.batch_rebuilds += 1;
-        self.purge_uploads(self.entry_serial[bi]);
-        self.entries[bi] = self.placeholder.clone();
-        let serial = self.next_serial;
-        self.next_serial += 1;
-        self.entry_serial[bi] = serial;
         let members = self.batch_members[bi].clone();
         let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
-        self.entries[bi] = entry;
-        self.queue_uploads(uploads, serial);
+        self.track_entry_in(&entry);
+        let old = std::mem::replace(&mut self.entries[bi], entry);
+        self.track_entry_out(&old);
+        self.queue_uploads(uploads);
     }
 
     /// 由成员表组装批次条目：成员顶点重定基（pos += chunk_origin −
@@ -790,7 +746,6 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: vertex_buf.clone(),
                 bytes: vbytes,
-                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let index_buf = self.empty_buffer(opaque_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
@@ -798,7 +753,6 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: index_buf.clone(),
                 bytes: bytemuck::cast_slice(&opaque_idx).to_vec(),
-                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let water_index_buf = if has_water {
@@ -807,7 +761,6 @@ impl MeshUploader {
                 uploads.push(PendingUpload {
                     dst: ib.clone(),
                     bytes: bytemuck::cast_slice(&water_idx).to_vec(),
-                    serial: 0, // queue_uploads 盖世代戳
                 });
             }
             Some(ib)
