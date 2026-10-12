@@ -76,10 +76,14 @@ pub struct MeshStats {
     pub fallback_uploads: u64,
     /// GPU 侧驻留网格字节总量（#115 刀 5a；含批次共享缓冲的分配对齐）。
     pub resident_bytes: u64,
-    /// CPU 侧留存网格字节（#80 无 LRU 池，计入内存预算面）。
+    /// CPU 侧留存网格字节（计入内存预算面，#174 治理口径见 gpu.rs）。
     pub cpu_pool_bytes: u64,
-    /// 越 CPU_POOL_BUDGET_BYTES 的 LRU 逐出累计笔数（#168）。
+    /// 保留环内盲逐出警报（#174 隐形墙回归计数，契约上恒 0）。
     pub evicted_chunks: u64,
+    /// 保留环外预算修剪次数（#174 正常治理面；逐出经 drain 回灌 remesh）。
+    pub trimmed_chunks: u64,
+    /// 当前 remesh 债账条数（#174；等待 drain 回灌的已逐出区块）。
+    pub debt_chunks: usize,
     /// GPU 顶点字节账历史峰值（#168 重建瞬态放大实证分子）。
     pub live_vertex_peak_bytes: u64,
 }
@@ -108,6 +112,18 @@ pub trait ChunkMesher: Send {
     /// 合批 + 异步上传统计（默认零值）。
     fn mesh_stats(&self) -> MeshStats {
         MeshStats::default()
+    }
+
+    /// 设置渲染保留环（#174 隐形墙修复）：锚点 = 玩家块、半径 = 流式环
+    /// （`unload_dist`）。环内区块渲染层永不静默逐出；越预算只修剪环外
+    /// 远场并转入 remesh 债账（默认 no-op，无头实现无池）。
+    fn set_retention(&mut self, _anchor: ChunkPos, _radius: i32) {}
+
+    /// 领走 remesh 债账（#174 逐出通知回灌）：返回渲染层因预算修剪逐出、
+    /// 尚未回灌的区块（逐出序）。调用方须对仍在活动表的块置 MESH 脏
+    /// 回灌重建——逐出必不静默失明（默认空表，无头实现无逐出）。
+    fn drain_evicted(&mut self) -> Vec<ChunkPos> {
+        Vec::new()
     }
 }
 
@@ -240,6 +256,14 @@ impl ChunkMesher for RustMesher {
         self.uploader.flush();
     }
 
+    fn set_retention(&mut self, anchor: ChunkPos, radius: i32) {
+        self.uploader.set_retention((anchor.x, anchor.z), radius);
+    }
+
+    fn drain_evicted(&mut self) -> Vec<ChunkPos> {
+        self.uploader.drain_evicted()
+    }
+
     fn mesh_stats(&self) -> MeshStats {
         let b = self.uploader.batching_stats();
         let u = self.uploader.upload_stats();
@@ -254,6 +278,8 @@ impl ChunkMesher for RustMesher {
             resident_bytes: b.resident_bytes,
             cpu_pool_bytes: b.cpu_pool_bytes,
             evicted_chunks: b.evicted_chunks,
+            trimmed_chunks: b.trimmed_chunks,
+            debt_chunks: b.debt_chunks,
             live_vertex_peak_bytes: b.live_vertex_peak_bytes,
         }
     }
@@ -3250,6 +3276,20 @@ impl GameRuntime {
                 if !self.pending_light_edges.contains(&e) {
                     self.pending_light_edges.push(e);
                 }
+            }
+        }
+
+        // #174 隐形墙修复（回灌接线，每帧）：①保留环随玩家迁移——渲染层
+        // 内存治理只在流式环外修剪（原版渲染保留区语义，
+        // ClientChunkCache.java:158-160），环内永不静默逐出；②领走 remesh
+        // 债账——渲染层越预算修剪逐出的块在此置 MESH 脏，走下方近优先预算
+        // 流重建（逐出≠失明）。活动表外块防御性丢弃（卸载路径已同步销债，
+        // 理论不出现）。
+        self.mesher.set_retention(center, self.unload_dist());
+        for pos in self.mesher.drain_evicted() {
+            if let Some(handle) = self.chunks.get(&pos) {
+                handle.mark_dirty(mcv_core::dirty::MESH);
+                log::debug!("mesh remesh-debt requeue {pos:?}");
             }
         }
 

@@ -3210,7 +3210,7 @@ impl AppState {
             let tt = runtime.take_frame_timing_stats();
             let mean = tt.mean_us();
             log::info!(
-                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} evicted={} live_peak_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} trimmed={} evicted={} debt={} live_peak_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
                 st.opaque_draws,
                 st.water_draws,
                 ms.draw_entries,
@@ -3222,7 +3222,9 @@ impl AppState {
                 ms.fallback_uploads,
                 ms.resident_bytes / 1024,
                 ms.cpu_pool_bytes / 1024,
+                ms.trimmed_chunks,
                 ms.evicted_chunks,
+                ms.debt_chunks,
                 ms.live_vertex_peak_bytes / 1024,
                 mean.fixed_step_us,
                 mean.ecs_us,
