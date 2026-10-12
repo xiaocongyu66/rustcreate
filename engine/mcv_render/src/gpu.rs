@@ -263,11 +263,6 @@ pub struct MeshUploader {
     /// 在途拷贝必须保留到 flush（调用方合法绘制旧克隆的契约，见
     /// [`PendingUpload`]），世代替换时不摘。
     handed: std::collections::HashSet<u64>,
-    /// 重建窗口的占位条目（本波 ②「先摘旧批再建新批」）：旧缓冲先于新
-    /// 分配释放，GPU 顶点字节瞬态峰值不叠旧批。占位只在重建函数体内
-    /// 瞬时存在（同步替换，帧间不可见），缓冲仅 4B×2，不计入顶点字节账
-    /// （常数级，见 tests/render_mem.rs 的 PEAK_SLACK 余量）。
-    placeholder: RenderChunk,
     /// LRU 时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，逐出
     /// 取最旧。
     use_clock: u64,
@@ -301,28 +296,6 @@ impl MeshUploader {
                 state: SlotState::Mapping,
             });
         }
-        // 占位条目（②）：小缓冲对，仅重建函数体内瞬时替换用。
-        let ph_vb = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-placeholder"),
-            size: 4,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let ph_ib = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("mesh-placeholder"),
-            size: 4,
-            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        let placeholder = RenderChunk {
-            origin: [0.0; 3],
-            vertex_buf: ph_vb,
-            index_buf: ph_ib,
-            opaque_range: 0..0,
-            water_index_buf: None,
-            water_parts: Vec::new(),
-            aabb: (Vec3::ZERO, Vec3::ZERO),
-        };
         Self {
             device,
             queue,
@@ -338,7 +311,6 @@ impl MeshUploader {
             entry_serial: Vec::new(),
             next_serial: 0,
             handed: std::collections::HashSet::new(),
-            placeholder,
             use_clock: 0,
             upload_stats: UploadStats::default(),
         }
@@ -748,12 +720,10 @@ impl MeshUploader {
 
     /// 原位重建第 bi 个批次（成员表不变，数据源为池内最新字节）。
     ///
-    /// ② 先摘旧再建新：旧世代若从未出册（同调用内 push+rebuild 的内部
-    /// 世代），其在途拷贝永不可达、当场摘除；已出册世代的拷贝按契约
-    /// 保留到 flush（见 [`PendingUpload`]）。占位条目替换令旧 GPU 缓冲
-    /// 先于新分配释放——顶点字节账上旧批出册在新批入册之前，新旧不
-    /// 并存（[`BatchingStats::live_vertex_peak_bytes`] 实证）。占位仅
-    /// 本函数体内瞬时存在（同步替换、无帧穿插），不产生「重建窗口空帧」。
+    /// 【回测红临时态】② 治理下线版：新批建成入册时旧批仍挂条目表
+    /// （新旧并存双计），live_vertex_peak_bytes 应升到 ~2× 稳态，
+    /// tests/render_mem.rs ②(A) 必红——治理前行为锁红证，下一提交恢复。
+    /// 世代替换拷贝规则不变（未出册即摘 / 已出册留 flush）。
     fn rebuild_batch(&mut self, bi: usize) {
         self.stats.batch_rebuilds += 1;
         let old_serial = self.entry_serial[bi];
@@ -761,17 +731,16 @@ impl MeshUploader {
             self.purge_uploads(old_serial);
         }
         self.handed.remove(&old_serial);
-        let out = entry_gpu_bytes(&self.entries[bi]);
-        self.track_entry_out(out);
-        self.entries[bi] = self.placeholder.clone();
-        let serial = self.next_serial;
-        self.next_serial += 1;
-        self.entry_serial[bi] = serial;
         let members = self.batch_members[bi].clone();
         let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
         self.track_entry_in(&entry);
-        self.entries[bi] = entry;
+        let old_entry = std::mem::replace(&mut self.entries[bi], entry);
+        let out = entry_gpu_bytes(&old_entry);
+        self.track_entry_out(out);
+        let serial = self.next_serial;
+        self.next_serial += 1;
+        self.entry_serial[bi] = serial;
         self.queue_uploads(uploads, serial);
     }
 
