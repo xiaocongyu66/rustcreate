@@ -94,6 +94,16 @@ const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 const STAGING_SLOT_BYTES: u64 = 2 * 1024 * 1024;
 const STAGING_SLOT_COUNT: usize = 8;
 
+/// CPU 留存网格字节（池）预算上限——本波「CPU 网格字节有界回收」的集中
+/// 定义点。依据：RD=8（remesh 环 19²=361 块，口径同 tests/mesh_memory.rs）
+/// 稳态实测 cpu_pool_bytes = 48.34 MiB（run 38114958737，lavapipe，
+/// 361 块合成地形），取 +25% 余量 = 60.4 MiB，向下取整 60 MiB。RD=8
+/// 稳态永不触发回收（48.34 < 60），只有滞留/泄漏（该卸未卸的超环驻留）
+/// 才会越界——越界即 LRU 逐出，对齐原版「区块卸载即释放渲染资源」
+/// （ChunkMap.java:478-535 processUnloads）的兜底语义；「CPU 网格字节
+/// LRU」本身是本仓性能自选（登记项），原版无 CPU 网格缓存。
+pub const CPU_POOL_BUDGET_BYTES: u64 = 60 * 1024 * 1024;
+
 /// 异步上传统计（#80 第二刀可观测性）：主线程同步大拷贝消除的证据。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UploadStats {
@@ -150,6 +160,16 @@ pub struct BatchingStats {
     /// 池：它是合批重建的数据源，常驻不回收——按派单要求计入内存预算面，
     /// 全表见 docs/memory-budget.md）。
     pub cpu_pool_bytes: u64,
+    /// 越预算 LRU 逐出次数（本波 ① 释放路径的计数实证，不靠墙钟）。
+    pub evicted_chunks: u64,
+    /// LRU 逐出释放的逻辑字节（公式同 [`BatchingStats::cpu_pool_bytes`]）。
+    pub evicted_bytes: u64,
+    /// 当前待 flush 的 staging 拷贝滞留字节（uploads 的 CPU 字节增量
+    /// 记账，本波 ② 瞬态放大记账分子）。
+    pub transient_bytes: u64,
+    /// [`BatchingStats::transient_bytes`] 的历史峰值：重建窗口新旧批
+    /// 并存的瞬态放大上界的实证值。
+    pub transient_peak_bytes: u64,
 }
 
 /// 池内单块网格的 CPU 字节（合批重建的数据源）：opaque 顶点 + opaque 局部
@@ -197,6 +217,9 @@ pub struct MeshUploader {
     /// 待 flush 的拷贝（目标缓冲 + 字节）；flush 记入 encoder 并 submit，
     /// 先于同帧任何 draw（单队列按提交序执行）。
     uploads: Vec<PendingUpload>,
+    /// `uploads` 的 CPU 字节增量记账（本波 ② 瞬态放大：重建窗口新旧批
+    /// 并存时，被替换批次的滞留拷贝也在此计量）。
+    uploads_bytes: u64,
     upload_stats: UploadStats,
 }
 
@@ -237,8 +260,17 @@ impl MeshUploader {
             staging,
             mapped_mailbox: mailbox,
             uploads: Vec::new(),
+            uploads_bytes: 0,
             upload_stats: UploadStats::default(),
         }
+    }
+
+    /// 攒入待 flush 拷贝并做瞬态记账（峰值即重建窗口瞬态放大的实证值）。
+    fn queue_uploads(&mut self, ups: Vec<PendingUpload>) {
+        self.uploads_bytes += ups.iter().map(|u| u.bytes.len() as u64).sum::<u64>();
+        self.stats.transient_bytes = self.uploads_bytes;
+        self.stats.transient_peak_bytes = self.stats.transient_peak_bytes.max(self.uploads_bytes);
+        self.uploads.extend(ups);
     }
 
     /// 当前绘制条目表（批次 + 不可合并单块）。场景块表即此表——合批后
@@ -324,6 +356,8 @@ impl MeshUploader {
             return;
         }
         let ups = std::mem::take(&mut self.uploads);
+        self.uploads_bytes = 0;
+        self.stats.transient_bytes = 0;
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -528,7 +562,7 @@ impl MeshUploader {
                     let members = vec![key];
                     let (entry, bytes, uploads) = self.build_batch_entry(&members);
                     self.stats.rebuild_bytes += bytes;
-                    self.uploads.extend(uploads);
+                    self.queue_uploads(uploads);
                     self.batch_members.push(members);
                     self.entries.push(entry);
                     self.batch_members.len() - 1
@@ -573,7 +607,7 @@ impl MeshUploader {
         let members = self.batch_members[bi].clone();
         let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
-        self.uploads.extend(uploads);
+        self.queue_uploads(uploads);
         self.entries[bi] = entry;
     }
 

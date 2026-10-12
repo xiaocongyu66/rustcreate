@@ -29,3 +29,10 @@ mcv_mesher.workspace = true
 name = "mesh_memory"
 harness = false
 required-features = ["gpu-tests"]
+
+# 渲染内存治理波（①池预算 LRU 回收 ②重建瞬态放大）：同 mesh_memory 口径，
+# K-MEM 行落日志取证，仅 render-headless（gpu-tests）构建。
+[[test]]
+name = "render_mem"
+harness = false
+required-features = ["gpu-tests"]
