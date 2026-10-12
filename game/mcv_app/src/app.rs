@@ -1249,7 +1249,7 @@ impl AppState {
             return;
         }
         if self.menu_audio.is_none() && !self.menu_audio_dead {
-            match self.sounds_dir().map(|d| mcv_audio::AudioManager::open(d)) {
+            match self.sounds_dir().map(mcv_audio::AudioManager::open) {
                 Some(Ok(a)) => self.menu_audio = Some(a),
                 Some(Err(e)) => {
                     self.menu_audio_dead = true;
