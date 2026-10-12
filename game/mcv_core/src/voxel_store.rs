@@ -646,17 +646,17 @@ mod tests {
         sec.set(10, 7);
         assert_eq!(sec.bits(), 4);
         sec.set(11, 5);
-        assert_eq!(sec.get(0), 9);
+        assert_eq!(sec.get(0), 5);
         assert_eq!(sec.get(10), 7);
         assert_eq!(sec.get(11), 5);
-        // 16 值满档 → 第 17 值进 hashmap 5bit，旧值不丢。
-        for i in 0..15u16 {
+        // 16 值满档 → 第 17 值进 hashmap 5bit，旧值不丢。现 3 值（9/5/7），补 13 个恰满 16。
+        for i in 0..13u16 {
             sec.set(100 + i as usize, 100 + i);
         }
         assert_eq!(sec.bits(), 4);
         sec.set(200, 120);
         assert_eq!(sec.bits(), 5);
-        assert_eq!(sec.get(0), 9);
+        assert_eq!(sec.get(0), 5);
         assert_eq!(sec.get(100), 100);
         assert_eq!(sec.get(200), 120);
     }
