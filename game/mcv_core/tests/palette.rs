@@ -11,6 +11,7 @@
 //! - SimpleBitStorage.java:240-264 LSB-first 打包（valuesPerLong =
 //!   64/bits）；LevelChunkSection.java:13-15,21 按 16³=4096 section
 //!   持容器。
+//!
 //! 简化登记（债）：global 档内存位宽取 16（值域 = 全域 u16，含状态
 //! nibble；原版 globalBits = ceillog2(IdMap 大小)）；linear 档在
 //! 2..=16 值时同样占 4bit 存储（与原版一致，非简化）。
@@ -37,14 +38,12 @@ fn expect_ladder(distinct: usize) -> (usize, usize) {
 /// 在 section 0（y ∈ [WORLD_MIN_Y, WORLD_MIN_Y+16)）内逐个填入
 /// `count` 个不同值（每值填满整 section 的一部分槽位，触发换档）。
 fn fill_distinct(store: &mut mcv_core::VoxelStore, count: usize) {
-    let mut i = 0usize;
-    for v in 0..count {
+    for (i, v) in (0..count).enumerate() {
         // 每值至少占一个槽位即可触发 palette 增长。
         let x = i % 16;
         let yl = (i / 16) % 16;
         let z = (i / 256) % 16;
         store.set(x, WORLD_MIN_Y + yl as i32, z, BlockId(v as u16 + 1));
-        i += 1;
     }
 }
 
@@ -170,7 +169,7 @@ fn build_is_deterministic() {
     let mut x: u64 = 12345;
     for v in flat.iter_mut() {
         x = x
-            .wrapping_mul(63_641_362_238_467_930_05)
+            .wrapping_mul(6_364_136_223_846_793_005)
             .wrapping_add(1_442_695_040_888_963_407);
         *v = ((x >> 16) % 300) as u16;
     }
