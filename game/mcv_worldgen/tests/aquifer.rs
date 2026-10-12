@@ -21,9 +21,10 @@
 //! 60% = 期望值 3 倍裕量；(b) 岩浆非零由 −54 全局带 + lavaNoise
 //! |v|>0.3（σ≈0.32 → P≈36%）保证采样窗内必现。
 
+use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField, Substance};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
-use mcv_worldgen::{ChunkPos, TerrainBackend, generate_terrain_with};
+use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SEED: u64 = 0xA01F_175_0B1;
 

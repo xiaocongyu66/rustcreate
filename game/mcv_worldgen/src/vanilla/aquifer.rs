@@ -290,6 +290,12 @@ const SURFACE_OFFSETS: [(i32, i32); 13] = [
     (1, 1),
 ];
 
+/// 胞格键（网格坐标三元组）。
+type CellKey = (i32, i32, i32);
+/// 胞格缓存条目：(胞心, 状态惰性位)——对齐原版
+/// aquiferLocationCache/aquiferCache 双层惰性。
+type CellEntry = (CellKey, Option<FluidStatus>);
+
 /// 一区块（一次 `generate` 调用）作用域的含水层现场：列探针缓存
 /// （= NoiseChunk.preliminarySurfaceLevelCache）+ 胞格状态缓存 +
 /// 免采样线。纯世界坐标函数——缓存只省算力，不改语义。
@@ -300,7 +306,7 @@ pub struct AquiferField<'a> {
     cols: HashMap<(i32, i32), ColumnProbe>,
     /// key = 胞格坐标；value = (胞心, 状态)（状态惰性算，对齐
     /// aquiferCache/aquiferLocationCache 双层惰性，Aquifer.java:80-82）
-    cells: HashMap<(i32, i32, i32), ((i32, i32, i32), Option<FluidStatus>)>,
+    cells: HashMap<CellKey, CellEntry>,
     /// 各区块的 skipSamplingAboveY（Aquifer.java:134-137）缓存：此线以上
     /// 不再采样胞格，直接用全局流体（地表水体/海面空气由这条路径给出）。
     /// 该线是**区块窗口**函数（原版 NoiseChunk 每区块算一次），体素判据
