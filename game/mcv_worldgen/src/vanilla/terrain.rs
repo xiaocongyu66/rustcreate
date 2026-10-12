@@ -578,7 +578,7 @@ impl Orchestrator {
         for y in ((SEA + 1)..=fill_top).rev() {
             if self.density(&cs, block_x, y, block_z) > 0.0 {
                 depth_above += 1; // SurfaceSystem.java:146（同款计数）
-                if y <= crate::vanilla::tree_pass::TREE_MAX_Y - 1 {
+                if y < crate::vanilla::tree_pass::TREE_MAX_Y {
                     let id = if y < min_surface {
                         STONE
                     } else if depth_above == 1 {

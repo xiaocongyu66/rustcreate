@@ -155,7 +155,7 @@ fn boundary_trees_complete_on_both_sides() {
                         );
                         assert_ne!(
                             v, WATER,
-                            "跨界叶 ({wx},{wy},{wz}) 在邻块 ({ncx},{ncz}) 仍是水（重放未执行）",
+                            "跨界叶 ({wx},{wy},{wz}) 在邻块 ({ncx},{ncz}) 仍是水（重放未执行，树 @({},{})）",
                             spot.x, spot.z
                         );
                     } else if is_log(id) {
