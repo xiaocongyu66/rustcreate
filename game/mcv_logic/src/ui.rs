@@ -210,7 +210,7 @@ pub fn swap_inv_with_hotbar(hb: &mut Hotbar, i: usize, k: usize) -> Option<ItemS
         return None;
     }
     if i < HOTBAR_SLOTS {
-        std::mem::swap(&mut hb.slots[i], &mut hb.slots[k]);
+        hb.slots.swap(i, k);
         return None;
     }
     // 主背包槽：值拷出复用核心（规避同结构双 &mut），终态写回。
