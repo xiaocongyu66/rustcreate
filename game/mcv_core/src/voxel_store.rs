@@ -574,6 +574,12 @@ impl VoxelStore {
         self.sections[sy].set(flat & (SEC_SIZE - 1), id.0);
     }
 
+    /// 按平铺 `crate::vidx` 布局惰性遍历全柱（旧平铺数组
+    /// `.iter()` 的等价替换；计数/比较等整段消费方使用）。
+    pub fn iter(&self) -> impl Iterator<Item = BlockId> + '_ {
+        (0..CHUNK_VOL).map(move |i| self.get_flat(i))
+    }
+
     /// 堆驻留估算总和（预算门口径，见
     /// [`VoxelSection::resident_bytes`]）。
     pub fn resident_bytes(&self) -> usize {
