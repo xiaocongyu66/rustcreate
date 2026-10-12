@@ -156,7 +156,10 @@ fn assert_all_air_column_constant() {
     let h = mcv_core::ChunkHandle::new(mcv_core::ChunkPos::new(0, 0));
     let vox = h.voxels.read().unwrap().resident_bytes();
     eprintln!("K5-MEAS-VOX all_air_column: resident={vox} B");
-    assert!(vox <= 1024, "全空气柱驻留 {vox} B 超常数预算（0bit 档失效？）");
+    assert!(
+        vox <= 1024,
+        "全空气柱驻留 {vox} B 超常数预算（0bit 档失效？）"
+    );
 }
 
 /// E7a 新增门②：典型生成柱（vanilla 后端、固定 seed 多点采样）
@@ -173,7 +176,10 @@ fn assert_typical_generated_column() {
         let store = mcv_core::VoxelStore::from_flat_u16(out.voxels.as_u16_slice());
         let vox = store.resident_bytes();
         eprintln!("K5-MEAS-VOX generated({cx},{cz}): resident={vox} B");
-        assert!(vox <= 32 * 1024, "({cx},{cz}) 生成柱 voxels {vox} B 超 32 KiB");
+        assert!(
+            vox <= 32 * 1024,
+            "({cx},{cz}) 生成柱 voxels {vox} B 超 32 KiB"
+        );
     }
 }
 

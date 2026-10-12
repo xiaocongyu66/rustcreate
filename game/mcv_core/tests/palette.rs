@@ -28,7 +28,9 @@ fn expect_ladder(distinct: usize) -> (usize, usize) {
         33..=64 => (6, distinct),
         65..=128 => (7, distinct),
         129..=256 => (8, distinct),
-        n => (16, n),
+        // ≥257 → global 回退：无本地表（GlobalPalette 无 size 语义，
+        // palette_len 报 0）。
+        _ => (16, 0),
     }
 }
 
@@ -52,7 +54,11 @@ fn empty_store_is_zero_bit_single_value() {
     let store = mcv_core::VoxelStore::new();
     for sy in 0..mcv_core::SECTION_COUNT {
         let s = store.section(sy);
-        assert_eq!((s.bits(), s.palette_len()), (0, 1), "sy={sy} 全空柱必须 0bit");
+        assert_eq!(
+            (s.bits(), s.palette_len()),
+            (0, 1),
+            "sy={sy} 全空柱必须 0bit"
+        );
         assert!(s.is_uniform());
         assert_eq!(s.uniform_value(), Some(0));
     }
@@ -71,7 +77,9 @@ fn ladder_matches_vanilla_strategy_table() {
     // 1..=16 值线性档一律 4bit（Strategy.java:39 FOUR_BITS_LINEAR，
     // 2 值 section 也占 4bit——原版语义，非本仓近似）；换档只在
     // 17/33/65/129/257 个不同值处发生（onResize ceillog2）。
-    for n in [2usize, 3, 5, 16, 17, 32, 33, 64, 65, 128, 129, 256, 257, 300] {
+    for n in [
+        2usize, 3, 5, 16, 17, 32, 33, 64, 65, 128, 129, 256, 257, 300,
+    ] {
         let mut store = mcv_core::VoxelStore::new();
         fill_distinct(&mut store, n);
         let s = store.section(0);
@@ -109,7 +117,11 @@ fn flat_roundtrip_is_identity() {
         x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
         // 混合档：section0 全随机（>256 值），其余 section 低值域。
         let sec = i / mcv_core::SECTION_VOL;
-        *v = if sec == 0 { (x >> 16) as u16 } else { ((x >> 20) % 12) as u16 };
+        *v = if sec == 0 {
+            (x >> 16) as u16
+        } else {
+            ((x >> 20) % 12) as u16
+        };
     }
     let store = mcv_core::VoxelStore::from_flat_u16(&flat);
     assert_eq!(store.decode_column(), flat);
@@ -138,7 +150,11 @@ fn set_get_matches_flat_shadow_model() {
         let y = WORLD_MIN_Y + yi as i32;
         // 值域逐步扩宽：早期小值域（linear），后期大值域（hashmap）。
         let wide = step > 10_000;
-        let id = if wide { ((x >> 12) % 600) as u16 + 1 } else { ((x >> 12) % 20) as u16 + 1 };
+        let id = if wide {
+            ((x >> 12) % 600) as u16 + 1
+        } else {
+            ((x >> 12) % 20) as u16 + 1
+        };
         store.set(xi, y, zi, BlockId(id));
         shadow[vidx(xi, y, zi)] = id;
     }
@@ -177,7 +193,13 @@ fn typical_generated_column_fits_32kib() {
         for z in 0..16 {
             for x in 0..16 {
                 let i = (yl << 8) | (z << 4) | x;
-                flat[i] = if yl < 128 { 0 } else if yl < 190 { 1 } else { 3 };
+                flat[i] = if yl < 128 {
+                    0
+                } else if yl < 190 {
+                    1
+                } else {
+                    3
+                };
             }
         }
     }

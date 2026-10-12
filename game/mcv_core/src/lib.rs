@@ -7,11 +7,13 @@ pub mod pool;
 pub mod shape;
 pub mod tint;
 pub mod tool;
+pub mod voxel_store;
 
 pub use chunk::dirty;
 pub use chunk::{ChunkHandle, ChunkStatus, SECTION_COUNT, SECTION_VOL, Stage, section_view};
 pub use pool::{TaskPool, world_worker_count};
 pub use shape::Shape;
+pub use voxel_store::{VoxelSection, VoxelStore};
 
 pub const CHUNK_SX: usize = 16;
 pub const CHUNK_SY: usize = 384;
