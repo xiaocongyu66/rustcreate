@@ -236,3 +236,32 @@ AABB 0.25（Item.java SIZE）→ quad 边长 0.25、浮动 bob = sin(ageInTicks/
 6. **湿耕地未建模**：farmland MOISTURE 状态无位 → `crop_growth_speed`
    恒取干耕地 1.0 基值，湿耕 3.0 分支不可达（CropBlock.java:104-113）——
    作物节奏偏慢侧（干耕产量下限），状态位波落地后同构接通。
+
+## AQUI-1 含水层（#175，feat/aquifer）的结构复刻裁剪
+
+原版机制 = `NoiseBasedAquifer`（26.1 已并入 Aquifer.java:58-513 inner
+class），本仓为**结构复刻非字节级同原版**——传入判据的 density 本身即
+clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐派生），
+端到端原版对拍在 density/preliminary surface 未同真前不可达；逐行复刻
+只锁死演进不换一致性。逐项登记：
+
+1. **种子链非原版**：四通道噪声（barrier/floodedness/spread/lava）用
+   本仓 NormalNoise 内核 + 自有域盐（SALT_*，TREE_DOMAIN 先例），非
+   Xoroshiro fork 序（RandomState.java:38 fromHashOf("aquifer") +
+   Java StringHashing）；统计形态同参数表（firstOctave/振幅/路由缩放
+   逐字抄 noise json 与 NoiseRouterData.java:319-322），由
+   tests/aquifer.rs 统计门（干占比/三态占比带）替代字节对拍。
+2. **胞心随机非原版 Xoroshiro 三连 nextInt**：splitmix 链 + Lemire
+   无偏归约（同值域 10/9/10、同分布）。
+3. **preliminary surface 用密度场解析过零面 crossing**（terrain.rs
+   实顶扫描同款），非原版 preliminary_surface_level 密度函数（本仓
+   density 管线无该函数；两者同为无洞穴地表高度估计，语义对位）。
+4. **水流更新调度不建模**：shouldScheduleFluidUpdate/
+   markPosForPostprocessing（Aquifer.java:160,246-294）无对应存储/
+   tick 面——原版靠它把边界水交给随机刻流动，本仓生成期水静态
+   （引擎无流体模拟，全局面在 #148 流体波）。
+5. **岩浆渲染最小可用面**：LAVA id=516（blocks_gen.inc.rs:537，liquid、
+   光 15、六面贴图 402）。mesher `liquid` 规则出贴图整盒（无流动动画、
+   无 0.9 水面下沉、非水 pass 半透）——流体保真归 #148 E2 流体波债；
+   光照面 lava 光 15 经 blocks_gen 表进 mcv_light 自动生效（tests 锁
+   「注岩浆格邻近方块光 >0」）。

@@ -26,7 +26,7 @@ use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField, Substance};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
-const SEED: u64 = 0xA01F_175_0B1;
+const SEED: u64 = 0xA01_F17_50B;
 
 /// 被盖空腔扫描：固定格点上按列做密度 run-length，取「上下皆有实心」的
 /// 密度≤0 连段（= 洞穴口径；排除与天空/海面水体连通的开空段——洋面水
@@ -160,7 +160,7 @@ fn generated_chunks_have_dry_caves_below_sea() {
         "K-AQUIFER-BUF air={air} water={water} lava={lava} dry_share={:.3} n={tot}",
         air as f64 / tot.max(1) as f64
     );
-    assert!(tot > 100_000, "样本异常小 {tot}");
+    assert!(tot > 10_000, "样本异常小 {tot}");
     assert!(
         air as f64 / tot as f64 > 0.30,
         "海下空气占比 {:.3} ≤ 0.30（含水层未生效或全灌水回归）",

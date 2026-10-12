@@ -1212,3 +1212,37 @@ fn ocean_pair_edge_sync_keeps_water_column_and_is_idempotent() {
         .collect();
     assert_eq!(before, after, "第二轮边同步必须零变化（边协议幂等）");
 }
+
+/// #175 岩浆光照面锁：含水层岩浆带/岩浆湖写入 LAVA id 后，`init` 必须
+/// 从体素自发光播种（light_emit(lava)=15，blocks_gen.inc.rs:537），
+/// 注岩浆格的空气邻格方块光 >0（预期 15−1=14，同火把衰减律）。
+/// 地表/深层囊袋岩浆的可见性前提——烫死之前先看得见（渲染贴图面见
+/// KNOWN-DIVERGENCE AQUI-1 ⑤）。
+#[test]
+fn lava_emission_seeded_by_init() {
+    let lava = bid("lava");
+    assert_eq!(
+        mcv_core::BLOCKS[lava as usize].light_emit,
+        15,
+        "lava 发光 15（26.1）"
+    );
+    // 密封石室（同火把黄金用例布局）：内部空气 x 1..=15, y 32..=36, z 6..=10。
+    let mut w = World::flat(40);
+    w.box_fill(1, 15, 32, 36, 6, 10, AIR);
+    w.rebuild_heightmap();
+    // 岩浆格放 (2,34,8)（同 torch 用例位形，水平可测 5 格衰减）。
+    w.voxels[vidx(2, 34, 8)] = lava;
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+    {
+        let c = w.chunk();
+        assert!(
+            blk(&c, 3, 34, 8) > 0,
+            "岩浆邻格方块光必须 >0（LAVA 未被光照播种？）"
+        );
+        assert_eq!(blk(&c, 3, 34, 8), 14, "岩浆 15 衰减 1 步 = 14");
+        assert_eq!(blk(&c, 6, 34, 8), 10, "水平 4 格衰减到 10");
+    }
+}
