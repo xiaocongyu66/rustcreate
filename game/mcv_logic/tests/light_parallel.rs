@@ -72,7 +72,7 @@ fn scene_voxels(seed: u64) -> Vec<u16> {
                 v[vidx(x, y, z)] = 1; // stone
             }
             // 封闭腔：表面下掏 3×3（无邻面进光的暗腔，init 只亮腔口）。
-            if rng.next() % 7 == 0 {
+            if rng.next().is_multiple_of(7) {
                 for dz in 0..3i32 {
                     for dx in 0..3i32 {
                         let (xx, zz) = (x as i32 + dx, z as i32 + dz);
@@ -89,7 +89,7 @@ fn scene_voxels(seed: u64) -> Vec<u16> {
                 }
             }
             // 火把群（只在岸上，避免与水池互相覆盖）。
-            if h > 35 && rng.next() % 13 == 0 {
+            if h > 35 && rng.next().is_multiple_of(13) {
                 v[vidx(x, h + 1, z)] = TORCH;
             }
         }
