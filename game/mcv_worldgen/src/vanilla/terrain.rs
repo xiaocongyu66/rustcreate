@@ -511,6 +511,92 @@ impl Orchestrator {
         }
     }
 
+    /// 一列表层材质对 (顶格, 亚表带)。#140 表层波表驱动，自 `generate`
+    /// 原样抽出（判定语义逐字节不变，`column_real_top` 与柱层循环共用，
+    /// 杜绝两套表层规则漂移）。
+    ///
+    /// 滩/雪位置带沿用 `surface_ours` 估计面口径（geometry_locks
+    /// vanilla_surface_material_bands 的契约面：「材质由 offset 估计面
+    /// 分带」，tests/geometry_locks.rs:100-121）。26.1 表层是逐方块条件
+    /// 规则表（SurfaceRuleData.overworldLike），顶格按群系与水情取块——
+    /// 内陆默认 grassOrDirtIfUnderwater（SurfaceRuleData.java:71,165：
+    /// aboveWater→GRASS_BLOCK，否则 DIRT）、BEACH/WARM_OCEAN/DESERT 沙
+    /// （:74-87 sandOrSandstoneIfCeiling）、SNOWY_PLAINS 草+雪层（雪草
+    /// 单块表示，本子集无 frozen peaks/badlands/mushroom/mangrove 例外
+    /// 群系，缺 id 债见 KNOWN-DIVERGENCE SURF-1 ①）。
+    #[must_use]
+    pub fn column_surface_ids(&self, block_x: i32, block_z: i32, cs: &ColumnState) -> (u16, u16) {
+        let surface = cs.surface_ours;
+        let beach = surface <= SEA + 1;
+        let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
+        if beach {
+            (SAND, SAND)
+        } else if snowy {
+            (SNOW_GRASS, DIRT)
+        } else {
+            match self.biome_at(block_x, block_z) {
+                Biome::Desert | Biome::Beach | Biome::Ocean | Biome::River => (SAND, SAND),
+                Biome::SnowyPlains => (SNOW_GRASS, DIRT),
+                Biome::Plains
+                | Biome::Forest
+                | Biome::BirchForest
+                | Biome::Savanna
+                | Biome::Taiga => (GRASS, DIRT),
+            }
+        }
+    }
+
+    /// pass-1 体素缓冲中该列的**实顶**（自顶向下第一个非空气格）+1 = 树基
+    /// 候选，附带实顶格材质——不读本列体素、纯世界坐标函数，任意区块可对
+    /// 任意 (x,z) 重放（fix/tree-chunk-clip：邻块树在本块重放时，树基判定
+    /// 必须与树干所属块的缓冲扫描逐字节一致，否则跨界树两侧各算各的基，
+    /// 「少一边树叶」缺陷的根因面）。
+    ///
+    /// 复刻 `generate` 柱层循环的自顶向下语义（扫描即填充）：
+    /// - 起点 `fill_top = scan_top.max(SEA)`，`scan_top = crossing +
+    ///   REAL_TOP_SCAN_MARGIN`（软空气余量保证，见常数注），其上缓冲恒
+    ///   AIR（`ChunkVoxels::filled(0)` 起点，`generate` 不上探）；
+    /// - `depth_above` 计数与 SurfaceSystem.java:126-128/146 同式（y>SEA
+    ///   且 density≤0 重置为 0；水格只在 y≤SEA，扫描窗 [SEA+1, …] 不触及）；
+    /// - 首个 density>0 格 y ≤ `TREE_MAX_Y-1` 即返回：材质按柱层循环同款
+    ///   （`y < min_surface` → STONE；`depth_above == 1` → 顶格材质；
+    ///   `≤ 1 + SUBSOIL_DEPTH` → 亚表材质；其余 STONE）——山体内壁在扫描
+    ///   窗顶入窗时 depth_above 已 >1，材质归 STONE，与缓冲读数一致；
+    /// - 窗上界钳 `TREE_MAX_Y-1`（旧 `tree_pass::ground_spot` 同窗），
+    ///   全程无实心 → `None`。
+    #[must_use]
+    pub fn column_real_top(&self, block_x: i32, block_z: i32) -> Option<(i32, u16)> {
+        let cs = self.column_state(block_x, block_z);
+        let (surface_id, subsoil_id) = self.column_surface_ids(block_x, block_z, &cs);
+        let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
+        let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
+        let scan_top =
+            (crossing + REAL_TOP_SCAN_MARGIN).clamp(MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
+        let fill_top = scan_top.max(SEA);
+        let min_surface = crossing - PRELIM_SURFACE_BAND;
+        let mut depth_above = 0_i32;
+        for y in ((SEA + 1)..=fill_top).rev() {
+            if self.density(&cs, block_x, y, block_z) > 0.0 {
+                depth_above += 1; // SurfaceSystem.java:146（同款计数）
+                if y <= crate::vanilla::tree_pass::TREE_MAX_Y - 1 {
+                    let id = if y < min_surface {
+                        STONE
+                    } else if depth_above == 1 {
+                        surface_id
+                    } else if depth_above <= 1 + SUBSOIL_DEPTH {
+                        subsoil_id
+                    } else {
+                        STONE
+                    };
+                    return Some((y + 1, id));
+                }
+            } else {
+                depth_above = 0; // SurfaceSystem.java:126-128（y>SEA 空气重置）
+            }
+        }
+        None
+    }
+
     /// 采样并编排一列。
     #[must_use]
     pub fn column_state(&self, block_x: i32, block_z: i32) -> ColumnState {
@@ -712,35 +798,10 @@ pub fn generate(
             let wx = base_x.wrapping_add(cx);
             let wz = base_z.wrapping_add(cz);
             let cs = orch.column_state(wx, wz);
-            let surface = cs.surface_ours;
-            // 滩/雪位置带沿用 `surface_ours` 估计面口径（geometry_locks
-            // vanilla_surface_material_bands 的契约面：「材质由 offset 估计面
-            // 分带」，tests/geometry_locks.rs:100-121）。
-            let beach = surface <= SEA + 1;
-            let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
-            // 群系面表（#140 表层波）：26.1 表层是逐方块条件规则表
-            // （SurfaceRuleData.overworldLike），顶格按群系与水情取块——
-            // 内陆默认 grassOrDirtIfUnderwater（SurfaceRuleData.java:71,165：
-            // aboveWater→GRASS_BLOCK，否则 DIRT）、
-            // BEACH/WARM_OCEAN/DESERT 沙（:74-87 sandOrSandstoneIfCeiling）、
-            // SNOWY_PLAINS 草+雪层（雪草单块表示，本子集无 frozen peaks/
-            // badlands/mushroom/mangrove 例外群系，缺 id 债见
-            // KNOWN-DIVERGENCE SURF-1 ①）。
-            let (surface_id, subsoil_id) = if beach {
-                (SAND, SAND)
-            } else if snowy {
-                (SNOW_GRASS, DIRT)
-            } else {
-                match orch.biome_at(wx, wz) {
-                    Biome::Desert | Biome::Beach | Biome::Ocean | Biome::River => (SAND, SAND),
-                    Biome::SnowyPlains => (SNOW_GRASS, DIRT),
-                    Biome::Plains
-                    | Biome::Forest
-                    | Biome::BirchForest
-                    | Biome::Savanna
-                    | Biome::Taiga => (GRASS, DIRT),
-                }
-            };
+            // 群系面表（#140 表层波，滩/雪带 + 群系顶格判定——判定语义与
+            // 引注集中在 Orchestrator::column_surface_ids，树 pass 的
+            // column_real_top 共用同一函数，杜绝两套表层规则漂移）。
+            let (surface_id, subsoil_id) = orch.column_surface_ids(wx, wz, &cs);
             // 表层锚 = 密度场**真实过零面**（逐列实顶扫描），不再锚样条估计
             // 面 `surface_ours`（旧 y==surface→GRASS 的 ±1-2 格偏差把暴露层
             // 打进 DIRT 带 = 用户可见整片裸土）。26.1 同语义：

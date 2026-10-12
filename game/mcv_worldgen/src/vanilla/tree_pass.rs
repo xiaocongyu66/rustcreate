@@ -1,10 +1,36 @@
-//! vanilla 后端 pass 2 —— 树投影（任务板 #139，T5 树收口）。
+//! vanilla 后端 pass 2 —— 树投影（任务板 #139，T5 树收口；跨界完整性修复
+//! 见 fix/tree-chunk-clip）。
 //!
 //! 把 [`crate::trees::place_tree`]（#135 六树种结构库）接进
 //! [`crate::vanilla::terrain::generate`]：pass 1 柱层写完后，扫描本区块
-//! 邻域的 5×5 树池，把「树干落在本块内」的树整体投影，邻树冠伸入本块的
-//! 部分按原版替换门补写——树落点是世界坐标纯函数（同 (cell, seed) 恒同
-//! 树位集），跨区块一致性由纯函数性保证，无需区块间通信。
+//! 邻域（CROWN_REACH 环带）的树池，**每棵过门的树都在本块重放**——树干
+//! 在本块的投影整体（裁剪到本块），树干在邻块的树补写伸入本块的冠部。
+//! 落点/树基/树种全是世界坐标纯函数（同 (cell, seed) 恒同 [`TreeSpot`]），
+//! 每个世界体素恰由其所属区块写一次，跨区块一致性由纯函数性保证，无需
+//! 区块间通信。
+//!
+//! **跨区块写语义的本仓对位（fix/tree-chunk-clip 裁决，方案 (a)）**：
+//! 原版 FEATURES 阶段允许特征跨区块写一格半径——
+//! `ChunkPyramid.java:30-33`（`ChunkStatus.FEATURES` 步
+//! `.blockStateWriteRadius(1)`）与 `WorldGenRegion.java:231-237`
+//! （setBlock 写半径门 `distanceX/Z <= blockStateWriteRadius`），跨块写
+//! 经 `Level.setBlock → updateNeighborsAt`（`Level.java:246`）落到
+//! `ServerChunkCache.blockChanged`（:463-468）→ `ChunkHolder.blockChanged`
+//! （`ChunkHolder.java:123-135`）标邻块脏、驱动重网格/重光照，保证「树写
+//! 进邻块」的可见性。本仓无 12 态金字塔，地形生成在 TaskPool worker 并行
+//! （E2 确定性锁：同 seed 同字节），worker 内跨块写会引入竞争/时序面；
+//! 又因树是 (seed, cell) 纯函数（`TreesRng` 由池坐标派生，#135 契约面），
+//! **邻块重放同一棵树**与原版「原块跨块写 + 邻块标脏」终态逐体素等价
+//! （每个体素仍只被其所属块写一次、门判据读同一 pass-1 地形），且零跨块
+//! 写面——故取重放。旧实现（#139 初版）把树干不在本块的池 `continue`
+//! 丢弃，跨界冠两侧都没写 = 真机「树少一边树叶」缺陷；docs/
+//! KNOWN-DIVERGENCE.md TREES-2 ④ 当时声称「由邻区块生成时以同一纯函数
+//! 补齐」并未兑现，本次把实现补到文档承诺。
+//!
+//! 树基判定与所属块的一致性锚：[`crate::vanilla::terrain::Orchestrator::
+//! column_real_top`]——pass-1 缓冲实顶扫描（原 `ground_spot`）的纯函数
+//! 复刻，两侧块对同一树干列必得同 (base_y, ground)；`trees_wiring.rs` 的
+//! 立地门/无悬空树锁与 `trees_cross_chunk.rs` 的双侧重放锁共同围堵漂移。
 //!
 //! 机制出处（原版 26.1，铁律 1；缩写：placed/configured feature JSON 相对
 //! `data/minecraft/worldgen/`，Java 相对
@@ -40,10 +66,11 @@
 //!   → substrate = #dirt/#mud/#moss_blocks/#grass_blocks。本仓生成面只有
 //!   草方块/泥土/雪草（雪草=雪覆盖草方块，grass_blocks 等价）→ 白名单
 //!   三 id；沙/石/水=放弃该位。
-//! - **树基 y**：pass-1 体素缓冲的实顶（密度场零交叉的块级实现）+1——
-//!   比编排器的 offset 估计 surface_ours 更真（base_3d/jag 与真实地表差
-//!   ±1-2 格会悬空），且与渲染所见逐块一致。基座门 SEA+1 < base ≤
-//!   TREE_MAX_Y（TREE_MAX_Y=SEA+52，legacy rust_terrain.rs:27-33 先例）。
+//! - **树基 y**：pass-1 实顶（密度场零交叉的块级实现；重放路径经
+//!   `column_real_top` 纯函数复刻，见上）+1——比编排器的 offset 估计
+//!   surface_ours 更真（base_3d/jag 与真实地表差 ±1-2 格会悬空），且与渲染
+//!   所见逐块一致。基座门 SEA+1 < base ≤ TREE_MAX_Y（TREE_MAX_Y=SEA+52，
+//!   legacy rust_terrain.rs:27-33 先例）。
 //! - **替换门（本 pass 的世界级写规则，补 #135 TREES-1 ①②的世界半边）**：
 //!   原木/叶只进 `validTreePos` 位（TreeFeature.java:53-55 =
 //!   isAir | REPLACEABLE_BY_TREES，tags/block/replaceable_by_trees.json 含
@@ -60,15 +87,17 @@
 //! jx(1) → jz(2) → gate(3) → 树种 roll(4)，树结构随机流 = TreesRng（池
 //! 坐标派生种子，#135 契约面）。
 //!
-//! 投影两段式（先选址后盖章）：选址全部读**未被本 pass 触碰的 pass-1
-//! 体素**——先放立的树冠不压制后选的树（原版各尝试独立采样 heightmap
-//! 语义）；盖章序 = 池序（cell_x 升序、cell_z 升序），原木/叶替换门在
-//! 盖章时对「pass-1 地形 + 已盖章树」生效，跨区块两块各算各的、结果
-//! 逐块一致（纯函数性）。
+//! 投影两段式（先选址后盖章）：选址全部走世界坐标纯函数（`column_real_top`
+//! 读密度场，不读缓冲）——先放立的树冠不压制后选的树（原版各尝试独立采样
+//! heightmap 语义）；盖章序 = 池序（cell_x 升序、cell_z 升序），原木/叶
+//! 替换门在盖章时对「本块 pass-1 地形 + 本块已盖章树」生效。跨块差异面
+//! （债，KNOWN-DIVERGENCE TREES-2 ⑤）：原版整树一次性写入、门判据含全局
+//! 已放置特征；重放模型下跨界树重叠格的赢家由各自区块的池序决定，单格
+//! 物种归属可与原版全局序不同（逐格仍确定、跨块无裂缝）。
 
 use crate::trees::{BlockSetter, TreeKind, TreesRng, ids, place_tree};
 use crate::vanilla::biomes::Biome;
-use crate::vanilla::terrain::{AIR, DIRT, GRASS, Orchestrator, SEA, SNOW_GRASS, WATER};
+use crate::vanilla::terrain::{AIR, DIRT, GRASS, Orchestrator, SNOW_GRASS, WATER};
 
 /// 树装饰专属域盐（树 pass 唯一随机域入口；与地形/气候/洞穴通道隔离）。
 const TREE_DOMAIN: u64 = 0x7BEE_5501;
@@ -145,8 +174,12 @@ fn profile(b: Biome) -> Option<(f64, TreeKind, TreeKind, f64)> {
     Some((density, primary, secondary, mix))
 }
 
-/// 世界 → 本区块局部裁剪写手：越界（跨区块冠/干）丢弃，块内按原版
+/// 世界 → 本区块局部裁剪写手：越界（跨区块冠/干）丢弃、块内按原版
 /// validTreePos / 基下 dirt 条件替换门写（引注见模块头注）。
+///
+/// 「丢弃」不丢内容：跨界格由其所属区块对同一 [`TreeSpot`] 重放补齐
+/// （原版 blockStateWriteRadius=1 跨块写 + ChunkHolder 标脏的重放等价，
+/// 裁决与引注见模块头注；本仓 worker 并行无跨界写面）。
 struct ChunkClipper<'a> {
     voxels: &'a mut [u16],
     base_x: i32,
@@ -157,8 +190,9 @@ impl BlockSetter for ChunkClipper<'_> {
     fn set(&mut self, x: i32, y: i32, z: i32, id: u16) {
         let lx = x - self.base_x;
         let lz = z - self.base_z;
-        // 跨界写 = 原版 blockStateWriteRadius=1 的 CHUNK_FEATURES 语义，
-        // 本仓 generate() 无跨界通道 → 裁剪（KNOWN-DIVERGENCE TREES-2）。
+        // 出块格不写本块缓冲：属邻块的格由邻块重放本树补齐（模块头注
+        // fix/tree-chunk-clip 裁决；旧实现在此裁剪后两侧都不写 = 真机
+        // 「树少一边树叶」缺陷）。
         if !(0..16).contains(&lx) || !(0..16).contains(&lz) {
             return;
         }
@@ -190,46 +224,34 @@ impl BlockSetter for ChunkClipper<'_> {
     }
 }
 
-/// 一列的树基：pass-1 体素实顶（密度场零交叉的块级实现）+1。
-/// 树基门 SEA+1 < base ≤ TREE_MAX_Y ⇒ 实顶 ∈ [SEA+1, SEA+51]，
-/// 扫描带恰为该窗（海床/滩涂无实顶入带 = 天然拒绝）。
-fn ground_spot(voxels: &[u16], lx: usize, lz: usize) -> Option<(i32, u16)> {
-    for y in ((SEA + 1)..=(TREE_MAX_Y - 1)).rev() {
-        let id = voxels[mcv_core::vidx(lx, y, lz)];
-        if id != AIR {
-            return Some((y + 1, id));
-        }
-    }
-    None
+/// pass 2 选中的一棵树（世界坐标 + 树基 + 树种 + 结构随机流种子）。
+/// 全部字段是 (seed, cell) 纯函数——同一棵树在任意区块的重放读数一致
+/// （`trees_cross_chunk.rs` 锁）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TreeSpot {
+    pub x: i32,
+    pub z: i32,
+    pub base_y: i32,
+    pub kind: TreeKind,
+    pub rng_seed: u64,
 }
 
-/// pass 2 选中的一棵树（世界坐标 + 树基 + 树种）。
-struct Spot {
-    x: i32,
-    z: i32,
-    base_y: i32,
-    kind: TreeKind,
-    rng_seed: u64,
-}
-
-/// pass 2：树投影。`orch` 复用 pass 1 的气候通道（群系判定无平行分类）。
+/// 选址段（两段式第一段）：扫描与区块窗口交叠 CROWN_REACH 的树池，返回
+/// 过密度门/群系门/立地门的树（池序 = cell_x 升、cell_z 升）。
 ///
-/// 两段式：先在**未被本 pass 触碰的 pass-1 体素**上完成全部选址判定
-/// （密度门/群系门/立地门互不看见彼此的冠——与原版各尝试独立采样
-/// heightmap 同语义），再按池序统一投影。
-pub fn project_trees(
-    seed: u64,
-    chunk_x: i32,
-    chunk_z: i32,
-    orch: &Orchestrator,
-    voxels: &mut [u16],
-) {
+/// 与 [`project_trees`] 同一入口供测试重放：跨界树两侧区块各自调用本函数
+/// 都能拿到同一 [`TreeSpot`]（树干所属性、树基、树种、结构种子与调用块
+/// 无关），`place_tree(&mut TreesRng::new(rng_seed), …)` 重放即可复现该树
+/// 全部写入格。
+#[must_use]
+pub fn tree_spots(seed: u64, chunk_x: i32, chunk_z: i32, orch: &Orchestrator) -> Vec<TreeSpot> {
     let base_x = chunk_x.wrapping_mul(16);
     let base_z = chunk_z.wrapping_mul(16);
     let ts = crate::vanilla::channel_seed(seed, TREE_DOMAIN);
     let ts_u = ts as u64;
-    // 邻域池扫描：树落点世界坐标纯函数 → 树干在本块的池负责全树，邻池
-    // 只贡献伸入本块的冠（CROWN_REACH 覆盖面）。
+    // 邻域池扫描：树落点世界坐标纯函数；CROWN_REACH 环带内的池（含树干
+    // 在邻块的）全部入选——树干所属块投影其裁剪整体，邻块重放伸入部分
+    // （模块头注 fix/tree-chunk-clip）。
     let c0x = (base_x - CROWN_REACH).div_euclid(CELL);
     let c1x = (base_x + 15 + CROWN_REACH).div_euclid(CELL);
     let c0z = (base_z - CROWN_REACH).div_euclid(CELL);
@@ -253,14 +275,12 @@ pub fn project_trees(
             if gate >= density {
                 continue;
             }
-            // 树干在本块才立地查顶（邻树只补冠）；立地 = would_survive
-            // 白名单（沙/石/水放弃该位）。
-            let lx = wx - base_x;
-            let lz = wz - base_z;
-            if !(0..16).contains(&lx) || !(0..16).contains(&lz) {
-                continue;
-            }
-            let Some((base_y, ground)) = ground_spot(voxels, lx as usize, lz as usize) else {
+            // 立地门（would_survive 白名单；沙/石/水放弃该位）。树基经
+            // `column_real_top` 纯函数判定——树干出块不再跳过（旧实现在此
+            // `continue`，跨界冠两侧皆失 = 真机「树少一边树叶」），且与
+            // 树干所属块的读数字节一致（两侧各算各的必同 (base_y, ground)，
+            // 否则重放错位出新裂缝）。
+            let Some((base_y, ground)) = orch.column_real_top(wx, wz) else {
                 continue;
             };
             if !GROUND.contains(&ground) {
@@ -274,7 +294,7 @@ pub fn project_trees(
                 ts_u ^ (cx as u64).wrapping_mul(0x9E37_79B1_9E37_79B1)
                     ^ (cz as u64).wrapping_mul(0x85EB_CA77_85EB_CA77),
             );
-            spots.push(Spot {
+            spots.push(TreeSpot {
                 x: wx,
                 z: wz,
                 base_y,
@@ -283,7 +303,24 @@ pub fn project_trees(
             });
         }
     }
-    for spot in spots {
+    spots
+}
+
+/// pass 2：树投影。`orch` 复用 pass 1 的气候通道（群系判定无平行分类）。
+///
+/// 两段式：[`tree_spots`] 完成全部选址判定（密度门/群系门/立地门读密度场
+/// 不读缓冲、互不看见彼此的冠——与原版各尝试独立采样 heightmap 同语义），
+/// 再按池序统一投影盖章（裁剪写 [`ChunkClipper`]）。
+pub fn project_trees(
+    seed: u64,
+    chunk_x: i32,
+    chunk_z: i32,
+    orch: &Orchestrator,
+    voxels: &mut [u16],
+) {
+    let base_x = chunk_x.wrapping_mul(16);
+    let base_z = chunk_z.wrapping_mul(16);
+    for spot in tree_spots(seed, chunk_x, chunk_z, orch) {
         let mut rng = TreesRng::new(spot.rng_seed);
         let mut clipper = ChunkClipper {
             voxels: &mut *voxels,

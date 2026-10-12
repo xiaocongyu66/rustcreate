@@ -84,10 +84,17 @@ placed feature 的 per-chunk 尝试数（E[count]/10.24，见模块头注），�
 3. **叶下不立树**：原版尝试用 OCEAN_FLOOR heightmap——叶也挡
    motion，邻树冠上的列会在冠顶续放树（森林有「叠生树」）；本仓选址读
    pass-1 体素实顶、拒绝以叶为立地 → 无叠生树。
-4. **跨界写裁剪**：原版 `blockStateWriteRadius=1` 的 CHUNK_FEATURES 语义
-   允许特征写邻区块；`generate()` 签名无跨界通道 → 树冠伸出本块的部分
-   由邻区块生成时以同一纯函数补齐（树干恒由其落点所属块负责），仅当
-   邻块尚未生成时视口边缘暂缺冠——流式加载下自愈，非持久缺块。
+4. **跨界重放 vs 跨界写**（fix/tree-chunk-clip 改写）：原版 FEATURES 步
+   `blockStateWriteRadius=1`（ChunkPyramid.java:30-33）允许特征跨写邻块
+   （WorldGenRegion.java:231-237）并经 `ServerChunkCache.blockChanged`
+   (:463-468) → `ChunkHolder.blockChanged`（ChunkHolder.java:123-135）标
+   邻块脏重网格；本仓 worker 并行无跨界写通道 → 邻块生成时对同一 TreeSpot
+   重放补齐伸入部分（`tree_spots` 纯函数，树基经 `column_real_top` 与树干
+   所属块逐字节一致；门判据只读本块「pass-1 地形 + 本块已盖章树」，两树冠
+   跨界重叠格的物种归属可与原版全局序不同——单格仍确定、无裂缝）。等价性
+   锁 `tests/trees_cross_chunk.rs`。历史：#139 初版只在树干落本块时选址，
+   本条旧文「由邻区块生成时以同一纯函数补齐」从未成立，跨界树恒缺一侧冠 =
+   真机「树少一边树叶」缺陷（2026-10-12 修复）。
 5. **树基高度门**：`SEA+1 < base ≤ TREE_MAX_Y(=SEA+52)`（派发既定门，
    legacy rust_terrain.rs TREE_MAX_Y 先例）——vanilla 无此高度上限
    （SnowyPlains 稀疏云杉原版全高度程可长）；本仓高雪原（surface>
