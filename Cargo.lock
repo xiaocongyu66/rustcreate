@@ -1563,7 +1563,9 @@ dependencies = [
 name = "mcv_worldgen"
 version = "0.1.0"
 dependencies = [
+ "log",
  "mcv_core",
+ "mcv_nbt",
 ]
 
 [[package]]

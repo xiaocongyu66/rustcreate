@@ -21,6 +21,7 @@ pub mod lake_pass;
 pub mod noise;
 pub mod perlin;
 pub mod spline;
+pub mod structure;
 pub mod terrain;
 pub mod tree_pass;
 

@@ -298,3 +298,38 @@ clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐
    等价退化为「非空气非流体即铺石」。
 5. **height_range 上沿**：`below_top 0`（max_inclusive=320 出界行）
    取 [0,320) 均匀——单点边界差，扫描/阈值面自动消化。
+
+## NBT-* mcv_nbt 底座（#177，feat/nbt-foundation）的登记偏差
+
+1. **NBT-UTF8-CESU**：modified UTF-8 的补充平面字符原版 `writeUTF` 产出
+   CESU-8 surrogate 对（2×3 字节）；本仓读写走标准 UTF-8 4 字节。字符级
+   语义一致，字节级与 Java 端互读非常规文本（原版合法数据从不含非 BMP
+   字符串——注册表名/SNBT/模板实测全 ASCII）。孤立 surrogate（Java 可
+   持、Rust String 不可）解码直接 BadUtf8。
+2. **NBT-ACCOUNT-SIMPL**：配额记账口径简化——字符串照抄 36+2×len 与
+   quota 2Mi/100Mi/depth 512 常数，但 compound/list 容器不记 self-size
+   （原版每 tag 记 36）；同输入本仓配额余量略宽。
+3. **NBT-WRITE-STRICT**：字符串 >65535 mutf8 字节时报 TooLarge，原版
+   StringFallbackDataOutput 静默写空串（选更响的行为）。
+4. **NBT-SNBT**：SNBT 子集缺口——hex 整数（0x..）、数字下划线分隔符
+   （1_000）、`[;]` 显式空数组类型声明未实装；`[I;]` 域内小数元素按
+   截断接受（原版拒绝）。数组糖外的解析面（注释/尾逗号/引号转义/
+   NaN/Infinity/指数）与原版一致。
+5. **NBT-NEGINT-LAX**：无后缀超 i32 整数字面量（9999999999）按裸串接受
+   （原版报「too big, use L suffix」）。
+
+## STRU-* 结构模板运行时（#177）的接线近似
+
+1. **STRU-1**：`palettes` 多调色板变体只取第 0 个；blocks `state` 越界
+   索引回落空气（原版 palette 回落 first-entry 语义）。26.1 data 树实物
+   全为单 `palette` 现代格式（blocks/pos/state），旧 BlockIndices/
+   width/height/length 世代格式不复刻（资产实物无此形态）。
+2. **STRU-RNG**：integrity 掷骰流为单流 SplitMix64(seed)（lake_pass
+   LakeRng 同族先例）；原版 `StructurePlaceSettings.getRandom(pos)` 无
+   random 时按 Mth.getSeed(pos) 逐位播种 Xoroshiro128++。同 seed 两次
+   放置逐字节一致（测试锁死），但与原版不位同。
+3. **STRU-STATE**：mirror/rotation 只变换 block pos；palette Name 的
+   facing 等 blockstate 属性旋转（BlockRotationUtil 全表）未实装。
+4. **STRU-BE**：block `nbt`（方块实体）与 `entities` 读取后忽略。
+5. **STRU-LOOKUP**：Name→BlockId 线性查 mcv_core::BLOCKS，O(n)；刀 7
+   统一换名称→索引表。
