@@ -52,6 +52,23 @@ jobs:
             done
           done
           exit $fail
+      # NBT 底座外部依赖白名单守卫(任务板 #177):mcv_nbt 是全仓共享的通用
+      # 序列化模块——零领域知识不仅指不 use mcv_* game 类型,也指外部依赖面
+      # 必须最小。白名单:flate2(GZIP/ZLIB,纯 Rust 后端,原版 structure .nbt
+      # 全为 GZIP 压缩,自写 inflate 不值)。新增外部依赖必须显式改本守卫。
+      - name: mcv_nbt dependency whitelist guard
+        run: |
+          deps=$(cargo tree -p mcv_nbt -e normal,build --depth 1 --prefix none \
+                 | awk '{print $1}' | sort -u | grep -v '^mcv_nbt$' || true)
+          if echo "$deps" | grep -q '^mcv_'; then
+            echo "::error::mcv_nbt 依赖了 mcv_* crate(NBT 底座必须零领域知识)"
+            exit 1
+          fi
+          extra=$(echo "$deps" | grep -v -x 'flate2' || true)
+          if [ -n "$extra" ]; then
+            echo "::error::mcv_nbt 引入白名单外外部依赖: $extra"
+            exit 1
+          fi
 
   test:
     runs-on: ubuntu-24.04
@@ -65,6 +82,10 @@ jobs:
       # 使 sounds_exist 的全树 ogg 校验真实发生。
       - name: Fetch vanilla sounds (sounds.json + ogg tree)
         run: bash ci/fetch-sounds.sh
+      # 原版结构模板 .nbt 树(结构管线真件测试)。CDN 不可达时容许失败:
+      # 测试侧按「资产目录在否」优雅 skip(打印 K-STRUCT skip 行)。
+      - name: Fetch vanilla structures (.nbt tree, warn-allowed)
+        run: bash ci/fetch-structures.sh || echo "::warning::fetch-structures 失败,结构测试走 skip 路径"
       - run: cargo test --workspace --locked
 
   render-headless:

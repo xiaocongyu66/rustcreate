@@ -34,6 +34,11 @@ jobs:
       - name: Fetch vanilla sounds from Mojang CDN (dev builds only)
         if: github.event_name == 'push'
         run: bash ci/fetch-sounds.sh
+      # 结构模板 .nbt 树随 dev 包分发（同一 DEVELOP_ONLY 约定；结构测试消费）。
+      # release 路径不跑 → 产物不含 Mojang 资产。
+      - name: Fetch vanilla structures from Mojang CDN (dev builds only)
+        if: github.event_name == 'push'
+        run: bash ci/fetch-structures.sh
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
