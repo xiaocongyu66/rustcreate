@@ -1234,7 +1234,7 @@ impl AppState {
 
     /// UI 按钮按下音（本波 #143）。26.1：`AbstractWidget.mouseClicked`
     /// （AbstractWidget.java:106-118）命中即 `playDownSound` →
-    /// `playButtonClickSound`（:163-166）`forUI(UI_BUTTON_CLICK, 1.0F)`
+    /// `playButtonClickSound`（:165-167）`forUI(UI_BUTTON_CLICK, 1.0F)`
     /// （SoundEvents.java:1636 "ui.button.click"）；滑杆松开同音
     /// （AbstractSliderButton.onRelease :153-155）。世界列表行同音
     /// （WorldSelectionList.java:579/:594）。
@@ -1544,7 +1544,7 @@ impl AppState {
         };
         for ev in events {
             // 按钮按下 / 滑杆松开都播 UI 点击音（AbstractWidget.java:106-118
-            // → playButtonClickSound :163-166；滑杆松开同音
+            // → playButtonClickSound :165-167；滑杆松开同音
             // AbstractSliderButton.onRelease :153-155）。
             match ev {
                 mcv_ui::widget::UiEvent::Click { .. }
@@ -1604,7 +1604,7 @@ impl AppState {
         }
         if let Some(id) = self.hit_menu(x, y) {
             // 按下沿音（AbstractWidget.mouseClicked :106-118：命中即
-            // playDownSound，先音后 onClick；:163-166 音量 1.0F）。
+            // playDownSound，先音后 onClick；:165-167 音量 1.0F）。
             self.play_ui_click();
             if id == "quit" {
                 self.quit_requested = true;

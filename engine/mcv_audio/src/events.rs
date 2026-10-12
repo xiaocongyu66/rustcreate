@@ -65,7 +65,7 @@ pub const ITEM_PICKUP: &str = "entity.item.pickup";
 
 /// UI 按钮按下（SoundEvents.java:1636 `UI_BUTTON_CLICK`；消费点
 /// AbstractWidget.mouseClicked :106-118 命中即 playDownSound →
-/// playButtonClickSound :163-166 `forUI(UI_BUTTON_CLICK, 1.0F)`；
+/// playButtonClickSound :165-167 `forUI(UI_BUTTON_CLICK, 1.0F)`；
 /// 世界列表行同音 WorldSelectionList.java:579/:594；滑杆松开同音
 /// AbstractSliderButton.onRelease :153-155）。app.rs 菜单/按钮接线。
 pub const UI_BUTTON_CLICK: &str = "ui.button.click";
