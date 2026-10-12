@@ -291,16 +291,24 @@ fn game_dispatch_records_and_routes_hi_priority() {
     rt.phase = GamePhase::Playing;
     rt.render_dist = 2;
 
-    // 3×3 灯就绪夹具：石板地面顶 y=40（streaming.rs lit_chunk 同款手工推进）。
+    // 5×5 灯就绪夹具：石板地面顶 y=40（streaming.rs lit_chunk 同款手工
+    // 推进）。外圈两环必须补齐——预算流邻块（如 (-1,-1)）的 3×3 邻域伸
+    // 出 3×3 夹具，缺块即门槛全拒、零 lo 派发。request 环半径 = 2 恰被
+    // 覆盖，无世界生成插块干扰。
+    for dz in -2i32..=2 {
+        for dx in -2i32..=2 {
+            let p = ChunkPos::new(dx, dz);
+            rt.chunks.insert(p, lit_floor_chunk(p, 40));
+        }
+    }
+    // 参照快照源：中心块 (0,0) 的 3×3 邻域（dz 外层行主序，与
+    // snapshot_neighborhood 同布局）。
     let mut handles: Vec<(ChunkPos, Arc<ChunkHandle>)> = Vec::new();
     for dz in -1i32..=1 {
         for dx in -1i32..=1 {
             let p = ChunkPos::new(dx, dz);
-            handles.push((p, lit_floor_chunk(p, 40)));
+            handles.push((p, rt.chunks[&p].clone()));
         }
-    }
-    for (p, h) in &handles {
-        rt.chunks.insert(*p, h.clone());
     }
     // 玩家立于中心块地面上、准星垂直向下 → interact(false) 命中脚下石块。
     rt.player.pos = glam::Vec3::new(8.5, 41.5, 8.5);
