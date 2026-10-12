@@ -703,8 +703,8 @@ fn flat_dist2(a: Vec3, b: Vec3) -> f32 {
     dx * dx + dz * dz
 }
 
-/// 游走目标点：水平 2..10 格（DefaultRandomPos 排除贴身处）、垂直 ±2（简化，原版 ±7）。
-fn random_point_around(pos: Vec3, rng: &mut impl FnMut() -> u32) -> Vec3 {
+/// 游走目标点（采样语义，任务 #131 缺口 3 红锁公开面）。
+pub fn random_point_around(pos: Vec3, rng: &mut impl FnMut() -> u32) -> Vec3 {
     let r1 = rng() as f32 / u32::MAX as f32;
     let r2 = rng() as f32 / u32::MAX as f32;
     let r3 = rng() as f32 / u32::MAX as f32;

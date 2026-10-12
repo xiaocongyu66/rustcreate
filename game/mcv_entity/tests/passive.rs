@@ -35,6 +35,16 @@ fn stone_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
 }
 
 fn harness(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec3, seed: u64) -> App {
+    harness_with_tick(chunks, player, seed, true)
+}
+
+/// 变体：显式指定本步是否跨 tick 边界（生产 60 Hz 步里 2/3 是非 tick 步）。
+fn harness_with_tick(
+    chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
+    player: Vec3,
+    seed: u64,
+    on_tick: bool,
+) -> App {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
@@ -44,7 +54,7 @@ fn harness(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec3, seed: u64
     app.resources.insert(PassiveServices {
         chunks: Arc::new(chunks.clone()),
         player_pos: player,
-        on_tick: true,
+        on_tick,
         seed,
     });
     app
@@ -250,5 +260,41 @@ fn chicken_falls_slower_than_cow() {
     assert!(
         chicken_y > cow_y,
         "鸡应缓降：chicken {chicken_y} vs cow {cow_y}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 6) 缺口 4（鸡慢落 · tick 门）：Chicken.aiStep（Chicken.java:124-127）的
+//    ×0.6 阻尼每 **tick**（20 Hz）施加一次——非 tick 固定步（on_tick=false）
+//    不得重复阻尼（旧实现在每个 60 Hz 物理步都乘 → 阻尼 3× 过强）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn chicken_slow_fall_is_tick_gated_not_step_gated() {
+    let chunks = stone_chunk();
+    let mut cow_app = harness_with_tick(&chunks, Vec3::new(60.0, 64.0, 60.0), 5, false);
+    let mut chicken_app = harness_with_tick(&chunks, Vec3::new(60.0, 64.0, 60.0), 5, false);
+    spawn_passive_mob(&mut cow_app.world, MobId::COW, Vec3::new(8.0, 90.0, 8.0));
+    spawn_passive_mob(
+        &mut chicken_app.world,
+        MobId::CHICKEN,
+        Vec3::new(8.0, 90.0, 8.0),
+    );
+    for _ in 0..4 {
+        step(&mut cow_app);
+        step(&mut chicken_app);
+    }
+    let y = |app: &App| {
+        app.world
+            .read::<mcv_entity::PhysBody>()
+            .iter()
+            .map(|(_, b)| b.pos.y)
+            .next()
+            .unwrap()
+    };
+    let (cow_y, chicken_y) = (y(&cow_app), y(&chicken_app));
+    assert!(
+        (cow_y - chicken_y).abs() < 1e-3,
+        "非 tick 步鸡与牛下落轨迹必须一致（×0.6 只在 aiStep 20 Hz 生效，Chicken.java:124-127）：cow {cow_y} vs chicken {chicken_y}"
     );
 }

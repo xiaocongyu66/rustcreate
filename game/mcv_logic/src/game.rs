@@ -9228,6 +9228,94 @@ mod tests {
              N 在册(组A) 与 N 缺席(组B) 的 C 光照应逐字节一致"
         );
     }
+
+    // -----------------------------------------------------------------------
+    // 缺口 5（刷怪豁免 · 任务 #131）：自然刷怪只发生在实体 tick 环内区块。
+    // 26.1：ServerChunkCache.tickSpawningChunk（ServerChunkCache.java:423-424）
+    // 只对 `canSpawnEntitiesInChunk` 的区块 spawnForChunk，谓词 =
+    // entityManager.canPositionTick（ServerLevel.java:1818-1820）= 模拟距离环；
+    // 8 chunk 候选环（DistanceManager.java:42 naturalSpawnChunkCounter(8)）是
+    // 必要不充分条件。模拟距离 < 8 时环外已载区块**不刷怪**——否则怪出生即
+    // 落进 mob_ai_system 实体门的冻结域（不 tick、账本不走、永存不死）。
+    // -----------------------------------------------------------------------
+
+    /// 全封闭暗室：石 0..=62 + 石 65..=100，63..64 空腔。天光/方块光全 0
+    /// （is_dark_enough 三段门恒过），y=63 是唯一 standable 格
+    /// （下 62 实心、63/64 空气、65+ 石封顶 → 天光 0）。
+    fn dark_sealed_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
+        let handle = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
+        {
+            let mut vg = handle.voxels.write().unwrap();
+            for y in (0..=62).chain(65..=100) {
+                for zz in 0..16usize {
+                    for xx in 0..16usize {
+                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+                    }
+                }
+            }
+        }
+        let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
+            handle.voxels.read().unwrap().as_slice(),
+        ));
+        *handle.heightmap.write().unwrap() = hm;
+        {
+            let vg = handle.voxels.read().unwrap();
+            let mut lg = handle.light.write().unwrap();
+            let hg = handle.heightmap.read().unwrap();
+            let voxels: &[u16] = bytemuck::cast_slice(vg.as_slice());
+            let mut view = mcv_light::LightChunk {
+                voxels,
+                light: &mut lg[..],
+                heightmap: &hg[..],
+            };
+            mcv_light::init(&mut view);
+        }
+        handle.advance_to(Stage::LightLocalReady);
+        handle
+    }
+
+    fn spawn_test_runtime(tag: &str) -> GameRuntime {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (tag, std::process::id(), std::time::SystemTime::now()).hash(&mut h);
+        let dir = std::env::temp_dir().join(format!("mcv-natspawn-{:x}", h.finish()));
+        GameRuntime::new_headless(20261012, dir, GameMode::Survival)
+    }
+
+    #[test]
+    fn natural_spawn_skips_chunks_outside_entity_ticking_ring() {
+        let mut rt = spawn_test_runtime("outside");
+        rt.render_dist = 2; // sim_dist = 3：Chebyshev 4 已在实体 tick 环外
+        rt.chunks_mut()
+            .insert(ChunkPos::new(4, 0), dark_sealed_chunk(4, 0));
+        rt.refresh_player_tickets(ChunkPos::new(0, 0));
+        // 候选环 ±8 全指向该块（唯一在册），暗室 standable 概率 1/67×6 组
+        // ≈ 8.6%/轮——若环门缺失，400 轮必然刷出怪。
+        for _ in 0..400 {
+            rt.try_natural_spawn();
+        }
+        assert_eq!(
+            rt.mobs_app.world.component_count::<mcv_entity::MobKind>(),
+            0,
+            "模拟环外区块（Chebyshev 4 > sim_dist 3）不得自然刷怪"
+        );
+    }
+
+    #[test]
+    fn natural_spawn_allows_chunks_inside_entity_ticking_ring() {
+        let mut rt = spawn_test_runtime("inside");
+        rt.render_dist = 2; // sim_dist = 3：Chebyshev 2 在环内，块距 32..47 ∈ (24,128]
+        rt.chunks_mut()
+            .insert(ChunkPos::new(2, 0), dark_sealed_chunk(2, 0));
+        rt.refresh_player_tickets(ChunkPos::new(0, 0));
+        for _ in 0..400 {
+            rt.try_natural_spawn();
+        }
+        assert!(
+            rt.mobs_app.world.component_count::<mcv_entity::MobKind>() > 0,
+            "环内暗室区块必须能自然刷怪（豁免门不得过修成全域禁刷）"
+        );
+    }
 }
 
 #[cfg(test)]

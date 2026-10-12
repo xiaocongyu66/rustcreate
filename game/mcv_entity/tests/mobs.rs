@@ -780,3 +780,120 @@ fn raw_brightness_subtracts_sky_darken() {
     assert_eq!(raw_brightness(3, 0, 11), 0, "天光扣到负封 0");
     assert_eq!(raw_brightness(0, 6, 11), 6, "方块光不受 skyDarken 影响");
 }
+
+// ---------------------------------------------------------------------------
+// 10) 实体保真五缺口（任务 #131，26.1 实读引注）
+// ---------------------------------------------------------------------------
+
+/// 缺口 1（骷髅弓 · 拉弓节奏 + 弹道 power）：RangedBowAttackGoal.java:123-136
+/// ——attackTime 归零才 startUsingItem（:134-136），pullTime ≥ 20 且本 tick
+/// 有视线才放箭（:126-132）；放箭 power = BowItem.getPowerForTime(20) = 1.0
+/// （BowItem.java:74-82），base = power×2.0 = 2.0（AbstractArrow.java:718-720）
+/// ——不是 RangedAttackGoal.java:92-93 的 clamp(dist/radius) 曲线
+/// （那是雪球/烈焰人等 RangedAttackGoal 族的公式）。
+#[test]
+fn skeleton_draw_gate_first_shot_at_20_ticks_full_power() {
+    let def = MobId::SKELETON.def();
+    let mut brain = Brain::new();
+    let mut rng = || 121u32; // 121%120=1：不触发游走
+    let p = percept(Vec3::ZERO, Some(Vec3::new(9.0, 0.0, 0.0)));
+    let mut shots = Vec::new();
+    for t in 1..=130 {
+        for a in brain.tick(def, &p, &mut rng) {
+            if let AiAction::Shoot { base_damage, .. } = a {
+                assert!(
+                    (base_damage - 2.0).abs() < 1e-6,
+                    "满拉 20t power=1.0 → base=2.0（BowItem.java:74-82 + AbstractArrow.java:718-720），得 {base_damage}"
+                );
+                shots.push(t);
+            }
+        }
+    }
+    assert!(
+        shots.iter().all(|&t| t >= 20),
+        "首箭不得早于拉弓满 20 tick（RangedBowAttackGoal.java:126-132），实际 {shots:?}"
+    );
+    // 索敌 tick（1）即 startUsingItem（attackTime=-1 → --≤0，:134-136），
+    // pullTime ≥ 20 → 第 21 tick 首箭。
+    assert_eq!(shots[0], 21, "索敌 tick + 拉弓 20 tick");
+    // 普通(40)间隔 + 拉弓 20 → 周期 60（AbstractSkeleton.java:52,55）。
+    assert_eq!(shots[1] - shots[0], 60, "attackIntervalMin 40 + draw 20");
+}
+
+/// 缺口 2（近战触达）：Mob.isWithinMeleeAttackRange（Mob.java:1317-1328）=
+/// 自身 AABB inflate(DEFAULT_ATTACK_REACH, 0, ·) ∩ 目标 hitbox
+/// （getAttackBoundingBox :1333-1352）——水平中心距阈值含**攻击者半宽**：
+/// 僵尸(0.3) vs 玩家(0.3) → 0.828+0.3+0.3 ≈ 1.428。
+#[test]
+fn melee_reach_includes_attacker_half_width() {
+    let def = MobId::ZOMBIE.def();
+    let mut rng = || 121u32;
+    // d=1.2 ∈ (旧 0.828+0.3=1.128, 新 1.428)：原版触达内必须命中。
+    let mut brain = Brain::new();
+    let p = percept(Vec3::ZERO, Some(Vec3::new(1.2, 0.0, 0.0)));
+    let mut hit = false;
+    for _ in 0..4 {
+        for a in brain.tick(def, &p, &mut rng) {
+            if matches!(a, AiAction::MeleeHit { .. }) {
+                hit = true;
+            }
+        }
+    }
+    assert!(
+        hit,
+        "d=1.2 ≤ 0.828+0.3+0.3：自身 AABB inflate 触达内必须命中（Mob.java:1333-1352）"
+    );
+    // d=1.5 > 1.428：出触达不命中（防过修）。
+    let mut brain = Brain::new();
+    let far = percept(Vec3::ZERO, Some(Vec3::new(1.5, 0.0, 0.0)));
+    let mut hit_far = false;
+    for _ in 0..4 {
+        for a in brain.tick(def, &far, &mut rng) {
+            if matches!(a, AiAction::MeleeHit { .. }) {
+                hit_far = true;
+            }
+        }
+    }
+    assert!(!hit_far, "d=1.5 > 1.428 不得命中");
+}
+
+/// 缺口 3（游荡采样）：WaterAvoidingRandomStrollGoal.java:27 →
+/// LandRandomPos.getPos(mob, 10, 7) → RandomPos.generateRandomDirection
+/// （RandomPos.java:18-23）：x/z = next(2·10+1)−10 ∈ [−10,10]、
+/// y = next(2·7+1)−7 ∈ [−7,7] 的**方块偏移**，落点为偏移方块底面中心
+/// （atBottomCenterOf，RandomPos.java:111）。
+#[test]
+fn wander_sampling_matches_random_pos_cube() {
+    let origin = Vec3::new(8.0, 64.0, 8.0);
+    let mut max_abs_y = 0.0f32;
+    let mut near_origin_h = false;
+    for seed in 0..500u64 {
+        let mut rng = lcg(seed + 1);
+        let t = random_point_around(origin, &mut rng);
+        let d = t - origin;
+        assert!(
+            d.x.abs() <= 10.0 && d.z.abs() <= 10.0,
+            "水平偏移界 ±10（RandomPos.java:19,21）：{d:?}"
+        );
+        assert!(
+            d.y.abs() <= 7.0,
+            "垂直偏移界 ±7（generateRandomDirection(10,7)）：{d:?}"
+        );
+        max_abs_y = max_abs_y.max(d.y.abs());
+        if d.x * d.x + d.z * d.z < 4.0 {
+            near_origin_h = true;
+        }
+        assert!(
+            ((d.x.fract() - 0.5).abs() < 1e-4) && ((d.z.fract() - 0.5).abs() < 1e-4),
+            "落点 = 偏移方块底面中心（RandomPos.java:111 atBottomCenterOf）：{d:?}"
+        );
+    }
+    assert!(
+        max_abs_y > 2.0,
+        "垂直采样必须覆盖到 ±7（旧 ±2 简化）：max |Δy| = {max_abs_y}"
+    );
+    assert!(
+        near_origin_h,
+        "方块偏移采样必须能取到 <2 格贴身偏移（旧 2..10 圆盘取不到）"
+    );
+}

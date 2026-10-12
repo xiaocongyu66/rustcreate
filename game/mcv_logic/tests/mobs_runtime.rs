@@ -272,15 +272,45 @@ fn skeleton_shoots_ranged_instead_of_melee() {
     let chunks = air_chunk_map();
     let player = Vec3::new(4.0, 64.0, 8.0);
     spawn_mob(&mut app.world, MobId::SKELETON, Vec3::new(13.0, 64.0, 8.0)); // dist 9 ∈ (7.5,15]
-    let mut melee = 0usize;
-    for _ in 0..5 {
+    // 钉住出生格：只验射击节拍，不走位（游走/追击方向由全局 RNG 决定）。
+    let mob_e = app
+        .world
+        .read::<MobKind>()
+        .iter()
+        .map(|(e, _)| e)
+        .next()
+        .expect("skeleton spawned");
+    let pin = |app: &mut App| {
+        if let Some(b) = app.world.write::<PhysBody>().get_mut(mob_e) {
+            b.pos = Vec3::new(13.0, 64.0, 8.0);
+            b.vel = Vec3::ZERO;
+        }
+    };
+    // 拉弓 20 tick 门（RangedBowAttackGoal.java:123-136）：前 19 tick
+    // 不得出箭、不得走近战门。
+    for t in 1..=19 {
+        pin(&mut app);
         step(&mut app, &chunks, player, true, false);
-        melee += drain_melee(&mut app).len();
+        assert_eq!(drain_melee(&mut app).len(), 0, "拉弓区间不走近战门");
+        assert_eq!(
+            app.world.component_count::<MobArrow>(),
+            0,
+            "第 {t} tick 出箭：拉弓未满 20 tick（pullTime ≥ 20 门）"
+        );
     }
-    assert_eq!(melee, 0, "拉弓区间不走近战门");
+    // 第 20~21 tick 满蓄力放箭。
+    let mut shot_at = None;
+    for t in 20..=25 {
+        pin(&mut app);
+        step(&mut app, &chunks, player, true, false);
+        if app.world.component_count::<MobArrow>() > 0 {
+            shot_at = Some(t);
+            break;
+        }
+    }
     assert!(
-        app.world.component_count::<MobArrow>() > 0,
-        "有 LOS 且 dist≤15 必须产出箭矢（RangedBowAttackGoal）"
+        shot_at.is_some(),
+        "拉弓满 20 tick 且有 LOS 必须出箭（RangedBowAttackGoal.java:126-132）"
     );
 }
 
