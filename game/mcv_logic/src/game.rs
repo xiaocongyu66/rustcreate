@@ -1159,6 +1159,45 @@ impl GameRuntime {
         )
     }
 
+    /// E4 测试装配（headless + 显式 IO 异步开关）：`io_async = true` 走独立
+    /// IO 线程（两段式落盘 + 读盘投递），`false` = 同步路（`MCV_IO_ASYNC=0`
+    /// 回滚开关同款语义）。生产装配走 [`new`](Self::new)（env 解析一次）。
+    #[doc(hidden)]
+    pub fn new_headless_with_io(
+        seed: u64,
+        save_dir: std::path::PathBuf,
+        mode: GameMode,
+        io_async: bool,
+    ) -> Self {
+        let _ = io_async;
+        Self::new_headless(seed, save_dir, mode)
+    }
+
+    /// IO 在途记账观测面（测试取证；非调度依据）：`(在途写, 在途读)`。
+    /// 在途写 = 已投递快照未收到完成回执；在途读 = 已投递读请求未回填。
+    #[doc(hidden)]
+    pub fn io_inflight(&self) -> (usize, usize) {
+        (0, 0)
+    }
+
+    /// 测试钩子：登记一笔在途读记账（等价请求环投递后的驻留标记），
+    /// 供防乒乓驻留断言在不依赖真实 IO 时序的情况下驱动。
+    #[doc(hidden)]
+    pub fn io_debug_mark_loading(&mut self, _pos: ChunkPos) {}
+
+    /// `MCV_IO_ASYNC` 语义（E4 回滚开关，对齐 `MCV_MESHER_WORKERS` /
+    /// `MCV_TERRAIN_BACKEND` 先例）：未设或非 `"0"` → 异步（独立 IO 线程）；
+    /// `"0"` → 同步路（E3 前行为）。纯函数核，env 解析见 [`io_async_enabled`]。
+    pub fn io_async_enabled_from(v: Option<&str>) -> bool {
+        v != Some("0")
+    }
+
+    /// 生产解析：env 在构造时点读一次（主线程；后台线程不反复读 env，
+    /// 同 `TerrainScheduler::new` 的后端固定纪律）。
+    pub fn io_async_enabled() -> bool {
+        Self::io_async_enabled_from(std::env::var("MCV_IO_ASYNC").ok().as_deref())
+    }
+
     fn assemble(
         seed: u64,
         mesher: Box<dyn ChunkMesher>,
