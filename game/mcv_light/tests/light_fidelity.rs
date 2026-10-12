@@ -656,18 +656,15 @@ fn fidelity_dig_shaft_extends_direct_sky_column_incrementally() {
 }
 
 // ---------------------------------------------------------------------------
-// F9（红 → ignore）：顶半砖应截断直天源柱——形状感知遮光缺失。
+// F9 形状感知遮光（病灶#1）：半砖面遮蔽形截断直天源柱。
 // ---------------------------------------------------------------------------
 
 /// 原版真值：顶半砖 `useShapeForLightOcclusion=true`（SlabBlock.java:
 /// 49-51 `TYPE != DOUBLE`），其 UP 面遮蔽形为满格 → `isEdgeOccluded`
 /// （ChunkSkyLightSources.java:140-148 的 faceShapeOccludes 分支）截断
-/// 源柱；砖格与其下方天光由 BFS 侧向供给（14）。本引擎 damp(slab)=0
-/// 且无形状感知（lib.rs KNOWN-DIVERGENCE）→ 源柱穿透，下方错亮 15。
-/// 修复需 (方块, 状态, 方向) 级面遮蔽形表（引擎单文件面内非小修），
-/// 划入重建波（docs/light-audit.md 病灶#1）。
+/// 源柱（lowestSourceY = 半砖格上方一格，SkyLightEngine.java:106-136）；
+/// 砖格与其下方天光由 BFS 侧向供给（14）。
 #[test]
-#[ignore = "light-audit: 病灶#1 待重建波（形状感知遮光：顶半砖截断源柱）"]
 fn fidelity_top_slab_truncates_direct_sky_column() {
     let slab = BlockId(bid("oak_slab")).with_state(1); // bit0=1 → 顶半砖
     let mut w = World::flat(40);
@@ -688,6 +685,54 @@ fn fidelity_top_slab_truncates_direct_sky_column() {
         }
         // 上方空气仍是满照度源柱。
         assert_eq!(sky(&c, 8, 46, 8), 15);
+    }
+    // 生产路径（update_block 列修）拆掉半砖：源柱穿透回整列 15。
+    edit(&mut w, 8, 45, 8, slab.0, AIR);
+    {
+        let c = w.chunk();
+        for y in 41..=45 {
+            assert_eq!(sky(&c, 8, y, 8), 15, "拆后半砖列 y={y}");
+        }
+    }
+}
+
+/// 原版真值（病灶#1 配套，重建波切分②）：悬空**底**半砖的 DOWN 面遮蔽
+/// 形为满格（SlabBlock.java:35 `SHAPE_BOTTOM = column(16, 0, 8)` 贴 y=0）
+/// → 作为该边 topState 截断**下方**源柱（ChunkSkyLightSources.java:140-148
+/// 的 top↓ 分支，findLowestSourceY 返回 topState y）；砖格自身在源柱内
+/// 保 15（lowestSourceY = 砖格 y，addSourcesAbove 含该格），下方阴影列
+/// 14（侧向一步源）。
+#[test]
+fn fidelity_bottom_slab_keeps_cell_lit_and_shades_below() {
+    let slab = BlockId(bid("oak_slab")); // state 0 → 底半砖
+    let mut w = World::flat(40);
+    // 悬空底半砖 (8,45,8)。
+    w.voxels[vidx(8, 45, 8)] = slab.0;
+    w.rebuild_heightmap();
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+    {
+        let c = w.chunk();
+        // 砖格自身是源柱格：15；下方阴影列 14；上方空气 15。
+        assert_eq!(sky(&c, 8, 45, 8), 15, "底半砖砖格自身保 15");
+        for y in 41..45 {
+            assert_eq!(sky(&c, 8, y, 8), 14, "底半砖下方阴影 y={y}");
+        }
+        assert_eq!(sky(&c, 8, 46, 8), 15, "上方源柱");
+    }
+    // 生产路径放回顶半砖变叠合（视觉上等价整块）：改放一格顶半砖于其上
+    // ——新格 UP 面满格 → 该列源柱只到新格上方。
+    let top = BlockId(bid("oak_slab")).with_state(1);
+    edit(&mut w, 8, 46, 8, AIR, top.0);
+    {
+        let c = w.chunk();
+        assert_eq!(sky(&c, 8, 46, 8), 14, "叠合顶半砖格侧向 14");
+        assert_eq!(sky(&c, 8, 47, 8), 15, "叠合层上方仍源柱");
+        for y in 41..45 {
+            assert_eq!(sky(&c, 8, y, 8), 14, "叠合后下方阴影不变 y={y}");
+        }
     }
 }
 
