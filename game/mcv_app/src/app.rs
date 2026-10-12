@@ -3246,4 +3246,28 @@ mod tests {
             );
         }
     }
+
+    /// #152 tooltip 物品名查询（26.1 Screen.getTooltipFromItem:237-242 首
+    /// 行 = 物品显示名）：modern 官方键 + legacy 无键回退注册名两档 +
+    /// 空堆不显（ACS:196 hoveredSlot.hasItem() 门）。
+    #[test]
+    fn tooltip_title_modern_legacy_and_empty() {
+        let modern = mcv_item::ItemStack::new(mcv_item::OAK_STAIRS, 1);
+        assert_eq!(
+            tooltip_title(crate::i18n::Lang::En, &modern),
+            Some("Oak Stairs".to_string()),
+            "modern：i18n 表内官方名"
+        );
+        let legacy = mcv_item::ItemStack::new(mcv_item::LOG, 1);
+        assert_eq!(
+            tooltip_title(crate::i18n::Lang::En, &legacy),
+            Some("log".to_string()),
+            "legacy：无官方 key 回退注册名（不伪造翻译）"
+        );
+        assert_eq!(
+            tooltip_title(crate::i18n::Lang::En, &mcv_item::ItemStack::empty()),
+            None,
+            "空堆不显（ACS:196 门）"
+        );
+    }
 }
