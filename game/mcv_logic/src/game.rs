@@ -3294,7 +3294,9 @@ impl GameRuntime {
     ///
     /// 级别 > MAX_LEVEL 的区块不授权任何推进（同帧已入卸载候选）。
     fn advance_status_by_level(&self, levels: &HashMap<ChunkPos, u8>) {
-        for (pos, handle) in &self.chunks {
+        // E6：外层 Arc 化后 for 循环须显式 .iter()（泛型 IntoIterator bound
+        // 不走 Deref 强转，`&Arc<HashMap>` 不满足 bound）。
+        for (pos, handle) in self.chunks.iter() {
             let Some(target) = ticket::generation_status(
                 levels.get(pos).copied().unwrap_or(ticket::NOT_LOADED) as i32,
             ) else {
