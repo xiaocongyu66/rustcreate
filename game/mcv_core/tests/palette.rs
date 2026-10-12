@@ -82,9 +82,17 @@ fn ladder_matches_vanilla_strategy_table() {
         let mut store = mcv_core::VoxelStore::new();
         fill_distinct(&mut store, n);
         let s = store.section(0);
-        let (bits, pal) = expect_ladder(n);
-        assert_eq!(s.bits(), bits, "{n} 个不同值应落 {bits}bit 档");
-        assert_eq!(s.palette_len(), pal, "{n} 值 palette 长度");
+        // 空气占一个 palette entry（原版 PalettedContainer 对在场值
+        // 一视同仁计数）：air 床上写 n 个非空气值 → 在场相异值 n+1，
+        // 期望表按 n+1 取（换档仍发生在总相异 17/33/65/129/257）。
+        let (bits, pal) = expect_ladder(n + 1);
+        assert_eq!(
+            s.bits(),
+            bits,
+            "{n} 非空气值（+空气共 {}）应落 {bits}bit 档",
+            n + 1
+        );
+        assert_eq!(s.palette_len(), pal, "{n}+1 值 palette 长度");
     }
 }
 
