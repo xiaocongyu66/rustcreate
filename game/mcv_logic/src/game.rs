@@ -2368,8 +2368,9 @@ impl GameRuntime {
             return false;
         }
         // 主线程锁内快照（唯一碰 RwLock 的点，拷贝 ~50µs 量级）。
-        let ids: Box<[u16]> =
-            bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        let ids: Box<[u16]> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice())
+            .to_vec()
+            .into_boxed_slice();
         let hm: Box<[i16; 256]> = Box::new(**handle.heightmap.read().unwrap());
         let seq = self.io_seq.wrapping_add(1);
         self.io_seq = seq;
