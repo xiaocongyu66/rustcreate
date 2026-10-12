@@ -183,6 +183,14 @@ def main():
         )
     )
     OUT_RS.write_text("\n".join(out))
+    # CI 的 cargo fmt --check 覆盖 include! 文件，产物必须 rustfmt 稳定：
+    # 生成后立即过一遍 rustfmt（本机缺失时跳过——提交前手动补跑）。
+    import subprocess
+
+    if subprocess.run(
+        ["rustfmt", "--edition", "2024", str(OUT_RS)]
+    ).returncode != 0:
+        print("WARN: rustfmt 失败/缺失，提交前手动 rustfmt", file=sys.stderr)
 
     counts = {
         "tag_files": len(files),

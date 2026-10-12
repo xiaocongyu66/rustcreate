@@ -10,2420 +10,1530 @@ use mcv_registry::{TagEntry, TagKey, TagSet};
 
 pub const TAG_BLOCK_ACACIA_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "acacia_logs"),
-    set: TagSet::new(
-    &[
-        20, 31, 970, 971,
-    ],
-    ),
+    set: TagSet::new(&[20, 31, 970, 971]),
 };
 
 pub const TAG_BLOCK_AIR: TagEntry = TagEntry {
     key: TagKey::new("block", "air"),
-    set: TagSet::new(
-    &[
-        0, 176, 1034,
-    ],
-    ),
+    set: TagSet::new(&[0, 176, 1034]),
 };
 
 pub const TAG_BLOCK_ALL_HANGING_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "all_hanging_signs"),
-    set: TagSet::new(
-    &[
-        18, 29, 53, 65, 81, 92, 184, 195, 261, 273, 302, 313, 494, 505,
-        590, 602, 645, 653, 700, 711, 946, 957, 1041, 1053,
-    ],
-    ),
+    set: TagSet::new(&[
+        18, 29, 53, 65, 81, 92, 184, 195, 261, 273, 302, 313, 494, 505, 590, 602, 645, 653, 700,
+        711, 946, 957, 1041, 1053,
+    ]),
 };
 
 pub const TAG_BLOCK_ALL_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "all_signs"),
-    set: TagSet::new(
-    &[
-        18, 25, 29, 30, 53, 61, 65, 66, 81, 88, 92, 93, 184, 191,
-        195, 196, 261, 268, 273, 274, 302, 309, 313, 314, 494, 501, 505, 506,
-        590, 598, 602, 603, 645, 649, 653, 654, 700, 707, 711, 712, 946, 953,
-        957, 958, 1041, 1048, 1053, 1054,
-    ],
-    ),
+    set: TagSet::new(&[
+        18, 25, 29, 30, 53, 61, 65, 66, 81, 88, 92, 93, 184, 191, 195, 196, 261, 268, 273, 274,
+        302, 309, 313, 314, 494, 501, 505, 506, 590, 598, 602, 603, 645, 649, 653, 654, 700, 707,
+        711, 712, 946, 953, 957, 958, 1041, 1048, 1053, 1054,
+    ]),
 };
 
 pub const TAG_BLOCK_ANCIENT_CITY_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "ancient_city_replaceable"),
-    set: TagSet::new(
-    &[
-        219, 246, 247, 342, 343, 344, 345, 346, 355, 357, 358, 445,
-    ],
-    ),
+    set: TagSet::new(&[219, 246, 247, 342, 343, 344, 345, 346, 355, 357, 358, 445]),
 };
 
 pub const TAG_BLOCK_ANIMALS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "animals_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3,
-    ],
-    ),
+    set: TagSet::new(&[3]),
 };
 
 pub const TAG_BLOCK_ANVIL: TagEntry = TagEntry {
     key: TagKey::new("block", "anvil"),
-    set: TagSet::new(
-    &[
-        41, 199, 297,
-    ],
-    ),
+    set: TagSet::new(&[41, 199, 297]),
 };
 
 pub const TAG_BLOCK_ARMADILLO_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "armadillo_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3, 154, 218, 547, 671, 863, 871, 1004, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[3, 154, 218, 547, 671, 863, 871, 1004, 1147, 1166]),
 };
 
 pub const TAG_BLOCK_AXOLOTLS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "axolotls_spawnable_on"),
-    set: TagSet::new(
-    &[
-        214,
-    ],
-    ),
+    set: TagSet::new(&[214]),
 };
 
 pub const TAG_BLOCK_AZALEA_GROWS_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "azalea_grows_on"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 106, 127, 154, 218, 294, 443, 457, 533, 547, 566, 582,
-        608, 619, 624, 626, 671, 694, 731, 741, 810, 833, 863, 871, 891, 931,
-        998, 1004, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        2, 3, 4, 106, 127, 154, 218, 294, 443, 457, 533, 547, 566, 582, 608, 619, 624, 626, 671,
+        694, 731, 741, 810, 833, 863, 871, 891, 931, 998, 1004, 1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_AZALEA_ROOT_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "azalea_root_replaceable"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 4, 37, 106, 127, 154, 214, 218, 294, 342, 362, 427,
-        431, 443, 457, 533, 547, 566, 582, 608, 619, 624, 626, 671, 694, 731,
-        741, 810, 833, 863, 871, 891, 931, 1004, 1020, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 4, 37, 106, 127, 154, 214, 218, 294, 342, 362, 427, 431, 443, 457, 533, 547, 566,
+        582, 608, 619, 624, 626, 671, 694, 731, 741, 810, 833, 863, 871, 891, 931, 1004, 1020,
+        1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_BADLANDS_TERRACOTTA: TagEntry = TagEntry {
     key: TagKey::new("block", "badlands_terracotta"),
-    set: TagSet::new(
-    &[
-        154, 547, 671, 871, 1004, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[154, 547, 671, 871, 1004, 1147, 1166]),
 };
 
 pub const TAG_BLOCK_BAMBOO_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "bamboo_blocks"),
-    set: TagSet::new(
-    &[
-        48, 972,
-    ],
-    ),
+    set: TagSet::new(&[48, 972]),
 };
 
 pub const TAG_BLOCK_BANNERS: TagEntry = TagEntry {
     key: TagKey::new("block", "banners"),
-    set: TagSet::new(
-    &[
-        95, 107, 114, 128, 141, 155, 283, 295, 432, 444, 446, 458, 522, 534,
-        536, 548, 555, 567, 571, 583, 660, 673, 719, 733, 822, 834, 849, 873,
-        1136, 1149, 1155, 1167,
-    ],
-    ),
+    set: TagSet::new(&[
+        95, 107, 114, 128, 141, 155, 283, 295, 432, 444, 446, 458, 522, 534, 536, 548, 555, 567,
+        571, 583, 660, 673, 719, 733, 822, 834, 849, 873, 1136, 1149, 1155, 1167,
+    ]),
 };
 
 pub const TAG_BLOCK_BARS: TagEntry = TagEntry {
     key: TagKey::new("block", "bars"),
-    set: TagSet::new(
-    &[
-        232, 390, 480, 678, 1058, 1073, 1089, 1104, 1119,
-    ],
-    ),
+    set: TagSet::new(&[232, 390, 480, 678, 1058, 1073, 1089, 1104, 1119]),
 };
 
 pub const TAG_BLOCK_BASE_STONE_NETHER: TagEntry = TagEntry {
     key: TagKey::new("block", "base_stone_nether"),
-    set: TagSet::new(
-    &[
-        69, 109, 639,
-    ],
-    ),
+    set: TagSet::new(&[69, 109, 639]),
 };
 
 pub const TAG_BLOCK_BASE_STONE_OVERWORLD: TagEntry = TagEntry {
     key: TagKey::new("block", "base_stone_overworld"),
-    set: TagSet::new(
-    &[
-        1, 37, 342, 362, 427, 1020,
-    ],
-    ),
+    set: TagSet::new(&[1, 37, 342, 362, 427, 1020]),
 };
 
 pub const TAG_BLOCK_BATS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "bats_spawnable_on"),
-    set: TagSet::new(
-    &[
-        1, 37, 342, 362, 427, 1020,
-    ],
-    ),
+    set: TagSet::new(&[1, 37, 342, 362, 427, 1020]),
 };
 
 pub const TAG_BLOCK_BEACON_BASE_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "beacon_base_blocks"),
-    set: TagSet::new(
-    &[
-        360, 375, 424, 481, 638,
-    ],
-    ),
+    set: TagSet::new(&[360, 375, 424, 481, 638]),
 };
 
 pub const TAG_BLOCK_BEDS: TagEntry = TagEntry {
     key: TagKey::new("block", "beds"),
-    set: TagSet::new(
-    &[
-        96, 115, 142, 284, 433, 447, 523, 537, 556, 572, 661, 720, 823, 850,
-        1137, 1156,
-    ],
-    ),
+    set: TagSet::new(&[
+        96, 115, 142, 284, 433, 447, 523, 537, 556, 572, 661, 720, 823, 850, 1137, 1156,
+    ]),
 };
 
 pub const TAG_BLOCK_BEE_ATTRACTIVE: TagEntry = TagEntry {
     key: TagKey::new("block", "bee_attractive"),
-    set: TagSet::new(
-    &[
-        12, 13, 33, 46, 123, 165, 185, 212, 245, 413, 414, 552, 553, 595,
-        659, 672, 675, 715, 727, 732, 738, 872, 892, 941, 996, 1010, 1148, 1151,
-        1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        12, 13, 33, 46, 123, 165, 185, 212, 245, 413, 414, 552, 553, 595, 659, 672, 675, 715, 727,
+        732, 738, 872, 892, 941, 996, 1010, 1148, 1151, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_BEE_GROWABLES: TagEntry = TagEntry {
     key: TagKey::new("block", "bee_growables"),
-    set: TagSet::new(
-    &[
-        73, 172, 177, 178, 607, 737, 771, 821, 999, 1011, 1135,
-    ],
-    ),
+    set: TagSet::new(&[73, 172, 177, 178, 607, 737, 771, 821, 999, 1011, 1135]),
 };
 
 pub const TAG_BLOCK_BEEHIVES: TagEntry = TagEntry {
     key: TagKey::new("block", "beehives"),
-    set: TagSet::new(
-    &[
-        71, 72,
-    ],
-    ),
+    set: TagSet::new(&[71, 72]),
 };
 
 pub const TAG_BLOCK_BENEATH_BAMBOO_PODZOL_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "beneath_bamboo_podzol_replaceable"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_BENEATH_TREE_PODZOL_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "beneath_tree_podzol_replaceable"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_BIRCH_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "birch_logs"),
-    set: TagSet::new(
-    &[
-        83, 94, 973, 974,
-    ],
-    ),
+    set: TagSet::new(&[83, 94, 973, 974]),
 };
 
 pub const TAG_BLOCK_BLOCKS_WIND_CHARGE_EXPLOSIONS: TagEntry = TagEntry {
     key: TagKey::new("block", "blocks_wind_charge_explosions"),
-    set: TagSet::new(
-    &[
-        10, 68,
-    ],
-    ),
+    set: TagSet::new(&[10, 68]),
 };
 
 pub const TAG_BLOCK_BUTTONS: TagEntry = TagEntry {
     key: TagKey::new("block", "buttons"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         14, 49, 77, 180, 256, 298, 490, 586, 641, 696, 752, 942, 965, 1036,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_CAMEL_SAND_STEP_SOUND_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "camel_sand_step_sound_blocks"),
-    set: TagSet::new(
-    &[
-        4, 101, 120, 147, 289, 438, 452, 528, 542, 561, 577, 666, 725, 828,
-        855, 863, 998, 1142, 1161,
-    ],
-    ),
+    set: TagSet::new(&[
+        4, 101, 120, 147, 289, 438, 452, 528, 542, 561, 577, 666, 725, 828, 855, 863, 998, 1142,
+        1161,
+    ]),
 };
 
 pub const TAG_BLOCK_CAMELS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "camels_spawnable_on"),
-    set: TagSet::new(
-    &[
-        4, 863, 998,
-    ],
-    ),
+    set: TagSet::new(&[4, 863, 998]),
 };
 
 pub const TAG_BLOCK_CAMPFIRES: TagEntry = TagEntry {
     key: TagKey::new("block", "campfires"),
-    set: TagSet::new(
-    &[
-        169, 932,
-    ],
-    ),
+    set: TagSet::new(&[169, 932]),
 };
 
 pub const TAG_BLOCK_CAN_GLIDE_THROUGH: TagEntry = TagEntry {
     key: TagKey::new("block", "can_glide_through"),
-    set: TagSet::new(
-    &[
-        177, 178, 1029, 1030, 1033, 1132, 1133,
-    ],
-    ),
+    set: TagSet::new(&[177, 178, 1029, 1030, 1033, 1132, 1133]),
 };
 
 pub const TAG_BLOCK_CANDLE_CAKES: TagEntry = TagEntry {
     key: TagKey::new("block", "candle_cakes"),
-    set: TagSet::new(
-    &[
-        98, 117, 144, 171, 286, 435, 449, 525, 539, 558, 574, 663, 722, 825,
-        852, 1139, 1158,
-    ],
-    ),
+    set: TagSet::new(&[
+        98, 117, 144, 171, 286, 435, 449, 525, 539, 558, 574, 663, 722, 825, 852, 1139, 1158,
+    ]),
 };
 
 pub const TAG_BLOCK_CANDLES: TagEntry = TagEntry {
     key: TagKey::new("block", "candles"),
-    set: TagSet::new(
-    &[
-        97, 116, 143, 170, 285, 434, 448, 524, 538, 557, 573, 662, 721, 824,
-        851, 1138, 1157,
-    ],
-    ),
+    set: TagSet::new(&[
+        97, 116, 143, 170, 285, 434, 448, 524, 538, 557, 573, 662, 721, 824, 851, 1138, 1157,
+    ]),
 };
 
 pub const TAG_BLOCK_CANNOT_REPLACE_BELOW_TREE_TRUNK: TagEntry = TagEntry {
     key: TagKey::new("block", "cannot_replace_below_tree_trunk"),
-    set: TagSet::new(
-    &[
-        2, 218, 608, 619, 624, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 218, 608, 619, 624, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_CANNOT_SUPPORT_KELP: TagEntry = TagEntry {
     key: TagKey::new("block", "cannot_support_kelp"),
-    set: TagSet::new(
-    &[
-        585,
-    ],
-    ),
+    set: TagSet::new(&[585]),
 };
 
 pub const TAG_BLOCK_CANNOT_SUPPORT_SEAGRASS: TagEntry = TagEntry {
     key: TagKey::new("block", "cannot_support_seagrass"),
-    set: TagSet::new(
-    &[
-        585,
-    ],
-    ),
+    set: TagSet::new(&[585]),
 };
 
 pub const TAG_BLOCK_CANNOT_SUPPORT_SNOW_LAYER: TagEntry = TagEntry {
     key: TagKey::new("block", "cannot_support_snow_layer"),
-    set: TagSet::new(
-    &[
-        68, 472, 691,
-    ],
-    ),
+    set: TagSet::new(&[68, 472, 691]),
 };
 
 pub const TAG_BLOCK_CAULDRONS: TagEntry = TagEntry {
     key: TagKey::new("block", "cauldrons"),
-    set: TagSet::new(
-    &[
-        175, 517, 811, 1056,
-    ],
-    ),
+    set: TagSet::new(&[175, 517, 811, 1056]),
 };
 
 pub const TAG_BLOCK_CAVE_VINES: TagEntry = TagEntry {
     key: TagKey::new("block", "cave_vines"),
-    set: TagSet::new(
-    &[
-        177, 178,
-    ],
-    ),
+    set: TagSet::new(&[177, 178]),
 };
 
 pub const TAG_BLOCK_CEILING_HANGING_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "ceiling_hanging_signs"),
-    set: TagSet::new(
-    &[
-        18, 53, 81, 184, 261, 302, 494, 590, 645, 700, 946, 1041,
-    ],
-    ),
+    set: TagSet::new(&[18, 53, 81, 184, 261, 302, 494, 590, 645, 700, 946, 1041]),
 };
 
 pub const TAG_BLOCK_CHAINS: TagEntry = TagEntry {
     key: TagKey::new("block", "chains"),
-    set: TagSet::new(
-    &[
-        235, 392, 482, 680, 1061, 1075, 1091, 1106, 1121,
-    ],
-    ),
+    set: TagSet::new(&[235, 392, 482, 680, 1061, 1075, 1091, 1106, 1121]),
 };
 
 pub const TAG_BLOCK_CHERRY_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "cherry_logs"),
-    set: TagSet::new(
-    &[
-        186, 197, 975, 976,
-    ],
-    ),
+    set: TagSet::new(&[186, 197, 975, 976]),
 };
 
 pub const TAG_BLOCK_CLIMBABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "climbable"),
-    set: TagSet::new(
-    &[
-        177, 178, 510, 897, 1029, 1030, 1033, 1132, 1133,
-    ],
-    ),
+    set: TagSet::new(&[177, 178, 510, 897, 1029, 1030, 1033, 1132, 1133]),
 };
 
 pub const TAG_BLOCK_COAL_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "coal_ores"),
-    set: TagSet::new(
-    &[
-        217, 347,
-    ],
-    ),
+    set: TagSet::new(&[217, 347]),
 };
 
 pub const TAG_BLOCK_COMBINATION_STEP_SOUND_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "combination_step_sound_blocks"),
-    set: TagSet::new(
-    &[
-        99, 118, 145, 266, 287, 436, 450, 526, 540, 559, 575, 609, 635, 664,
-        695, 723, 826, 853, 889, 930, 1046, 1140, 1159,
-    ],
-    ),
+    set: TagSet::new(&[
+        99, 118, 145, 266, 287, 436, 450, 526, 540, 559, 575, 609, 635, 664, 695, 723, 826, 853,
+        889, 930, 1046, 1140, 1159,
+    ]),
 };
 
 pub const TAG_BLOCK_COMPLETES_FIND_TREE_TUTORIAL: TagEntry = TagEntry {
     key: TagKey::new("block", "completes_find_tree_tutorial"),
-    set: TagSet::new(
-    &[
-        6, 7, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197, 262, 271,
-        303, 304, 315, 414, 495, 496, 507, 591, 592, 604, 637, 655, 701, 702,
-        713, 947, 948, 959, 970, 971, 973, 974, 975, 976, 977, 978, 979, 980,
-        981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1042, 1051,
+    set: TagSet::new(&[
+        6, 7, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197, 262, 271, 303, 304, 315, 414, 495, 496,
+        507, 591, 592, 604, 637, 655, 701, 702, 713, 947, 948, 959, 970, 971, 973, 974, 975, 976,
+        977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1042, 1051,
         1055,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_CONCRETE_POWDER: TagEntry = TagEntry {
     key: TagKey::new("block", "concrete_powder"),
-    set: TagSet::new(
-    &[
-        101, 120, 147, 289, 438, 452, 528, 542, 561, 577, 666, 725, 828, 855,
-        1142, 1161,
-    ],
-    ),
+    set: TagSet::new(&[
+        101, 120, 147, 289, 438, 452, 528, 542, 561, 577, 666, 725, 828, 855, 1142, 1161,
+    ]),
 };
 
 pub const TAG_BLOCK_CONVERTABLE_TO_MUD: TagEntry = TagEntry {
     key: TagKey::new("block", "convertable_to_mud"),
-    set: TagSet::new(
-    &[
-        2, 218, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 218, 891]),
 };
 
 pub const TAG_BLOCK_COPPER: TagEntry = TagEntry {
     key: TagKey::new("block", "copper"),
-    set: TagSet::new(
-    &[
-        233, 389, 677, 1059, 1072, 1088, 1103, 1118,
-    ],
-    ),
+    set: TagSet::new(&[233, 389, 677, 1059, 1072, 1088, 1103, 1118]),
 };
 
 pub const TAG_BLOCK_COPPER_CHESTS: TagEntry = TagEntry {
     key: TagKey::new("block", "copper_chests"),
-    set: TagSet::new(
-    &[
-        236, 393, 681, 1062, 1076, 1092, 1107, 1122,
-    ],
-    ),
+    set: TagSet::new(&[236, 393, 681, 1062, 1076, 1092, 1107, 1122]),
 };
 
 pub const TAG_BLOCK_COPPER_GOLEM_STATUES: TagEntry = TagEntry {
     key: TagKey::new("block", "copper_golem_statues"),
-    set: TagSet::new(
-    &[
-        238, 395, 683, 1064, 1078, 1094, 1109, 1124,
-    ],
-    ),
+    set: TagSet::new(&[238, 395, 683, 1064, 1078, 1094, 1109, 1124]),
 };
 
 pub const TAG_BLOCK_COPPER_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "copper_ores"),
-    set: TagSet::new(
-    &[
-        241, 348,
-    ],
-    ),
+    set: TagSet::new(&[241, 348]),
 };
 
 pub const TAG_BLOCK_CORAL_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "coral_blocks"),
-    set: TagSet::new(
-    &[
-        133, 159, 407, 469, 1017,
-    ],
-    ),
+    set: TagSet::new(&[133, 159, 407, 469, 1017]),
 };
 
 pub const TAG_BLOCK_CORAL_PLANTS: TagEntry = TagEntry {
     key: TagKey::new("block", "coral_plants"),
-    set: TagSet::new(
-    &[
-        132, 158, 406, 468, 1016,
-    ],
-    ),
+    set: TagSet::new(&[132, 158, 406, 468, 1016]),
 };
 
 pub const TAG_BLOCK_CORALS: TagEntry = TagEntry {
     key: TagKey::new("block", "corals"),
-    set: TagSet::new(
-    &[
-        132, 134, 158, 160, 406, 408, 468, 470, 1016, 1018,
-    ],
-    ),
+    set: TagSet::new(&[132, 134, 158, 160, 406, 408, 468, 470, 1016, 1018]),
 };
 
 pub const TAG_BLOCK_CRIMSON_STEMS: TagEntry = TagEntry {
     key: TagKey::new("block", "crimson_stems"),
-    set: TagSet::new(
-    &[
-        262, 271, 977, 978,
-    ],
-    ),
+    set: TagSet::new(&[262, 271, 977, 978]),
 };
 
 pub const TAG_BLOCK_CROPS: TagEntry = TagEntry {
     key: TagKey::new("block", "crops"),
-    set: TagSet::new(
-    &[
-        73, 172, 607, 737, 771, 821, 1011, 1135,
-    ],
-    ),
+    set: TagSet::new(&[73, 172, 607, 737, 771, 821, 1011, 1135]),
 };
 
 pub const TAG_BLOCK_CRYSTAL_SOUND_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "crystal_sound_blocks"),
-    set: TagSet::new(
-    &[
-        34, 162,
-    ],
-    ),
+    set: TagSet::new(&[34, 162]),
 };
 
 pub const TAG_BLOCK_DAMPENS_VIBRATIONS: TagEntry = TagEntry {
     key: TagKey::new("block", "dampens_vibrations"),
-    set: TagSet::new(
-    &[
-        99, 108, 118, 129, 145, 156, 287, 296, 436, 445, 450, 459, 526, 535,
-        540, 549, 559, 568, 575, 584, 664, 674, 723, 734, 826, 835, 853, 874,
-        1140, 1150, 1159, 1168,
-    ],
-    ),
+    set: TagSet::new(&[
+        99, 108, 118, 129, 145, 156, 287, 296, 436, 445, 450, 459, 526, 535, 540, 549, 559, 568,
+        575, 584, 664, 674, 723, 734, 826, 835, 853, 874, 1140, 1150, 1159, 1168,
+    ]),
 };
 
 pub const TAG_BLOCK_DARK_OAK_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "dark_oak_logs"),
-    set: TagSet::new(
-    &[
-        304, 315, 979, 980,
-    ],
-    ),
+    set: TagSet::new(&[304, 315, 979, 980]),
 };
 
 pub const TAG_BLOCK_DEEPSLATE_ORE_REPLACEABLES: TagEntry = TagEntry {
     key: TagKey::new("block", "deepslate_ore_replaceables"),
-    set: TagSet::new(
-    &[
-        342, 1020,
-    ],
-    ),
+    set: TagSet::new(&[342, 1020]),
 };
 
 pub const TAG_BLOCK_DIAMOND_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "diamond_ores"),
-    set: TagSet::new(
-    &[
-        349, 361,
-    ],
-    ),
+    set: TagSet::new(&[349, 361]),
 };
 
 pub const TAG_BLOCK_DIRT: TagEntry = TagEntry {
     key: TagKey::new("block", "dirt"),
-    set: TagSet::new(
-    &[
-        2, 218, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 218, 891]),
 };
 
 pub const TAG_BLOCK_DOES_NOT_BLOCK_HOPPERS: TagEntry = TagEntry {
     key: TagKey::new("block", "does_not_block_hoppers"),
-    set: TagSet::new(
-    &[
-        71, 72,
-    ],
-    ),
+    set: TagSet::new(&[71, 72]),
 };
 
 pub const TAG_BLOCK_DOORS: TagEntry = TagEntry {
     key: TagKey::new("block", "doors"),
-    set: TagSet::new(
-    &[
-        15, 50, 78, 181, 237, 257, 299, 394, 483, 491, 587, 642, 682, 697,
-        943, 1037, 1063, 1077, 1093, 1108, 1123,
-    ],
-    ),
+    set: TagSet::new(&[
+        15, 50, 78, 181, 237, 257, 299, 394, 483, 491, 587, 642, 682, 697, 943, 1037, 1063, 1077,
+        1093, 1108, 1123,
+    ]),
 };
 
 pub const TAG_BLOCK_DRAGON_IMMUNE: TagEntry = TagEntry {
     key: TagKey::new("block", "dragon_immune"),
-    set: TagSet::new(
-    &[
-        10, 68, 179, 228, 275, 378, 379, 380, 382, 480, 488, 618, 657, 881,
-        883, 890, 993, 1005, 1006,
-    ],
-    ),
+    set: TagSet::new(&[
+        10, 68, 179, 228, 275, 378, 379, 380, 382, 480, 488, 618, 657, 881, 883, 890, 993, 1005,
+        1006,
+    ]),
 };
 
 pub const TAG_BLOCK_DRAGON_TRANSPARENT: TagEntry = TagEntry {
     key: TagKey::new("block", "dragon_transparent"),
-    set: TagSet::new(
-    &[
-        405, 521, 933,
-    ],
-    ),
+    set: TagSet::new(&[405, 521, 933]),
 };
 
 pub const TAG_BLOCK_DRIPSTONE_REPLACEABLE_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "dripstone_replaceable_blocks"),
-    set: TagSet::new(
-    &[
-        1, 37, 342, 362, 427, 1020,
-    ],
-    ),
+    set: TagSet::new(&[1, 37, 342, 362, 427, 1020]),
 };
 
 pub const TAG_BLOCK_EDIBLE_FOR_SHEEP: TagEntry = TagEntry {
     key: TagKey::new("block", "edible_for_sheep"),
-    set: TagSet::new(
-    &[
-        404, 906, 907, 1000,
-    ],
-    ),
+    set: TagSet::new(&[404, 906, 907, 1000]),
 };
 
 pub const TAG_BLOCK_EMERALD_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "emerald_ores"),
-    set: TagSet::new(
-    &[
-        350, 376,
-    ],
-    ),
+    set: TagSet::new(&[350, 376]),
 };
 
 pub const TAG_BLOCK_ENABLES_BUBBLE_COLUMN_DRAG_DOWN: TagEntry = TagEntry {
     key: TagKey::new("block", "enables_bubble_column_drag_down"),
-    set: TagSet::new(
-    &[
-        585,
-    ],
-    ),
+    set: TagSet::new(&[585]),
 };
 
 pub const TAG_BLOCK_ENABLES_BUBBLE_COLUMN_PUSH_UP: TagEntry = TagEntry {
     key: TagKey::new("block", "enables_bubble_column_push_up"),
-    set: TagSet::new(
-    &[
-        935,
-    ],
-    ),
+    set: TagSet::new(&[935]),
 };
 
 pub const TAG_BLOCK_ENCHANTMENT_POWER_PROVIDER: TagEntry = TagEntry {
     key: TagKey::new("block", "enchantment_power_provider"),
-    set: TagSet::new(
-    &[
-        131,
-    ],
-    ),
+    set: TagSet::new(&[131]),
 };
 
 pub const TAG_BLOCK_ENCHANTMENT_POWER_TRANSMITTER: TagEntry = TagEntry {
     key: TagKey::new("block", "enchantment_power_transmitter"),
-    set: TagSet::new(
-    &[
-        0, 5, 157, 163, 176, 266, 328, 404, 405, 422, 461, 515, 516, 518,
-        521, 635, 889, 905, 906, 907, 930, 933, 994, 1000, 1001, 1002, 1033, 1034,
-        1046,
-    ],
-    ),
+    set: TagSet::new(&[
+        0, 5, 157, 163, 176, 266, 328, 404, 405, 422, 461, 515, 516, 518, 521, 635, 889, 905, 906,
+        907, 930, 933, 994, 1000, 1001, 1002, 1033, 1034, 1046,
+    ]),
 };
 
 pub const TAG_BLOCK_ENDERMAN_HOLDABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "enderman_holdable"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 12, 13, 33, 46, 123, 149, 164, 165, 174, 214, 215,
-        218, 245, 260, 263, 266, 426, 431, 553, 606, 608, 619, 624, 626, 659,
-        672, 675, 694, 732, 741, 820, 857, 863, 872, 891, 1008, 1010, 1040, 1043,
-        1046, 1148, 1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        2, 3, 4, 12, 13, 33, 46, 123, 149, 164, 165, 174, 214, 215, 218, 245, 260, 263, 266, 426,
+        431, 553, 606, 608, 619, 624, 626, 659, 672, 675, 694, 732, 741, 820, 857, 863, 872, 891,
+        1008, 1010, 1040, 1043, 1046, 1148, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_FALL_DAMAGE_RESETTING: TagEntry = TagEntry {
     key: TagKey::new("block", "fall_damage_resetting"),
-    set: TagSet::new(
-    &[
-        177, 178, 226, 510, 897, 999, 1029, 1030, 1033, 1132, 1133,
-    ],
-    ),
+    set: TagSet::new(&[177, 178, 226, 510, 897, 999, 1029, 1030, 1033, 1132, 1133]),
 };
 
 pub const TAG_BLOCK_FEATURES_CANNOT_REPLACE: TagEntry = TagEntry {
     key: TagKey::new("block", "features_cannot_replace"),
-    set: TagSet::new(
-    &[
-        10, 198, 380, 881, 939, 1013, 1031,
-    ],
-    ),
+    set: TagSet::new(&[10, 198, 380, 881, 939, 1013, 1031]),
 };
 
 pub const TAG_BLOCK_FENCE_GATES: TagEntry = TagEntry {
     key: TagKey::new("block", "fence_gates"),
-    set: TagSet::new(
-    &[
-        17, 52, 80, 183, 259, 301, 493, 589, 644, 699, 945, 1039,
-    ],
-    ),
+    set: TagSet::new(&[17, 52, 80, 183, 259, 301, 493, 589, 644, 699, 945, 1039]),
 };
 
 pub const TAG_BLOCK_FENCES: TagEntry = TagEntry {
     key: TagKey::new("block", "fences"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         16, 51, 79, 182, 258, 300, 492, 588, 627, 643, 698, 944, 1038,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_FIRE: TagEntry = TagEntry {
     key: TagKey::new("block", "fire"),
-    set: TagSet::new(
-    &[
-        405, 933,
-    ],
-    ),
+    set: TagSet::new(&[405, 933]),
 };
 
 pub const TAG_BLOCK_FLOWER_POTS: TagEntry = TagEntry {
     key: TagKey::new("block", "flower_pots"),
-    set: TagSet::new(
-    &[
-        412, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784,
-        785, 786, 787, 788, 789, 790, 791, 792, 793, 794, 795, 796, 797, 798,
-        799, 800, 801, 802, 803, 804, 805, 806, 807, 808, 809,
-    ],
-    ),
+    set: TagSet::new(&[
+        412, 772, 773, 774, 775, 776, 777, 778, 779, 780, 781, 782, 783, 784, 785, 786, 787, 788,
+        789, 790, 791, 792, 793, 794, 795, 796, 797, 798, 799, 800, 801, 802, 803, 804, 805, 806,
+        807, 808, 809,
+    ]),
 };
 
 pub const TAG_BLOCK_FLOWERS: TagEntry = TagEntry {
     key: TagKey::new("block", "flowers"),
-    set: TagSet::new(
-    &[
-        12, 13, 33, 46, 123, 165, 185, 212, 215, 245, 413, 414, 426, 552,
-        553, 595, 659, 672, 675, 715, 727, 732, 738, 872, 892, 941, 996, 1010,
-        1148, 1151, 1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        12, 13, 33, 46, 123, 165, 185, 212, 215, 245, 413, 414, 426, 552, 553, 595, 659, 672, 675,
+        715, 727, 732, 738, 872, 892, 941, 996, 1010, 1148, 1151, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_FOREST_ROCK_CAN_PLACE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "forest_rock_can_place_on"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 37, 218, 342, 362, 427, 608, 619, 624, 626, 694, 741,
-        891, 1020,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 37, 218, 342, 362, 427, 608, 619, 624, 626, 694, 741, 891, 1020,
+    ]),
 };
 
 pub const TAG_BLOCK_FOXES_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "foxes_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3, 218, 741, 930, 931,
-    ],
-    ),
+    set: TagSet::new(&[3, 218, 741, 930, 931]),
 };
 
 pub const TAG_BLOCK_FROG_PREFER_JUMP_TO: TagEntry = TagEntry {
     key: TagKey::new("block", "frog_prefer_jump_to"),
-    set: TagSet::new(
-    &[
-        75, 554,
-    ],
-    ),
+    set: TagSet::new(&[75, 554]),
 };
 
 pub const TAG_BLOCK_FROGS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "frogs_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3, 596, 619, 624,
-    ],
-    ),
+    set: TagSet::new(&[3, 596, 619, 624]),
 };
 
 pub const TAG_BLOCK_GEODE_INVALID_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "geode_invalid_blocks"),
-    set: TagSet::new(
-    &[
-        5, 10, 122, 472, 516, 691,
-    ],
-    ),
+    set: TagSet::new(&[5, 10, 122, 472, 516, 691]),
 };
 
 pub const TAG_BLOCK_GOATS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "goats_spawnable_on"),
-    set: TagSet::new(
-    &[
-        1, 3, 431, 691, 930, 931,
-    ],
-    ),
+    set: TagSet::new(&[1, 3, 431, 691, 930, 931]),
 };
 
 pub const TAG_BLOCK_GOLD_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "gold_ores"),
-    set: TagSet::new(
-    &[
-        351, 425, 632,
-    ],
-    ),
+    set: TagSet::new(&[351, 425, 632]),
 };
 
 pub const TAG_BLOCK_GRASS_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "grass_blocks"),
-    set: TagSet::new(
-    &[
-        3, 626, 741,
-    ],
-    ),
+    set: TagSet::new(&[3, 626, 741]),
 };
 
 pub const TAG_BLOCK_GROWS_CROPS: TagEntry = TagEntry {
     key: TagKey::new("block", "grows_crops"),
-    set: TagSet::new(
-    &[
-        403,
-    ],
-    ),
+    set: TagSet::new(&[403]),
 };
 
 pub const TAG_BLOCK_GUARDED_BY_PIGLINS: TagEntry = TagEntry {
     key: TagKey::new("block", "guarded_by_piglins"),
-    set: TagSet::new(
-    &[
-        67, 103, 124, 151, 198, 236, 291, 351, 387, 393, 418, 424, 425, 440,
-        454, 530, 544, 563, 579, 632, 668, 681, 728, 830, 847, 868, 909, 1012,
-        1062, 1076, 1092, 1107, 1122, 1144, 1163,
-    ],
-    ),
+    set: TagSet::new(&[
+        67, 103, 124, 151, 198, 236, 291, 351, 387, 393, 418, 424, 425, 440, 454, 530, 544, 563,
+        579, 632, 668, 681, 728, 830, 847, 868, 909, 1012, 1062, 1076, 1092, 1107, 1122, 1144,
+        1163,
+    ]),
 };
 
 pub const TAG_BLOCK_HAPPY_GHAST_AVOIDS: TagEntry = TagEntry {
     key: TagKey::new("block", "happy_ghast_avoids"),
-    set: TagSet::new(
-    &[
-        164, 405, 585, 742, 999, 1152,
-    ],
-    ),
+    set: TagSet::new(&[164, 405, 585, 742, 999, 1152]),
 };
 
 pub const TAG_BLOCK_HOGLIN_REPELLENTS: TagEntry = TagEntry {
     key: TagKey::new("block", "hoglin_repellents"),
-    set: TagSet::new(
-    &[
-        633, 806, 890, 1040,
-    ],
-    ),
+    set: TagSet::new(&[633, 806, 890, 1040]),
 };
 
 pub const TAG_BLOCK_HUGE_BROWN_MUSHROOM_CAN_PLACE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "huge_brown_mushroom_can_place_on"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 263, 608, 619, 624, 626, 694, 741, 891, 1043,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 263, 608, 619, 624, 626, 694, 741, 891, 1043]),
 };
 
 pub const TAG_BLOCK_HUGE_RED_MUSHROOM_CAN_PLACE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "huge_red_mushroom_can_place_on"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 263, 608, 619, 624, 626, 694, 741, 891, 1043,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 263, 608, 619, 624, 626, 694, 741, 891, 1043]),
 };
 
 pub const TAG_BLOCK_ICE: TagEntry = TagEntry {
     key: TagKey::new("block", "ice"),
-    set: TagSet::new(
-    &[
-        122, 416, 472, 691,
-    ],
-    ),
+    set: TagSet::new(&[122, 416, 472, 691]),
 };
 
 pub const TAG_BLOCK_ICE_SPIKE_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "ice_spike_replaceable"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 472, 608, 619, 624, 626, 694, 741, 891, 931,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 472, 608, 619, 624, 626, 694, 741, 891, 931]),
 };
 
 pub const TAG_BLOCK_IMPERMEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "impermeable"),
-    set: TagSet::new(
-    &[
-        68, 104, 125, 152, 292, 419, 441, 455, 531, 545, 564, 580, 669, 729,
-        831, 869, 1007, 1145, 1164,
-    ],
-    ),
+    set: TagSet::new(&[
+        68, 104, 125, 152, 292, 419, 441, 455, 531, 545, 564, 580, 669, 729, 831, 869, 1007, 1145,
+        1164,
+    ]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_COPPER_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_copper_tool"),
-    set: TagSet::new(
-    &[
-        36, 275, 349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 638, 657,
-        847, 877, 890,
-    ],
-    ),
+    set: TagSet::new(&[
+        36, 275, 349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 638, 657, 847, 877, 890,
+    ]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_DIAMOND_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_diamond_tool"),
-    set: TagSet::new(
-    &[],
-    ),
+    set: TagSet::new(&[]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_GOLD_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_gold_tool"),
-    set: TagSet::new(
-    &[
-        36, 201, 233, 234, 236, 239, 241, 243, 251, 275, 276, 277, 278, 348,
-        349, 350, 351, 352, 353, 354, 360, 361, 375, 376, 388, 389, 391, 393,
-        396, 398, 399, 400, 401, 402, 424, 425, 481, 484, 512, 513, 551, 638,
-        657, 676, 677, 679, 681, 684, 686, 687, 688, 689, 690, 846, 847, 848,
-        877, 890, 1057, 1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072, 1074,
-        1076, 1079, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097,
-        1098, 1099, 1100, 1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116,
-        1117, 1118, 1120, 1122, 1125, 1127, 1128, 1129, 1130, 1131,
-    ],
-    ),
+    set: TagSet::new(&[
+        36, 201, 233, 234, 236, 239, 241, 243, 251, 275, 276, 277, 278, 348, 349, 350, 351, 352,
+        353, 354, 360, 361, 375, 376, 388, 389, 391, 393, 396, 398, 399, 400, 401, 402, 424, 425,
+        481, 484, 512, 513, 551, 638, 657, 676, 677, 679, 681, 684, 686, 687, 688, 689, 690, 846,
+        847, 848, 877, 890, 1057, 1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072, 1074,
+        1076, 1079, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097, 1098,
+        1099, 1100, 1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116, 1117, 1118,
+        1120, 1122, 1125, 1127, 1128, 1129, 1130, 1131,
+    ]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_IRON_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_iron_tool"),
-    set: TagSet::new(
-    &[
-        36, 275, 638, 657, 890,
-    ],
-    ),
+    set: TagSet::new(&[36, 275, 638, 657, 890]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_NETHERITE_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_netherite_tool"),
-    set: TagSet::new(
-    &[],
-    ),
+    set: TagSet::new(&[]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_STONE_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_stone_tool"),
-    set: TagSet::new(
-    &[
-        36, 275, 349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 638, 657,
-        847, 877, 890,
-    ],
-    ),
+    set: TagSet::new(&[
+        36, 275, 349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 638, 657, 847, 877, 890,
+    ]),
 };
 
 pub const TAG_BLOCK_INCORRECT_FOR_WOODEN_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "incorrect_for_wooden_tool"),
-    set: TagSet::new(
-    &[
-        36, 201, 233, 234, 236, 239, 241, 243, 251, 275, 276, 277, 278, 348,
-        349, 350, 351, 352, 353, 354, 360, 361, 375, 376, 388, 389, 391, 393,
-        396, 398, 399, 400, 401, 402, 424, 425, 481, 484, 512, 513, 551, 638,
-        657, 676, 677, 679, 681, 684, 686, 687, 688, 689, 690, 846, 847, 848,
-        877, 890, 1057, 1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072, 1074,
-        1076, 1079, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097,
-        1098, 1099, 1100, 1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116,
-        1117, 1118, 1120, 1122, 1125, 1127, 1128, 1129, 1130, 1131,
-    ],
-    ),
+    set: TagSet::new(&[
+        36, 201, 233, 234, 236, 239, 241, 243, 251, 275, 276, 277, 278, 348, 349, 350, 351, 352,
+        353, 354, 360, 361, 375, 376, 388, 389, 391, 393, 396, 398, 399, 400, 401, 402, 424, 425,
+        481, 484, 512, 513, 551, 638, 657, 676, 677, 679, 681, 684, 686, 687, 688, 689, 690, 846,
+        847, 848, 877, 890, 1057, 1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072, 1074,
+        1076, 1079, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097, 1098,
+        1099, 1100, 1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116, 1117, 1118,
+        1120, 1122, 1125, 1127, 1128, 1129, 1130, 1131,
+    ]),
 };
 
 pub const TAG_BLOCK_INFINIBURN_END: TagEntry = TagEntry {
     key: TagKey::new("block", "infiniburn_end"),
-    set: TagSet::new(
-    &[
-        10, 585, 639,
-    ],
-    ),
+    set: TagSet::new(&[10, 585, 639]),
 };
 
 pub const TAG_BLOCK_INFINIBURN_NETHER: TagEntry = TagEntry {
     key: TagKey::new("block", "infiniburn_nether"),
-    set: TagSet::new(
-    &[
-        585, 639,
-    ],
-    ),
+    set: TagSet::new(&[585, 639]),
 };
 
 pub const TAG_BLOCK_INFINIBURN_OVERWORLD: TagEntry = TagEntry {
     key: TagKey::new("block", "infiniburn_overworld"),
-    set: TagSet::new(
-    &[
-        585, 639,
-    ],
-    ),
+    set: TagSet::new(&[585, 639]),
 };
 
 pub const TAG_BLOCK_INSIDE_STEP_SOUND_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "inside_step_sound_blocks"),
-    set: TagSet::new(
-    &[
-        422, 518, 554, 727, 810, 902, 913, 1151,
-    ],
-    ),
+    set: TagSet::new(&[422, 518, 554, 727, 810, 902, 913, 1151]),
 };
 
 pub const TAG_BLOCK_INVALID_SPAWN_INSIDE: TagEntry = TagEntry {
     key: TagKey::new("block", "invalid_spawn_inside"),
-    set: TagSet::new(
-    &[
-        378, 379,
-    ],
-    ),
+    set: TagSet::new(&[378, 379]),
 };
 
 pub const TAG_BLOCK_IRON_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "iron_ores"),
-    set: TagSet::new(
-    &[
-        352, 484,
-    ],
-    ),
+    set: TagSet::new(&[352, 484]),
 };
 
 pub const TAG_BLOCK_JUNGLE_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "jungle_logs"),
-    set: TagSet::new(
-    &[
-        496, 507, 981, 982,
-    ],
-    ),
+    set: TagSet::new(&[496, 507, 981, 982]),
 };
 
 pub const TAG_BLOCK_LANTERNS: TagEntry = TagEntry {
     key: TagKey::new("block", "lanterns"),
-    set: TagSet::new(
-    &[
-        240, 397, 511, 685, 934, 1066, 1080, 1096, 1111, 1126,
-    ],
-    ),
+    set: TagSet::new(&[240, 397, 511, 685, 934, 1066, 1080, 1096, 1111, 1126]),
 };
 
 pub const TAG_BLOCK_LAPIS_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "lapis_ores"),
-    set: TagSet::new(
-    &[
-        353, 513,
-    ],
-    ),
+    set: TagSet::new(&[353, 513]),
 };
 
 pub const TAG_BLOCK_LAVA_POOL_STONE_CANNOT_REPLACE: TagEntry = TagEntry {
     key: TagKey::new("block", "lava_pool_stone_cannot_replace"),
-    set: TagSet::new(
-    &[
-        6, 7, 10, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197, 198,
-        262, 271, 303, 304, 315, 380, 414, 495, 496, 507, 591, 592, 604, 655,
-        701, 702, 713, 881, 939, 947, 948, 959, 970, 971, 973, 974, 975, 976,
-        977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990,
+    set: TagSet::new(&[
+        6, 7, 10, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197, 198, 262, 271, 303, 304, 315, 380,
+        414, 495, 496, 507, 591, 592, 604, 655, 701, 702, 713, 881, 939, 947, 948, 959, 970, 971,
+        973, 974, 975, 976, 977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990,
         991, 992, 1013, 1031, 1042, 1051,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_LEAVES: TagEntry = TagEntry {
     key: TagKey::new("block", "leaves"),
-    set: TagSet::new(
-    &[
-        7, 19, 45, 82, 185, 303, 414, 495, 591, 701, 947,
-    ],
-    ),
+    set: TagSet::new(&[7, 19, 45, 82, 185, 303, 414, 495, 591, 701, 947]),
 };
 
 pub const TAG_BLOCK_LIGHTNING_RODS: TagEntry = TagEntry {
     key: TagKey::new("block", "lightning_rods"),
-    set: TagSet::new(
-    &[
-        402, 551, 690, 1085, 1086, 1101, 1116, 1131,
-    ],
-    ),
+    set: TagSet::new(&[402, 551, 690, 1085, 1086, 1101, 1116, 1131]),
 };
 
 pub const TAG_BLOCK_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "logs"),
-    set: TagSet::new(
-    &[
-        6, 20, 31, 83, 94, 186, 197, 262, 271, 304, 315, 496, 507, 592,
-        604, 655, 702, 713, 948, 959, 970, 971, 973, 974, 975, 976, 977, 978,
-        979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992,
-        1042, 1051,
-    ],
-    ),
+    set: TagSet::new(&[
+        6, 20, 31, 83, 94, 186, 197, 262, 271, 304, 315, 496, 507, 592, 604, 655, 702, 713, 948,
+        959, 970, 971, 973, 974, 975, 976, 977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987,
+        988, 989, 990, 991, 992, 1042, 1051,
+    ]),
 };
 
 pub const TAG_BLOCK_LOGS_THAT_BURN: TagEntry = TagEntry {
     key: TagKey::new("block", "logs_that_burn"),
-    set: TagSet::new(
-    &[
-        6, 20, 31, 83, 94, 186, 197, 304, 315, 496, 507, 592, 604, 655,
-        702, 713, 948, 959, 970, 971, 973, 974, 975, 976, 979, 980, 981, 982,
-        983, 984, 985, 986, 987, 988, 989, 990,
-    ],
-    ),
+    set: TagSet::new(&[
+        6, 20, 31, 83, 94, 186, 197, 304, 315, 496, 507, 592, 604, 655, 702, 713, 948, 959, 970,
+        971, 973, 974, 975, 976, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990,
+    ]),
 };
 
 pub const TAG_BLOCK_LUSH_GROUND_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "lush_ground_replaceable"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 4, 37, 177, 178, 214, 218, 342, 362, 427, 431, 608,
-        619, 624, 626, 694, 741, 891, 1020,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 4, 37, 177, 178, 214, 218, 342, 362, 427, 431, 608, 619, 624, 626, 694, 741, 891,
+        1020,
+    ]),
 };
 
 pub const TAG_BLOCK_MAINTAINS_FARMLAND: TagEntry = TagEntry {
     key: TagKey::new("block", "maintains_farmland"),
-    set: TagSet::new(
-    &[
-        17, 42, 43, 52, 73, 80, 172, 183, 259, 301, 493, 589, 607, 618,
-        644, 699, 737, 771, 821, 945, 1010, 1011, 1039, 1135,
-    ],
-    ),
+    set: TagSet::new(&[
+        17, 42, 43, 52, 73, 80, 172, 183, 259, 301, 493, 589, 607, 618, 644, 699, 737, 771, 821,
+        945, 1010, 1011, 1039, 1135,
+    ]),
 };
 
 pub const TAG_BLOCK_MANGROVE_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "mangrove_logs"),
-    set: TagSet::new(
-    &[
-        592, 604, 983, 984,
-    ],
-    ),
+    set: TagSet::new(&[592, 604, 983, 984]),
 };
 
 pub const TAG_BLOCK_MANGROVE_LOGS_CAN_GROW_THROUGH: TagEntry = TagEntry {
     key: TagKey::new("block", "mangrove_logs_can_grow_through"),
-    set: TagSet::new(
-    &[
-        591, 592, 595, 596, 609, 619, 624, 1033,
-    ],
-    ),
+    set: TagSet::new(&[591, 592, 595, 596, 609, 619, 624, 1033]),
 };
 
 pub const TAG_BLOCK_MANGROVE_ROOTS_CAN_GROW_THROUGH: TagEntry = TagEntry {
     key: TagKey::new("block", "mangrove_roots_can_grow_through"),
-    set: TagSet::new(
-    &[
-        595, 596, 609, 619, 624, 930, 1033,
-    ],
-    ),
+    set: TagSet::new(&[595, 596, 609, 619, 624, 930, 1033]),
 };
 
 pub const TAG_BLOCK_MINEABLE__AXE: TagEntry = TagEntry {
     key: TagKey::new("block", "mineable/axe"),
-    set: TagSet::new(
-    &[
-        6, 8, 14, 15, 16, 17, 18, 20, 21, 22, 24, 25, 26, 27,
-        28, 29, 30, 31, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-        57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 71, 72, 75, 76,
-        77, 78, 79, 80, 81, 83, 84, 85, 87, 88, 89, 90, 91, 92,
-        93, 94, 95, 107, 114, 128, 131, 141, 150, 155, 169, 173, 174, 180,
-        181, 182, 183, 184, 186, 187, 188, 190, 191, 192, 193, 194, 195, 196,
-        197, 198, 200, 212, 213, 227, 230, 252, 253, 256, 257, 258, 259, 261,
-        262, 264, 265, 267, 268, 269, 270, 271, 272, 273, 274, 283, 295, 298,
-        299, 300, 301, 302, 304, 305, 306, 308, 309, 310, 311, 312, 313, 314,
-        315, 319, 411, 422, 432, 444, 446, 458, 487, 489, 490, 491, 492, 493,
-        494, 496, 497, 498, 500, 501, 502, 503, 504, 505, 506, 507, 510, 519,
-        522, 534, 536, 548, 555, 567, 570, 571, 583, 586, 587, 588, 589, 590,
-        592, 593, 594, 596, 597, 598, 599, 600, 601, 602, 603, 604, 606, 625,
-        640, 641, 642, 643, 644, 645, 646, 648, 649, 650, 651, 652, 653, 654,
-        655, 660, 673, 696, 697, 698, 699, 700, 702, 703, 704, 706, 707, 708,
-        709, 710, 711, 712, 713, 719, 733, 820, 822, 834, 849, 858, 873, 915,
-        932, 942, 943, 944, 945, 946, 948, 949, 950, 952, 953, 954, 955, 956,
-        957, 958, 959, 970, 971, 972, 973, 974, 975, 976, 977, 978, 979, 980,
-        981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1012, 1033,
-        1036, 1037, 1038, 1039, 1041, 1042, 1044, 1045, 1047, 1048, 1049, 1050, 1051, 1052,
+    set: TagSet::new(&[
+        6, 8, 14, 15, 16, 17, 18, 20, 21, 22, 24, 25, 26, 27, 28, 29, 30, 31, 47, 48, 49, 50, 51,
+        52, 53, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 67, 71, 72, 75, 76, 77, 78, 79, 80,
+        81, 83, 84, 85, 87, 88, 89, 90, 91, 92, 93, 94, 95, 107, 114, 128, 131, 141, 150, 155, 169,
+        173, 174, 180, 181, 182, 183, 184, 186, 187, 188, 190, 191, 192, 193, 194, 195, 196, 197,
+        198, 200, 212, 213, 227, 230, 252, 253, 256, 257, 258, 259, 261, 262, 264, 265, 267, 268,
+        269, 270, 271, 272, 273, 274, 283, 295, 298, 299, 300, 301, 302, 304, 305, 306, 308, 309,
+        310, 311, 312, 313, 314, 315, 319, 411, 422, 432, 444, 446, 458, 487, 489, 490, 491, 492,
+        493, 494, 496, 497, 498, 500, 501, 502, 503, 504, 505, 506, 507, 510, 519, 522, 534, 536,
+        548, 555, 567, 570, 571, 583, 586, 587, 588, 589, 590, 592, 593, 594, 596, 597, 598, 599,
+        600, 601, 602, 603, 604, 606, 625, 640, 641, 642, 643, 644, 645, 646, 648, 649, 650, 651,
+        652, 653, 654, 655, 660, 673, 696, 697, 698, 699, 700, 702, 703, 704, 706, 707, 708, 709,
+        710, 711, 712, 713, 719, 733, 820, 822, 834, 849, 858, 873, 915, 932, 942, 943, 944, 945,
+        946, 948, 949, 950, 952, 953, 954, 955, 956, 957, 958, 959, 970, 971, 972, 973, 974, 975,
+        976, 977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1012,
+        1033, 1036, 1037, 1038, 1039, 1041, 1042, 1044, 1045, 1047, 1048, 1049, 1050, 1051, 1052,
         1053, 1054, 1136, 1149, 1155, 1167,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_MINEABLE__HOE: TagEntry = TagEntry {
     key: TagKey::new("block", "mineable/hoe"),
-    set: TagSet::new(
-    &[
-        7, 19, 45, 82, 168, 185, 303, 372, 414, 462, 495, 591, 608, 609,
-        637, 694, 695, 701, 898, 899, 900, 901, 902, 908, 940, 947, 1003, 1055,
-        1134,
-    ],
-    ),
+    set: TagSet::new(&[
+        7, 19, 45, 82, 168, 185, 303, 372, 414, 462, 495, 591, 608, 609, 637, 694, 695, 701, 898,
+        899, 900, 901, 902, 908, 940, 947, 1003, 1055, 1134,
+    ]),
 };
 
 pub const TAG_BLOCK_MINEABLE__PICKAXE: TagEntry = TagEntry {
     key: TagKey::new("block", "mineable/pickaxe"),
-    set: TagSet::new(
-    &[
-        1, 9, 32, 34, 35, 36, 37, 38, 39, 40, 41, 69, 74, 100,
-        102, 103, 106, 109, 110, 111, 112, 113, 119, 121, 122, 124, 127, 130,
-        133, 136, 137, 138, 139, 140, 146, 148, 151, 154, 159, 162, 167, 175,
-        199, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 216, 217,
-        219, 220, 221, 222, 223, 224, 225, 231, 232, 233, 234, 235, 236, 237,
-        238, 239, 240, 241, 243, 246, 247, 248, 249, 250, 251, 263, 275, 276,
-        277, 278, 279, 280, 281, 282, 288, 290, 291, 294, 297, 316, 317, 318,
-        320, 321, 322, 323, 324, 325, 326, 327, 329, 330, 331, 332, 333, 334,
-        335, 336, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349,
-        350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363,
-        364, 365, 367, 373, 374, 375, 376, 377, 382, 383, 384, 385, 386, 387,
-        388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398, 399, 400, 401,
-        402, 407, 417, 418, 424, 425, 427, 428, 429, 430, 437, 439, 440, 443,
-        451, 453, 454, 457, 460, 463, 464, 467, 469, 472, 473, 474, 475, 476,
-        477, 478, 479, 480, 481, 482, 483, 484, 485, 511, 512, 513, 514, 517,
-        527, 529, 530, 533, 541, 543, 544, 547, 550, 551, 560, 562, 563, 566,
-        569, 576, 578, 579, 582, 585, 605, 610, 611, 612, 613, 614, 615, 616,
-        617, 620, 621, 622, 623, 627, 628, 629, 630, 631, 632, 634, 638, 639,
-        656, 657, 665, 667, 668, 671, 676, 677, 678, 679, 680, 681, 682, 683,
-        684, 685, 686, 687, 688, 689, 690, 691, 692, 716, 724, 726, 728, 731,
-        735, 736, 742, 743, 744, 745, 746, 747, 748, 749, 750, 751, 752, 753,
-        754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767,
-        768, 769, 770, 811, 812, 813, 814, 815, 816, 817, 818, 819, 827, 829,
-        830, 833, 836, 837, 838, 839, 840, 841, 842, 843, 844, 845, 846, 847,
-        848, 854, 856, 859, 860, 861, 862, 864, 865, 866, 867, 868, 871, 875,
-        877, 885, 886, 887, 888, 890, 893, 894, 895, 896, 909, 913, 916, 917,
-        918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 934, 939, 960,
-        961, 962, 963, 964, 965, 966, 967, 968, 969, 1004, 1017, 1020, 1021, 1022,
-        1023, 1024, 1025, 1026, 1027, 1043, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063,
-        1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077,
-        1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091,
-        1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105,
-        1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119,
-        1120, 1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129, 1130, 1131, 1141, 1143,
-        1144, 1147, 1160, 1162, 1163, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 9, 32, 34, 35, 36, 37, 38, 39, 40, 41, 69, 74, 100, 102, 103, 106, 109, 110, 111, 112,
+        113, 119, 121, 122, 124, 127, 130, 133, 136, 137, 138, 139, 140, 146, 148, 151, 154, 159,
+        162, 167, 175, 199, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 216, 217, 219,
+        220, 221, 222, 223, 224, 225, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 243,
+        246, 247, 248, 249, 250, 251, 263, 275, 276, 277, 278, 279, 280, 281, 282, 288, 290, 291,
+        294, 297, 316, 317, 318, 320, 321, 322, 323, 324, 325, 326, 327, 329, 330, 331, 332, 333,
+        334, 335, 336, 337, 338, 339, 340, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352,
+        353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 367, 373, 374, 375, 376,
+        377, 382, 383, 384, 385, 386, 387, 388, 389, 390, 391, 392, 393, 394, 395, 396, 397, 398,
+        399, 400, 401, 402, 407, 417, 418, 424, 425, 427, 428, 429, 430, 437, 439, 440, 443, 451,
+        453, 454, 457, 460, 463, 464, 467, 469, 472, 473, 474, 475, 476, 477, 478, 479, 480, 481,
+        482, 483, 484, 485, 511, 512, 513, 514, 517, 527, 529, 530, 533, 541, 543, 544, 547, 550,
+        551, 560, 562, 563, 566, 569, 576, 578, 579, 582, 585, 605, 610, 611, 612, 613, 614, 615,
+        616, 617, 620, 621, 622, 623, 627, 628, 629, 630, 631, 632, 634, 638, 639, 656, 657, 665,
+        667, 668, 671, 676, 677, 678, 679, 680, 681, 682, 683, 684, 685, 686, 687, 688, 689, 690,
+        691, 692, 716, 724, 726, 728, 731, 735, 736, 742, 743, 744, 745, 746, 747, 748, 749, 750,
+        751, 752, 753, 754, 755, 756, 757, 758, 759, 760, 761, 762, 763, 764, 765, 766, 767, 768,
+        769, 770, 811, 812, 813, 814, 815, 816, 817, 818, 819, 827, 829, 830, 833, 836, 837, 838,
+        839, 840, 841, 842, 843, 844, 845, 846, 847, 848, 854, 856, 859, 860, 861, 862, 864, 865,
+        866, 867, 868, 871, 875, 877, 885, 886, 887, 888, 890, 893, 894, 895, 896, 909, 913, 916,
+        917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 934, 939, 960, 961, 962, 963,
+        964, 965, 966, 967, 968, 969, 1004, 1017, 1020, 1021, 1022, 1023, 1024, 1025, 1026, 1027,
+        1043, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069,
+        1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084,
+        1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099,
+        1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114,
+        1115, 1116, 1117, 1118, 1119, 1120, 1121, 1122, 1123, 1124, 1125, 1126, 1127, 1128, 1129,
+        1130, 1131, 1141, 1143, 1144, 1147, 1160, 1162, 1163, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_MINEABLE__SHOVEL: TagEntry = TagEntry {
     key: TagKey::new("block", "mineable/shovel"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 101, 120, 147, 214, 218, 289, 366, 403, 431, 438, 452,
-        528, 542, 561, 577, 619, 624, 626, 666, 725, 741, 828, 855, 863, 891,
-        930, 931, 935, 936, 997, 998, 1142, 1161,
-    ],
-    ),
+    set: TagSet::new(&[
+        2, 3, 4, 101, 120, 147, 214, 218, 289, 366, 403, 431, 438, 452, 528, 542, 561, 577, 619,
+        624, 626, 666, 725, 741, 828, 855, 863, 891, 930, 931, 935, 936, 997, 998, 1142, 1161,
+    ]),
 };
 
 pub const TAG_BLOCK_MOB_INTERACTABLE_DOORS: TagEntry = TagEntry {
     key: TagKey::new("block", "mob_interactable_doors"),
-    set: TagSet::new(
-    &[
-        15, 50, 78, 181, 237, 257, 299, 394, 491, 587, 642, 682, 697, 943,
-        1037, 1063, 1077, 1093, 1108, 1123,
-    ],
-    ),
+    set: TagSet::new(&[
+        15, 50, 78, 181, 237, 257, 299, 394, 491, 587, 642, 682, 697, 943, 1037, 1063, 1077, 1093,
+        1108, 1123,
+    ]),
 };
 
 pub const TAG_BLOCK_MOOSHROOMS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "mooshrooms_spawnable_on"),
-    set: TagSet::new(
-    &[
-        626,
-    ],
-    ),
+    set: TagSet::new(&[626]),
 };
 
 pub const TAG_BLOCK_MOSS_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "moss_blocks"),
-    set: TagSet::new(
-    &[
-        608, 694,
-    ],
-    ),
+    set: TagSet::new(&[608, 694]),
 };
 
 pub const TAG_BLOCK_MOSS_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "moss_replaceable"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 37, 177, 178, 218, 342, 362, 427, 608, 619, 624, 626,
-        694, 741, 891, 1020,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 37, 177, 178, 218, 342, 362, 427, 608, 619, 624, 626, 694, 741, 891, 1020,
+    ]),
 };
 
 pub const TAG_BLOCK_MUD: TagEntry = TagEntry {
     key: TagKey::new("block", "mud"),
-    set: TagSet::new(
-    &[
-        619, 624,
-    ],
-    ),
+    set: TagSet::new(&[619, 624]),
 };
 
 pub const TAG_BLOCK_NEEDS_DIAMOND_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "needs_diamond_tool"),
-    set: TagSet::new(
-    &[
-        36, 275, 638, 657, 890,
-    ],
-    ),
+    set: TagSet::new(&[36, 275, 638, 657, 890]),
 };
 
 pub const TAG_BLOCK_NEEDS_IRON_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "needs_iron_tool"),
-    set: TagSet::new(
-    &[
-        349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 847, 877,
-    ],
-    ),
+    set: TagSet::new(&[349, 350, 351, 354, 360, 361, 375, 376, 424, 425, 847, 877]),
 };
 
 pub const TAG_BLOCK_NEEDS_STONE_TOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "needs_stone_tool"),
-    set: TagSet::new(
-    &[
-        201, 233, 234, 236, 239, 241, 243, 251, 276, 277, 278, 348, 352, 353,
-        388, 389, 391, 393, 396, 398, 399, 400, 401, 402, 481, 484, 512, 513,
-        551, 676, 677, 679, 681, 684, 686, 687, 688, 689, 690, 846, 848, 1057,
-        1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072, 1074, 1076, 1079, 1081,
-        1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097, 1098, 1099, 1100,
-        1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1120,
-        1122, 1125, 1127, 1128, 1129, 1130, 1131,
-    ],
-    ),
+    set: TagSet::new(&[
+        201, 233, 234, 236, 239, 241, 243, 251, 276, 277, 278, 348, 352, 353, 388, 389, 391, 393,
+        396, 398, 399, 400, 401, 402, 481, 484, 512, 513, 551, 676, 677, 679, 681, 684, 686, 687,
+        688, 689, 690, 846, 848, 1057, 1059, 1060, 1062, 1065, 1067, 1068, 1069, 1070, 1071, 1072,
+        1074, 1076, 1079, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1090, 1092, 1095, 1097,
+        1098, 1099, 1100, 1101, 1102, 1103, 1105, 1107, 1110, 1112, 1113, 1114, 1115, 1116, 1117,
+        1118, 1120, 1122, 1125, 1127, 1128, 1129, 1130, 1131,
+    ]),
 };
 
 pub const TAG_BLOCK_NETHER_CARVER_REPLACEABLES: TagEntry = TagEntry {
     key: TagKey::new("block", "nether_carver_replaceables"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 37, 69, 109, 218, 263, 342, 362, 427, 608, 619, 624,
-        626, 637, 639, 694, 741, 891, 935, 936, 1020, 1043, 1055,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 37, 69, 109, 218, 263, 342, 362, 427, 608, 619, 624, 626, 637, 639, 694, 741, 891,
+        935, 936, 1020, 1043, 1055,
+    ]),
 };
 
 pub const TAG_BLOCK_NYLIUM: TagEntry = TagEntry {
     key: TagKey::new("block", "nylium"),
-    set: TagSet::new(
-    &[
-        263, 1043,
-    ],
-    ),
+    set: TagSet::new(&[263, 1043]),
 };
 
 pub const TAG_BLOCK_OAK_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "oak_logs"),
-    set: TagSet::new(
-    &[
-        6, 655, 985, 986,
-    ],
-    ),
+    set: TagSet::new(&[6, 655, 985, 986]),
 };
 
 pub const TAG_BLOCK_OCCLUDES_VIBRATION_SIGNALS: TagEntry = TagEntry {
     key: TagKey::new("block", "occludes_vibration_signals"),
-    set: TagSet::new(
-    &[
-        108, 129, 156, 296, 445, 459, 535, 549, 568, 584, 674, 734, 835, 874,
-        1150, 1168,
-    ],
-    ),
+    set: TagSet::new(&[
+        108, 129, 156, 296, 445, 459, 535, 549, 568, 584, 674, 734, 835, 874, 1150, 1168,
+    ]),
 };
 
 pub const TAG_BLOCK_OVERRIDES_MUSHROOM_LIGHT_REQUIREMENT: TagEntry = TagEntry {
     key: TagKey::new("block", "overrides_mushroom_light_requirement"),
-    set: TagSet::new(
-    &[
-        263, 626, 741, 1043,
-    ],
-    ),
+    set: TagSet::new(&[263, 626, 741, 1043]),
 };
 
 pub const TAG_BLOCK_OVERWORLD_CARVER_REPLACEABLES: TagEntry = TagEntry {
     key: TagKey::new("block", "overworld_carver_replaceables"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 4, 5, 37, 106, 127, 154, 167, 218, 241, 294, 342,
-        348, 352, 362, 427, 431, 443, 457, 484, 533, 547, 566, 582, 608, 619,
-        624, 626, 671, 691, 694, 731, 741, 810, 833, 846, 848, 863, 864, 871,
-        891, 893, 930, 931, 997, 998, 1004, 1020, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 4, 5, 37, 106, 127, 154, 167, 218, 241, 294, 342, 348, 352, 362, 427, 431, 443,
+        457, 484, 533, 547, 566, 582, 608, 619, 624, 626, 671, 691, 694, 731, 741, 810, 833, 846,
+        848, 863, 864, 871, 891, 893, 930, 931, 997, 998, 1004, 1020, 1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_OVERWORLD_NATURAL_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "overworld_natural_logs"),
-    set: TagSet::new(
-    &[
-        6, 20, 83, 186, 304, 496, 592, 702, 948,
-    ],
-    ),
+    set: TagSet::new(&[6, 20, 83, 186, 304, 496, 592, 702, 948]),
 };
 
 pub const TAG_BLOCK_PALE_OAK_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "pale_oak_logs"),
-    set: TagSet::new(
-    &[
-        702, 713, 987, 988,
-    ],
-    ),
+    set: TagSet::new(&[702, 713, 987, 988]),
 };
 
 pub const TAG_BLOCK_PARROTS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "parrots_spawnable_on"),
-    set: TagSet::new(
-    &[
-        0, 3, 6, 7, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197,
-        262, 271, 303, 304, 315, 414, 495, 496, 507, 591, 592, 604, 655, 701,
-        702, 713, 947, 948, 959, 970, 971, 973, 974, 975, 976, 977, 978, 979,
-        980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1042,
-        1051,
-    ],
-    ),
+    set: TagSet::new(&[
+        0, 3, 6, 7, 19, 20, 31, 45, 82, 83, 94, 185, 186, 197, 262, 271, 303, 304, 315, 414, 495,
+        496, 507, 591, 592, 604, 655, 701, 702, 713, 947, 948, 959, 970, 971, 973, 974, 975, 976,
+        977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992, 1042, 1051,
+    ]),
 };
 
 pub const TAG_BLOCK_PIGLIN_REPELLENTS: TagEntry = TagEntry {
     key: TagKey::new("block", "piglin_repellents"),
-    set: TagSet::new(
-    &[
-        932, 933, 934, 937, 938,
-    ],
-    ),
+    set: TagSet::new(&[932, 933, 934, 937, 938]),
 };
 
 pub const TAG_BLOCK_PLANKS: TagEntry = TagEntry {
     key: TagKey::new("block", "planks"),
-    set: TagSet::new(
-    &[
-        8, 21, 57, 84, 187, 264, 305, 497, 593, 703, 949, 1044,
-    ],
-    ),
+    set: TagSet::new(&[8, 21, 57, 84, 187, 264, 305, 497, 593, 703, 949, 1044]),
 };
 
 pub const TAG_BLOCK_POLAR_BEARS_SPAWNABLE_ON_ALTERNATE: TagEntry = TagEntry {
     key: TagKey::new("block", "polar_bears_spawnable_on_alternate"),
-    set: TagSet::new(
-    &[
-        472,
-    ],
-    ),
+    set: TagSet::new(&[472]),
 };
 
 pub const TAG_BLOCK_PORTALS: TagEntry = TagEntry {
     key: TagKey::new("block", "portals"),
-    set: TagSet::new(
-    &[
-        378, 379, 633,
-    ],
-    ),
+    set: TagSet::new(&[378, 379, 633]),
 };
 
 pub const TAG_BLOCK_PRESSURE_PLATES: TagEntry = TagEntry {
     key: TagKey::new("block", "pressure_plates"),
-    set: TagSet::new(
-    &[
-        22, 58, 85, 188, 265, 306, 464, 498, 550, 594, 646, 704, 753, 950,
-        966, 1045,
-    ],
-    ),
+    set: TagSet::new(&[
+        22, 58, 85, 188, 265, 306, 464, 498, 550, 594, 646, 704, 753, 950, 966, 1045,
+    ]),
 };
 
 pub const TAG_BLOCK_PREVENT_MOB_SPAWNING_INSIDE: TagEntry = TagEntry {
     key: TagKey::new("block", "prevent_mob_spawning_inside"),
-    set: TagSet::new(
-    &[
-        32, 359, 812, 845,
-    ],
-    ),
+    set: TagSet::new(&[32, 359, 812, 845]),
 };
 
 pub const TAG_BLOCK_PREVENTS_NEARBY_LEAF_DECAY: TagEntry = TagEntry {
     key: TagKey::new("block", "prevents_nearby_leaf_decay"),
-    set: TagSet::new(
-    &[
-        6, 20, 31, 83, 94, 186, 197, 262, 271, 304, 315, 496, 507, 592,
-        604, 655, 702, 713, 948, 959, 970, 971, 973, 974, 975, 976, 977, 978,
-        979, 980, 981, 982, 983, 984, 985, 986, 987, 988, 989, 990, 991, 992,
-        1042, 1051,
-    ],
-    ),
+    set: TagSet::new(&[
+        6, 20, 31, 83, 94, 186, 197, 262, 271, 304, 315, 496, 507, 592, 604, 655, 702, 713, 948,
+        959, 970, 971, 973, 974, 975, 976, 977, 978, 979, 980, 981, 982, 983, 984, 985, 986, 987,
+        988, 989, 990, 991, 992, 1042, 1051,
+    ]),
 };
 
 pub const TAG_BLOCK_RABBITS_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "rabbits_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3, 4, 930, 931,
-    ],
-    ),
+    set: TagSet::new(&[3, 4, 930, 931]),
 };
 
 pub const TAG_BLOCK_RAILS: TagEntry = TagEntry {
     key: TagKey::new("block", "rails"),
-    set: TagSet::new(
-    &[
-        32, 359, 812, 845,
-    ],
-    ),
+    set: TagSet::new(&[32, 359, 812, 845]),
 };
 
 pub const TAG_BLOCK_REDSTONE_ORES: TagEntry = TagEntry {
     key: TagKey::new("block", "redstone_ores"),
-    set: TagSet::new(
-    &[
-        354, 877,
-    ],
-    ),
+    set: TagSet::new(&[354, 877]),
 };
 
 pub const TAG_BLOCK_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "replaceable"),
-    set: TagSet::new(
-    &[
-        0, 5, 157, 163, 176, 266, 328, 404, 405, 422, 461, 515, 516, 518,
-        521, 635, 889, 905, 906, 907, 930, 933, 994, 1000, 1001, 1002, 1033, 1034,
-        1046,
-    ],
-    ),
+    set: TagSet::new(&[
+        0, 5, 157, 163, 176, 266, 328, 404, 405, 422, 461, 515, 516, 518, 521, 635, 889, 905, 906,
+        907, 930, 933, 994, 1000, 1001, 1002, 1033, 1034, 1046,
+    ]),
 };
 
 pub const TAG_BLOCK_REPLACEABLE_BY_MUSHROOMS: TagEntry = TagEntry {
     key: TagKey::new("block", "replaceable_by_mushrooms"),
-    set: TagSet::new(
-    &[
-        5, 7, 12, 13, 19, 33, 45, 46, 82, 123, 149, 150, 163, 185,
-        215, 245, 266, 303, 328, 404, 410, 414, 422, 426, 461, 495, 515, 518,
-        552, 553, 591, 635, 659, 672, 675, 695, 701, 715, 732, 738, 857, 858,
-        872, 892, 905, 906, 907, 947, 996, 1000, 1001, 1002, 1010, 1033, 1046, 1148,
-        1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        5, 7, 12, 13, 19, 33, 45, 46, 82, 123, 149, 150, 163, 185, 215, 245, 266, 303, 328, 404,
+        410, 414, 422, 426, 461, 495, 515, 518, 552, 553, 591, 635, 659, 672, 675, 695, 701, 715,
+        732, 738, 857, 858, 872, 892, 905, 906, 907, 947, 996, 1000, 1001, 1002, 1010, 1033, 1046,
+        1148, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_REPLACEABLE_BY_TREES: TagEntry = TagEntry {
     key: TagKey::new("block", "replaceable_by_trees"),
-    set: TagSet::new(
-    &[
-        5, 7, 12, 13, 19, 33, 45, 46, 82, 123, 163, 185, 215, 245,
-        266, 303, 328, 404, 410, 414, 422, 426, 461, 495, 515, 518, 552, 553,
-        591, 635, 659, 672, 675, 695, 701, 715, 732, 738, 872, 892, 905, 906,
-        907, 947, 996, 1000, 1001, 1002, 1010, 1033, 1046, 1148, 1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        5, 7, 12, 13, 19, 33, 45, 46, 82, 123, 163, 185, 215, 245, 266, 303, 328, 404, 410, 414,
+        422, 426, 461, 495, 515, 518, 552, 553, 591, 635, 659, 672, 675, 695, 701, 715, 732, 738,
+        872, 892, 905, 906, 907, 947, 996, 1000, 1001, 1002, 1010, 1033, 1046, 1148, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_SAND: TagEntry = TagEntry {
     key: TagKey::new("block", "sand"),
-    set: TagSet::new(
-    &[
-        4, 863, 998,
-    ],
-    ),
+    set: TagSet::new(&[4, 863, 998]),
 };
 
 pub const TAG_BLOCK_SAPLINGS: TagEntry = TagEntry {
     key: TagKey::new("block", "saplings"),
-    set: TagSet::new(
-    &[
-        23, 44, 86, 189, 307, 413, 499, 595, 647, 705, 951,
-    ],
-    ),
+    set: TagSet::new(&[23, 44, 86, 189, 307, 413, 499, 595, 647, 705, 951]),
 };
 
 pub const TAG_BLOCK_SCULK_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "sculk_replaceable"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 4, 37, 69, 106, 109, 127, 154, 167, 214, 218, 263,
-        294, 342, 362, 373, 382, 427, 431, 443, 457, 533, 547, 566, 582, 608,
-        619, 624, 626, 639, 671, 694, 731, 741, 833, 863, 864, 871, 891, 893,
-        917, 935, 936, 1004, 1020, 1043, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 4, 37, 69, 106, 109, 127, 154, 167, 214, 218, 263, 294, 342, 362, 373, 382, 427,
+        431, 443, 457, 533, 547, 566, 582, 608, 619, 624, 626, 639, 671, 694, 731, 741, 833, 863,
+        864, 871, 891, 893, 917, 935, 936, 1004, 1020, 1043, 1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_SCULK_REPLACEABLE_WORLD_GEN: TagEntry = TagEntry {
     key: TagKey::new("block", "sculk_replaceable_world_gen"),
-    set: TagSet::new(
-    &[
-        1, 2, 3, 4, 37, 69, 106, 109, 127, 154, 167, 214, 218, 219,
-        246, 247, 263, 294, 342, 346, 358, 362, 373, 382, 427, 431, 443, 457,
-        533, 547, 566, 582, 608, 619, 624, 626, 639, 671, 694, 731, 741, 757,
-        833, 863, 864, 871, 891, 893, 917, 935, 936, 1004, 1020, 1043, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 2, 3, 4, 37, 69, 106, 109, 127, 154, 167, 214, 218, 219, 246, 247, 263, 294, 342, 346,
+        358, 362, 373, 382, 427, 431, 443, 457, 533, 547, 566, 582, 608, 619, 624, 626, 639, 671,
+        694, 731, 741, 757, 833, 863, 864, 871, 891, 893, 917, 935, 936, 1004, 1020, 1043, 1147,
+        1166,
+    ]),
 };
 
 pub const TAG_BLOCK_SHULKER_BOXES: TagEntry = TagEntry {
     key: TagKey::new("block", "shulker_boxes"),
-    set: TagSet::new(
-    &[
-        103, 124, 151, 291, 440, 454, 530, 544, 563, 579, 668, 728, 830, 868,
-        909, 1144, 1163,
-    ],
-    ),
+    set: TagSet::new(&[
+        103, 124, 151, 291, 440, 454, 530, 544, 563, 579, 668, 728, 830, 868, 909, 1144, 1163,
+    ]),
 };
 
 pub const TAG_BLOCK_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "signs"),
-    set: TagSet::new(
-    &[
-        25, 30, 61, 66, 88, 93, 191, 196, 268, 274, 309, 314, 501, 506,
-        598, 603, 649, 654, 707, 712, 953, 958, 1048, 1054,
-    ],
-    ),
+    set: TagSet::new(&[
+        25, 30, 61, 66, 88, 93, 191, 196, 268, 274, 309, 314, 501, 506, 598, 603, 649, 654, 707,
+        712, 953, 958, 1048, 1054,
+    ]),
 };
 
 pub const TAG_BLOCK_SLABS: TagEntry = TagEntry {
     key: TagKey::new("block", "slabs"),
-    set: TagSet::new(
-    &[
-        26, 38, 55, 62, 89, 110, 137, 192, 220, 223, 269, 277, 280, 282,
-        310, 317, 343, 355, 363, 383, 400, 428, 502, 599, 611, 614, 620, 628,
-        650, 688, 708, 716, 744, 748, 754, 758, 762, 765, 768, 814, 817, 838,
-        843, 859, 865, 885, 894, 919, 922, 925, 928, 954, 961, 967, 1021, 1025,
-        1049, 1069, 1083, 1099, 1114, 1129,
-    ],
-    ),
+    set: TagSet::new(&[
+        26, 38, 55, 62, 89, 110, 137, 192, 220, 223, 269, 277, 280, 282, 310, 317, 343, 355, 363,
+        383, 400, 428, 502, 599, 611, 614, 620, 628, 650, 688, 708, 716, 744, 748, 754, 758, 762,
+        765, 768, 814, 817, 838, 843, 859, 865, 885, 894, 919, 922, 925, 928, 954, 961, 967, 1021,
+        1025, 1049, 1069, 1083, 1099, 1114, 1129,
+    ]),
 };
 
 pub const TAG_BLOCK_SMALL_FLOWERS: TagEntry = TagEntry {
     key: TagKey::new("block", "small_flowers"),
-    set: TagSet::new(
-    &[
-        12, 13, 33, 46, 123, 215, 245, 426, 553, 659, 672, 675, 732, 872,
-        1010, 1148, 1152,
-    ],
-    ),
+    set: TagSet::new(&[
+        12, 13, 33, 46, 123, 215, 245, 426, 553, 659, 672, 675, 732, 872, 1010, 1148, 1152,
+    ]),
 };
 
 pub const TAG_BLOCK_SMELTS_TO_GLASS: TagEntry = TagEntry {
     key: TagKey::new("block", "smelts_to_glass"),
-    set: TagSet::new(
-    &[
-        4, 863,
-    ],
-    ),
+    set: TagSet::new(&[4, 863]),
 };
 
 pub const TAG_BLOCK_SNAPS_GOAT_HORN: TagEntry = TagEntry {
     key: TagKey::new("block", "snaps_goat_horn"),
-    set: TagSet::new(
-    &[
-        1, 6, 20, 83, 186, 217, 241, 304, 376, 484, 496, 592, 691, 702,
-        948,
-    ],
-    ),
+    set: TagSet::new(&[
+        1, 6, 20, 83, 186, 217, 241, 304, 376, 484, 496, 592, 691, 702, 948,
+    ]),
 };
 
 pub const TAG_BLOCK_SNIFFER_DIGGABLE_BLOCK: TagEntry = TagEntry {
     key: TagKey::new("block", "sniffer_diggable_block"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 608, 619, 624, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 608, 619, 624, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SNIFFER_EGG_HATCH_BOOST: TagEntry = TagEntry {
     key: TagKey::new("block", "sniffer_egg_hatch_boost"),
-    set: TagSet::new(
-    &[
-        608,
-    ],
-    ),
+    set: TagSet::new(&[608]),
 };
 
 pub const TAG_BLOCK_SNOW: TagEntry = TagEntry {
     key: TagKey::new("block", "snow"),
-    set: TagSet::new(
-    &[
-        810, 930, 931,
-    ],
-    ),
+    set: TagSet::new(&[810, 930, 931]),
 };
 
 pub const TAG_BLOCK_SOUL_FIRE_BASE_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "soul_fire_base_blocks"),
-    set: TagSet::new(
-    &[
-        935, 936,
-    ],
-    ),
+    set: TagSet::new(&[935, 936]),
 };
 
 pub const TAG_BLOCK_SOUL_SPEED_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "soul_speed_blocks"),
-    set: TagSet::new(
-    &[
-        935, 936,
-    ],
-    ),
+    set: TagSet::new(&[935, 936]),
 };
 
 pub const TAG_BLOCK_SPRUCE_LOGS: TagEntry = TagEntry {
     key: TagKey::new("block", "spruce_logs"),
-    set: TagSet::new(
-    &[
-        948, 959, 989, 990,
-    ],
-    ),
+    set: TagSet::new(&[948, 959, 989, 990]),
 };
 
 pub const TAG_BLOCK_STAIRS: TagEntry = TagEntry {
     key: TagKey::new("block", "stairs"),
-    set: TagSet::new(
-    &[
-        27, 39, 56, 63, 90, 111, 138, 193, 221, 224, 270, 278, 311, 318,
-        344, 356, 364, 384, 401, 429, 503, 600, 612, 615, 621, 629, 651, 689,
-        709, 745, 749, 755, 759, 763, 766, 769, 815, 818, 839, 844, 860, 866,
-        886, 895, 920, 923, 926, 955, 962, 968, 1022, 1026, 1050, 1070, 1084, 1100,
-        1115, 1130,
-    ],
-    ),
+    set: TagSet::new(&[
+        27, 39, 56, 63, 90, 111, 138, 193, 221, 224, 270, 278, 311, 318, 344, 356, 364, 384, 401,
+        429, 503, 600, 612, 615, 621, 629, 651, 689, 709, 745, 749, 755, 759, 763, 766, 769, 815,
+        818, 839, 844, 860, 866, 886, 895, 920, 923, 926, 955, 962, 968, 1022, 1026, 1050, 1070,
+        1084, 1100, 1115, 1130,
+    ]),
 };
 
 pub const TAG_BLOCK_STANDING_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "standing_signs"),
-    set: TagSet::new(
-    &[
-        25, 61, 88, 191, 268, 309, 501, 598, 649, 707, 953, 1048,
-    ],
-    ),
+    set: TagSet::new(&[25, 61, 88, 191, 268, 309, 501, 598, 649, 707, 953, 1048]),
 };
 
 pub const TAG_BLOCK_STONE_BRICKS: TagEntry = TagEntry {
     key: TagKey::new("block", "stone_bricks"),
-    set: TagSet::new(
-    &[
-        209, 250, 617, 964,
-    ],
-    ),
+    set: TagSet::new(&[209, 250, 617, 964]),
 };
 
 pub const TAG_BLOCK_STONE_BUTTONS: TagEntry = TagEntry {
     key: TagKey::new("block", "stone_buttons"),
-    set: TagSet::new(
-    &[
-        752, 965,
-    ],
-    ),
+    set: TagSet::new(&[752, 965]),
 };
 
 pub const TAG_BLOCK_STONE_ORE_REPLACEABLES: TagEntry = TagEntry {
     key: TagKey::new("block", "stone_ore_replaceables"),
-    set: TagSet::new(
-    &[
-        1, 37, 362, 427,
-    ],
-    ),
+    set: TagSet::new(&[1, 37, 362, 427]),
 };
 
 pub const TAG_BLOCK_STONE_PRESSURE_PLATES: TagEntry = TagEntry {
     key: TagKey::new("block", "stone_pressure_plates"),
-    set: TagSet::new(
-    &[
-        753, 966,
-    ],
-    ),
+    set: TagSet::new(&[753, 966]),
 };
 
 pub const TAG_BLOCK_STRIDER_WARM_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "strider_warm_blocks"),
-    set: TagSet::new(
-    &[
-        516,
-    ],
-    ),
+    set: TagSet::new(&[516]),
 };
 
 pub const TAG_BLOCK_SUBSTRATE_OVERWORLD: TagEntry = TagEntry {
     key: TagKey::new("block", "substrate_overworld"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORT_OVERRIDE_CACTUS_FLOWER: TagEntry = TagEntry {
     key: TagKey::new("block", "support_override_cactus_flower"),
-    set: TagSet::new(
-    &[
-        164, 403,
-    ],
-    ),
+    set: TagSet::new(&[164, 403]),
 };
 
 pub const TAG_BLOCK_SUPPORT_OVERRIDE_SNOW_LAYER: TagEntry = TagEntry {
     key: TagKey::new("block", "support_override_snow_layer"),
-    set: TagSet::new(
-    &[
-        465, 619, 935,
-    ],
-    ),
+    set: TagSet::new(&[465, 619, 935]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_AZALEA: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_azalea"),
-    set: TagSet::new(
-    &[
-        2, 3, 214, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 214, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_BAMBOO: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_bamboo"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 47, 59, 218, 431, 608, 619, 624, 626, 694, 741, 863,
-        891, 997, 998,
-    ],
-    ),
+    set: TagSet::new(&[
+        2, 3, 4, 47, 59, 218, 431, 608, 619, 624, 626, 694, 741, 863, 891, 997, 998,
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_BIG_DRIPLEAF: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_big_dripleaf"),
-    set: TagSet::new(
-    &[
-        2, 3, 214, 218, 403, 608, 619, 624, 626, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 214, 218, 403, 608, 619, 624, 626, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CACTUS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_cactus"),
-    set: TagSet::new(
-    &[
-        4, 863, 998,
-    ],
-    ),
+    set: TagSet::new(&[4, 863, 998]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CHORUS_FLOWER: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_chorus_flower"),
-    set: TagSet::new(
-    &[
-        382,
-    ],
-    ),
+    set: TagSet::new(&[382]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CHORUS_PLANT: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_chorus_plant"),
-    set: TagSet::new(
-    &[
-        382,
-    ],
-    ),
+    set: TagSet::new(&[382]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_COCOA: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_cocoa"),
-    set: TagSet::new(
-    &[
-        496, 507, 981, 982,
-    ],
-    ),
+    set: TagSet::new(&[496, 507, 981, 982]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CRIMSON_FUNGUS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_crimson_fungus"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 263, 403, 608, 619, 624, 626, 694, 741, 891, 936, 1043,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CRIMSON_ROOTS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_crimson_roots"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 263, 403, 608, 619, 624, 626, 694, 741, 891, 936, 1043,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_CROPS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_crops"),
-    set: TagSet::new(
-    &[
-        403,
-    ],
-    ),
+    set: TagSet::new(&[403]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_DRY_VEGETATION: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_dry_vegetation"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 106, 127, 154, 218, 294, 403, 443, 457, 533, 547, 566,
-        582, 608, 619, 624, 626, 671, 694, 731, 741, 833, 863, 871, 891, 998,
-        1004, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        2, 3, 4, 106, 127, 154, 218, 294, 403, 443, 457, 533, 547, 566, 582, 608, 619, 624, 626,
+        671, 694, 731, 741, 833, 863, 871, 891, 998, 1004, 1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_FROGSPAWN: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_frogspawn"),
-    set: TagSet::new(
-    &[],
-    ),
+    set: TagSet::new(&[]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_HANGING_MANGROVE_PROPAGULE: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_hanging_mangrove_propagule"),
-    set: TagSet::new(
-    &[
-        591,
-    ],
-    ),
+    set: TagSet::new(&[591]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_LILY_PAD: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_lily_pad"),
-    set: TagSet::new(
-    &[
-        416, 472,
-    ],
-    ),
+    set: TagSet::new(&[416, 472]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_MANGROVE_PROPAGULE: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_mangrove_propagule"),
-    set: TagSet::new(
-    &[
-        2, 3, 214, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 214, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_MELON_STEM: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_melon_stem"),
-    set: TagSet::new(
-    &[
-        403,
-    ],
-    ),
+    set: TagSet::new(&[403]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_MELON_STEM_FRUIT: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_melon_stem_fruit"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_NETHER_SPROUTS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_nether_sprouts"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 263, 403, 608, 619, 624, 626, 694, 741, 891, 936, 1043,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_NETHER_WART: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_nether_wart"),
-    set: TagSet::new(
-    &[
-        935,
-    ],
-    ),
+    set: TagSet::new(&[935]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_PUMPKIN_STEM: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_pumpkin_stem"),
-    set: TagSet::new(
-    &[
-        403,
-    ],
-    ),
+    set: TagSet::new(&[403]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_PUMPKIN_STEM_FRUIT: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_pumpkin_stem_fruit"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_SMALL_DRIPLEAF: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_small_dripleaf"),
-    set: TagSet::new(
-    &[
-        214, 608,
-    ],
-    ),
+    set: TagSet::new(&[214, 608]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_STEM_CROPS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_stem_crops"),
-    set: TagSet::new(
-    &[
-        403,
-    ],
-    ),
+    set: TagSet::new(&[403]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_STEM_FRUIT: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_stem_fruit"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_SUGAR_CANE: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_sugar_cane"),
-    set: TagSet::new(
-    &[
-        2, 3, 4, 218, 608, 619, 624, 626, 694, 741, 863, 891, 998,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 4, 218, 608, 619, 624, 626, 694, 741, 863, 891, 998]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_SUGAR_CANE_ADJACENTLY: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_sugar_cane_adjacently"),
-    set: TagSet::new(
-    &[
-        416,
-    ],
-    ),
+    set: TagSet::new(&[416]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_VEGETATION: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_vegetation"),
-    set: TagSet::new(
-    &[
-        2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891,
-    ],
-    ),
+    set: TagSet::new(&[2, 3, 218, 403, 608, 619, 624, 626, 694, 741, 891]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_WARPED_FUNGUS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_warped_fungus"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 263, 403, 608, 619, 624, 626, 694, 741, 891, 936, 1043,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_WARPED_ROOTS: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_warped_roots"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 263, 403, 608, 619, 624, 626, 694, 741, 891, 936, 1043,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SUPPORTS_WITHER_ROSE: TagEntry = TagEntry {
     key: TagKey::new("block", "supports_wither_rose"),
-    set: TagSet::new(
-    &[
+    set: TagSet::new(&[
         2, 3, 218, 403, 608, 619, 624, 626, 639, 694, 741, 891, 935, 936,
-    ],
-    ),
+    ]),
 };
 
 pub const TAG_BLOCK_SWORD_EFFICIENT: TagEntry = TagEntry {
     key: TagKey::new("block", "sword_efficient"),
-    set: TagSet::new(
-    &[
-        7, 19, 45, 75, 76, 82, 174, 185, 212, 213, 227, 303, 414, 422,
-        487, 495, 591, 606, 701, 820, 947, 1033,
-    ],
-    ),
+    set: TagSet::new(&[
+        7, 19, 45, 75, 76, 82, 174, 185, 212, 213, 227, 303, 414, 422, 487, 495, 591, 606, 701,
+        820, 947, 1033,
+    ]),
 };
 
 pub const TAG_BLOCK_SWORD_INSTANTLY_MINES: TagEntry = TagEntry {
     key: TagKey::new("block", "sword_instantly_mines"),
-    set: TagSet::new(
-    &[
-        47, 59,
-    ],
-    ),
+    set: TagSet::new(&[47, 59]),
 };
 
 pub const TAG_BLOCK_TERRACOTTA: TagEntry = TagEntry {
     key: TagKey::new("block", "terracotta"),
-    set: TagSet::new(
-    &[
-        106, 127, 154, 294, 443, 457, 533, 547, 566, 582, 671, 731, 833, 871,
-        1004, 1147, 1166,
-    ],
-    ),
+    set: TagSet::new(&[
+        106, 127, 154, 294, 443, 457, 533, 547, 566, 582, 671, 731, 833, 871, 1004, 1147, 1166,
+    ]),
 };
 
 pub const TAG_BLOCK_TRAIL_RUINS_REPLACEABLE: TagEntry = TagEntry {
     key: TagKey::new("block", "trail_ruins_replaceable"),
-    set: TagSet::new(
-    &[
-        431,
-    ],
-    ),
+    set: TagSet::new(&[431]),
 };
 
 pub const TAG_BLOCK_TRAPDOORS: TagEntry = TagEntry {
     key: TagKey::new("block", "trapdoors"),
-    set: TagSet::new(
-    &[
-        28, 64, 91, 194, 243, 272, 312, 398, 485, 504, 601, 652, 686, 710,
-        956, 1052, 1067, 1081, 1097, 1112, 1127,
-    ],
-    ),
+    set: TagSet::new(&[
+        28, 64, 91, 194, 243, 272, 312, 398, 485, 504, 601, 652, 686, 710, 956, 1052, 1067, 1081,
+        1097, 1112, 1127,
+    ]),
 };
 
 pub const TAG_BLOCK_TRIGGERS_AMBIENT_DESERT_DRY_VEGETATION_BLOCK_SOUNDS: TagEntry = TagEntry {
-    key: TagKey::new("block", "triggers_ambient_desert_dry_vegetation_block_sounds"),
-    set: TagSet::new(
-    &[
-        4, 106, 127, 154, 294, 443, 457, 533, 547, 566, 582, 671, 731, 833,
-        863, 871, 1004, 1147, 1166,
-    ],
+    key: TagKey::new(
+        "block",
+        "triggers_ambient_desert_dry_vegetation_block_sounds",
     ),
+    set: TagSet::new(&[
+        4, 106, 127, 154, 294, 443, 457, 533, 547, 566, 582, 671, 731, 833, 863, 871, 1004, 1147,
+        1166,
+    ]),
 };
 
 pub const TAG_BLOCK_TRIGGERS_AMBIENT_DESERT_SAND_BLOCK_SOUNDS: TagEntry = TagEntry {
     key: TagKey::new("block", "triggers_ambient_desert_sand_block_sounds"),
-    set: TagSet::new(
-    &[
-        4, 863,
-    ],
-    ),
+    set: TagSet::new(&[4, 863]),
 };
 
 pub const TAG_BLOCK_TRIGGERS_AMBIENT_DRIED_GHAST_BLOCK_SOUNDS: TagEntry = TagEntry {
     key: TagKey::new("block", "triggers_ambient_dried_ghast_block_sounds"),
-    set: TagSet::new(
-    &[
-        935, 936,
-    ],
-    ),
+    set: TagSet::new(&[935, 936]),
 };
 
 pub const TAG_BLOCK_UNDERWATER_BONEMEALS: TagEntry = TagEntry {
     key: TagKey::new("block", "underwater_bonemeals"),
-    set: TagSet::new(
-    &[
-        132, 134, 135, 158, 160, 161, 406, 408, 409, 468, 470, 471, 905, 1016,
-        1018, 1019,
-    ],
-    ),
+    set: TagSet::new(&[
+        132, 134, 135, 158, 160, 161, 406, 408, 409, 468, 470, 471, 905, 1016, 1018, 1019,
+    ]),
 };
 
 pub const TAG_BLOCK_UNSTABLE_BOTTOM_CENTER: TagEntry = TagEntry {
     key: TagKey::new("block", "unstable_bottom_center"),
-    set: TagSet::new(
-    &[
-        17, 52, 80, 183, 259, 301, 493, 589, 644, 699, 945, 1039,
-    ],
-    ),
+    set: TagSet::new(&[17, 52, 80, 183, 259, 301, 493, 589, 644, 699, 945, 1039]),
 };
 
 pub const TAG_BLOCK_VALID_SPAWN: TagEntry = TagEntry {
     key: TagKey::new("block", "valid_spawn"),
-    set: TagSet::new(
-    &[
-        3, 741,
-    ],
-    ),
+    set: TagSet::new(&[3, 741]),
 };
 
 pub const TAG_BLOCK_VIBRATION_RESONATORS: TagEntry = TagEntry {
     key: TagKey::new("block", "vibration_resonators"),
-    set: TagSet::new(
-    &[
-        34,
-    ],
-    ),
+    set: TagSet::new(&[34]),
 };
 
 pub const TAG_BLOCK_WALL_CORALS: TagEntry = TagEntry {
     key: TagKey::new("block", "wall_corals"),
-    set: TagSet::new(
-    &[
-        135, 161, 409, 471, 1019,
-    ],
-    ),
+    set: TagSet::new(&[135, 161, 409, 471, 1019]),
 };
 
 pub const TAG_BLOCK_WALL_HANGING_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "wall_hanging_signs"),
-    set: TagSet::new(
-    &[
-        29, 65, 92, 195, 273, 313, 505, 602, 653, 711, 957, 1053,
-    ],
-    ),
+    set: TagSet::new(&[29, 65, 92, 195, 273, 313, 505, 602, 653, 711, 957, 1053]),
 };
 
 pub const TAG_BLOCK_WALL_POST_OVERRIDE: TagEntry = TagEntry {
     key: TagKey::new("block", "wall_post_override"),
-    set: TagSet::new(
-    &[
-        22, 25, 30, 58, 61, 66, 85, 88, 93, 95, 107, 114, 128, 141,
-        155, 165, 188, 191, 196, 242, 265, 268, 274, 283, 295, 306, 309, 314,
-        432, 444, 446, 458, 464, 498, 501, 506, 522, 534, 536, 548, 550, 555,
-        567, 571, 583, 594, 598, 603, 646, 649, 654, 660, 673, 704, 707, 712,
-        719, 733, 753, 822, 834, 849, 873, 878, 937, 950, 953, 958, 966, 1009,
-        1014, 1045, 1048, 1054, 1136, 1149, 1155, 1167,
-    ],
-    ),
+    set: TagSet::new(&[
+        22, 25, 30, 58, 61, 66, 85, 88, 93, 95, 107, 114, 128, 141, 155, 165, 188, 191, 196, 242,
+        265, 268, 274, 283, 295, 306, 309, 314, 432, 444, 446, 458, 464, 498, 501, 506, 522, 534,
+        536, 548, 550, 555, 567, 571, 583, 594, 598, 603, 646, 649, 654, 660, 673, 704, 707, 712,
+        719, 733, 753, 822, 834, 849, 873, 878, 937, 950, 953, 958, 966, 1009, 1014, 1045, 1048,
+        1054, 1136, 1149, 1155, 1167,
+    ]),
 };
 
 pub const TAG_BLOCK_WALL_SIGNS: TagEntry = TagEntry {
     key: TagKey::new("block", "wall_signs"),
-    set: TagSet::new(
-    &[
-        30, 66, 93, 196, 274, 314, 506, 603, 654, 712, 958, 1054,
-    ],
-    ),
+    set: TagSet::new(&[30, 66, 93, 196, 274, 314, 506, 603, 654, 712, 958, 1054]),
 };
 
 pub const TAG_BLOCK_WALLS: TagEntry = TagEntry {
     key: TagKey::new("block", "walls"),
-    set: TagSet::new(
-    &[
-        40, 112, 139, 222, 225, 345, 357, 365, 385, 430, 613, 616, 622, 630,
-        750, 756, 760, 770, 819, 861, 867, 887, 896, 963, 1023, 1027,
-    ],
-    ),
+    set: TagSet::new(&[
+        40, 112, 139, 222, 225, 345, 357, 365, 385, 430, 613, 616, 622, 630, 750, 756, 760, 770,
+        819, 861, 867, 887, 896, 963, 1023, 1027,
+    ]),
 };
 
 pub const TAG_BLOCK_WARPED_STEMS: TagEntry = TagEntry {
     key: TagKey::new("block", "warped_stems"),
-    set: TagSet::new(
-    &[
-        991, 992, 1042, 1051,
-    ],
-    ),
+    set: TagSet::new(&[991, 992, 1042, 1051]),
 };
 
 pub const TAG_BLOCK_WART_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "wart_blocks"),
-    set: TagSet::new(
-    &[
-        637, 1055,
-    ],
-    ),
+    set: TagSet::new(&[637, 1055]),
 };
 
 pub const TAG_BLOCK_WITHER_IMMUNE: TagEntry = TagEntry {
     key: TagKey::new("block", "wither_immune"),
-    set: TagSet::new(
-    &[
-        10, 68, 179, 228, 378, 379, 380, 488, 521, 618, 881, 883, 993, 1005,
-        1006,
-    ],
-    ),
+    set: TagSet::new(&[
+        10, 68, 179, 228, 378, 379, 380, 488, 521, 618, 881, 883, 993, 1005, 1006,
+    ]),
 };
 
 pub const TAG_BLOCK_WITHER_SUMMON_BASE_BLOCKS: TagEntry = TagEntry {
     key: TagKey::new("block", "wither_summon_base_blocks"),
-    set: TagSet::new(
-    &[
-        935, 936,
-    ],
-    ),
+    set: TagSet::new(&[935, 936]),
 };
 
 pub const TAG_BLOCK_WOLVES_SPAWNABLE_ON: TagEntry = TagEntry {
     key: TagKey::new("block", "wolves_spawnable_on"),
-    set: TagSet::new(
-    &[
-        3, 218, 741, 930, 931,
-    ],
-    ),
+    set: TagSet::new(&[3, 218, 741, 930, 931]),
 };
 
 pub const TAG_BLOCK_WOODEN_BUTTONS: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_buttons"),
-    set: TagSet::new(
-    &[
-        14, 49, 77, 180, 256, 298, 490, 586, 641, 696, 942, 1036,
-    ],
-    ),
+    set: TagSet::new(&[14, 49, 77, 180, 256, 298, 490, 586, 641, 696, 942, 1036]),
 };
 
 pub const TAG_BLOCK_WOODEN_DOORS: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_doors"),
-    set: TagSet::new(
-    &[
-        15, 50, 78, 181, 257, 299, 491, 587, 642, 697, 943, 1037,
-    ],
-    ),
+    set: TagSet::new(&[15, 50, 78, 181, 257, 299, 491, 587, 642, 697, 943, 1037]),
 };
 
 pub const TAG_BLOCK_WOODEN_FENCES: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_fences"),
-    set: TagSet::new(
-    &[
-        16, 51, 79, 182, 258, 300, 492, 588, 643, 698, 944, 1038,
-    ],
-    ),
+    set: TagSet::new(&[16, 51, 79, 182, 258, 300, 492, 588, 643, 698, 944, 1038]),
 };
 
 pub const TAG_BLOCK_WOODEN_PRESSURE_PLATES: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_pressure_plates"),
-    set: TagSet::new(
-    &[
-        22, 58, 85, 188, 265, 306, 498, 594, 646, 704, 950, 1045,
-    ],
-    ),
+    set: TagSet::new(&[22, 58, 85, 188, 265, 306, 498, 594, 646, 704, 950, 1045]),
 };
 
 pub const TAG_BLOCK_WOODEN_SHELVES: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_shelves"),
-    set: TagSet::new(
-    &[
-        24, 60, 87, 190, 267, 308, 500, 597, 648, 706, 952, 1047,
-    ],
-    ),
+    set: TagSet::new(&[24, 60, 87, 190, 267, 308, 500, 597, 648, 706, 952, 1047]),
 };
 
 pub const TAG_BLOCK_WOODEN_SLABS: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_slabs"),
-    set: TagSet::new(
-    &[
-        26, 62, 89, 192, 269, 310, 502, 599, 650, 708, 954, 1049,
-    ],
-    ),
+    set: TagSet::new(&[26, 62, 89, 192, 269, 310, 502, 599, 650, 708, 954, 1049]),
 };
 
 pub const TAG_BLOCK_WOODEN_STAIRS: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_stairs"),
-    set: TagSet::new(
-    &[
-        27, 63, 90, 193, 270, 311, 503, 600, 651, 709, 955, 1050,
-    ],
-    ),
+    set: TagSet::new(&[27, 63, 90, 193, 270, 311, 503, 600, 651, 709, 955, 1050]),
 };
 
 pub const TAG_BLOCK_WOODEN_TRAPDOORS: TagEntry = TagEntry {
     key: TagKey::new("block", "wooden_trapdoors"),
-    set: TagSet::new(
-    &[
-        28, 64, 91, 194, 272, 312, 504, 601, 652, 710, 956, 1052,
-    ],
-    ),
+    set: TagSet::new(&[28, 64, 91, 194, 272, 312, 504, 601, 652, 710, 956, 1052]),
 };
 
 pub const TAG_BLOCK_WOOL: TagEntry = TagEntry {
     key: TagKey::new("block", "wool"),
-    set: TagSet::new(
-    &[
-        108, 129, 156, 296, 445, 459, 535, 549, 568, 584, 674, 734, 835, 874,
-        1150, 1168,
-    ],
-    ),
+    set: TagSet::new(&[
+        108, 129, 156, 296, 445, 459, 535, 549, 568, 584, 674, 734, 835, 874, 1150, 1168,
+    ]),
 };
 
 pub const TAG_BLOCK_WOOL_CARPETS: TagEntry = TagEntry {
     key: TagKey::new("block", "wool_carpets"),
-    set: TagSet::new(
-    &[
-        99, 118, 145, 287, 436, 450, 526, 540, 559, 575, 664, 723, 826, 853,
-        1140, 1159,
-    ],
-    ),
+    set: TagSet::new(&[
+        99, 118, 145, 287, 436, 450, 526, 540, 559, 575, 664, 723, 826, 853, 1140, 1159,
+    ]),
 };
 
-pub static ALL_TAGS: [&TagEntry; 248] = [&TAG_BLOCK_ACACIA_LOGS,
+pub static ALL_TAGS: [&TagEntry; 248] = [
+    &TAG_BLOCK_ACACIA_LOGS,
     &TAG_BLOCK_AIR,
     &TAG_BLOCK_ALL_HANGING_SIGNS,
     &TAG_BLOCK_ALL_SIGNS,
@@ -2670,4 +1780,5 @@ pub static ALL_TAGS: [&TagEntry; 248] = [&TAG_BLOCK_ACACIA_LOGS,
     &TAG_BLOCK_WOODEN_STAIRS,
     &TAG_BLOCK_WOODEN_TRAPDOORS,
     &TAG_BLOCK_WOOL,
-    &TAG_BLOCK_WOOL_CARPETS];
+    &TAG_BLOCK_WOOL_CARPETS,
+];
