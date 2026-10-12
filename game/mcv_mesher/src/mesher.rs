@@ -4,9 +4,17 @@
 //! 各函数注释以 `mesher.cpp:行号` 标注机制出处（引用出处≠复制表达，
 //! docs/porting-conventions.md §1/§3：控制流与命名是本仓库自有表达）。
 //! 输出是渲染 ABI（24 B 交错顶点 + u32 索引，mesher.cpp:11-13,105-115），
-//! 与黄金数据逐字节回归锁定（tests/golden.rs；**回归锁，非正确性标准**——
-//! 黄金值是删除前 oracle 的旧近似输出，26.1 权威门在 vanilla 后端 +
-//! tests/quality.rs）。
+//! 与黄金数据逐字节回归锁定（tests/golden.rs）。
+//!
+//! **病灶#2 平滑光照层（#153 审计 M9 重建波，LightCoordsUtil.java:61-89）**：
+//! 顶点光 = 暴露层四格（两侧 + 对角 + 面中心）均值 + 借中心规则（26.1
+//! 原版默认 Smooth Lighting ON；改动前每面单采 = M8 平采 ≈ Smooth OFF）。
+//! 环境开关 `MCV_SMOOTH_LIGHT=0` 回落单采（输出与改动前逐位等价，回滚
+//! 面），缺省开。黄金件随本层落地重锚（tests/golden/README.md 头注）。
+//! 未移植债：非立方面的二级权重混合（`smoothWeightedBlend` 仅
+//! facePartial 走 faceShape 权重，BlockModelLighter.java:163-178 的
+//! `doNonCubicWeight` 分支）——盒面走与立方面同一 smoothBlend；cross 恒
+//! 平采（无暴露层语义）。
 //!
 //! 顶点布局（24 B）：pos f32x3 | uv u16x2 | tex_layer u16 | block_light u8 |
 //! sky_light u8 | ao u8 | flags u8（bit0-2 面档，bit3 水顶波动）| pad 2B；
@@ -258,6 +266,69 @@ fn corner_ao(n: &Nb, nx: i32, ny: i32, nz: i32, u: [i32; 3], v: [i32; 3], a: i32
     }
 }
 
+/// 病灶#2 环境开关（#153 审计 M9 重建波）：`MCV_SMOOTH_LIGHT=0` 回落每面
+/// 单采（M8 平采语义 = vanilla Smooth Lighting OFF，输出与改动前逐位
+/// 等价——回滚面）；缺省/其他值 = 开（原版默认语义）。每次 build 读取
+/// 一次（不入 OnceLock：测试需在同一进程内切换两分支对拍）。
+fn smooth_light_enabled() -> bool {
+    std::env::var("MCV_SMOOTH_LIGHT").ok().as_deref() != Some("0")
+}
+
+/// 26.1 `LightCoordsUtil.smoothBlend`（LightCoordsUtil.java:61-89）的
+/// (sky, block) 双通道表达：中心任一通道 >2 时，零通道邻格借中心值
+/// （借中心规则，:62-86）；四格按通道 floor 均值（:88 打包
+/// `sum >> 2 & 0x00FF00FF`——通道位不相交，故与逐通道 `>>2` 等价）。
+fn smooth_blend(n1: (u8, u8), n2: (u8, u8), n3: (u8, u8), center: (u8, u8)) -> (u8, u8) {
+    let mut ns = [n1, n2, n3];
+    if center.0 > 2 || center.1 > 2 {
+        for nn in &mut ns {
+            if nn.0 == 0 {
+                nn.0 = center.0;
+            }
+            if nn.1 == 0 {
+                nn.1 = center.1;
+            }
+        }
+    }
+    (
+        (ns[0].0 + ns[1].0 + ns[2].0 + center.0) >> 2,
+        (ns[0].1 + ns[1].1 + ns[2].1 + center.1) >> 2,
+    )
+}
+
+/// 单角平滑光采样：与 [`corner_ao`] 同一三格几何（该角在暴露层的两侧格
+/// 与对角格），blend 中心 = 面平采格 (c_sky, c_blk)。26.1
+/// `BlockModelLighter.prepareQuadShape` 立方面分支
+/// （BlockModelLighter.java:163-178）：顶点光 = smoothBlend(两侧格,
+/// 对角格, lightCenter)，lightCenter 取面朝向格（:115-120）= 本仓既有的
+/// `light_at(nx,ny,nz)` 平采点。
+// 参数列与 corner_ao/corner_smooth 同构（邻格 + u/v 轴 + 角偏移），不可再拆。
+#[allow(clippy::too_many_arguments)]
+fn corner_smooth(
+    n: &Nb,
+    c_sky: u8,
+    c_blk: u8,
+    nx: i32,
+    ny: i32,
+    nz: i32,
+    u: [i32; 3],
+    v: [i32; 3],
+    a: i32,
+    b: i32,
+) -> (u8, u8) {
+    let du = if a != 0 { 1 } else { -1 };
+    let dv = if b != 0 { 1 } else { -1 };
+    let n1 = light_at(n, nx + du * u[0], ny + du * u[1], nz + du * u[2]);
+    let n2 = light_at(n, nx + dv * v[0], ny + dv * v[1], nz + dv * v[2]);
+    let nc = light_at(
+        n,
+        nx + du * u[0] + dv * v[0],
+        ny + du * u[1] + dv * v[1],
+        nz + du * u[2] + dv * v[2],
+    );
+    smooth_blend(n1, n2, nc, (c_sky, c_blk))
+}
+
 /// 扫描轴 → (格 u 数, 格 v 数, 层数)（mesher.cpp:243-256 slice_geom）。
 /// axis0: u=z v=y；axis1: u=x v=z；axis2: u=x v=y。
 fn slice_geom(axis: usize) -> (usize, usize, usize) {
@@ -298,7 +369,9 @@ fn uv_coord(blocks: f32) -> u16 {
     (blocks * UV_PER_BLOCK + 0.5) as u16
 }
 
-/// 切片格（mesher.cpp:117-127 Cell）：ao4 打包 4 角 × 2bit，角序 (b*2+a)。
+/// 切片格（mesher.cpp:117-127 Cell）：ao4 打包 4 角 × 2bit，角序 (b*2+a)；
+/// 病灶#2 平滑光照层增补 sl4/bl4（4 角 sky/block 均值，各 4bit/角，同一
+/// 角序）——顶点光随角变化后，合并键必须锁全矩形的四角光场。
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 struct Cell {
     id: u16,
@@ -306,6 +379,8 @@ struct Cell {
     sky: u8,
     blk: u8,
     ao4: u8,
+    sl4: u16,
+    bl4: u16,
     wave: u8,
     visible: u8,
 }
@@ -319,6 +394,8 @@ fn same_key(a: &Cell, b: &Cell) -> bool {
         && a.sky == b.sky
         && a.blk == b.blk
         && a.ao4 == b.ao4
+        && a.sl4 == b.sl4
+        && a.bl4 == b.bl4
         && a.wave == b.wave
 }
 
@@ -358,21 +435,24 @@ impl MeshData {
         z: f32,
         uu: u16,
         vv: u16,
-        c: &Cell,
+        tex: u16,
+        blk: u8,
+        sky: u8,
         ao: u8,
         flags: u8,
     ) {
         // mesher.cpp:303-320 push_vertex 的平铺表达：手写 LE 字节保证布局
         // 与 C++ 结构体逐字节一致（偏移 0/12/16/18/19/20/21，pad=0）。
+        // 病灶#2 起 blk/sky 逐顶点取值（平滑层），由调用方按角解包传入；
         // 参数列与 oracle 同构（一条顶点的全部字段），不可再拆。
         self.vertices.extend_from_slice(&x.to_le_bytes());
         self.vertices.extend_from_slice(&y.to_le_bytes());
         self.vertices.extend_from_slice(&z.to_le_bytes());
         self.vertices.extend_from_slice(&uu.to_le_bytes());
         self.vertices.extend_from_slice(&vv.to_le_bytes());
-        self.vertices.extend_from_slice(&c.tex.to_le_bytes());
-        self.vertices.push(c.blk);
-        self.vertices.push(c.sky);
+        self.vertices.extend_from_slice(&tex.to_le_bytes());
+        self.vertices.push(blk);
+        self.vertices.push(sky);
         self.vertices.push(ao);
         self.vertices.push(flags);
         self.vertices.extend_from_slice(&[0, 0]);
@@ -391,7 +471,10 @@ impl MeshData {
 
 /// 发射一条合并 quad（mesher.cpp:322-371 emit_quad）：角序按
 /// CORNER_ORDER[face]，AO 取锚格打包值（键相等 ⇒ 全矩形相等），水面顶
-/// 波动位进 flags bit3 并下沉平面。
+/// 波动位进 flags bit3 并下沉平面。病灶#2：平滑层顶点光按角取锚格
+/// sl4/bl4 打包（键相等 ⇒ 远角格的四角光场与锚格逐位同，几何上大 quad
+/// 的远角顶点 = 远格同序角）；`smooth == false` 或水 pass（水取光平采
+/// 语义，M8/129-L，FluidRenderer.java:430-432）回落面单采值。
 #[allow(clippy::too_many_arguments)]
 fn emit_quad(
     out: &mut MeshData,
@@ -404,6 +487,7 @@ fn emit_quad(
     wq: i32,
     hq: i32,
     anchor: &Cell,
+    smooth: bool,
 ) {
     let face = axis * 2 + dir;
     let mut plane = layer as f32 + if dir == 0 { 1.0 } else { 0.0 };
@@ -436,8 +520,17 @@ fn emit_quad(
         } else {
             0
         };
-        let ao = (anchor.ao4 >> (2 * (b as u8 * 2 + a as u8))) & 0x3;
-        out.push_vertex(x, y, z, cu, cv, anchor, ao, flags);
+        let k = b as u8 * 2 + a as u8;
+        let ao = (anchor.ao4 >> (2 * k)) & 0x3;
+        let (blk, sky) = if smooth && !water_pass {
+            (
+                ((anchor.bl4 >> (4 * k)) & 0xF) as u8,
+                ((anchor.sl4 >> (4 * k)) & 0xF) as u8,
+            )
+        } else {
+            (anchor.blk, anchor.sky)
+        };
+        out.push_vertex(x, y, z, cu, cv, anchor.tex, blk, sky, ao, flags);
     }
     out.push_quad_indices(base);
 }
@@ -466,13 +559,15 @@ fn face_uv_axes(axis: usize) -> (usize, usize) {
 /// 非立方形状发射器（mesher.cpp:408 起的形状模板段）：持有邻域与输出，
 /// 方法对应 emit_box_face / emit_box / emit_cross / emit_fence /
 /// emit_stairs。面剔除、光照、AO、UV 全部复用 Cube 路径函数
-/// （mesher.cpp:373-377 段注释语义）。
+/// （mesher.cpp:373-377 段注释语义）。病灶#2：`smooth` 直通 box_face
+/// 顶点光（平滑层）；cross 恒平采（植物不遮自身格，无暴露层语义）。
 struct ShapeEmitter<'a, 'v> {
     n: &'a Nb<'a>,
     out: &'v mut MeshData,
     x: i32,
     y: i32,
     z: i32,
+    smooth: bool,
 }
 
 impl ShapeEmitter<'_, '_> {
@@ -503,15 +598,6 @@ impl ShapeEmitter<'_, '_> {
         let (u_ax, v_ax) = (unit(u_axis), unit(v_axis));
 
         let (sky, blk) = light_at(self.n, nx, ny, nz);
-        let c = Cell {
-            id: 0,
-            tex: info.tiles[face],
-            sky,
-            blk,
-            ao4: 0,
-            wave: 0,
-            visible: 1,
-        };
 
         let plane = if face.is_multiple_of(2) {
             bmax[axis]
@@ -534,13 +620,26 @@ impl ShapeEmitter<'_, '_> {
             };
             let cv = uv_coord(v_uv_pos);
             let ao = corner_ao(self.n, nx, ny, nz, u_ax, v_ax, a, bq);
+            // 病灶#2：非立方盒面顶点光与 Cube 同一平滑采样点（暴露格为
+            // blend 中心）；回落 = 面单采。平滑权重二级混合（26.1
+            // smoothWeightedBlend 仅 facePartial 走 faceShape 权重）未移植，
+            // 登记债（见文件头注）。
+            // corner_smooth/light_at 的返回序为 (sky, blk)，与 push_vertex
+            // 的 (blk, sky) 入参序相反——此处按名绑定防换位。
+            let (vsky, vblk) = if self.smooth {
+                corner_smooth(self.n, sky, blk, nx, ny, nz, u_ax, v_ax, a, bq)
+            } else {
+                (sky, blk)
+            };
             self.out.push_vertex(
                 pos[0] + self.x as f32,
                 pos[1] + self.y as f32,
                 pos[2] + self.z as f32,
                 cu,
                 cv,
-                &c,
+                info.tiles[face],
+                vblk,
+                vsky,
                 ao,
                 flags,
             );
@@ -557,18 +656,10 @@ impl ShapeEmitter<'_, '_> {
 
     /// 十字植物（mesher.cpp:475-513 emit_cross）：两条对角双面 quad，正面、
     /// 反面索引各 6（不透明管线开背面剔除）；ao 恒 3；flags 用 +Y 光照档；
-    /// 光照取方块自身所在格（植物不遮挡所在格光照）。
+    /// 光照取方块自身所在格（植物不遮挡所在格光照）——病灶#2 起 cross 不
+    /// 参与平滑层（无暴露层，无四格语义，恒平采自身格）。
     fn cross(&mut self, info: &Info) {
         let (sky, blk) = light_at(self.n, self.x, self.y, self.z);
-        let c = Cell {
-            id: 0,
-            tex: info.tiles[FACE_PY],
-            sky,
-            blk,
-            ao4: 0,
-            wave: 0,
-            visible: 1,
-        };
         let (fx, fy, fz) = (self.x as f32, self.y as f32, self.z as f32);
         let u_max = uv_coord(1.0);
         let v_max = uv_coord(1.0);
@@ -599,7 +690,9 @@ impl ShapeEmitter<'_, '_> {
                     fz + diag[k][2],
                     cuv[k][0],
                     cuv[k][1],
-                    &c,
+                    info.tiles[FACE_PY],
+                    blk,
+                    sky,
                     3,
                     flags,
                 );
@@ -766,7 +859,7 @@ impl ShapeEmitter<'_, '_> {
 /// 不透明 pass 调用；生成表出 shape 0..15（1..5 黄金冻结实现、6..15 走
 /// mcv_core::shape::template_boxes 模板，M 波 #138），default 整盒为
 /// 防御性回退。
-fn emit_shapes(n: &Nb, out: &mut MeshData) {
+fn emit_shapes(n: &Nb, out: &mut MeshData, smooth: bool) {
     for y in mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y {
         for z in 0..16 {
             for x in 0..16 {
@@ -779,7 +872,14 @@ fn emit_shapes(n: &Nb, out: &mut MeshData) {
                     continue;
                 }
                 let st = ((raw >> 12) & 0xF) as u8;
-                let mut em = ShapeEmitter { n, out, x, y, z };
+                let mut em = ShapeEmitter {
+                    n,
+                    out,
+                    x,
+                    y,
+                    z,
+                    smooth,
+                };
                 match info.shape {
                     1 => em.cross(info),
                     2 => em.box_all(
@@ -854,7 +954,7 @@ fn emit_shapes(n: &Nb, out: &mut MeshData) {
 /// 格 u 轴扩宽、再沿 v 轴扩高；仅整格 quad 键（方块/贴图/天空/方块光/
 /// 打包 AO/波动）全等才合并。贪心仅限 shape==0（Cube）；非立方由
 /// emit_shapes 另行发射。
-fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
+fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: bool) {
     for axis in 0..3 {
         let (gu, gv, layers) = slice_geom(axis);
         let grid_len = gu * gv;
@@ -938,6 +1038,8 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                             sky,
                             blk,
                             ao4: 0,
+                            sl4: 0,
+                            bl4: 0,
                             wave,
                             visible: 1,
                         };
@@ -948,6 +1050,22 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                                 for a in 0..2i32 {
                                     let ao = corner_ao(n, nx, ny, nz, u_ax, v_ax, a, b);
                                     c.ao4 |= ao << (2 * (b * 2 + a));
+                                }
+                            }
+                            // 病灶#2：平滑层四角光场（与 corner_ao 同一角序
+                            // (b*2+a) 打包，4bit/通道/角）——合并键锁全四角，
+                            // emit_quad 按角解包为逐顶点光。回落（smooth=
+                            // false）保持全 0，键与顶点取值均为改动前语义。
+                            if smooth {
+                                for b in 0..2i32 {
+                                    for a in 0..2i32 {
+                                        let (s, bl) = corner_smooth(
+                                            n, sky, blk, nx, ny, nz, u_ax, v_ax, a, b,
+                                        );
+                                        let k = (b * 2 + a) as u32;
+                                        c.sl4 |= (s as u16) << (4 * k);
+                                        c.bl4 |= (bl as u16) << (4 * k);
+                                    }
                                 }
                             }
                         }
@@ -995,7 +1113,9 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables) {
                                 visited[(v + dv) * gu + u + du] = 1;
                             }
                         }
-                        emit_quad(out, water_pass, axis, dir, layer, u, v, wq, hq, &key);
+                        emit_quad(
+                            out, water_pass, axis, dir, layer, u, v, wq, hq, &key, smooth,
+                        );
                     }
                 }
             }
@@ -1015,10 +1135,13 @@ pub fn build_mesh(
         voxels: *voxels,
         light: *lights,
     };
+    // 病灶#2：顶点光走平滑光照层（原版默认语义）；`MCV_SMOOTH_LIGHT=0`
+    // 回落每面单采（M8 平采语义，回滚面）。
+    let smooth = smooth_light_enabled();
     let mut out = MeshData::default();
-    build_pass(&n, kind == 1, &mut out, tables());
+    build_pass(&n, kind == 1, &mut out, tables(), smooth);
     if kind == 0 {
-        emit_shapes(&n, &mut out);
+        emit_shapes(&n, &mut out, smooth);
     }
     out
 }

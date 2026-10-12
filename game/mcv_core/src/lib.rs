@@ -330,6 +330,104 @@ pub static OPACITY: [u8; GEN_BLOCKS.len()] = {
     t
 };
 
+// ---------------------------------------------------------------------------
+// 面遮蔽形状表（useShapeForLightOcclusion——#153 审计病灶#1 重建波，
+// docs/light-audit.md 病灶与重建波清单①）
+// ---------------------------------------------------------------------------
+
+/// 遮蔽形状类别（SHAPE_OCCLUDE_KIND 元素值）。
+pub const SHAPE_NONE: u8 = 0;
+pub const SHAPE_SLAB: u8 = 1;
+pub const SHAPE_STAIRS: u8 = 2;
+
+/// 遮蔽形状类别判定（按注册名后缀 → 26.1 类属：`*_slab` → SlabBlock、
+/// `*_stairs` → StairBlock；字符串判据复用 [`name_ends_with`]）。
+const fn gen_shape_kind(name: &str) -> u8 {
+    if name_ends_with(name, "_slab") {
+        SHAPE_SLAB
+    } else if name_ends_with(name, "_stairs") {
+        SHAPE_STAIRS
+    } else {
+        SHAPE_NONE
+    }
+}
+
+/// 全 1171 块遮蔽形状类别：`useShapeForLightOcclusion=true` 的方块族
+/// （SlabBlock.java:49-51 `TYPE != DOUBLE`、StairBlock.java:69-71 恒
+/// true）。其余方块 `LightEngine.isEmptyShape`（LightEngine.java:66-68
+/// `!canOcclude || !useShapeForLightOcclusion`）→ 空遮蔽形，不参与面遮蔽。
+///
+/// KNOWN-DIVERGENCE：26.1 同判据方块还有 farmland/dirt_path/snow 层/
+/// daylight_detector/enchanting_table/end_portal_frame/lectern/
+/// stonecutter/sculk_sensor/sculk_shrieker/shelf/piston 系——其满格面
+/// 分支（如 farmland 整格宽 15px 高 → DOWN 面满格）未建表，登记为病灶#1
+/// 后续数据项；实践中均贴地放置（邻居 damp!=0 先行截断），源柱语义不受
+/// 影响。
+pub static SHAPE_OCCLUDE_KIND: [u8; GEN_BLOCKS.len()] = {
+    let mut t = [SHAPE_NONE; GEN_BLOCKS.len()];
+    let mut i = 0usize;
+    while i < t.len() {
+        t[i] = gen_shape_kind(GEN_BLOCKS[i].0);
+        i += 1;
+    }
+    t
+};
+
+/// 查表（越界 id → SHAPE_NONE）。
+#[inline]
+pub fn shape_occlude_kind(id: u16) -> u8 {
+    SHAPE_OCCLUDE_KIND
+        .get(id as usize)
+        .copied()
+        .unwrap_or(SHAPE_NONE)
+}
+
+/// 源柱边遮蔽形判据（#153 审计病灶#1）：26.1
+/// `ChunkSkyLightSources.isEdgeOccluded` 的第二分支
+/// （ChunkSkyLightSources.java:140-148）——
+/// `faceShapeOccludes(LightEngine.getOcclusionShape(top, DOWN),
+/// LightEngine.getOcclusionShape(bottom, UP))`；`getOcclusionShape` 对
+/// 非形状方块返回空形（LightEngine.java:62-68），`Shapes.faceShapeOccludes`
+/// 任一侧满格即真、否则两侧并集铺满整面才真（Shapes.java:286-292）。
+///
+/// 本表覆盖板/梯两族的竖直两面（damp 维度已由 `OPACITY` 先行短路，本
+/// 函数只在 damp==0 的边上被询问）：
+/// - 半砖：上半态 UP 面满格（SHAPE_TOP = column(16, 8, 16) 贴 y=16）、
+///   下半态 DOWN 面满格（SHAPE_BOTTOM = column(16, 0, 8) 贴 y=0）
+///   （SlabBlock.java:35-36）；
+/// - 楼梯同构（底座/顶板为整格宽半高盒：下半态 DOWN 满格、上半态 UP
+///   满格）；半格面为朝向侧半条——下半楼梯的 UP 面 / 上半楼梯的 DOWN
+///   面各占 facing 半格（facing 0=+Z 1=-Z 2=+X 3=-X，与
+///   [`BlockId::state`]/网格器 emit_stairs 同一约定），两半条 facing
+///   互补（0↔1、2↔3）时并集铺满整面（Shapes.java:290 的 OR 分支）。
+///
+/// 状态位约定见 [`BlockId::state`]：半砖 bit0=上半；楼梯 bit0-1 朝向、
+/// bit2=上半。消费方：`mcv_light::column_top`（源柱截断）与
+/// `mcv_light::propagate_channel` 的直下豁免维。
+#[inline]
+pub fn face_shape_occludes(top: BlockId, bottom: BlockId) -> bool {
+    let tk = shape_occlude_kind(top.id());
+    let bk = shape_occlude_kind(bottom.id());
+    if tk == SHAPE_NONE && bk == SHAPE_NONE {
+        return false; // 双侧空遮蔽形（Shapes.java:290 isEmpty&&isEmpty → false）
+    }
+    let (ts, bs) = (top.state(), bottom.state());
+    // 满格分支：top 的 DOWN 面满格（下半砖/下半楼梯）或 bottom 的 UP 面
+    // 满格（上半砖/上半楼梯）。
+    let top_down_full = (tk == SHAPE_SLAB && ts & 1 == 0) || (tk == SHAPE_STAIRS && ts & 4 == 0);
+    let bottom_up_full = (bk == SHAPE_SLAB && bs & 1 != 0) || (bk == SHAPE_STAIRS && bs & 4 != 0);
+    if top_down_full || bottom_up_full {
+        return true;
+    }
+    // 半格并集分支：top=上半楼梯（DOWN 面为朝向半条）× bottom=下半楼梯
+    // （UP 面为朝向半条），facing 互补时并集铺满整面。
+    tk == SHAPE_STAIRS
+        && ts & 4 != 0
+        && bk == SHAPE_STAIRS
+        && bs & 4 == 0
+        && (bs & 3) == ((ts & 3) ^ 1)
+}
+
 /// 26.1 带 `Properties.replaceable()` 的注册名全集（对照 src-26.1
 /// `Blocks.java` 逐一提取，共 29 项：空气族 air/cave_air/void_air/
 /// structure_void、流体水与岩浆（water Blocks.java:197-205 带

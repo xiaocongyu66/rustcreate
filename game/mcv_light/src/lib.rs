@@ -9,8 +9,9 @@
 //!   (topmost solid-terrain y + 1; water/flowers excluded — see
 //!   `mcv_worldgen::recompute_heightmap`). It is a *gameplay* surface array
 //!   (spawn/mob logic); lighting never reads it — the direct-sky source
-//!   column is derived from voxels via [`opacity`], the single criterion
-//!   shared by `init` and `update_block` (vanilla `ChunkSkyLightSources.
+//!   column is derived from voxels via [`opacity`] + `mcv_core::
+//!   face_shape_occludes`（病灶#1 形状维），the single criterion shared by
+//!   `init` and `update_block` (vanilla `ChunkSkyLightSources.
 //!   isEdgeOccluded`, ChunkSkyLightSources.java:140-148).
 //!
 //! BFS semantics follow vanilla `LightEngine.propagateIncreases` /
@@ -84,10 +85,15 @@ pub struct BorderSeed {
 /// `CrossCollisionBlock.java:70-73`、花草系 `VegetationBlock.java:49-52`）
 /// ——即审计 C6（形状方块不得整格 15 阻光）由全表满足。
 ///
-/// KNOWN-DIVERGENCE: 半砖/楼梯在 26.1 是 damp=0 + `useShapeForLightOcclusion`
-/// 形状感知遮光（`SlabBlock.java:48-51`、`StairBlock.java:69-71`）——本引擎
-/// 光照无形状感知，实半遮/空半透的“半影”效果缺失（半砖顶棚不再有整柱阴影，
-/// 也不投形状影），登记为后续项。
+/// 病灶#1 重建波（#153）后源柱维已接形状感知：`column_top` 与直下豁免
+/// 在 damp==0 的边上询问 `mcv_core::face_shape_occludes`（板/梯面遮蔽形
+/// 满/半格判据，ChunkSkyLightSources.java:140-148 第二分支）——顶半砖
+/// 整柱阴影、悬空底半砖闭柱（砖格自身保 15）落地（fidelity F9）。
+/// KNOWN-DIVERGENCE（剩余维）：BFS **侧向/竖直向上**的面遮蔽（26.1
+/// `LightEngine.shapeOccludes`，LightEngine.java:81-85）与 mesher 面遮蔽
+/// 仍按 damp 数值维（半格侧面不相接场景两者同值，登记后续项）；其余
+/// useShapeForLightOcclusion 方块（farmland/dirt_path/snow 层等）未建表
+/// （见 `mcv_core::SHAPE_OCCLUDE_KIND`）。
 #[inline]
 pub fn opacity(id: BlockId) -> u8 {
     // id.id() 掩掉状态位：带状态的体素（上半砖/楼梯朝向）按基础方块遮光。
@@ -172,9 +178,18 @@ fn out_of_bounds(x: i32, y: i32, z: i32) -> bool {
 /// the way down, while water/leaves (damp 1) truncate the column and
 /// attenuate 15 → 14 → 13 … vertically as well (there `dec = opacity =
 /// 1`), and opaque blocks (15) clamp straight to 0.
+///
+/// 病灶#1 形状维（#153 重建波）：豁免成立还要求该竖直边**不**被面遮蔽形
+/// 截断（`edge_shape_occluded == false`，即
+/// `!faceShapeOccludes(top↓, bottom↑)`，ChunkSkyLightSources.java:140-148
+/// 的第二分支）——顶半砖格 damp==0 但 UP 面满格，其上方源柱格的 15 不得
+/// 经直下豁免穿透（砖格应得侧向 14，fidelity F9）；底半砖 DOWN 满格面
+/// 同理闭柱。damp!=0 的边不进此分支（`opacity()` 先行，水柱衰减语义
+/// 不变），非 sky 通道与非竖直步恒 false——BFS 波形语义零改动，此参量
+/// 只把「源柱延展」判据补全到与 `column_top` 同一维度。
 #[inline]
-fn spread_target(shift: u32, level: u8, down: bool, nopacity: u8) -> u8 {
-    let direct_down = shift == SKY_SHIFT && down && level == 15;
+fn spread_target(shift: u32, level: u8, down: bool, nopacity: u8, edge_shape_occluded: bool) -> u8 {
+    let direct_down = shift == SKY_SHIFT && down && level == 15 && !edge_shape_occluded;
     let dec = if direct_down {
         nopacity
     } else {
@@ -205,7 +220,22 @@ fn propagate_channel(voxels: &[u16], light: &mut [u8], shift: u32, queue: &mut V
                 continue;
             }
             let nidx = vidx(nx as usize, ny, nz as usize);
-            let target = spread_target(shift, level, dy < 0, opacity(BlockId(voxels[nidx])));
+            // 直下豁免维（病灶#1）：仅 sky 15 的竖直向下一步才询问面遮蔽
+            // 形（其余步该参量恒 false，逐位等价改动前判据）。
+            let edge_shape_occluded = shift == SKY_SHIFT
+                && dy < 0
+                && level == 15
+                && mcv_core::face_shape_occludes(
+                    BlockId(voxels[idx as usize]),
+                    BlockId(voxels[nidx]),
+                );
+            let target = spread_target(
+                shift,
+                level,
+                dy < 0,
+                opacity(BlockId(voxels[nidx])),
+                edge_shape_occluded,
+            );
             if target == 0 {
                 continue;
             }
@@ -281,15 +311,27 @@ fn removal_channel(
 /// （哨兵 −65）for a fully open column。`subst` overrides one cell（绝对 y）
 /// —— reconstructs the pre-edit column top, because `LightChunk.voxels`
 /// is already written with the new block.
+///
+/// 病灶#1 形状维（#153 重建波）：判据 = 26.1 `isEdgeOccluded`
+/// （ChunkSkyLightSources.java:140-148）`bottomState.getLightDampening()
+/// != 0 || faceShapeOccludes(top↓, bottom↑)`——`opacity > 0` 是第一维，
+/// `mcv_core::face_shape_occludes(above, cur)` 是第二维（damp==0 的半砖/
+/// 楼梯面遮蔽形边同样截断）。自顶向下扫描，`above` 携带上一格（该边的
+/// topState；世界顶外恒空气）；返回首个被截断边的 bottomState y（= 原版
+/// `lowestSourceY − 1`，源柱 = `(本值+1)..顶`——顶半砖边在砖格上方截断
+/// （砖格不入源柱），底半砖的 DOWN 满格面在砖格下方截断（砖格本身
+/// lowestSourceY，保 15）。
 fn column_top(voxels: &[u16], x: usize, z: usize, subst: Option<(i32, u16)>) -> i32 {
+    let mut above = BlockId(0);
     for y in (WORLD_MIN_Y..WORLD_MAX_Y).rev() {
-        let id = match subst {
+        let id = BlockId(match subst {
             Some((sy, sid)) if sy == y => sid,
             _ => voxels[vidx(x, y, z)],
-        };
-        if opacity(BlockId(id)) > 0 {
+        });
+        if opacity(id) > 0 || mcv_core::face_shape_occludes(above, id) {
             return y;
         }
+        above = id;
     }
     WORLD_MIN_Y - 1
 }
@@ -377,8 +419,8 @@ pub fn init(chunk: &mut LightChunk) -> u8 {
     // water column falls off 14, 13, 12 … via BFS (`max(1, damp)` cost);
     // the old heightmap-driven seeding used the terrain heightmap, which
     // deliberately excludes water, and lit whole ocean columns to 15.
-    // `column_top` (opacity > 0) is the single criterion shared with the
-    // `update_block` column fix-up.
+    // `column_top` (opacity > 0 || face_shape_occludes，病灶#1 形状维) is
+    // the single criterion shared with the `update_block` column fix-up.
     for z in 0..16usize {
         for x in 0..16usize {
             let top = column_top(chunk.voxels, x, z, None);
