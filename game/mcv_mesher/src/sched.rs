@@ -23,7 +23,11 @@ use std::sync::{Arc, Mutex};
 use mcv_core::ChunkPos;
 use mcv_core::pool::TaskPool;
 
-use crate::{MESH_OPAQUE, MESH_WATER, Mesher, Slot};
+use crate::{KindProducts, MESH_OPAQUE, MESH_WATER, Mesher, Rows, Slot};
+
+/// 一个区块两种 kind 的分 section 产物（#172 增量重放的中转态；一笔
+/// 网格任务同时算 opaque+water，产物成对存取）。
+pub type ChunkProducts = (KindProducts, KindProducts);
 
 /// 一笔网格产物字节（顶点 24B 步长交错 + u32 索引，[`crate::MeshData`]
 /// 的所有权化搬运）。
@@ -52,6 +56,15 @@ pub struct MeshDone {
     pub seq: u64,
     pub opaque: Option<MeshBytes>,
     pub water: Option<MeshBytes>,
+    /// #172 重放工作量观测面：本笔重算的 (轴,向,层) 扫描行数 + 形状
+    /// section 数。整柱直算 = [`crate::TOTAL_SCANNED_ROWS`] +
+    /// [`crate::SECTION_COUNT`]（收益断言的分母）。
+    pub work: usize,
+    /// #172 增量路产物：[`MeshResults::drain_committed`] 经提交地板过滤
+    /// 后复制入调度器侧缓存（供下一笔编辑增量重放），本副本原样保留
+    /// （观测面）；直算路 = None（准入时作废既有缓存——直算落地后任何
+    /// 旧产物都不再与最新快照同源，见 [`MeshScheduler::submit`]）。
+    pub products: Option<ChunkProducts>,
 }
 
 /// 提交地板（调度器与回传端共享）：seq 单调源 + per-pos 拒收线。
@@ -62,6 +75,11 @@ struct Gate {
     /// per-pos 提交地板：seq ≤ 地板的产物拒收。kill（卸载）抬到当前
     /// seq（杀全部在途），提交抬到所提交 seq（杀更旧的乱序产物）。
     floor: Mutex<HashMap<ChunkPos, u64>>,
+    /// #172 per-pos 分 section 产物缓存（增量重放的 `old`）：只在
+    /// [`MeshResults::drain_committed`] 准入点后写入（僵尸/陈旧产物不入
+    /// 缓存），kill/卸载与直算路派发时删除——不变式：缓存存在 ⇒ 产物与
+    /// 最近一次准入提交的快照逐字节同源，下一笔增量只需重放脏行。
+    products: Mutex<HashMap<ChunkPos, ChunkProducts>>,
 }
 
 /// 计算端：专属 worker 池 + 产物通道发送端。
@@ -84,6 +102,7 @@ impl MeshScheduler {
             seq: AtomicU64::new(0),
             pending: AtomicU64::new(0),
             floor: Mutex::new(HashMap::new()),
+            products: Mutex::new(HashMap::new()),
         });
         (
             Self {
@@ -96,9 +115,33 @@ impl MeshScheduler {
         )
     }
 
-    /// 投递一笔网格任务。`hi` = 编辑源块优先通道（mesh_priority），else
-    /// 预算流。seq 在投递时点分配——「拿到快照的那一刻」的派发序。
+    /// 投递一笔网格任务（整柱直算路，E3 原语义逐字节不动）。`hi` = 编辑
+    /// 源块优先通道（mesh_priority），else 预算流。seq 在投递时点分配——
+    /// 「拿到快照的那一刻」的派发序。
+    ///
+    /// #172：派发即作废该块的产物缓存——直算不回传产物，直算提交落地后
+    /// 旧产物缓存不再与任何快照同源，留着只会被后续增量误用。
     pub fn submit(&self, job: MeshJob, hi: bool) {
+        self.gate.products.lock().unwrap().remove(&job.pos);
+        self.spawn(job, hi, None, None);
+    }
+
+    /// #172 增量投递：worker 用 [`crate::Mesher::build_products`] 只重放
+    /// `rows` 覆盖的扫描行、其余桶复用 `old`，combine 后产物字节与整柱
+    /// 直呼逐字节相同（tests/sections.rs 锁）；产物经准入后入缓存，供
+    /// 下一笔编辑继续增量。`old = None` = 全柱产物化播种笔（字节同直算，
+    /// 额外产出缓存，此后该块可走窄行增量）。
+    pub fn submit_incremental(
+        &self,
+        job: MeshJob,
+        hi: bool,
+        rows: Rows,
+        old: Option<ChunkProducts>,
+    ) {
+        self.spawn(job, hi, Some(rows), old);
+    }
+
+    fn spawn(&self, job: MeshJob, hi: bool, rows: Option<Rows>, old: Option<ChunkProducts>) {
         let seq = self.gate.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let tx = self.tx.clone();
         // 闭包持整份 Arc<Gate>：seq 源/pending 计数/地板表同源（Send+Sync）。
@@ -111,8 +154,38 @@ impl MeshScheduler {
             // Mesher 零尺寸 Copy，worker 本地实例；同输入同产物（等价锁
             // tests/mesh_parallel.rs::worker_output_bit_identical 锁定）。
             let mesher = Mesher::new();
-            let opaque = mesher.build(&slots, MESH_OPAQUE).ok();
-            let water = mesher.build(&slots, MESH_WATER).ok();
+            // #172 两路：None = 整柱直算（golden 锁面的 build_mesh 直呼，
+            // 零额外拷贝）；Some = 产物化重放 + combine（字节同一直算，
+            // sections.rs/tests 双侧锁定），work 为收益观测面。
+            let (opaque, water, work, products) = match rows {
+                None => {
+                    let full = crate::TOTAL_SCANNED_ROWS + crate::SECTION_COUNT;
+                    let opaque = mesher.build(&slots, MESH_OPAQUE).ok();
+                    let water = mesher.build(&slots, MESH_WATER).ok();
+                    (opaque, water, full, None)
+                }
+                Some(rows) => {
+                    let (old_o, old_w) = old.map_or((None, None), |(o, w)| (Some(o), Some(w)));
+                    match (
+                        mesher.build_products(&slots, MESH_OPAQUE, Some(rows), old_o),
+                        mesher.build_products(&slots, MESH_WATER, Some(rows), old_w),
+                    ) {
+                        (Ok((po, work)), Ok((pw, _))) => {
+                            let (mo, mw) = (po.combine(), pw.combine());
+                            (Some(mo), Some(mw), work, Some((po, pw)))
+                        }
+                        // BAD_ARG 不可达（kind 为编译期常量）；真失败退化为
+                        // 产物缺失 + 不产缓存，与同步路失败同级别的响亮
+                        // 记账在主线程 flush 侧（drain 见 None 会作废缓存）。
+                        _ => (
+                            None,
+                            None,
+                            crate::TOTAL_SCANNED_ROWS + crate::SECTION_COUNT,
+                            None,
+                        ),
+                    }
+                }
+            };
             let done = MeshDone {
                 pos: job.pos,
                 origin: job.origin,
@@ -126,6 +199,8 @@ impl MeshScheduler {
                     vertex: m.vertices,
                     index: m.indices,
                 }),
+                work,
+                products,
             };
             if tx.send(done).is_ok() {
                 gate.pending.fetch_add(1, Ordering::Relaxed);
@@ -136,6 +211,12 @@ impl MeshScheduler {
         } else {
             self.pool.spawn_lo(Box::new(run));
         }
+    }
+
+    /// #172 取该块的分 section 产物缓存（派发方决策用：有缓存才能窄行
+    /// 增量；主线程调用，与准入写缓存同线程序——无撕裂风险）。
+    pub fn product_of(&self, pos: ChunkPos) -> Option<ChunkProducts> {
+        self.gate.products.lock().unwrap().get(&pos).cloned()
     }
 
     /// 背压门：在途（排队+执行）≥ 高水位（workers+2）时为真——派发方
@@ -176,6 +257,19 @@ impl MeshResults {
             let admit = done.seq > *floor.get(&done.pos).unwrap_or(&0);
             if admit {
                 floor.insert(done.pos, done.seq);
+                // #172 产物缓存准入（锁序恒 floor→products，勿反）：
+                // Some = 增量提交，缓存与之同源；None = 直算/退化提交，
+                // 任何既有缓存不再与最新快照同源，作废之（保守：下一笔
+                // 最多多跑一次播种笔，不会误用陈旧产物）。
+                let pos = done.pos;
+                match &done.products {
+                    Some(p) => {
+                        self.gate.products.lock().unwrap().insert(pos, p.clone());
+                    }
+                    None => {
+                        self.gate.products.lock().unwrap().remove(&pos);
+                    }
+                }
                 out.push(done);
             }
             // 拒收分支：产物就地 drop（~2.5 MiB 字节随之释放）。
@@ -195,6 +289,9 @@ impl MeshResults {
     pub fn kill(&mut self, pos: ChunkPos) {
         let cur = self.gate.seq.load(Ordering::Relaxed);
         self.gate.floor.lock().unwrap().insert(pos, cur);
+        // #172：卸载 = 快照失去唯一真相源，产物缓存一并作废（重载后
+        // 首笔必然播种/直算，绝不用跨装载的陈旧产物做增量）。
+        self.gate.products.lock().unwrap().remove(&pos);
     }
 
     /// 已完成、滞留通道的产物数（测试观测面；非消费、非调度依据）。
@@ -235,6 +332,18 @@ pub fn mesh_worker_count() -> usize {
         std::env::var("MCV_MESHER_WORKERS").ok().as_deref(),
         mcv_core::world_worker_count(),
     )
+}
+
+/// #172 `MCV_SUBCHUNK_REMESH` 语义（对齐 `MCV_MESHER_WORKERS=0` 回滚
+/// 开关先例）：显式 "0" = 关闭 sub-chunk 增量重网格（编辑回到整柱直算
+/// 派发，逐字节原语义）；未设/其余值 = 启用。
+pub fn subchunk_enabled_from(v: Option<&str>) -> bool {
+    !matches!(v, Some("0"))
+}
+
+/// 生产解析：env 每次构造读一次（主线程；同 [`mesh_worker_count`] 纪律）。
+pub fn subchunk_enabled() -> bool {
+    subchunk_enabled_from(std::env::var("MCV_SUBCHUNK_REMESH").ok().as_deref())
 }
 
 /// 从 3×3 快照字节装配邻域槽位（行主序 dz 外层，`(dz+1)*3+(dx+1)`，

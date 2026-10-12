@@ -12,8 +12,8 @@ mod sections;
 
 pub use mesher::{MeshData, Rows, block_geom, build_mesh};
 pub use sched::{
-    MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
-    neighborhood_slots, worker_count_from,
+    ChunkProducts, MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
+    neighborhood_slots, subchunk_enabled, subchunk_enabled_from, worker_count_from,
 };
 pub use sections::{KindProducts, SECTION_COUNT, TOTAL_SCANNED_ROWS, build_products, edit_rows};
 

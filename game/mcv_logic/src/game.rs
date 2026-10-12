@@ -402,34 +402,73 @@ fn relight_block_edit(
     old_id: u16,
     new_id: u16,
     queue: &mut Vec<(ChunkPos, u8)>,
-) {
+) -> mcv_mesher::Rows {
     let cpos = target.chunk();
+    let [lx, _, lz] = target.local();
+    // #172 返回值 = 增量重网格脏行集（编辑盒 ±1 ∪ 块内光变 bbox ±1）。
+    let edit_rows = mcv_mesher::Rows::from_bbox(
+        lx as i32, target.y, lz as i32, lx as i32, target.y, lz as i32,
+    );
     let Some(handle) = chunks.get(&cpos) else {
-        return;
+        return edit_rows;
     };
     {
         let ids: Vec<u16> = handle.voxels.read().unwrap().decode_column();
         *handle.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     }
     if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
-        return;
+        return edit_rows;
     }
-    let [lx, _, lz] = target.local();
     let mut seeds = Vec::new();
-    let mask = {
+    let (mask, light_rows) = {
         let vg = handle.voxels.read().unwrap();
         let mut lg = handle.light.write().unwrap();
         let hg = handle.heightmap.read().unwrap();
         let voxels = vg.decode_column();
+        // #172 块内光变范围实测（96 KB 拷贝 + 一次线性扫；编辑是用户
+        // 频度，相对整柱重网格 ~10ms×24 可忽略）：update_block 的 BFS
+        // 波及半径（块光 14 / 天光整列）是实现细节，不硬编码信任——
+        // 光字节差分实测后折算脏行，行集外光字节恒等 ⇒ 增量产物可复用。
+        let before: Vec<u8> = lg.to_vec();
         let mut view = mcv_light::LightChunk {
             voxels: &voxels,
             light: &mut lg[..],
             heightmap: &hg[..],
         };
         // v6：update_block 的 y 为绝对世界 y（x/z 为区块内局部）。
-        mcv_light::update_block(
+        let mask = mcv_light::update_block(
             &mut view, lx as u32, target.y, lz as u32, old_id, new_id, &mut seeds,
-        )
+        );
+        let (mut lo, mut hi) = (usize::MAX, 0usize);
+        let (mut xm, mut zm) = (0u16, 0u16);
+        for (i, b) in before.iter().enumerate() {
+            if *b != lg[i] {
+                let yl = i >> 8; // vidx 布局：y_local 为高位段
+                lo = lo.min(yl);
+                hi = hi.max(yl);
+                xm |= 1 << (i & 15);
+                zm |= 1 << ((i >> 4) & 15);
+            }
+        }
+        let light_rows = if lo <= hi {
+            // 掩码折算包络 bbox（保守多算不少算，同 Rows::union 语义；
+            // from_bbox 自带 ±1 膨胀）。
+            let x_lo = xm.trailing_zeros() as i32;
+            let x_hi = 15 - xm.leading_zeros() as i32;
+            let z_lo = zm.trailing_zeros() as i32;
+            let z_hi = 15 - zm.leading_zeros() as i32;
+            mcv_mesher::Rows::from_bbox(
+                x_lo,
+                lo as i32 + mcv_core::WORLD_MIN_Y,
+                z_lo,
+                x_hi,
+                hi as i32 + mcv_core::WORLD_MIN_Y,
+                z_hi,
+            )
+        } else {
+            mcv_mesher::Rows::NONE
+        };
+        (mask, light_rows)
     };
     // BorderSeed 是格级差分记录；跨区块协议以整条边快照
     // （extract_edge/apply_edge）为单位，脏面掩码已足够驱动派发。
@@ -455,6 +494,7 @@ fn relight_block_edit(
             }
         }
     }
+    edit_rows.union(&light_rows)
 }
 
 /// 跨区块光照边派发队列（C1：原 border_synced 只做记账，光从不真正过界）。
@@ -473,7 +513,11 @@ fn relight_block_edit(
 /// 同键去重（审计 A1）：relight 排的 pull 与 push 的 REMOVE 回报常生成
 /// 同一 `(ChunkPos, side)` 任务；in-flight 集合让每条边每轮至多处理一次
 /// （对齐原版区块任务按距离合并去重，ChunkHolder/LevelLightEngine）。
-fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Vec<(ChunkPos, u8)>) {
+fn sync_light_edges(
+    chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>,
+    queue: &mut Vec<(ChunkPos, u8)>,
+    mesh_rows: &mut HashMap<ChunkPos, mcv_mesher::Rows>,
+) {
     let mut inflight: HashSet<(ChunkPos, u8)> = queue.iter().copied().collect();
     let mut steps = 0usize;
     while let Some((pos, side)) = queue.pop() {
@@ -543,6 +587,10 @@ fn sync_light_edges(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, queue: &mut Ve
             };
             if dirty != 0 {
                 to.mark_dirty(mcv_core::dirty::MESH);
+                // #172 级联光变无盒状界（apply_edge 播种后 BFS 走多远是
+                // mcv_light 实现细节）：接收块整柱重放，保守正确。
+                // 锁账本 = 窄行增量只在「脏来源可盒状界定」时启用。
+                mesh_rows.insert(npos, mcv_mesher::Rows::ALL);
                 for bit in 0..4u8 {
                     if dirty & (1 << bit) != 0 && inflight.insert((npos, bit)) {
                         queue.push((npos, bit));
@@ -752,6 +800,14 @@ pub struct GameRuntime {
     /// 回滚开关）。回传端在 RustMesher 内（flush 消化）；派发端在此供
     /// remesh 预算流投递快照字节（hi/lo 通道选择在 [`Self::build_chunk_mesh`]）。
     mesh_sched: Option<mcv_mesher::MeshScheduler>,
+    /// #172 sub-chunk 增量重网格的 MESH 脏来源账本：pos → 脏行集
+    /// （编辑盒 ∪ 块内光变 bbox，±1 膨胀；光照边级联等非盒状来源记
+    /// [`mcv_mesher::Rows::ALL`] = 整柱重放）。派发即消费（清除），卸载
+    /// 即清除。产物缓存不在这里——在调度器 Gate（准入点单一写者）。
+    mesh_dirty_rows: HashMap<ChunkPos, mcv_mesher::Rows>,
+    /// #172 `MCV_SUBCHUNK_REMESH=0` 回滚开关（构造时点解析一次，对齐
+    /// `MCV_MESHER_WORKERS` 先例）：false = 编辑派发回整柱原语义。
+    subchunk_remesh: bool,
     /// E4 独立 IO 通道（None = 同步路，`MCV_IO_ASYNC=0` 回滚开关/无头）。
     /// 提交与回执消化都在主线程；region open/read/write 全部移出主线程。
     io: Option<IoChannel>,
@@ -1544,6 +1600,10 @@ impl GameRuntime {
             on_tick: false,
             mesher,
             mesh_sched,
+            // #172：sub-chunk 增量重网格（env 构造时点解析一次，主线程；
+            // 账本随派发/卸载生命周期自清）。
+            mesh_dirty_rows: HashMap::new(),
+            subchunk_remesh: mcv_mesher::subchunk_enabled(),
             io: if io_async {
                 Some(IoChannel::new(save_dir.clone()))
             } else {
@@ -2801,7 +2861,7 @@ impl GameRuntime {
             // E0：edge 子段（帧头消化段，512 步预算）。
             let edge_t0 = std::time::Instant::now();
             let mut q = std::mem::take(&mut self.pending_light_edges);
-            sync_light_edges(&self.chunks, &mut q);
+            sync_light_edges(&self.chunks, &mut q, &mut self.mesh_dirty_rows);
             self.pending_light_edges = q;
             self.timing_frame.edge_us += edge_t0.elapsed().as_micros() as u64;
         }
@@ -2868,6 +2928,9 @@ impl GameRuntime {
             // 视野时会重建网格（保持两者严格同步）。
             self.meshed.remove(&c);
             self.mesher.unload(c);
+            // #172：卸载 = 快照真相源消失，脏行账本一并回收
+            //（产物缓存由 mesher.unload → results.kill 同点作废）。
+            self.mesh_dirty_rows.remove(&c);
             // E5：光照在途产物记账回收（僵尸锁，[`Self::light_kill`]）——
             // 与网格卸载记账同点：TerrainReady 块可能带一笔在途 init 任务
             // 出环，提交地板抬到当前 seq 后其在途产物写回处拒收。
@@ -3234,7 +3297,7 @@ impl GameRuntime {
                 *ns |= 1 << obit;
             }
         }
-        sync_light_edges(&self.chunks, &mut pair_edges);
+        sync_light_edges(&self.chunks, &mut pair_edges, &mut self.mesh_dirty_rows);
         self.timing_frame.edge_us += edge_t0.elapsed().as_micros() as u64;
         // 成对边任务同样「预算耗尽不丢」（审计 A3 对 pair 路径的收口）：
         // border_synced 已先行记账，残留若随手 Vec 丢弃即永久暗缝——并入
@@ -3423,6 +3486,43 @@ impl GameRuntime {
         }
     }
 
+    /// #172 合并脏行入账（仅开关启用时记录——关闭时账本无人消费，不留
+    /// 垃圾）。多笔编辑/级联在同一派发窗口内按 [`mcv_mesher::Rows::union`]
+    /// 包络（不相交段连带中间干净段重放 = 保守多算不少算）。
+    fn record_mesh_rows(&mut self, pos: ChunkPos, r: mcv_mesher::Rows) {
+        if !self.subchunk_remesh {
+            return;
+        }
+        let e = self
+            .mesh_dirty_rows
+            .entry(pos)
+            .or_insert(mcv_mesher::Rows::NONE);
+        *e = e.union(&r);
+    }
+
+    /// #172 跨缝镜像入账：贴缝编辑（本块局部 x/z = 0/15）改变邻块读取的
+    /// 1 格壳层——邻块网格在**邻块坐标系**里的脏行 = 编辑格镜像到邻块
+    /// 边界列（x=0 → 西侧邻块 x=15，etc.）。邻块光变侧由 sync_light_edges
+    /// 的 ALL 入账兜底；此处补齐纯可见性（面剔除/AO）的跨缝面。邻块未
+    /// 在册则跳过（无账可上）。
+    fn record_mesh_rows_seam(&mut self, cpos: ChunkPos, lx: usize, lz: usize, y: i32) {
+        if !self.subchunk_remesh {
+            return;
+        }
+        let mirrored: [(ChunkPos, i32, i32); 4] = [
+            (ChunkPos::new(cpos.x - 1, cpos.z), 15, lz as i32),
+            (ChunkPos::new(cpos.x + 1, cpos.z), 0, lz as i32),
+            (ChunkPos::new(cpos.x, cpos.z - 1), lx as i32, 15),
+            (ChunkPos::new(cpos.x, cpos.z + 1), lx as i32, 0),
+        ];
+        let on_seam = [lx == 0, lx == 15, lz == 0, lz == 15];
+        for ((npos, mx, mz), hit) in mirrored.iter().zip(on_seam) {
+            if *hit && self.chunks.contains_key(npos) {
+                self.record_mesh_rows(*npos, mcv_mesher::Rows::from_bbox(*mx, y, *mz, *mx, y, *mz));
+            }
+        }
+    }
+
     /// 单个区块的建网格+记账（stream remesh 流水与编辑源块优先通道共用）。
     /// 返回 true = 本帧实际建了一块（消耗一格预算）。门槛：中心
     /// ≥LightLocalReady、3×3 邻域就绪（[`Self::neighbors_ready`]）、且
@@ -3470,15 +3570,35 @@ impl GameRuntime {
                 return false;
             }
             let (voxels, lights) = snapshot_neighborhood(&handles);
-            sched.submit(
-                mcv_mesher::MeshJob {
-                    pos,
-                    origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
-                    voxels,
-                    lights,
-                },
-                hi,
-            );
+            let job = mcv_mesher::MeshJob {
+                pos,
+                origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
+                voxels,
+                lights,
+            };
+            // #172 sub-chunk 派发决策（快照之后读账本：账本行集对应的
+            // 编辑必须已进本笔快照）：
+            // - 有产物缓存 + 有脏行 → 窄行增量（未覆盖桶复用旧字节）；
+            // - 有脏行无缓存 → 整柱产物化播种笔（窄行不可对着空产物重放）；
+            // - 有缓存无脏行（账本外的 MESH 脏，理论不该发生）→ 整柱；
+            // - 开关关闭/首建 → 原直算路，逐字节 E3 语义。
+            let old = if self.subchunk_remesh {
+                sched.product_of(pos)
+            } else {
+                None
+            };
+            let rows = self.mesh_dirty_rows.remove(&pos);
+            if self.subchunk_remesh && (old.is_some() || rows.is_some()) {
+                let (r, keep) = match (old, rows) {
+                    (Some(p), Some(r)) => (r, Some(p)),
+                    (Some(p), None) => (mcv_mesher::Rows::ALL, Some(p)),
+                    (None, Some(_)) => (mcv_mesher::Rows::ALL, None),
+                    (None, None) => (mcv_mesher::Rows::ALL, None),
+                };
+                sched.submit_incremental(job, hi, r, keep);
+            } else {
+                sched.submit(job, hi);
+            }
             // 派发即记账：快照与脏位清除在同一主线程瞬时（见函数 doc）。
             // meshed 记账同步：记新。
             self.meshed.insert(pos);
@@ -3512,6 +3632,9 @@ impl GameRuntime {
             return false;
         };
         self.mesh_fail.remove(&pos);
+        // #172：同步路（含无调度器的 headless）不消费账本，派发即清，
+        // 防编辑记录在整柱语义下无限累积。
+        self.mesh_dirty_rows.remove(&pos);
         let idx_count = rc.opaque_range.end;
         // #80 起网格字节已在 mesher 实现内入池并合批（条目表由实现自持、
         // 原位重建不受重网格影响），游戏层只做 meshed 记账；rc 仅取索引量
@@ -4857,7 +4980,10 @@ impl GameRuntime {
         // 逐格增量重光照 + 高度图（26.1 setBlock → checkBlock 同位；树影
         // 决定下方作物后续的亮度门，不能只标脏）。源块当帧优先重建网格。
         for (p, o, n) in &edits {
-            relight_block_edit(&self.chunks, *p, *o, *n, &mut self.pending_light_edges);
+            let r = relight_block_edit(&self.chunks, *p, *o, *n, &mut self.pending_light_edges);
+            let [sx, _, sz] = p.local();
+            self.record_mesh_rows(p.chunk(), r);
+            self.record_mesh_rows_seam(p.chunk(), sx, sz, p.y);
         }
         self.mesh_priority = Some(base_chunk);
     }
@@ -5558,13 +5684,16 @@ impl GameRuntime {
             //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
             // 边派发只入队（stream 跨帧消化，审计 A1/F2），编辑源块进
             // 当帧优先重建通道（审计 A2/F3）。
-            relight_block_edit(
+            let r = relight_block_edit(
                 &self.chunks,
                 target,
                 old_id.0,
                 new_id.0,
                 &mut self.pending_light_edges,
             );
+            let [sx, _, sz] = target.local();
+            self.record_mesh_rows(target.chunk(), r);
+            self.record_mesh_rows_seam(target.chunk(), sx, sz, target.y);
             self.mesh_priority = Some(target.chunk());
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
@@ -5827,13 +5956,16 @@ impl GameRuntime {
         // C1：与放置同一接线——增量重光照（removal 波 + 边界派发）+
         // heightmap 维护（26.1 destroy → checkBlock）。边派发入队延后，
         // 编辑源块当帧优先重建（审计 A1/A2/F2/F3）。
-        relight_block_edit(
+        let r = relight_block_edit(
             &self.chunks,
             target,
             old.0,
             0,
             &mut self.pending_light_edges,
         );
+        let [sx, _, sz] = target.local();
+        self.record_mesh_rows(target.chunk(), r);
+        self.record_mesh_rows_seam(target.chunk(), sx, sz, target.y);
         self.mesh_priority = Some(target.chunk());
         // 破坏爆裂碎屑（ClientLevel.addDestroyBlockEffect:942-973：满块
         // 0.25 密度 4×4×4=64 粒，取被破坏方块图集层的 1/4 随机小矩形）。
@@ -8057,8 +8189,8 @@ mod tests {
             .unwrap()
             .set_flat(mcv_core::vidx(lx, at.y, lz), BlockId(new));
         let mut queue = Vec::new();
-        relight_block_edit(chunks, at, old, new, &mut queue);
-        sync_light_edges(chunks, &mut queue);
+        let _ = relight_block_edit(chunks, at, old, new, &mut queue);
+        sync_light_edges(chunks, &mut queue, &mut HashMap::new());
         assert!(
             queue.is_empty(),
             "测试排空后不应残留边任务（预算未耗尽前提）"
