@@ -275,3 +275,26 @@ clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐
    契约（geometry_locks 锁死；原版最高水行 = seaLevel−1，
    FluidStatus.at y<fluidLevel）。
 
+## LAKE-1 岩浆湖特征（#175，feat/aquifer 刀C）的接线近似
+
+原版 `LakeFeature` + placed 链（实证见 lake_pass.rs 头注）为本仓首个
+非树特征；接线为纯函数重放模型，逐项登记：
+
+1. **种子链非原版**：WorldgenRandom `setLargeFeatureSeed(seed, cx, cz)`
+   大特征链 → splitmix 域盐流（LAKE_DOMAIN，TREE_DOMAIN 先例）；形状
+   分布参数逐字抄 LakeFeature.java:38-66，由 tests/lakes.rs 频度带 +
+   确定性锁替代字节对拍。
+2. **判据环读 pass-1 重放态**（密度/含水层/开放柱门，非 WorldGenRegion
+   实况）：邻块=噪声填充态与 vanilla CHUNK 阶一致，但本块内**后续湖
+   不看见先前湖的写入**（原版后湖看见前湖）；origin 块内湖间重叠为
+   低频边缘。
+3. **biome placement filter 不逐群系建模**：65 群系 json 中 53 个在
+   features[1] 注册 lake_lava_pair（缺席 12 = 下界 5 + 末地 5 +
+   the_void + deep_dark）——本仓主世界全区块统一跑，仅 deep_dark 区
+   候选多出的低频偏差。
+4. **canReplaceBlock 面**：FEATURES_CANNOT_REPLACE 六成员本仓生成面
+   仅存在 bedrock → 只排 BEDROCK；LAVA_POOL_STONE_CANNOT_REPLACE 的
+   leaves/logs 成员在湖阶（features[1] < 植被）尚不存在 → barrier 门
+   等价退化为「非空气非流体即铺石」。
+5. **height_range 上沿**：`below_top 0`（max_inclusive=320 出界行）
+   取 [0,320) 均匀——单点边界差，扫描/阈值面自动消化。

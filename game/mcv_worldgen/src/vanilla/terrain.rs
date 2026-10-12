@@ -939,6 +939,11 @@ pub fn generate(
             }
         }
     }
+    // Pass 1.5（#175 刀C）：岩浆湖特征（26.1 lake_lava_underground
+    // 1/9 + lake_lava_surface 1/200，LakeFeature 判据环 + barrier 铺
+    // 石，见 lake_pass 模块头注实证摘要）。特征阶早于植被——置于树
+    // pass 前，与原版 lakes < vegetation 阶序一致。
+    crate::vanilla::lake_pass::place_lakes(seed, chunk_x, chunk_z, &orch, &mut field, out_voxels);
     // Pass 2（#139 树接线）：5×5 树池邻域扫描——树落点世界坐标纯函数；
     // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
     // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
