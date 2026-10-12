@@ -136,7 +136,7 @@ fn setup_fixtures(rt: &mut GameRuntime) -> Vec<ChunkPos> {
     for dz in -2i32..=2 {
         for dx in -2i32..=2 {
             let p = ChunkPos::new(dx, dz);
-            rt.chunks.insert(p, terrain_chunk(p, scene_seed(p)));
+            rt.chunks_mut().insert(p, terrain_chunk(p, scene_seed(p)));
             positions.push(p);
         }
     }
@@ -405,7 +405,7 @@ fn setup_pattern_fixtures(rt: &mut GameRuntime) -> Vec<ChunkPos> {
     for dz in -2i32..=2 {
         for dx in -2i32..=2 {
             let p = ChunkPos::new(dx, dz);
-            rt.chunks.insert(p, pattern_chunk(p));
+            rt.chunks_mut().insert(p, pattern_chunk(p));
             positions.push(p);
         }
     }
@@ -523,7 +523,7 @@ fn game_parallel_light_cross_border_torch_exact_values() {
                     bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
                 *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
             }
-            rt.chunks.insert(p, h);
+            rt.chunks_mut().insert(p, h);
             positions.push(p);
         }
     }
@@ -573,7 +573,7 @@ fn same_frame_writeback_reorders_scrambled_arrivals() {
     let mid = ChunkPos::new(1, 0);
     let far = ChunkPos::new(3, 3);
     for p in [near, mid, far] {
-        rt.chunks.insert(p, terrain_chunk(p, scene_seed(p)));
+        rt.chunks_mut().insert(p, terrain_chunk(p, scene_seed(p)));
     }
     // 串行参照产物（远→近乱序回传，seq 与到达序一致——worker 完成序）。
     let mut dones: Vec<LightDone> = Vec::new();
