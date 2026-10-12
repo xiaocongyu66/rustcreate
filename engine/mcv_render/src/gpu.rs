@@ -132,9 +132,13 @@ struct StagingSlot {
 }
 
 /// 一笔待上传拷贝：目标缓冲 + 数据（flush 时写入 staging 并记 copy）。
+/// `serial` = 目标缓冲所属绘制条目的世代号（本波 ②）：条目被替换/删除时
+/// 按世代 purge 掉指向旧缓冲的拷贝——旧缓冲的拷贝既泄 CPU 字节，又经
+/// `dst` 克隆把 GPU 缓冲钉在内存里（dead-buffer pinning）。
 struct PendingUpload {
     dst: wgpu::Buffer,
     bytes: Vec<u8>,
+    serial: u64,
 }
 
 /// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
@@ -156,9 +160,10 @@ pub struct BatchingStats {
     /// 缓冲尺寸（#115 刀 5a；批次成员共享缓冲，按整缓冲尺寸计——wgpu
     /// 分配粒度 4B 对齐的放大含在内，是驱动侧真实占用量）。
     pub resident_bytes: u64,
-    /// CPU 侧留存网格字节 = Σ池内 [`PoolMesh`] 顶点+索引字节（#80 无 LRU
-    /// 池：它是合批重建的数据源，常驻不回收——按派单要求计入内存预算面，
-    /// 全表见 docs/memory-budget.md）。
+    /// CPU 侧留存网格字节 = Σ池内 [`PoolMesh`] 顶点+索引字节。池是合批
+    /// 重建的数据源，在用批次成员不可回收；越 [`CPU_POOL_BUDGET_BYTES`]
+    /// 的陈旧驻留按 LRU 逐出（走整体卸载路径，见 evicted_chunks），
+    /// RD=8 稳态在预算内不触发。
     pub cpu_pool_bytes: u64,
     /// 越预算 LRU 逐出次数（本波 ① 释放路径的计数实证，不靠墙钟）。
     pub evicted_chunks: u64,
@@ -184,6 +189,18 @@ struct PoolMesh {
     /// origin 是否为 16 格网格点（区块原点 y 恒 0）。手工构造的测试原点
     /// （非 16 倍数）永远单块，不做重定基。
     mergeable: bool,
+    /// LRU 时钟戳（本波 ①）：入池/重网格时盖 [`MeshUploader::use_clock`]，
+    /// 越预算逐出取最旧。池是合批重建数据源，在用批次成员不可「只删字节
+    /// 留成员」——逐出必整体走卸载路径（字节 + 成员资格一起摘，语义等价
+    /// 原版 processUnloads 的兜底）。
+    last_use: u64,
+}
+
+/// [`PoolMesh`] 的逻辑字节（LRU 逐出量与 cpu_pool_bytes 同一公式）。
+fn mesh_bytes(m: &PoolMesh) -> u64 {
+    m.vbytes.len() as u64
+        + m.water_vbytes.len() as u64
+        + 4 * (m.opaque_idx.len() as u64 + m.water_idx.len() as u64)
 }
 
 /// 网格上传器：游戏层只交出顶点/索引字节，拿回 [`RenderChunk`]。
@@ -220,6 +237,18 @@ pub struct MeshUploader {
     /// `uploads` 的 CPU 字节增量记账（本波 ② 瞬态放大：重建窗口新旧批
     /// 并存时，被替换批次的滞留拷贝也在此计量）。
     uploads_bytes: u64,
+    /// 绘制条目世代号表（与 `entries` 下标平行，本波 ②）：每次建/重建
+    /// 条目发新世代，`PendingUpload.serial` 据此识别「目标缓冲已死的拷贝」
+    /// 并摘除。
+    entry_serial: Vec<u64>,
+    next_serial: u64,
+    /// LRU 时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，逐出
+    /// 取最旧。
+    use_clock: u64,
+    /// 重建窗口的占位条目（本波 ②「先摘旧批再建新批」）：旧缓冲先于新
+    /// 分配释放，GPU 顶点字节瞬态峰值不叠旧批。占位只在重建函数体内
+    /// 瞬时存在（同步替换，帧间不可见），缓冲仅 4B×2。
+    placeholder: RenderChunk,
     upload_stats: UploadStats,
 }
 
@@ -250,6 +279,28 @@ impl MeshUploader {
                 state: SlotState::Mapping,
             });
         }
+        // 占位条目（②）：小缓冲对，仅重建函数体内瞬时替换用。
+        let ph_vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-placeholder"),
+            size: 4,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ph_ib = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-placeholder"),
+            size: 4,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let placeholder = RenderChunk {
+            origin: [0.0; 3],
+            vertex_buf: ph_vb,
+            index_buf: ph_ib,
+            opaque_range: 0..0,
+            water_index_buf: None,
+            water_parts: Vec::new(),
+            aabb: (Vec3::ZERO, Vec3::ZERO),
+        };
         Self {
             device,
             queue,
@@ -261,16 +312,64 @@ impl MeshUploader {
             mapped_mailbox: mailbox,
             uploads: Vec::new(),
             uploads_bytes: 0,
+            entry_serial: Vec::new(),
+            next_serial: 0,
+            use_clock: 0,
+            placeholder,
             upload_stats: UploadStats::default(),
         }
     }
 
-    /// 攒入待 flush 拷贝并做瞬态记账（峰值即重建窗口瞬态放大的实证值）。
-    fn queue_uploads(&mut self, ups: Vec<PendingUpload>) {
+    /// 攒入待 flush 拷贝（盖条目世代号）并做瞬态记账（峰值即重建窗口
+    /// 瞬态放大的实证值）。
+    fn queue_uploads(&mut self, mut ups: Vec<PendingUpload>, serial: u64) {
+        for u in &mut ups {
+            u.serial = serial;
+        }
         self.uploads_bytes += ups.iter().map(|u| u.bytes.len() as u64).sum::<u64>();
         self.stats.transient_bytes = self.uploads_bytes;
         self.stats.transient_peak_bytes = self.stats.transient_peak_bytes.max(self.uploads_bytes);
         self.uploads.extend(ups);
+    }
+
+    /// 摘除指向某世代条目缓冲的在途拷贝（②）：条目被替换/删除后，这些
+    /// 拷贝的目标缓冲已死——字节是纯泄漏，`dst` 克隆还钉着 GPU 缓冲。
+    fn purge_uploads(&mut self, serial: u64) {
+        let mut freed = 0u64;
+        self.uploads.retain(|u| {
+            let keep = u.serial != serial;
+            if !keep {
+                freed += u.bytes.len() as u64;
+            }
+            keep
+        });
+        self.uploads_bytes -= freed;
+        self.stats.transient_bytes = self.uploads_bytes;
+    }
+
+    /// 池内 CPU 网格逻辑字节总量（预算门控与 cpu_pool_bytes 同一公式）。
+    fn pool_bytes(&self) -> u64 {
+        self.pool.values().map(mesh_bytes).sum()
+    }
+
+    /// ① 预算门控：池字节越预算即按 LRU 逐出（保护刚入池的 `protect`），
+    /// 逐出走整体卸载路径——字节与批次成员资格同摘，不留「成员在、
+    /// 数据源没了」的悬空态。RD=8 稳态（48.34 MiB < 预算 60 MiB）永不
+    /// 触发，只有滞留/泄漏越界才触发，见 [`CPU_POOL_BUDGET_BYTES`] 注释。
+    fn enforce_cpu_pool_budget(&mut self, protect: (i32, i32)) {
+        while self.pool_bytes() > CPU_POOL_BUDGET_BYTES {
+            let victim = self
+                .pool
+                .iter()
+                .filter(|(k, _)| **k != protect)
+                .min_by_key(|(_, m)| m.last_use)
+                .map(|(k, _)| *k);
+            let Some(key) = victim else { return };
+            let freed = mesh_bytes(self.pool.get(&key).expect("victim 必在池中"));
+            self.stats.evicted_chunks += 1;
+            self.stats.evicted_bytes += freed;
+            self.drop_chunk(key);
+        }
     }
 
     /// 当前绘制条目表（批次 + 不可合并单块）。场景块表即此表——合批后
@@ -290,16 +389,8 @@ impl MeshUploader {
                     + e.water_index_buf.as_ref().map_or(0, |b| b.size())
             })
             .sum();
-        // 与 batch_joinable 的 mesh_bytes 同一公式（逻辑字节，不含分配对齐）。
-        let cpu_pool_bytes: u64 = self
-            .pool
-            .values()
-            .map(|m| {
-                m.vbytes.len() as u64
-                    + m.water_vbytes.len() as u64
-                    + 4 * (m.opaque_idx.len() as u64 + m.water_idx.len() as u64)
-            })
-            .sum();
+        // 与 batch_joinable / 预算门控同一公式（逻辑字节，不含分配对齐）。
+        let cpu_pool_bytes = self.pool_bytes();
         BatchingStats {
             draw_entries: self.entries.len(),
             resident_bytes,
@@ -462,7 +553,12 @@ impl MeshUploader {
     /// 区块卸载：释放该块网格字节并从所属批次移除成员；批空删批，否则
     /// 原位重建（剩余成员顶点重定基到新批次最小角）。
     pub fn unload(&mut self, pos: mcv_core::ChunkPos) {
-        let key = (pos.x, pos.z);
+        self.drop_chunk((pos.x, pos.z));
+    }
+
+    /// 卸载的共用路径（① 预算逐出与显式 unload 同一语义）：池字节 +
+    /// 批次成员资格同摘；被删条目的在途拷贝按世代摘除（②）。
+    fn drop_chunk(&mut self, key: (i32, i32)) {
         if self.pool.remove(&key).is_some() {
             self.stats.meshed_chunks -= 1;
         }
@@ -473,8 +569,10 @@ impl MeshUploader {
         if self.batch_members[bi].is_empty() {
             // 顺序保持的移除：后续条目槽位前移一次，与旧 per-chunk retain
             // 的槽位漂移同级。
+            self.purge_uploads(self.entry_serial[bi]);
             self.batch_members.remove(bi);
             self.entries.remove(bi);
+            self.entry_serial.remove(bi);
         } else {
             self.rebuild_batch(bi);
         }
@@ -523,6 +621,7 @@ impl MeshUploader {
             && origin[1] == 0.0
             && vbytes.len().is_multiple_of(TERRAIN_STRIDE)
             && water.is_none_or(|(wv, _)| wv.len().is_multiple_of(TERRAIN_STRIDE));
+        self.use_clock += 1;
         let old = self.pool.insert(
             key,
             PoolMesh {
@@ -532,6 +631,7 @@ impl MeshUploader {
                 water_vbytes: water.map_or(Vec::new(), |(wv, _)| wv.to_vec()),
                 water_idx: water.map_or(Vec::new(), |(_, wi)| wi.to_vec()),
                 mergeable,
+                last_use: self.use_clock,
             },
         );
         if old.is_none() {
@@ -562,14 +662,19 @@ impl MeshUploader {
                     let members = vec![key];
                     let (entry, bytes, uploads) = self.build_batch_entry(&members);
                     self.stats.rebuild_bytes += bytes;
-                    self.queue_uploads(uploads);
+                    let serial = self.next_serial;
+                    self.next_serial += 1;
+                    self.queue_uploads(uploads, serial);
                     self.batch_members.push(members);
                     self.entries.push(entry);
+                    self.entry_serial.push(serial);
                     self.batch_members.len() - 1
                 }
             };
             self.rebuild_batch(bi);
         }
+        // ① 预算门控：刚入池字节受保护，越界的陈旧驻留按 LRU 逐出。
+        self.enforce_cpu_pool_budget(key);
         self.entry_of(key).expect("刚入池的区块必有批次")
     }
 
@@ -585,14 +690,11 @@ impl MeshUploader {
         if members.len() >= MAX_BATCH_MEMBERS {
             return false;
         }
-        let mesh_bytes = |m: &PoolMesh| {
-            m.vbytes.len() + m.water_vbytes.len() + 4 * (m.opaque_idx.len() + m.water_idx.len())
-        };
         let mut bytes = mesh_bytes(mesh);
         for k in members {
             bytes += self.pool.get(k).map_or(0, mesh_bytes);
         }
-        bytes <= MAX_BATCH_BYTES
+        bytes <= MAX_BATCH_BYTES as u64
     }
 
     /// 键所属批次条目。
@@ -602,13 +704,23 @@ impl MeshUploader {
     }
 
     /// 原位重建第 bi 个批次（成员表不变，数据源为池内最新字节）。
+    ///
+    /// ② 先摘旧再建新：按旧世代摘除在途拷贝（连带解开旧 GPU 缓冲的
+    /// dead-buffer pinning），占位条目替换令旧缓冲先于新分配释放——
+    /// 重建窗口内新旧批顶点字节不并存，瞬态峰值 = 单批新字节。占位仅在
+    /// 本函数体内瞬时存在（同步替换、无帧穿插），不产生「重建窗口空帧」。
     fn rebuild_batch(&mut self, bi: usize) {
         self.stats.batch_rebuilds += 1;
+        self.purge_uploads(self.entry_serial[bi]);
+        self.entries[bi] = self.placeholder.clone();
+        let serial = self.next_serial;
+        self.next_serial += 1;
+        self.entry_serial[bi] = serial;
         let members = self.batch_members[bi].clone();
         let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
-        self.queue_uploads(uploads);
         self.entries[bi] = entry;
+        self.queue_uploads(uploads, serial);
     }
 
     /// 由成员表组装批次条目：成员顶点重定基（pos += chunk_origin −
@@ -678,6 +790,7 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: vertex_buf.clone(),
                 bytes: vbytes,
+                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let index_buf = self.empty_buffer(opaque_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
@@ -685,6 +798,7 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: index_buf.clone(),
                 bytes: bytemuck::cast_slice(&opaque_idx).to_vec(),
+                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let water_index_buf = if has_water {
@@ -693,6 +807,7 @@ impl MeshUploader {
                 uploads.push(PendingUpload {
                     dst: ib.clone(),
                     bytes: bytemuck::cast_slice(&water_idx).to_vec(),
+                    serial: 0, // queue_uploads 盖世代戳
                 });
             }
             Some(ib)
