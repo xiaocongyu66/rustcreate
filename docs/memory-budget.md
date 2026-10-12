@@ -79,7 +79,10 @@ render-stats 日志带出（`app.rs` ~1 Hz）：
 ```
 render-stats: draws=… water_draws=… entries=… chunks=… rebuilds=… rebuild_kb=…
               staged_uploads=… staged_kb=… fallback=… resident_kb=… pool_kb=…
+              trimmed=… evicted=… debt=…
 ```
+（`trimmed`=环外修剪累计、`evicted`=环内盲逐出警报恒 0、`debt`=在途
+remesh 债；#174 观测面，真机隐形墙回归时 evicted>0 或 debt 常态堆积。）
 
 两本小账：
 
@@ -88,8 +91,23 @@ render-stats: draws=… water_draws=… entries=… chunks=… rebuilds=… rebu
   `gpu.rs:76-77`），按整缓冲尺寸计——含 wgpu 4B 对齐放大，即驱动侧
   真实占用量。
 - **CPU 留存**（cpu_pool_bytes）：Σ池内 `PoolMesh` 顶点+索引字节
-  （与 `batch_joinable` 的 mesh_bytes 同一公式）。#80 起 CPU 池无 LRU
-  （合批重建的数据源，常驻不回收）——按派单要求计入预算面。
+  （与 `batch_joinable` 的 mesh_bytes 同一公式）。池是合批重建的数据源，
+  在用批次成员不可回收。**#174 隐形墙修复后的治理口径**：越
+  `CPU_POOL_BUDGET_BYTES`（60→96 MiB 重标定）只修剪**保留环外**的远场
+  滞留（`set_retention(anchor, unload_dist)` 每帧随玩家迁移；环内绝对
+  保护、永不静默逐出——旧 LRU 逐「最早加载的近场块」且游戏层零通知 =
+  真机整墙透明/打掉一块全显形/走近偶愈），被逐块转入 **remesh 债账**
+  （`drain_evicted` 每帧回灌 `dirty::MESH` 重建，`game.rs` stream 网格段；
+  统计面 `trimmed_chunks` 正常治理 / `evicted_chunks` 环内警报恒 0 /
+  `debt_chunks` 在途债）。`meshed_chunks` 口径 = 池 ∪ 债（committed 未
+  卸载），「游戏零 unload 则 meshed == committed」恒成立。
+  原版对照：本仓「池」的等价物 = 客户端渲染保留区——
+  `ClientChunkCache.java:158-160`（`calculateStorageRange =
+  max(2, viewRange) + 3`，**只按距离不按 LRU**）+
+  `ChunkMap.java:477-496`（processUnloads 距离驱动卸载迟滞）；
+  `PlayerChunkSender.java:92,103`（发送队列按离玩家距离排序，无时间序
+  淘汰）。原版无 CPU 网格缓存这一层，「逐出」在本仓只许发生在游戏层
+  流式环（`unload_dist`，= 保留半径）之外。
 
 ### 网格域预算与实测
 
@@ -101,12 +119,26 @@ mcv_mesher 双 pass + 生产同款 `build_chunk`/`flush`）——它是记账量
 
 实测（CI `K5-MEAS mesh` 行，run 38114958737 / 7a35424，lavapipe）：
 
-| 项 | 实测 | 预算门 |
+| 项 | 实测（合成高度场） | 预算门 |
 |---|---|---|
 | GPU 驻留（resident_bytes） | 50 690 400 B ≈ 48.34 MiB（~140 KiB/块） | ≤ 96 MiB（= 2× 实测收紧后） |
 | CPU 池（cpu_pool_bytes） | 50 690 400 B ≈ 48.34 MiB | ≤ 96 MiB（同上） |
 | draw_entries（批次数） | 51（361 块 → 批均 ~7.1，逼近成员上限 8） | — |
 | meshed_chunks | 361 | = 网格域块数 |
+
+**洞穴灌水口径（#174，真机隐形墙的字节化实证）**：同 RD=8 环 361 块，
+换「4³ 粗格凿空 ~15% + 海平面以下腔体灌水」断面（洞壁面 + 水空/水岩
+界面双 pass 全负载），单块网格字节 **avg_chunk_bytes = 463 KB**（vs
+合成场 ~140 KiB，3.3×），池稳态需求 **≈ 167 MB（160 MiB）**（run 38255019997
+`K-INVIS cave` 行，`engine/mcv_render/tests/inviswall_eviction.rs`，
+render-headless）。旧 `CPU_POOL_BUDGET_BYTES = 60 MiB`（48.34 +25%，
+按无洞穴合成场标定）在此口径下稳态即越界 → 逐出风暴；该值已重标定
+为 **96 MiB**（同「2× 合成实测」纪律）。96 < 167 是**有意权衡**：预算
+只修剪保留环外远场（见上），洞穴环整体在保留环内不受预算门逐出，
+池实际上界 = 保留环面积 × 单块字节——rd8 洞穴最坏 23²×463 KB ≈
+245 MB（234 MiB）量级，超移动内存盘可承受线；**洞真机 rd 自适应降档 = 债**
+（§5）。目标语义：内存压力下失明只可能发生在远方流式环边缘（且经
+drain 回灌 1-2 帧重建），视野中心永不瞎。
 
 **收紧纪律**（派单）已执行：首跑暂定派单估值 40 MiB——run 38114958737
 实测 48.34 MiB 如约触发取证红（`resident_bytes ≤ MESH_BUDGET_MIB` 断言
