@@ -210,12 +210,10 @@ fn skeleton_shoot_cycle_and_kite() {
                 } = a
                 {
                     assert!((speed - 1.6).abs() < 1e-6);
-                    // power = clamp(dist/15, 0.1, 1.0)（RangedAttackGoal.java:92-93）：
-                    // dist=10 → 10/15 → base = 2.0×(10/15) ≈ 1.333。
-                    assert!(
-                        (base_damage - 2.0 * (10.0f32 / 15.0)).abs() < 1e-6,
-                        "base {base_damage}"
-                    );
+                    // power = BowItem.getPowerForTime(pullTime=20) = 1.0
+                    // （BowItem.java:74-82，RangedBowAttackGoal 只满拉放箭）→
+                    // base = power×2.0 = 2.0（AbstractArrow.java:718-720）。
+                    assert!((base_damage - 2.0).abs() < 1e-6, "base {base_damage}");
                     assert!((spread - (14.0 - diff as f32 * 4.0)).abs() < 1e-6);
                     shots.push(t);
                 }
@@ -871,9 +869,11 @@ fn wander_sampling_matches_random_pos_cube() {
         let mut rng = lcg(seed + 1);
         let t = random_point_around(origin, &mut rng);
         let d = t - origin;
+        // 整数原点 + containing(floor)：偏移块 ∈ 原点块 ±10 → 中心位移
+        // ∈ [−9.5, 10.5]（RandomPos.java:132 containing + :111 底心）。
         assert!(
-            d.x.abs() <= 10.0 && d.z.abs() <= 10.0,
-            "水平偏移界 ±10（RandomPos.java:19,21）：{d:?}"
+            d.x.abs() <= 10.5 && d.z.abs() <= 10.5,
+            "水平偏移界（next(21)−10 + containing 底心）：{d:?}"
         );
         assert!(
             d.y.abs() <= 7.0,
@@ -884,7 +884,7 @@ fn wander_sampling_matches_random_pos_cube() {
             near_origin_h = true;
         }
         assert!(
-            ((d.x.fract() - 0.5).abs() < 1e-4) && ((d.z.fract() - 0.5).abs() < 1e-4),
+            ((d.x.fract().abs() - 0.5).abs() < 1e-4) && ((d.z.fract().abs() - 0.5).abs() < 1e-4),
             "落点 = 偏移方块底面中心（RandomPos.java:111 atBottomCenterOf）：{d:?}"
         );
     }

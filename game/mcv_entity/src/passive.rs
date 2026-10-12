@@ -8,7 +8,8 @@
 //!   [`spawn_passive_mob`] 装配）；game.rs 的 Brain 路线不插该组件，
 //!   两套运行时互不触碰；
 //! - 物理固定步复用 `mcv_game::step_entity`（AABB 碰撞），与敌对怪
-//!   同一引擎通路；鸡额外做慢落（Chicken.java:123-126 扑翼 ×0.6）；
+//!   同一引擎通路；鸡额外做慢落（Chicken.java:124-127 扑翼 ×0.6，20 Hz
+//!   tick 门）；
 //! - 羊吃草只播放动画（低头 40 tick），不销毁草方块
 //!   ——KNOWN-DIVERGENCE（方块变更需要世界编辑面，留待集成）。
 //!
@@ -397,8 +398,14 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             gravity_scale: 1.0,
         };
         let mut eng = body.body();
-        if def.kind == MobKind::Chicken && !body.on_ground && eng.vel.y < 0.0 {
-            // Chicken.java:123-126 — 空中下落 y 速度 ×0.6（扑翼缓降）。
+        if on_tick && def.kind == MobKind::Chicken && !body.on_ground && eng.vel.y < 0.0 {
+            // Chicken.aiStep（Chicken.java:124-127）——空中下落 y 速度 ×0.6
+            // （扑翼缓降）。原版在 aiStep 每 **tick**（20 Hz）施加一次；
+            // 旧实现每个 60 Hz 物理步都乘 → 阻尼 3× 过强（任务 #131 缺口 4）。
+            // 免摔面：chicken 在 EntityTypeTags.FALL_DAMAGE_IMMUNE
+            // （data/minecraft/tags/entity_type/fall_damage_immune.json）+
+            // LivingEntity.calculateFallDamage（LivingEntity.java:1814-1818）
+            // 恒 0——本仓 mob 侧尚无摔落伤害结算（天然免疫，留债注释）。
             eng.vel.y *= 0.6;
         }
         step_entity(&view, &mut eng, def.half_size, &input);

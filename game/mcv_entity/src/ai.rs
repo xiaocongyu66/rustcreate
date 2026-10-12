@@ -12,8 +12,9 @@
 //!                 │ dist≤攻击距离&视线
 //!                 ▼
 //!   melee: zombie/spider ─ Melee ─(20t 间隔攻击; 出距离→Seek)
-//!   bow:   skeleton      ─ Ranged ─(15 格射程; >13 接近; <7.5 后撤; 横移;
-//!                                    60t 周期射箭, 断视线 60t 停)
+//!   bow:   skeleton      ─ Ranged ─(15 格横移半径; >13 接近; <7.5 后撤; 横移;
+//!                                    拉弓 20t 满力放箭 + interval(40/20) 冷却,
+//!                                    周期 60/40t; 断视线 60t 收弓)
 //!   creeper              ─ Swell ─(dist<3&视线起爆, 30t=1.5s;
 //!                                   dist>7 或断视线倒数递减→Seek)
 //!   creeper 避猫/ocelot(6 格)、skeleton 避狼/白天逃阴影 → Flee
@@ -160,9 +161,12 @@ pub const fn ai_table(kind: MobKind) -> MobAiTable {
     }
 }
 
-/// 近战判定距离：基础触达 + 目标半宽（MC 为 AABB 合成，Mob.java:1317-1323 简化）。
-pub fn melee_range(target_half_width: f32) -> f32 {
-    MELEE_REACH_BASE + target_half_width
+/// 近战触达判定（Mob.isWithinMeleeAttackRange，Mob.java:1317-1328 +
+/// getAttackBoundingBox :1333-1352）：自身 AABB inflate(√2.04−0.6, 0, ·)
+/// 与目标 hitbox 水平相交 ⟺ 中心水平距 < 基础触达 + **攻击者半宽** + 目标
+/// 半宽。垂直向原版还要 AABB 相交（同格站立近似恒真，简化，见模块头）。
+pub fn melee_range(own_half_width: f32, target_half_width: f32) -> f32 {
+    MELEE_REACH_BASE + own_half_width + target_half_width
 }
 
 /// 状态机状态。
@@ -277,6 +281,9 @@ pub struct Brain {
     pub fuse: u32,
     /// 攻击冷却剩余（近战 20 / 弓 interval+draw）。
     pub attack_cd: u32,
+    /// skeleton 拉弓进度（0=未拉弓；≥BOW_DRAW_TICKS 且有视线即放箭，
+    /// RangedBowAttackGoal.java:123-136）。
+    pub draw_ticks: u32,
     /// 横移方向（clockwise 标志，每 20t p=0.3 翻转）。
     pub strafe_clockwise: bool,
     strafe_flip_cd: u32,
@@ -304,6 +311,7 @@ impl Brain {
             wander_target: Vec3::ZERO,
             fuse: 0,
             attack_cd: 0,
+            draw_ticks: 0,
             strafe_clockwise: false,
             strafe_flip_cd: 0,
             leap_enabled: false,
@@ -320,6 +328,7 @@ impl Brain {
         self.has_target = false;
         self.unseen = 0;
         self.los_ticks = 0;
+        self.draw_ticks = 0; // 目标丢失 = goal.stop() → stopUsingItem（:56-62）
         self.state = MobState::Idle;
     }
 
@@ -405,12 +414,11 @@ impl Brain {
         rng: &mut impl FnMut() -> u32,
         acts: &mut Vec<AiAction>,
     ) {
-        let _ = def;
         if !self.has_target {
             self.wander_only(def, tbl, p, rng, acts);
             return;
         }
-        let range = melee_range(p.target_half_width);
+        let range = melee_range(def.half_size[0], p.target_half_width);
         match self.state {
             MobState::Melee => {
                 let t = p.target.unwrap_or(p.pos);
@@ -463,6 +471,7 @@ impl Brain {
             && p.sky_exposed
             && let Some(s) = p.shelter
         {
+            self.draw_ticks = 0; // 目标切换 = stopUsingItem（FleeSunGoal 抢占）
             self.state = MobState::Flee;
             acts.push(self.walk_toward(p, s, 1.0));
             return;
@@ -472,6 +481,7 @@ impl Brain {
             && let Some(a) = p.avoid
             && p.pos.distance(a) < AVOID_DIST
         {
+            self.draw_ticks = 0;
             self.state = MobState::Flee;
             acts.push(self.walk_away(p, a));
             return;
@@ -510,27 +520,45 @@ impl Brain {
                 jump: p.blocked,
             });
         }
-        // 射击：周期 = interval + 拉弓 20t（完整周期 normal 60 / hard 40）。
-        self.attack_cd = self.attack_cd.saturating_sub(1);
-        if self.attack_cd == 0 && p.los && dist <= BOW_RANGE {
-            let h = flat_dist(p.pos, t);
-            let mut dir = t - p.pos;
-            dir.y += h * 0.2; // AbstractSkeleton.java:170 抛物线补偿
-            // power = clamp(dist/attackRadius, 0.1, 1.0)（RangedAttackGoal
-            // .java:92-93，attackRadius=15 = BOW_RANGE）；base = power×2.0
-            // （AbstractArrow.java:718-719，难度噪声由主控生成时叠加）。
-            acts.push(AiAction::Shoot {
-                dir: normalize_or_zero(dir),
-                speed: ARROW_SPEED,
-                spread: arrow_spread(p.difficulty),
-                base_damage: 2.0 * crate::arrow::ranged_power(dist, BOW_RANGE),
-            });
-            let interval = if p.difficulty >= 3 {
-                BOW_INTERVAL_HARD
+        // 拉弓/放箭（RangedBowAttackGoal.java:123-136，逐态镜像）：
+        // - 拉弓中：pullTime ≥ 20 且本 tick 有视线 → 放箭（:126-132；
+        //   release **无射程门**——15² 半径只门横移停走 :86-92）；
+        // - 未拉弓：attackTime 归零 → startUsingItem（:134-136）；
+        // - 放箭后 attackTime = attackIntervalMin（:131，难度门
+        //   AbstractSkeleton.java:138-141/151-157：hard 20 / 其余 40）。
+        if self.draw_ticks > 0 {
+            if p.los && self.draw_ticks >= BOW_DRAW_TICKS {
+                let h = flat_dist(p.pos, t);
+                let mut dir = t - p.pos;
+                dir.y += h * 0.2; // AbstractSkeleton.java:164-170 抛物线补偿
+                acts.push(AiAction::Shoot {
+                    dir: normalize_or_zero(dir),
+                    speed: ARROW_SPEED,
+                    spread: arrow_spread(p.difficulty),
+                    // power = BowItem.getPowerForTime(pullTime=20) = 1.0
+                    // （BowItem.java:74-82）；base = power×2.0
+                    // （AbstractArrow.java:718-720，难度噪声由主控叠加）。
+                    base_damage: 2.0,
+                });
+                self.draw_ticks = 0;
+                self.attack_cd = if p.difficulty >= 3 {
+                    BOW_INTERVAL_HARD
+                } else {
+                    BOW_INTERVAL_NORMAL
+                };
+            } else if !p.los && self.unseen > LOSE_SIGHT_TICKS {
+                // 断视线 60t → 收弓（:124-125 seeTime < −60 stopUsingItem）。
+                self.draw_ticks = 0;
             } else {
-                BOW_INTERVAL_NORMAL
-            };
-            self.attack_cd = interval + BOW_DRAW_TICKS;
+                self.draw_ticks += 1;
+            }
+        } else {
+            self.attack_cd = self.attack_cd.saturating_sub(1);
+            if self.attack_cd == 0 {
+                // 冷却归零即起拉（本 tick = startUsingItem；pullTime 从
+                // 本 tick 起算，满 20 后下一 tick 放箭）。
+                self.draw_ticks = 1;
+            }
         }
     }
 
@@ -703,12 +731,24 @@ fn flat_dist2(a: Vec3, b: Vec3) -> f32 {
     dx * dx + dz * dz
 }
 
-/// 游走目标点（采样语义，任务 #131 缺口 3 红锁公开面）。
+/// 游走目标点（WaterAvoidingRandomStrollGoal.getPosition，任务 #131 缺口 3）：
+/// 陆地分支 `LandRandomPos.getPos(mob, 10, 7)`（WaterAvoidingRandomStrollGoal
+/// .java:27）→ `RandomPos.generateRandomDirection`（RandomPos.java:18-23）：
+/// x/z 各 `next(2·10+1)−10` ∈ [−10,10]、y `next(2·7+1)−7` ∈ [−7,7] 的**方块
+/// 偏移**，落点 = 偏移方块底面中心（atBottomCenterOf，RandomPos.java:111）。
+/// LandRandomPos 的水面/障碍/稳定性筛选与 10 次择优（LandRandomPos.java:66-78、
+/// RandomPos.java:96-112）依赖寻路 malus 账本——本仓无该数据面，采样后直接
+/// 采用（KNOWN-DIVERGENCE：游走点可能落水/落障碍，由移动物理自行兜底）。
 pub fn random_point_around(pos: Vec3, rng: &mut impl FnMut() -> u32) -> Vec3 {
-    let r1 = rng() as f32 / u32::MAX as f32;
-    let r2 = rng() as f32 / u32::MAX as f32;
-    let r3 = rng() as f32 / u32::MAX as f32;
-    let ang = r1 * std::f32::consts::TAU;
-    let d = 2.0 + r2 * (WANDER_RADIUS - 2.0);
-    pos + Vec3::new(ang.cos() * d, (r3 * 2.0 - 1.0) * 2.0, ang.sin() * d)
+    const H: u32 = 10; // 水平偏移半径（generateRandomDirection 第 1/3 参）
+    const V: u32 = 7; // 垂直偏移半径（第 2 参）
+    let xt = (rng() % (2 * H + 1)) as f32 - H as f32;
+    let yt = (rng() % (2 * V + 1)) as f32 - V as f32;
+    let zt = (rng() % (2 * H + 1)) as f32 - H as f32;
+    // generateRandomPosTowardDirection（RandomPos.java:114-133）：偏移加到
+    // 实体坐标后取整成方块（BlockPos.containing = floor），返回底面中心。
+    let bx = (pos.x + xt).floor() as i32;
+    let by = (pos.y + yt).floor() as i32;
+    let bz = (pos.z + zt).floor() as i32;
+    Vec3::new(bx as f32 + 0.5, by as f32, bz as f32 + 0.5)
 }

@@ -4813,6 +4813,20 @@ impl GameRuntime {
             if (handle.stage() as u8) < (Stage::LightLocalReady as u8) {
                 continue;
             }
+            // 实体 tick 环豁免门（任务 #131 缺口 5；26.1：spawnForChunk 只跑
+            // 在 `canSpawnEntitiesInChunk` 的区块——ServerChunkCache.java
+            // :423-424，谓词 = entityManager.canPositionTick（ServerLevel.java
+            // :1818-1820）= PLAYER_SIMULATION 模拟环）。±8 候选环
+            // （DistanceManager.java:42 naturalSpawnChunkCounter(8)，本仓
+            // SPAWN_RANGE_CHUNKS 抽样）只是必要条件：模拟距离 < 8 时环外
+            // 已载区块**不刷怪**——否则怪出生即落进 mob_ai_system 实体门的
+            // 冻结域（不 tick、消散账本不走、玩家走近前永存不动）。
+            if !ticket::is_entity_ticking(
+                self.tickets
+                    .level_of_type(TicketType::PlayerSimulation, pos) as i32,
+            ) {
+                continue;
+            }
             let start_x = (fast_rand() % 16) as i32 + pos.x * 16;
             let start_z = (fast_rand() % 16) as i32 + pos.z * 16;
             // 组起点柱面的地表 y（yStart 上限）——原版 getRandomPosWithin 用
