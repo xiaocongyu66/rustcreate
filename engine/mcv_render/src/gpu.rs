@@ -132,9 +132,16 @@ struct StagingSlot {
 }
 
 /// 一笔待上传拷贝：目标缓冲 + 数据（flush 时写入 staging 并记 copy）。
+/// `serial` = 目标缓冲所属绘制条目的世代号（本波 ②）：
+/// - 世代从未出册（[`MeshUploader::handed`] 不含）→ 世代替换时拷贝必
+///   不可达，当场摘除（同调用内 push+rebuild 的内部世代）；
+/// - 世代已出册（build_chunk 返回过克隆，调用方仍可合法绘制旧克隆——
+///   render.rs 水 pass/木族样本的像素测语义）→ 拷贝保留到 flush 送达；
+/// - chunk 死亡（卸载/逐出）→ 句柄失效，当前世代拷贝无条件摘除。
 struct PendingUpload {
     dst: wgpu::Buffer,
     bytes: Vec<u8>,
+    serial: u64,
 }
 
 /// 合批结构性统计（#80 可观测性）：draw 收敛与重建带宽都从这里出数。
@@ -247,6 +254,20 @@ pub struct MeshUploader {
     /// 重建函数体内尚未替换入册的新批缓冲字节（并存窗口）。峰值见
     /// [`BatchingStats::live_vertex_peak_bytes`]。
     live_vertex_bytes: u64,
+    /// 绘制条目世代号表（与 `entries` 下标平行，本波 ②）：每次建/重建
+    /// 条目发新世代，`PendingUpload.serial` 据此定位「目标缓冲已死且
+    /// 永不可达」的拷贝。
+    entry_serial: Vec<u64>,
+    next_serial: u64,
+    /// 已出册世代集：曾作为 build_chunk 返回值交给调用方的世代。其
+    /// 在途拷贝必须保留到 flush（调用方合法绘制旧克隆的契约，见
+    /// [`PendingUpload`]），世代替换时不摘。
+    handed: std::collections::HashSet<u64>,
+    /// 重建窗口的占位条目（本波 ②「先摘旧批再建新批」）：旧缓冲先于新
+    /// 分配释放，GPU 顶点字节瞬态峰值不叠旧批。占位只在重建函数体内
+    /// 瞬时存在（同步替换，帧间不可见），缓冲仅 4B×2，不计入顶点字节账
+    /// （常数级，见 tests/render_mem.rs 的 PEAK_SLACK 余量）。
+    placeholder: RenderChunk,
     /// LRU 时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，逐出
     /// 取最旧。
     use_clock: u64,
@@ -280,6 +301,28 @@ impl MeshUploader {
                 state: SlotState::Mapping,
             });
         }
+        // 占位条目（②）：小缓冲对，仅重建函数体内瞬时替换用。
+        let ph_vb = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-placeholder"),
+            size: 4,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ph_ib = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("mesh-placeholder"),
+            size: 4,
+            usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let placeholder = RenderChunk {
+            origin: [0.0; 3],
+            vertex_buf: ph_vb,
+            index_buf: ph_ib,
+            opaque_range: 0..0,
+            water_index_buf: None,
+            water_parts: Vec::new(),
+            aabb: (Vec3::ZERO, Vec3::ZERO),
+        };
         Self {
             device,
             queue,
@@ -292,17 +335,41 @@ impl MeshUploader {
             uploads: Vec::new(),
             uploads_bytes: 0,
             live_vertex_bytes: 0,
+            entry_serial: Vec::new(),
+            next_serial: 0,
+            handed: std::collections::HashSet::new(),
+            placeholder,
             use_clock: 0,
             upload_stats: UploadStats::default(),
         }
     }
 
-    /// 攒入待 flush 拷贝并做瞬态记账（峰值即重建窗口瞬态放大的实证值）。
-    fn queue_uploads(&mut self, ups: Vec<PendingUpload>) {
+    /// 攒入待 flush 拷贝（盖条目世代号）并做瞬态记账（峰值即重建窗口
+    /// 瞬态放大的实证值）。
+    fn queue_uploads(&mut self, mut ups: Vec<PendingUpload>, serial: u64) {
+        for u in &mut ups {
+            u.serial = serial;
+        }
         self.uploads_bytes += ups.iter().map(|u| u.bytes.len() as u64).sum::<u64>();
         self.stats.transient_bytes = self.uploads_bytes;
         self.stats.transient_peak_bytes = self.stats.transient_peak_bytes.max(self.uploads_bytes);
         self.uploads.extend(ups);
+    }
+
+    /// 摘除指向某世代条目缓冲的在途拷贝（②）：目标缓冲已死且按
+    /// [`PendingUpload`] 的规则永不可达时调用——字节是纯泄漏，`dst`
+    /// 克隆还钉着 GPU 缓冲（dead-buffer pinning）。
+    fn purge_uploads(&mut self, serial: u64) {
+        let mut freed = 0u64;
+        self.uploads.retain(|u| {
+            let keep = u.serial != serial;
+            if !keep {
+                freed += u.bytes.len() as u64;
+            }
+            keep
+        });
+        self.uploads_bytes -= freed;
+        self.stats.transient_bytes = self.uploads_bytes;
     }
 
     /// 入册一个绘制条目到 GPU 顶点字节账（② 并存记账公共入口）。
@@ -533,9 +600,14 @@ impl MeshUploader {
         if self.batch_members[bi].is_empty() {
             // 顺序保持的移除：后续条目槽位前移一次，与旧 per-chunk retain
             // 的槽位漂移同级。
+            // chunk 死亡 = 句柄失效（原版 processUnloads 语义）：当前
+            // 世代在途拷贝无条件摘除（②）。
+            self.purge_uploads(self.entry_serial[bi]);
+            self.handed.remove(&self.entry_serial[bi]);
             self.track_entry_out(&self.entries[bi]);
             self.batch_members.remove(bi);
             self.entries.remove(bi);
+            self.entry_serial.remove(bi);
         } else {
             self.rebuild_batch(bi);
         }
@@ -625,10 +697,13 @@ impl MeshUploader {
                     let members = vec![key];
                     let (entry, bytes, uploads) = self.build_batch_entry(&members);
                     self.stats.rebuild_bytes += bytes;
-                    self.queue_uploads(uploads);
+                    let serial = self.next_serial;
+                    self.next_serial += 1;
+                    self.queue_uploads(uploads, serial);
                     self.track_entry_in(&entry);
                     self.batch_members.push(members);
                     self.entries.push(entry);
+                    self.entry_serial.push(serial);
                     self.batch_members.len() - 1
                 }
             };
@@ -636,7 +711,13 @@ impl MeshUploader {
         }
         // ① 预算门控：刚入池字节受保护，越界的陈旧驻留按 LRU 逐出。
         self.enforce_cpu_pool_budget(key);
-        self.entry_of(key).expect("刚入池的区块必有批次")
+        let entry = self.entry_of(key).expect("刚入池的区块必有批次");
+        // ② 出册登记：本世代克隆即将交给调用方（可合法保留并绘制），
+        // 其世代的在途拷贝从此保留到 flush 送达。
+        if let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) {
+            self.handed.insert(self.entry_serial[bi]);
+        }
+        entry
     }
 
     /// 批次是否还能再吞下一个成员（成员数与合并字节双阈值）。
@@ -666,17 +747,30 @@ impl MeshUploader {
 
     /// 原位重建第 bi 个批次（成员表不变，数据源为池内最新字节）。
     ///
-    /// ② 并存记账如实反映本函数生命周期：新批建成时旧批仍在条目表上
-    /// （并存窗口双计），入册替换后旧批随引用消失释放。
+    /// ② 先摘旧再建新：旧世代若从未出册（同调用内 push+rebuild 的内部
+    /// 世代），其在途拷贝永不可达、当场摘除；已出册世代的拷贝按契约
+    /// 保留到 flush（见 [`PendingUpload`]）。占位条目替换令旧 GPU 缓冲
+    /// 先于新分配释放——顶点字节账上旧批出册在新批入册之前，新旧不
+    /// 并存（[`BatchingStats::live_vertex_peak_bytes`] 实证）。占位仅
+    /// 本函数体内瞬时存在（同步替换、无帧穿插），不产生「重建窗口空帧」。
     fn rebuild_batch(&mut self, bi: usize) {
         self.stats.batch_rebuilds += 1;
+        let old_serial = self.entry_serial[bi];
+        if !self.handed.contains(&old_serial) {
+            self.purge_uploads(old_serial);
+        }
+        self.handed.remove(&old_serial);
+        self.track_entry_out(&self.entries[bi]);
+        self.entries[bi] = self.placeholder.clone();
+        let serial = self.next_serial;
+        self.next_serial += 1;
+        self.entry_serial[bi] = serial;
         let members = self.batch_members[bi].clone();
         let (entry, bytes, uploads) = self.build_batch_entry(&members);
         self.stats.rebuild_bytes += bytes;
         self.track_entry_in(&entry);
-        let old = std::mem::replace(&mut self.entries[bi], entry);
-        self.track_entry_out(&old);
-        self.queue_uploads(uploads);
+        self.entries[bi] = entry;
+        self.queue_uploads(uploads, serial);
     }
 
     /// 由成员表组装批次条目：成员顶点重定基（pos += chunk_origin −
@@ -746,6 +840,7 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: vertex_buf.clone(),
                 bytes: vbytes,
+                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let index_buf = self.empty_buffer(opaque_idx.len() as u64 * 4, wgpu::BufferUsages::INDEX);
@@ -753,6 +848,7 @@ impl MeshUploader {
             uploads.push(PendingUpload {
                 dst: index_buf.clone(),
                 bytes: bytemuck::cast_slice(&opaque_idx).to_vec(),
+                serial: 0, // queue_uploads 盖世代戳
             });
         }
         let water_index_buf = if has_water {
@@ -761,6 +857,7 @@ impl MeshUploader {
                 uploads.push(PendingUpload {
                     dst: ib.clone(),
                     bytes: bytemuck::cast_slice(&water_idx).to_vec(),
+                    serial: 0, // queue_uploads 盖世代戳
                 });
             }
             Some(ib)
