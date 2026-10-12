@@ -94,15 +94,37 @@ const MAX_BATCH_BYTES: usize = 4 * 1024 * 1024;
 const STAGING_SLOT_BYTES: u64 = 2 * 1024 * 1024;
 const STAGING_SLOT_COUNT: usize = 8;
 
+/// 待 flush 拷贝的 CPU 滞留背压线（#174 配套）：调用方在两次 flush 之间
+/// 提交的天量重建拷贝（如逐出/修剪风暴中的批次重建）不得无界堆积——
+/// 超过本线在 build_chunk 尾部提前 flush（合法：flush 语义 = 把攒下拷贝
+/// submit，提前 submit 只让数据更早到位，不违「先于同帧 draw」契约）。
+/// 真机常规帧远低于本线（rd8 满负荷 remesh 帧 < 8 MiB），只有病态
+/// flush-饥饿场景才触发。
+const PENDING_UPLOAD_FLUSH_BYTES: u64 = 64 * 1024 * 1024;
+
 /// CPU 留存网格字节（池）预算上限——本波「CPU 网格字节有界回收」的集中
-/// 定义点。依据：RD=8（remesh 环 19²=361 块，口径同 tests/mesh_memory.rs）
-/// 稳态实测 cpu_pool_bytes = 48.34 MiB（run 38114958737，lavapipe，
-/// 361 块合成地形），取 +25% 余量 = 60.4 MiB，向下取整 60 MiB。RD=8
-/// 稳态永不触发回收（48.34 < 60），只有滞留/泄漏（该卸未卸的超环驻留）
-/// 才会越界——越界即 LRU 逐出，对齐原版「区块卸载即释放渲染资源」
-/// （ChunkMap.java:478-535 processUnloads）的兜底语义；「CPU 网格字节
-/// LRU」本身是本仓性能自选（登记项），原版无 CPU 网格缓存。
-pub const CPU_POOL_BUDGET_BYTES: u64 = 60 * 1024 * 1024;
+/// 定义点。**#174 隐形墙修复重标定（2026-10-12）**：旧值 60 MiB 按无洞穴
+/// 合成高度场标定（48.34 MiB，run 38114958737），被洞穴+灌水真机口径
+/// 证伪——RD=8 洞穴灌水环 361 块实测 avg_chunk_bytes=463 KB、池需求
+/// ≈ 167 MiB（run 38255019997 K-INVIS 行），60 MiB 门稳态即越界，LRU
+/// 逐出「最早加载的近场块」（视野中心）且游戏层零通知 = 隐形墙根因。
+/// 新语义（见 [`MeshUploader::enforce_cpu_pool_budget`]）：越预算只逐出
+/// **保留环外**（远离锚点）的滞留，环内永不逐出；保留环语义对齐原版
+/// 客户端渲染保留区——ClientChunkCache.java:158-160
+/// （`calculateStorageRange = max(2, viewRange) + 3`，只按距离不按
+/// LRU）+ ChunkMap.java:477-496（processUnloads 距离驱动卸载）。
+/// 数值依据：合成稳态 48.34 MiB × 2 = 96 MiB（与 mesh_memory.rs
+/// `MESH_BUDGET_MIB` 同一「2× 实测」纪律）——环外滞留（该卸未卸/陈旧
+/// 回传）从 96 MiB 起修剪；洞穴稳态池上界由游戏层流式环
+/// （`unload_dist`）保证，真机洞穴地形顶点域 40MB 门失效与 rd 自适应
+/// 降档已登记 `docs/memory-budget.md` §5 债。
+pub const CPU_POOL_BUDGET_BYTES: u64 = 96 * 1024 * 1024;
+
+/// [`MeshUploader`] 默认保留半径（区块数，Chebyshev）：游戏层每帧经
+/// [`MeshUploader::set_retention`] 传入流式环（`unload_dist`），此默认值
+/// 供无锚点直用方（测试/工具）——11 = 原版默认档 `max(2, 8) + 3`
+/// （ClientChunkCache.java:158-160，本仓桌面默认视距 8）。
+pub const DEFAULT_RETENTION_RADIUS: i32 = 11;
 
 /// 异步上传统计（#80 第二刀可观测性）：主线程同步大拷贝消除的证据。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -151,7 +173,9 @@ struct PendingUpload {
 /// 免「漏补一处即虚账」的分散状态，也无锁无失败路径）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct BatchingStats {
-    /// 池内已上传网格的区块数。
+    /// 已提交未卸载的区块数 = 池内驻留 + remesh 债账（#174：逐出≠消失，
+    /// 被逐块转入债账等游戏层 [`MeshUploader::drain_evicted`] 回灌重建，
+    /// 卸载才真正销账——「committed 且未 unload」的口径）。
     pub meshed_chunks: usize,
     /// 绘制条目数（批次 + 不可合并单块）——opaque draw 数的上界。
     pub draw_entries: usize,
@@ -165,13 +189,28 @@ pub struct BatchingStats {
     pub resident_bytes: u64,
     /// CPU 侧留存网格字节 = Σ池内 [`PoolMesh`] 顶点+索引字节。池是合批
     /// 重建的数据源，在用批次成员不可回收；越 [`CPU_POOL_BUDGET_BYTES`]
-    /// 的陈旧驻留按 LRU 逐出（走整体卸载路径，见 evicted_chunks），
-    /// RD=8 稳态在预算内不触发。
+    /// 时只修剪**保留环外**的远场滞留（见 `trimmed_chunks`），环内
+    /// 永不逐出（#174：近场静默逐出 = 隐形墙）。
     pub cpu_pool_bytes: u64,
-    /// 越预算 LRU 逐出次数（本波 ① 释放路径的计数实证，不靠墙钟）。
+    /// 保留环**内**的越预算逐出次数——盲逐出警报面，契约上恒 0。
+    /// 非 0 = 近场被逐而游戏层未同步置脏 = #174 隐形墙回归
+    /// （inviswall_eviction.rs 红锁即锁此计数；当前实现环内绝对保护，
+    /// 此计数只会因未来误接线而变红）。
     pub evicted_chunks: u64,
-    /// LRU 逐出释放的逻辑字节（公式同 [`BatchingStats::cpu_pool_bytes`]）。
+    /// [`BatchingStats::evicted_chunks`] 对应逐出释放的逻辑字节（同警报
+    /// 语义，恒 0）。
     pub evicted_bytes: u64,
+    /// 保留环外越预算修剪（retention trim）次数——正常治理面，原版
+    /// 距离驱动卸载迟滞（ChunkMap.java:477-496 processUnloads）的本仓
+    /// 等价物：远场滞留（该卸未卸/陈旧回传）被修剪并转入 remesh 债账，
+    /// 游戏层 drain 后按需重建，不静默失明。
+    pub trimmed_chunks: u64,
+    /// 保留环外修剪释放的逻辑字节（公式同 [`BatchingStats::cpu_pool_bytes`]）。
+    pub trimmed_bytes: u64,
+    /// 当前 remesh 债账条数 = 已逐出、等待游戏层
+    /// [`MeshUploader::drain_evicted`] 回灌的区块数（现算，同
+    /// [`BatchingStats::meshed_chunks`] 口径）。
+    pub debt_chunks: usize,
     /// 当前待 flush 的 staging 拷贝滞留字节（uploads 的 CPU 字节增量
     /// 记账，本波 ② 瞬态放大记账分子）。
     pub transient_bytes: u64,
@@ -196,10 +235,11 @@ struct PoolMesh {
     /// origin 是否为 16 格网格点（区块原点 y 恒 0）。手工构造的测试原点
     /// （非 16 倍数）永远单块，不做重定基。
     mergeable: bool,
-    /// LRU 时钟戳（本波 ①）：入池/重网格时盖 [`MeshUploader::use_clock`]，
-    /// 越预算逐出取最旧。池是合批重建数据源，在用批次成员不可「只删字节
-    /// 留成员」——逐出必整体走卸载路径（字节 + 成员资格一起摘，语义等价
-    /// 原版 processUnloads 的兜底）。
+    /// 使用时钟戳（本波 ①）：入池/重网格时盖 [`MeshUploader::use_clock`]。
+    /// #174 后仅作环外修剪的同距离平局判据（最旧先剪）——主判据是离锚点
+    /// 距离（远场优先），不再是最旧优先（LRU 逐最旧 = 逐近场 = 隐形墙）。
+    /// 池是合批重建数据源，在用批次成员不可「只删字节留成员」——逐出必
+    /// 整体走卸载路径（字节 + 成员资格一起摘 + 入 remesh 债账）。
     last_use: u64,
 }
 
@@ -268,9 +308,22 @@ pub struct MeshUploader {
     /// 瞬时存在（同步替换，帧间不可见），缓冲仅 4B×2，不计入顶点字节账
     /// （常数级，见 tests/render_mem.rs 的 PEAK_SLACK 余量）。
     placeholder: RenderChunk,
-    /// LRU 时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，逐出
-    /// 取最旧。
+    /// 使用时钟（本波 ①）：每次 build_chunk 递增并盖给入池字节，环外
+    /// 修剪的同距离平局判据（#174 前是 LRU 主判据）。
     use_clock: u64,
+    /// 保留环锚点（区块坐标，#174）：游戏层 stream 每帧经
+    /// [`Self::set_retention`] 传入玩家块；默认 (0,0) 供无锚点直用方。
+    anchor: (i32, i32),
+    /// 保留半径（区块数，Chebyshev，#174）：环内**永不逐出**（隐形墙
+    /// 契约），越预算只修剪环外远场。原版对照：渲染保留区只按距离
+    /// （ClientChunkCache.java:158-160）。
+    retention_radius: i32,
+    /// remesh 债账（#174 逐出通知回灌）：被预算修剪逐出、游戏层尚未
+    /// [`Self::drain_evicted`] 领走的区块集。债 = 「committed 但网格已
+    /// 摘除、待回灌 MESH 脏位重建」的在途记账；卸载同步销账。
+    remesh_debt: std::collections::HashSet<(i32, i32)>,
+    /// 债账 FIFO（drain 顺序 = 逐出顺序；与 `remesh_debt` 同步增删）。
+    evicted_pending: std::collections::VecDeque<(i32, i32)>,
     upload_stats: UploadStats,
 }
 
@@ -340,6 +393,10 @@ impl MeshUploader {
             handed: std::collections::HashSet::new(),
             placeholder,
             use_clock: 0,
+            anchor: (0, 0),
+            retention_radius: DEFAULT_RETENTION_RADIUS,
+            remesh_debt: std::collections::HashSet::new(),
+            evicted_pending: std::collections::VecDeque::new(),
             upload_stats: UploadStats::default(),
         }
     }
@@ -391,22 +448,55 @@ impl MeshUploader {
         self.pool.values().map(mesh_bytes).sum()
     }
 
-    /// ① 预算门控：池字节越预算即按 LRU 逐出（保护刚入池的 `protect`），
-    /// 逐出走整体卸载路径——字节与批次成员资格同摘，不留「成员在、
-    /// 数据源没了」的悬空态。RD=8 稳态（48.34 MiB < 预算 60 MiB）永不
-    /// 触发，只有滞留/泄漏越界才触发，见 [`CPU_POOL_BUDGET_BYTES`] 注释。
+    /// 设置保留环（#174 隐形墙修复）：锚点 = 玩家所在区块、半径 = 游戏层
+    /// 流式环（`unload_dist`）。环内区块**永不逐出**（视野中心不许瞎）；
+    /// 越预算只修剪环外远场滞留。原版对照：客户端渲染保留区只按距离
+    /// （ClientChunkCache.java:158-160 `max(2, viewRange)+3`），无 LRU。
+    pub fn set_retention(&mut self, anchor: (i32, i32), radius: i32) {
+        self.anchor = anchor;
+        self.retention_radius = radius.max(0);
+    }
+
+    /// 领走 remesh 债账（#174 逐出通知回灌，游戏层每帧必调）：返回自上次
+    /// drain 以来被预算修剪逐出的区块（逐出序）。领走 = 销账——调用方
+    /// 职责是对仍在活动表的块置 MESH 脏回灌重建；已卸载块的债在
+    /// [`Self::unload`] 时已同步销账，不会出现在此。
+    pub fn drain_evicted(&mut self) -> Vec<mcv_core::ChunkPos> {
+        self.remesh_debt.clear();
+        self.evicted_pending
+            .drain(..)
+            .map(|(x, z)| mcv_core::ChunkPos { x, z })
+            .collect()
+    }
+
+    /// ① 预算门控（#174 改版）：池字节越预算时，只逐出**保留环外**
+    /// （Chebyshev 距锚点 > `retention_radius`）的滞留，远场优先（最远
+    /// 先逐，同距离取 last_use 最旧）；保护刚入池的 `protect`。环内是
+    /// 可见/潜在可见面，**永不逐出**——旧 LRU「逐最旧」逐的恰是最早
+    /// 加载的近场块（近场块入池后不再重建、last_use 恒旧），真机
+    /// f4cdec80 隐形墙（整墙透明/打掉一块全显形/走近偶愈）即此。
+    /// 每个被逐块转入 remesh 债账（[`Self::drain_evicted`] 领走回灌），
+    /// 逐出必不静默失明。环外无可逐对象时容忍越界：池上界由游戏层
+    /// 流式环（`unload_dist`）保证，见 `docs/memory-budget.md` §2/§5。
     fn enforce_cpu_pool_budget(&mut self, protect: (i32, i32)) {
         while self.pool_bytes() > CPU_POOL_BUDGET_BYTES {
+            let anchor = self.anchor;
+            let radius = self.retention_radius;
+            let dist = |k: &(i32, i32)| (k.0 - anchor.0).abs().max((k.1 - anchor.1).abs());
             let victim = self
                 .pool
                 .iter()
-                .filter(|(k, _)| **k != protect)
-                .min_by_key(|(_, m)| m.last_use)
+                .filter(|(k, _)| **k != protect && dist(k) > radius)
+                .min_by_key(|(k, m)| (-dist(k), m.last_use))
                 .map(|(k, _)| *k);
             let Some(key) = victim else { return };
             let freed = mesh_bytes(self.pool.get(&key).expect("victim 必在池中"));
-            self.stats.evicted_chunks += 1;
-            self.stats.evicted_bytes += freed;
+            self.stats.trimmed_chunks += 1;
+            self.stats.trimmed_bytes += freed;
+            // 先入债账再摘除：drain_evicted 之前该块的缺席一直有账可追。
+            if self.remesh_debt.insert(key) {
+                self.evicted_pending.push_back(key);
+            }
             self.drop_chunk(key);
         }
     }
@@ -426,6 +516,11 @@ impl MeshUploader {
             draw_entries: self.entries.len(),
             resident_bytes,
             cpu_pool_bytes,
+            // #174：committed 口径现算 = 池内驻留 + remesh 债（逐出转债
+            // 不销账，卸载才销账）——「游戏零 unload 则 meshed == committed」
+            // 恒成立，逐出不再制造账外失踪块。
+            meshed_chunks: self.pool.len() + self.remesh_debt.len(),
+            debt_chunks: self.remesh_debt.len(),
             ..self.stats
         }
     }
@@ -582,17 +677,22 @@ impl MeshUploader {
     }
 
     /// 区块卸载：释放该块网格字节并从所属批次移除成员；批空删批，否则
-    /// 原位重建（剩余成员顶点重定基到新批次最小角）。
+    /// 原位重建（剩余成员顶点重定基到新批次最小角）。#174：卸载 =
+    /// remesh 债同步销账（游戏层已不关心该块网格，drain 不再回灌它）。
     pub fn unload(&mut self, pos: mcv_core::ChunkPos) {
-        self.drop_chunk((pos.x, pos.z));
+        let key = (pos.x, pos.z);
+        if self.remesh_debt.remove(&key) {
+            self.evicted_pending.retain(|k| *k != key);
+        }
+        self.drop_chunk(key);
     }
 
     /// 卸载的共用路径（① 预算逐出与显式 unload 同一语义）：池字节 +
-    /// 批次成员资格同摘；被删条目的在途拷贝按世代摘除（②）。
+    /// 批次成员资格同摘；被删条目的在途拷贝按世代摘除（②）。#174：
+    /// meshed/债记账改为 batching_stats 现算（池 ∪ 债账），此处不再
+    /// 增量维护计数。
     fn drop_chunk(&mut self, key: (i32, i32)) {
-        if self.pool.remove(&key).is_some() {
-            self.stats.meshed_chunks -= 1;
-        }
+        self.pool.remove(&key);
         let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) else {
             return;
         };
@@ -658,7 +758,12 @@ impl MeshUploader {
             && vbytes.len().is_multiple_of(TERRAIN_STRIDE)
             && water.is_none_or(|(wv, _)| wv.len().is_multiple_of(TERRAIN_STRIDE));
         self.use_clock += 1;
-        let old = self.pool.insert(
+        // #174：块回池 = remesh 债销账（回灌重建已发生；pending FIFO 中
+        // 的旧条目若尚未 drain，drain 后游戏层多做一次幂等 MESH 置脏，
+        // 无害）。committed 计数口径改为现算（batching_stats），此处不再
+        // 增量记 meshed_chunks。
+        self.remesh_debt.remove(&key);
+        self.pool.insert(
             key,
             PoolMesh {
                 vbytes: vbytes.to_vec(),
@@ -670,9 +775,6 @@ impl MeshUploader {
                 last_use: self.use_clock,
             },
         );
-        if old.is_none() {
-            self.stats.meshed_chunks += 1;
-        }
         if let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) {
             // 重网格：批次成员资格不变，只重建本批次（#80 稳定批次要求）。
             self.rebuild_batch(bi);
@@ -710,13 +812,20 @@ impl MeshUploader {
             };
             self.rebuild_batch(bi);
         }
-        // ① 预算门控：刚入池字节受保护，越界的陈旧驻留按 LRU 逐出。
+        // ① 预算门控（#174 改版）：刚入池字节受保护；越界只修剪保留环外
+        // 的远场滞留（环内永不逐出），被逐块入 remesh 债账等 drain 回灌。
         self.enforce_cpu_pool_budget(key);
         let entry = self.entry_of(key).expect("刚入池的区块必有批次");
         // ② 出册登记：本世代克隆即将交给调用方（可合法保留并绘制），
         // 其世代的在途拷贝从此保留到 flush 送达。
         if let Some(bi) = self.batch_members.iter().position(|m| m.contains(&key)) {
             self.handed.insert(self.entry_serial[bi]);
+        }
+        // 背压（#174 配套）：修剪/重建风暴中调用方迟迟不 flush 时，待传
+        // 拷贝不得无界堆积（已出册世代的拷贝按契约留到 flush，病态
+        // flush-饥饿会放大瞬态字节）——越线提前 submit。
+        if self.uploads_bytes > PENDING_UPLOAD_FLUSH_BYTES {
+            self.flush();
         }
         entry
     }
