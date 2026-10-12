@@ -188,8 +188,9 @@ impl ChunkMesher for RustMesher {
     }
 
     fn unload(&mut self, pos: ChunkPos) {
-        // E3：卸载记账同步回收在途产物（僵尸锁）——地板抬到当前 gen，
-        // 其后回传的该块产物在 flush 处拒收，防网格条目复活到已卸载键。
+        // E3：卸载记账同步回收在途产物（僵尸锁）——提交地板抬到当前
+        // 派发序，其后回传的该块产物在 flush 处拒收，防网格条目复活到
+        // 已卸载键（tests/mesh_parallel.rs 僵尸锁）。
         if let Some(results) = self.results.as_mut() {
             results.kill(pos);
         }

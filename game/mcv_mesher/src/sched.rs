@@ -101,7 +101,8 @@ impl MeshScheduler {
     pub fn submit(&self, job: MeshJob, hi: bool) {
         let seq = self.gate.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let tx = self.tx.clone();
-        let pending = Arc::clone(&self.gate.pending);
+        // 闭包持整份 Arc<Gate>：seq 源/pending 计数/地板表同源（Send+Sync）。
+        let gate = Arc::clone(&self.gate);
         let run = move || {
             let vol = mcv_core::CHUNK_VOL;
             let slots = neighborhood_slots(&job.voxels, &job.lights);
@@ -127,7 +128,7 @@ impl MeshScheduler {
                 }),
             };
             if tx.send(done).is_ok() {
-                pending.fetch_add(1, Ordering::Relaxed);
+                gate.pending.fetch_add(1, Ordering::Relaxed);
             }
         };
         if hi {
@@ -240,7 +241,7 @@ pub fn mesh_worker_count() -> usize {
 /// 中心 = [4]）。同步路径（`RustMesher::build`）与 worker
 /// （[`MeshScheduler::submit`]）共用同一装配，保证两路喂给
 /// [`Mesher::build`] 的输入布局逐字节同源。
-pub fn neighborhood_slots(voxels: &[u16], lights: &[u8]) -> [Option<Slot<'_>>; 9] {
+pub fn neighborhood_slots<'a>(voxels: &'a [u16], lights: &'a [u8]) -> [Option<Slot<'a>>; 9] {
     let vol = mcv_core::CHUNK_VOL;
     debug_assert!(voxels.len() >= 9 * vol);
     debug_assert!(lights.len() >= 9 * vol);
