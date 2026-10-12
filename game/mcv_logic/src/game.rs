@@ -3517,8 +3517,9 @@ impl GameRuntime {
         ];
         let on_seam = [lx == 0, lx == 15, lz == 0, lz == 15];
         for ((npos, mx, mz), hit) in mirrored.iter().zip(on_seam) {
-            if *hit && self.chunks.contains_key(npos) {
-                self.record_mesh_rows(*npos, mcv_mesher::Rows::from_bbox(*mx, y, *mz, *mx, y, *mz));
+            if hit && self.chunks.contains_key(npos) {
+                let r = mcv_mesher::Rows::from_bbox(*mx, y, *mz, *mx, y, *mz);
+                self.record_mesh_rows(*npos, r);
             }
         }
     }
