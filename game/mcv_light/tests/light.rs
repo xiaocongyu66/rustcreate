@@ -1243,6 +1243,6 @@ fn lava_emission_seeded_by_init() {
             "岩浆邻格方块光必须 >0（LAVA 未被光照播种？）"
         );
         assert_eq!(blk(&c, 3, 34, 8), 14, "岩浆 15 衰减 1 步 = 14");
-        assert_eq!(blk(&c, 6, 34, 8), 10, "水平 4 格衰减到 10");
+        assert_eq!(blk(&c, 6, 34, 8), 11, "水平 4 格衰减到 11");
     }
 }
