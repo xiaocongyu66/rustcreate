@@ -9253,20 +9253,28 @@ mod tests {
     // 落进 mob_ai_system 实体门的冻结域（不 tick、账本不走、永存不死）。
     // -----------------------------------------------------------------------
 
-    /// 全封闭暗室：石 0..=62 + 石 65..=100，63..64 空腔。天光/方块光全 0
-    /// （is_dark_enough 三段门恒过），y=63 是唯一 standable 格
-    /// （下 62 实心、63/64 空气、65+ 石封顶 → 天光 0）。
+    /// 多层封闭暗室：石壳夹 11 个 2 格高封闭空腔（y=63+16k, k=0..10；顶盖
+    /// 225..226 → heightmap 227 ≤ 250）。每层空腔底格（y=63+16k）都
+    /// standable 且天光/方块光全 0（is_dark_enough 三段门恒过）——把单块
+    /// 每组命中概率从 1/228 抬到 11/228，压低测试方差。
     fn dark_sealed_chunk(x: i32, z: i32) -> Arc<ChunkHandle> {
         let handle = Arc::new(ChunkHandle::new(ChunkPos::new(x, z)));
         {
             let mut vg = handle.voxels.write().unwrap();
-            for y in (0..=62).chain(65..=100) {
-                for zz in 0..16usize {
-                    for xx in 0..16usize {
-                        vg[lidx(xx, y, zz)] = BlockId(STONE);
+            let mut solid = |y0: i32, y1: i32| {
+                for y in y0..=y1 {
+                    for zz in 0..16usize {
+                        for xx in 0..16usize {
+                            vg[lidx(xx, y as usize, zz)] = BlockId(STONE);
+                        }
                     }
                 }
+            };
+            solid(0, 62); // 底壳
+            for k in 0..10i32 {
+                solid(65 + 16 * k, 78 + 16 * k); // 空腔间壳
             }
+            solid(225, 226); // 顶盖
         }
         let hm = mcv_worldgen::recompute_heightmap(bytemuck::cast_slice(
             handle.voxels.read().unwrap().as_slice(),
@@ -9288,6 +9296,27 @@ mod tests {
         handle
     }
 
+    /// 在候选环 ±8 内注入 `count` 个给定 Chebyshev 壳层的暗室区块（唯二
+    /// 随机源——块抽取 2/289 与组内 y 掷点——都被摊薄到统计确定性域）。
+    fn inject_dark_chunks(
+        rt: &mut GameRuntime,
+        chebyshev: std::ops::RangeInclusive<i32>,
+        count: usize,
+    ) {
+        let mut cells = Vec::new();
+        for dx in -8..=8i32 {
+            for dz in -8..=8i32 {
+                if chebyshev.contains(&(dx.abs().max(dz.abs()))) {
+                    cells.push((dx, dz));
+                }
+            }
+        }
+        for &(dx, dz) in cells.iter().take(count) {
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), dark_sealed_chunk(dx, dz));
+        }
+    }
+
     fn spawn_test_runtime(tag: &str) -> GameRuntime {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -9299,30 +9328,29 @@ mod tests {
     #[test]
     fn natural_spawn_skips_chunks_outside_entity_ticking_ring() {
         let mut rt = spawn_test_runtime("outside");
-        rt.render_dist = 2; // sim_dist = 3：Chebyshev 4 已在实体 tick 环外
-        rt.chunks_mut()
-            .insert(ChunkPos::new(4, 0), dark_sealed_chunk(4, 0));
+        rt.render_dist = 2; // sim_dist = 3：Chebyshev 4..5 壳层全在实体 tick 环外
+        inject_dark_chunks(&mut rt, 4..=5, 30);
         rt.refresh_player_tickets(ChunkPos::new(0, 0));
-        // 候选环 ±8 全指向该块（唯一在册），暗室 standable 概率 1/67×6 组
-        // ≈ 8.6%/轮——若环门缺失，400 轮必然刷出怪。
-        for _ in 0..400 {
+        // 30 块 × 每组 11/228 站立格 × 800 轮：若环门缺失，期望刷出 ~30 只
+        // （P(0) < 1e−12）；环门在场则逐块全拒，恒 0。
+        for _ in 0..800 {
             rt.try_natural_spawn();
         }
         assert_eq!(
             rt.mobs_app.world.component_count::<mcv_entity::MobKind>(),
             0,
-            "模拟环外区块（Chebyshev 4 > sim_dist 3）不得自然刷怪"
+            "模拟环外区块（Chebyshev 4..5 > sim_dist 3）不得自然刷怪"
         );
     }
 
     #[test]
     fn natural_spawn_allows_chunks_inside_entity_ticking_ring() {
         let mut rt = spawn_test_runtime("inside");
-        rt.render_dist = 2; // sim_dist = 3：Chebyshev 2 在环内，块距 32..47 ∈ (24,128]
-        rt.chunks_mut()
-            .insert(ChunkPos::new(2, 0), dark_sealed_chunk(2, 0));
+        // sim_dist = 3：Chebyshev 2..3 壳层在环内，块距 ≥ 31.5 ∈ (24,128]。
+        inject_dark_chunks(&mut rt, 2..=3, 30);
         rt.refresh_player_tickets(ChunkPos::new(0, 0));
-        for _ in 0..400 {
+        // 800 轮 × 2 抽 × 30/289 × 每组 ~3.6% → 期望 ~17 只，P(0) ≈ 4e−8。
+        for _ in 0..800 {
             rt.try_natural_spawn();
         }
         assert!(
