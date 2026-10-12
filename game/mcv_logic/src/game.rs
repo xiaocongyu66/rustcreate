@@ -223,7 +223,7 @@ impl ChunkMesher for RustMesher {
                     done.origin,
                     &opaque.vertex,
                     &opaque.index,
-                    done.water.as_ref().map(|w| (&w.vertex, &w.index)),
+                    done.water.as_ref().map(|w| (&w.vertex[..], &w.index[..])),
                 );
                 // 真机取证埋点：worker 回传提交带区块坐标——与派发日志
                 // 对账可观测回传延迟（帧数差）。
