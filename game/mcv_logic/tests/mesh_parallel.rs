@@ -9,7 +9,7 @@
 //!    未设 → world 默认池策略，非法值 → 默认（对齐 `MCV_TERRAIN_BACKEND`
 //!    /`MCV_POOL_WORKERS` 先例的纯函数核测法，env 不入并行测试）；
 //! 4. **僵尸/陈旧锁**：已卸载区块的在途产物不得提交（防复活网格条目）、
-//!    旧快照不得覆盖新快照（乱序完成序下最终提交 = 更高 gen）；
+//!    旧快照不得覆盖新快照（乱序完成序下最终提交 = 更高 seq）；
 //! 5. **游戏层派发锁**：编辑当帧 hi 通道派发 + 当帧记账（stage/MESH 脏位），
 //!    全栈产物与测试侧直呼 mesher 逐字节对拍。
 
@@ -229,10 +229,10 @@ fn killed_position_result_never_committed() {
 }
 
 /// 陈旧锁：同区块两次派发（编辑打断了前一张快照）乱序完成时，旧快照
-/// 不得覆盖新快照——最终提交态 = 更高 gen 的产物。完成序操弄：第一笔
+/// 不得覆盖新快照——最终提交态 = 更高 seq 的产物。完成序操弄：第一笔
 /// 投富场景（构建慢）占住一个 worker，第二笔投空场景（快）几乎必然先
 /// 完成——到达序 [g2, g1]，g1 必须被提交地板整笔拒收。即便竞争窗口
-/// 失效（g1 先到），g2 后到仍以更高 gen 收尾——终态不变量两序一致。
+/// 失效（g1 先到），g2 后到仍以更高 seq 收尾——终态不变量两序一致。
 #[test]
 fn stale_result_cannot_override_newer_commit() {
     let pos = ChunkPos::new(-4, 9);
@@ -240,17 +240,17 @@ fn stale_result_cannot_override_newer_commit() {
     let empty = empty_scene();
     for round in 0..3u32 {
         let (sched, mut results) = MeshScheduler::new(2);
-        sched.submit(job_of(pos, &rich), false); // gen 1（慢）
-        sched.submit(job_of(pos, &empty), false); // gen 2（快）
+        sched.submit(job_of(pos, &rich), false); // seq 1（慢）
+        sched.submit(job_of(pos, &empty), false); // seq 2（快）
         let committed = wait_quiescent(&mut results);
         assert!(
             !committed.is_empty(),
             "round {round}: 新快照必须获准提交（过滤吞掉一切）"
         );
         assert_eq!(
-            committed.last().expect("非空").gen,
+            committed.last().expect("非空").seq,
             2,
-            "round {round}: 最终提交必须是更高 gen 的产物（旧快照覆盖了新快照）"
+            "round {round}: 最终提交必须是更高 seq 的产物（旧快照覆盖了新快照）"
         );
     }
 }
