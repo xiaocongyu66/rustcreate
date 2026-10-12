@@ -99,7 +99,7 @@ fn rainy_rt(tag: &str, feet_y: f32) -> GameRuntime {
     let mut rt = headless_rt(tag);
     for dx in -1i32..=1 {
         for dz in -1i32..=1 {
-            rt.chunks
+            rt.chunks_mut()
                 .entry(ChunkPos::new(dx, dz))
                 .or_insert_with(|| lit_chunk(dx, dz, 69));
         }

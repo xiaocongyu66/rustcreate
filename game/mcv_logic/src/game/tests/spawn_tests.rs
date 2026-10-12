@@ -123,7 +123,7 @@ fn spawn_search_leaves_blocked_chunk_via_spiral() {
     rt.render_dist = 1; // 搜索窗 ±1，足以触达螺旋第二格 (1,0)
     for dx in -1i32..=1 {
         for dz in -1i32..=1 {
-            rt.chunks
+            rt.chunks_mut()
                 .insert(ChunkPos::new(dx, dz), lit_chunk(dx, dz, 69));
         }
     }
@@ -257,7 +257,7 @@ fn saved_player_pos_skips_spawn_drop() {
     rt.player.pos = saved;
     for dx in -3i32..=3 {
         for dz in -3i32..=3 {
-            rt.chunks
+            rt.chunks_mut()
                 .entry(ChunkPos::new(dx, dz))
                 .or_insert_with(|| lit_chunk(dx, dz, 69));
         }

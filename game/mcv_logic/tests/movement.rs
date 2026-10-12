@@ -67,7 +67,7 @@ fn enter_playing(rt: &mut GameRuntime) {
     for dx in -3i32..=3 {
         for dz in -3i32..=3 {
             let pos = ChunkPos::new(dx, dz);
-            rt.chunks
+            rt.chunks_mut()
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
@@ -180,7 +180,7 @@ fn loading_phase_gates_movement_input() {
     for dx in -3i32..=3 {
         for dz in -3i32..=3 {
             let pos = ChunkPos::new(dx, dz);
-            rt.chunks
+            rt.chunks_mut()
                 .entry(pos)
                 .or_insert_with(|| Arc::new(ChunkHandle::new(pos)))
                 .advance_to(Stage::Uploaded);
