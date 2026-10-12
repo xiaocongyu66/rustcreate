@@ -2457,6 +2457,17 @@ impl GameRuntime {
         self.io_frames.insert(pos, (self.stream_frame, seq));
     }
 
+    /// 测试钩子：只消化 IO 完成回执（等价 stream 帧头的 drain 半段，不跑
+    /// 环扫描/写回预算）——写路径语义测试用它驱动回执而不引入预算流竞争。
+    #[doc(hidden)]
+    pub fn io_debug_drain(&mut self) {
+        if self.io.is_some() {
+            while let Some(done) = self.io.as_mut().unwrap().try_recv() {
+                self.process_io_done(done);
+            }
+        }
+    }
+
     /// 退出安全落盘：全量投递扫描（[`Self::save_dirty(None)`]）+ **阻塞排空
     /// 在途 IO**。仅退出/挂起/关窗路径调用（quit_to_menu、suspended、
     /// CloseRequested）——周期 30s 存盘保持纯投递（不掉帧）。写持续失败时

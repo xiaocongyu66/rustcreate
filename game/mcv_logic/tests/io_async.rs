@@ -103,22 +103,34 @@ fn write_failure_keeps_dirty_bit_then_retry_clears() {
     let pos = ChunkPos::new(3, 5);
     rt.chunks.insert(pos, terrain_chunk(pos, true));
 
-    // 驱动到「失败回执已消化且脏位仍在」：投递即清位，回执失败重置——
-    // 稳态观测 = SAVE 位为 1（不得误清）。
-    let retained = pump(
-        &mut rt,
-        |rt| rt.chunks[&pos].dirty() & dirty::SAVE != 0 && rt.io_inflight().0 == 0,
-        500,
-    );
+    // 单块投递（不走 stream 的预算写回——避免预算流竞争让脏位稳态不可
+    // 观测），再用 drain-only 钩子消化失败回执：投递即清位，回执失败重置。
+    rt.save_dirty(Some(pos));
+    assert_eq!(rt.io_inflight().0, 1, "单块存盘应已投递在途（两段式写）");
+    let mut retained = false;
+    for _ in 0..500 {
+        rt.io_debug_drain();
+        if rt.chunks[&pos].dirty() & dirty::SAVE != 0 && rt.io_inflight() == (0, 0) {
+            retained = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(4));
+    }
     assert!(retained, "写失败后 SAVE 位必须保留（失败保脏位）");
+    assert!(disk_ids(&dir, pos).is_none(), "写失败不得伪造盘上成功");
 
-    // 解除替身 → 下轮重试成功 → 清位且盘上可读回（内容 = 快照）。
+    // 解除替身 → 重试成功 → 清位且盘上可读回（内容 = 快照）。
     std::fs::remove_file(dir.join("region")).unwrap();
-    let cleared = pump(
-        &mut rt,
-        |rt| rt.chunks[&pos].dirty() & dirty::SAVE == 0 && rt.io_inflight().0 == 0,
-        500,
-    );
+    rt.save_dirty(Some(pos));
+    let mut cleared = false;
+    for _ in 0..500 {
+        rt.io_debug_drain();
+        if rt.chunks[&pos].dirty() & dirty::SAVE == 0 && rt.io_inflight() == (0, 0) {
+            cleared = true;
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(4));
+    }
     assert!(cleared, "重试成功后 SAVE 位应清");
     let ids = disk_ids(&dir, pos).expect("重试成功后盘上应可读回");
     assert!(ids.contains(&1), "盘上内容应等于快照（地板 BlockId(1)）");
@@ -129,6 +141,7 @@ fn write_failure_keeps_dirty_bit_then_retry_clears() {
 fn edit_during_inflight_write_wins_on_disk() {
     let dir = temp_dir("race");
     let mut rt = headless_io("race", dir.clone());
+    rt.render_dist = 1; // 缩环降噪：预算写回不被生成脏集淹没
     let pos = ChunkPos::new(-2, 7);
     let handle = terrain_chunk(pos, true);
     rt.chunks.insert(pos, handle.clone());
@@ -148,9 +161,8 @@ fn edit_during_inflight_write_wins_on_disk() {
     handle.voxels.write().unwrap()[vidx(0, -63, 0)] = BlockId(42);
     handle.mark_dirty(dirty::SAVE);
     rt.stream();
-    assert_eq!(
-        rt.io_inflight().0,
-        1,
+    assert!(
+        rt.io_inflight().0 >= 1,
         "编辑 A 的快照应已投递在途（两段式写）"
     );
 
