@@ -40,19 +40,6 @@ impl PayloadRead for &[u8] {
     }
 }
 
-impl<R: Read> PayloadRead for std::io::BufReader<R> {
-    fn read_u8(&mut self) -> Result<u8, NbtError> {
-        let mut b = [0u8; 1];
-        self.read_exact(&mut b)?;
-        Ok(b[0])
-    }
-
-    fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), NbtError> {
-        self.read_exact(buf)?;
-        Ok(())
-    }
-}
-
 fn read_i16<R: PayloadRead + ?Sized>(r: &mut R) -> Result<i16, NbtError> {
     let mut b = [0u8; 2];
     r.read_exact(&mut b)?;
