@@ -6,9 +6,9 @@
 //! LRU（`enforce_cpu_pool_budget`）把「越预算逐出」当作泄漏兜底，注释
 //! 口径「RD=8 稳态（48.34 MiB < 60 MiB）永不触发」的标定依据是合成
 //! 高度场（`mesh_memory.rs`，无洞穴、无灌水）。真机洞穴灌水地形（洞壁
-//! + 灌水空腔的水面/水岩界面双 pass）单块网格字节显著更高，稳态池
-//! 越预算 → 每次 `build_chunk` 尾部逐出一个最旧块 = **玩家周围最先
-//! 加载的块**；游戏层 meshed 集/stage=Uploaded/MESH 脏位对此一无所知
+//! 面，灌水空腔的水面与水岩界面双 pass）单块网格字节显著更高，稳态池
+//! 越预算后每次 `build_chunk` 尾部逐出一个最旧块，即「玩家周围最先
+//! 加载的块」；游戏层 meshed 集/stage=Uploaded/MESH 脏位对此一无所知
 //! （`MeshStats` 无 evicted 面、无重网格通知），该块直到下一次编辑或
 //! 边同步置 MESH 脏才重建——正是用户报告的三个现象。
 //!
@@ -65,9 +65,9 @@ fn hash3(wx: i32, y: i32, wz: i32) -> u32 {
     h.wrapping_mul(2_246_822_519).rotate_left(13)
 }
 
-/// 洞穴 + 灌水断面：地表以下按哈希凿空（>12%），海平面以下的空气一律
-/// 灌水——用户场景「海平面以下洞穴灌水」的字节化（洞壁面 + 水空界面 +
-/// 水岩界面，opaque 与 water 双 pass 全负载）。
+/// 洞穴 + 灌水断面：地表以下按 4³ 粗格哈希凿空（~15% 体积、连通感洞
+/// 腔），海平面以下的空腔一律灌水——用户场景「海平面以下洞穴灌水」的
+/// 字节化（洞壁面、水空界面与水岩界面，opaque 与 water 双 pass 全负载）。
 fn cave_water_field(cx: i32, cz: i32, stone: u16, water: u16) -> Vec<u16> {
     let mut v = vec![0u16; CHUNK_VOL];
     for z in 0..16usize {
@@ -76,7 +76,7 @@ fn cave_water_field(cx: i32, cz: i32, stone: u16, water: u16) -> Vec<u16> {
             let wz = cz * 16 + z as i32;
             let h = terrain_height(wx, wz).clamp(-60, 300);
             for y in mcv_core::WORLD_MIN_Y..h {
-                let carved = y < h - 3 && hash3(wx, y, wz) % 100 < 12;
+                let carved = y < h - 3 && hash3(wx >> 2, y >> 2, wz >> 2) % 100 < 15;
                 if carved {
                     if y <= SEA {
                         v[vidx(x, y, z)] = water;
@@ -95,8 +95,17 @@ fn cave_water_field(cx: i32, cz: i32, stone: u16, water: u16) -> Vec<u16> {
     v
 }
 
-fn field_at<'a>(field: &'a [Vec<u16>], side: usize, cx: i32, cz: i32) -> &'a Vec<u16> {
+fn field_at(field: &[Vec<u16>], side: usize, cx: i32, cz: i32) -> &Vec<u16> {
     &field[((cz + RING + 1) as usize) * side + (cx + RING + 1) as usize]
+}
+
+/// 阶段 2 续传样本 = 阶段 1 真产物字节（opaque 顶点/索引 + water
+/// 顶点/索引，顶点 24B 步长交错 = 真 TERRAIN_STRIDE 形态）。
+struct Sample {
+    v: Vec<u8>,
+    idx: Vec<u32>,
+    wv: Vec<u8>,
+    wi: Vec<u32>,
 }
 
 #[test]
@@ -130,7 +139,7 @@ fn cave_density_stream_blinds_committed_chunks() {
     // 加载完成，一次 unload 都没有）。
     let mut built = 0usize;
     let mut mesh_bytes_sum: u64 = 0;
-    let mut samples: Vec<(f32, Vec<u8>, Vec<u32>, Vec<u8>, Vec<u32>)> = Vec::new();
+    let mut samples: Vec<Sample> = Vec::new();
     for cz in -RING..=RING {
         for cx in -RING..=RING {
             let mut slots: [Option<Slot<'_>>; 9] = std::array::from_fn(|_| None);
@@ -156,13 +165,12 @@ fn cave_density_stream_blinds_committed_chunks() {
                 Some((wm.vertex_data(), wm.indices()))
             };
             uploader.build_chunk(origin, opaque.vertex_data(), opaque.indices(), wf);
-            samples.push((
-                16.0 * cx as f32,
-                opaque.vertex_data().to_vec(),
-                opaque.indices().to_vec(),
-                wm.vertex_data().to_vec(),
-                wm.indices().to_vec(),
-            ));
+            samples.push(Sample {
+                v: opaque.vertex_data().to_vec(),
+                idx: opaque.indices().to_vec(),
+                wv: wm.vertex_data().to_vec(),
+                wi: wm.indices().to_vec(),
+            });
             built += 1;
         }
     }
@@ -187,25 +195,23 @@ fn cave_density_stream_blinds_committed_chunks() {
     // 条件（逐出若已发生在阶段 1，本段直接跳过，契约断言看最终态）。
     let mut extra = 0usize;
     while uploader.batching_stats().evicted_chunks == 0 && extra < 4096 {
-        // samples 布局：(origin_x 弃用, opaque vbytes, opaque idx,
-        // water vbytes, water idx)。
         let s = &samples[extra % samples.len()];
         // 远处空位单块提交（模拟远端新块入环；不影响近端批次）。
         let gx = 2048 + (extra % 512) as i32;
         let gz = 2048 + (extra / 512) as i32;
-        let water_arg = if s.4.is_empty() {
+        let water_arg = if s.wi.is_empty() {
             None
         } else {
-            Some((&s.3[..], &s.4[..]))
+            Some((&s.wv[..], &s.wi[..]))
         };
         uploader.build_chunk(
             [16.0 * gx as f32, 0.0, 16.0 * gz as f32],
-            &s.1,
-            &s.2,
+            &s.v,
+            &s.idx,
             water_arg,
         );
         extra += 1;
-        assert!(extra < 8192, "顶-up 未越过预算（记账漂移？）");
+        assert!(extra < 8192, "顶-up 未触发逐出（预算门记账漂移？）");
     }
     uploader.flush();
 
