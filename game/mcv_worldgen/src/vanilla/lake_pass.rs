@@ -454,7 +454,7 @@ fn stamp_lake(
 fn clip_idx(wx: i32, wz: i32, base_x: i32, base_z: i32, wy: i32) -> Option<usize> {
     let in_x = wx >= base_x && wx < base_x + 16;
     let in_z = wz >= base_z && wz < base_z + 16;
-    if !in_x || !in_z || wy < mcv_core::WORLD_MIN_Y || wy >= mcv_core::WORLD_MAX_Y {
+    if !in_x || !in_z || !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&wy) {
         return None;
     }
     Some(mcv_core::vidx(

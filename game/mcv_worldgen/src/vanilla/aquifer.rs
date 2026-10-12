@@ -100,6 +100,7 @@ pub const WAY_BELOW: i32 = MIN_Y << 4;
 ///   globalFluid，:416-417）或戳出修正面且面上有流体（→ 直返
 ///   globalFluidAtSurface，:420-429）——floodedness 噪声门
 ///   （computeSurfaceLevel :445+）只有面上全部岩层内的胞才可达。
+///
 /// globalFluid = seaStatus/lavaStatus（NoiseBasedChunkGenerator.java:
 /// 69-81，`FluidStatus.at` y<fluidLevel 出流体，Aquifer.java:52-55）。
 /// 本仓以**本列实顶扫描位**（terrain.rs `hit_solid` 门，

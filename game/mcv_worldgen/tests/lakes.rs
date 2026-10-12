@@ -57,29 +57,38 @@ fn lake_attempt_frequency_matches_vanilla_bands() {
     );
 }
 
-/// 地表岩浆湖真实存在 + 缓冲可见：纯函数侧 64×64 区块窗找 surface
-/// 候选（1/200/块 → μ ≈ 20.5）并计判据环存活，再对存活的 origin
+/// 地表岩浆湖真实存在 + 缓冲可见：纯函数侧 128×128 区块窗找 surface
+/// 候选（1/200/块 → μ ≈ 82）并计判据环存活，再对存活的 origin
 /// 区块整生成，实证**湖体下半带 y ∈ [oy−4, oy−1]** 的 LAVA 体积。
 /// 带即 LakeFeature yy<4 的 fluid 落位（origin = 高度图值 =
 /// 陆面顶+1 ⇒ 带 = 陆顶−3..陆顶）；水柱候选在判据环下半部即被弃
-/// （水非实心非本流体），所以判据环存活的 surface 湖必立足陆地。
-/// 注：16 区块窗期望候选仅 0.08，必不中——窗必须按 μ 反推取大窗。
-/// K-LAKES-BUF 行落候选/判据环存活/带内岩浆三计数。
+/// （水非实心非本流体，原版同语义——洋面/湖面的 surface 候选必弃），
+/// 所以判据环存活的 surface 湖必立足陆地。存活还要求 origin 周围
+/// ±8 域近平地（16×16 盒下半带全封底），丘陵地形存活率是低概率
+/// 事件——窗必须按 μ 反推取大窗（64×64 窗 18 候选 0 存活实测发生，
+/// 非判据 bug：海面柱占比高 + 平地门联合期望在此量级）。
+/// K-LAKES-BUF 行落候选（海柱/陆柱分列）/判据环存活/带内岩浆计数。
 #[test]
 fn surface_lava_lake_placed_and_visible_in_buffers() {
     let orch = Orchestrator::new(SEED);
     let aq = Aquifer::new(SEED);
     let mut field = AquiferField::new(&aq, &orch);
     let mut surf_cand = 0usize;
+    let mut land_cand = 0usize;
     let mut survivors = Vec::new();
-    for cz in -32..32 {
-        for cx in -32..32 {
+    for cz in -64..64 {
+        for cx in -64..64 {
             let spots = lake_spots(SEED, cx, cz, &orch, &mut field);
             for s in spots.iter().filter(|s| {
                 s.variant == 1 && s.ox.div_euclid(16) == cx && s.oz.div_euclid(16) == cz
             }) {
                 surf_cand += 1;
+                let on_land = orch
+                    .column_real_top(s.ox, s.oz, &mut field)
+                    .is_some_and(|(y, _)| y > mcv_core::SEA_LEVEL);
+                land_cand += on_land as usize;
                 if lake_passes_gate(s, &orch, &mut field) {
+                    assert!(on_land, "判据环存活却立足水柱（水非实心应弃）");
                     survivors.push(*s);
                 }
             }
@@ -87,7 +96,7 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     }
     assert!(
         surf_cand > 0,
-        "4096 区块窗 0 个 surface 候选（1/200/块频度门失效？）"
+        "16384 区块窗 0 个 surface 候选（1/200/块频度门失效？）"
     );
     let mut lava_in_band = 0usize;
     let mut chunks = std::collections::HashSet::new();
@@ -112,13 +121,13 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
         }
     }
     eprintln!(
-        "K-LAKES-BUF surface_candidates={surf_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=64x64)",
+        "K-LAKES-BUF surface_candidates={surf_cand} land={land_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=128x128)",
         survivors.len(),
         chunks.len()
     );
     assert!(
         !survivors.is_empty(),
-        "surface 候选 {surf_cand} 个但判据环全弃（判据环过严？）"
+        "surface 候选 {surf_cand}（陆柱 {land_cand}）判据环全弃——陆柱有而存活 0 = 判据环过严，陆柱 0 = 窗内地形无陆（换窗）"
     );
     assert!(
         lava_in_band > 0,
