@@ -4,7 +4,7 @@
 //! API 与既有测试装配），锁两条排除线：
 //!
 //! 1. **E7a palette 解码锁**：水下洞穴/水线断面的真实形状（同 section
-//!    >16 相异值换 5bit 档、>256 相异值进 global 档、状态 nibble 高 4 位、
+//!    相异值 >16 换 5bit 档、>256 进 global 档、状态 nibble 高 4 位、
 //!    负 y section）经 `from_flat_u16`（commit_terrain / load_voxels 入库
 //!    路）与逐格 `set_flat`（编辑路）两条写入路后，`decode_column`
 //!    （= 网格快照 `snapshot_neighborhood` 的唯一读法）必须与平铺源逐
