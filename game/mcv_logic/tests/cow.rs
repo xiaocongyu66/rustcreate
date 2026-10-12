@@ -184,7 +184,7 @@ fn tickets_snapshot_shares_arc_and_rebuilds_only_on_change() {
     );
     // 语义保持：级别场 = 锚点解析式（ticket.rs 同式），快照读安全。
     let vd = rt.sim_dist();
-    let sim_level = (mcv_logic::ticket::ENTITY_TICKING_LEVEL - vd).max(0) as i32;
+    let sim_level = (mcv_logic::ticket::ENTITY_TICKING_LEVEL - vd).max(0);
     assert_eq!(
         ms_tickets.level(ChunkPos::new(0, 0)) as i32,
         sim_level,
