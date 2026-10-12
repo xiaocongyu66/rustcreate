@@ -150,3 +150,46 @@ pub fn tile_icon(layer: u16, x: f32, y: f32, size: f32) -> HudQuad {
         rot: 0.0,
     }
 }
+
+/// 悬停物品名 tooltip(#152):26.1 AbstractContainerScreen.extractTooltip
+/// → GuiGraphics.setTooltipForNextFrame 的从简投影——单行白字 + 深底色条
+/// (原版背景 0xF0100010 的 fillGradient 渐变取平色投影;渐变/描边/锚点
+/// 偏移交涉 = 像素级债,登记 HANDOFF-UITOOLS.md)。`x,y` = 底色条左上角。
+pub fn tooltip_quads(line: &str, x: f32, y: f32, scale: f32) -> Vec<HudQuad> {
+    const BG: [f32; 4] = [0.0627, 0.0, 0.0627, 0.941]; // 0xF0100010 平色投影
+    const PAD_X: f32 = 3.0;
+    const PAD_Y: f32 = 2.0;
+    let w = text_width(line, scale) + PAD_X * 2.0 * scale;
+    let hgt = (GLYPH_PX + PAD_Y * 2.0) * scale;
+    let mut out = vec![rect(x, y, w, hgt, BG)];
+    out.extend(text_quads(
+        line,
+        x + PAD_X * scale,
+        y + PAD_Y * scale,
+        scale,
+        [1.0, 1.0, 1.0, 1.0],
+    ));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #152:tooltip = 深底色条 + 文字(阴影+正文)quads,文字落在条内
+    /// (右/下缘允许 1px 阴影偏移容差)。
+    #[test]
+    fn tooltip_bg_and_text_bounds() {
+        let q = tooltip_quads("Oak Stairs", 100.0, 100.0, 2.0);
+        assert!(q.len() > 1, "应有底色条 + 文字 quad");
+        let bg = &q[0];
+        assert!(bg.w > 0.0 && bg.h > 0.0, "底色条非零尺寸");
+        let max_right = q.iter().skip(1).map(|c| c.x + c.w).fold(0.0f32, f32::max);
+        assert!(
+            max_right <= bg.x + bg.w + 1.0,
+            "文字(含 1px 阴影偏移)不得溢出底色条右缘"
+        );
+        let max_bottom = q.iter().map(|c| c.y + c.h).fold(0.0f32, f32::max);
+        assert!(max_bottom <= bg.y + bg.h + 1.0, "文字不得溢出底色条下缘");
+    }
+}

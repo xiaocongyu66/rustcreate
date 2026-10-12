@@ -7,6 +7,10 @@
 //! [`CreativePicker`] 是创造模式物品选择页。[`FurnaceScreen`] 是熔炉屏
 //! 状态机(输入/燃料/产物槽 + 26.1 AbstractFurnaceBlockEntity.serverTick
 //! 直译的烧炼 tick,见该结构体文档)。
+//! 容器工具箱(#152):shift+点击快移(QUICK_MOVE,ACM:413-427 →
+//! CM/AM/IM quickMoveStack + ACM:638-700 moveItemStackTo 直译的
+//! [`move_stack_to`])与数字键 1-9 直换(SWAP,ACM:471-507,
+//! [`swap_with_hotbar`] 族)在 CraftScreen/FurnaceScreen 两屏同构接入。
 //! 物品守恒是硬约束:关屏归还 carried(先背包后 drop 余量,ACM:588-596)
 //! + 网格(**掉世界**,CM:96-99),见 `close_to_world` + [`drop_container_items`]。
 
@@ -97,6 +101,125 @@ fn click_slot(slot: &mut ItemStack, cursor: &mut ItemStack, left: bool) {
     }
 }
 
+/// moveItemStackTo（ACM:638-700）在槽引用序列上的直译：先同物并堆（封顶
+/// max_stack，ACM:645-671），再首个空格整段放入（ACM:673-696，vanilla 空位
+/// 段放一处即 break，ACM:688）；`backwards` = 序列从尾端向前（原版倒序
+/// 区间）。返回是否移动了任何数量。mayPlace 准入门在调用方（本函数面向
+/// 恒 mayPlace 的网格/背包/单槽段；燃料/结果槽的准入先经 quick_move/
+/// SWAP 路由筛选）。
+fn move_stack_to(st: &mut ItemStack, slots: &mut [&mut ItemStack], backwards: bool) -> bool {
+    let seq: Vec<usize> = if backwards {
+        (0..slots.len()).rev().collect()
+    } else {
+        (0..slots.len()).collect()
+    };
+    let mut changed = false;
+    // 并堆段（isStackable + isSameItemSameComponents = can_merge 投影）。
+    for &i in &seq {
+        if st.is_empty() {
+            break;
+        }
+        if slots[i].is_empty() || !can_merge(st, slots[i]) {
+            continue;
+        }
+        let max = Hotbar::max_stack(slots[i].item);
+        let total = slots[i].count + st.count;
+        if total <= max {
+            slots[i].count = total;
+            *st = ItemStack::empty();
+            changed = true;
+        } else if slots[i].count < max {
+            let mv = max - slots[i].count;
+            slots[i].count = max;
+            st.count -= mv;
+            changed = true;
+        }
+    }
+    // 空位段：首个空格放 min(余量, 上限)（ACM:683-689）。
+    if !st.is_empty() {
+        for &i in &seq {
+            if slots[i].is_empty() {
+                let max = Hotbar::max_stack(st.item);
+                let mv = st.count.min(max);
+                let mut placed = st.clone();
+                placed.count = mv;
+                *slots[i] = placed;
+                st.count -= mv;
+                if st.count == 0 {
+                    *st = ItemStack::empty();
+                }
+                changed = true;
+                break;
+            }
+        }
+    }
+    changed
+}
+
+/// 数字键直换核心（26.1 AbstractContainerMenu SWAP，ACM:471-507）：悬停槽
+/// `target` ↔ 快捷栏槽 `k`（0..8）。源空 = 悬停物整体入栏（ACM:476-482，
+/// mayPickup 调用方判）；目标空 = 超上限劈堆进上限、余量留快捷栏，否则
+/// 整移（ACM:483-492）；双非空 = 整堆互换（ACM:502-505）/ 劈堆换——被换下
+/// 物走 `Hotbar::add`（Inventory.add 投影），放不下的余量返回调用方落地
+/// （ACM:498-500；本仓堆叠上限 64/1 下实际不可达，语义留全）。
+pub fn swap_with_hotbar(target: &mut ItemStack, hb: &mut Hotbar, k: usize) -> Option<ItemStack> {
+    if k >= HOTBAR_SLOTS {
+        return None;
+    }
+    if hb.slots[k].is_empty() {
+        if target.is_empty() {
+            return None; // 双空（ACM:475 门）。
+        }
+        std::mem::swap(&mut hb.slots[k], target);
+        return None;
+    }
+    if target.is_empty() {
+        let max = Hotbar::max_stack(hb.slots[k].item);
+        if hb.slots[k].count > max {
+            let mut head = hb.slots[k].clone();
+            head.count = max;
+            hb.slots[k].count -= max;
+            *target = head;
+        } else {
+            std::mem::swap(&mut hb.slots[k], target);
+        }
+        return None;
+    }
+    let max = Hotbar::max_stack(hb.slots[k].item);
+    if hb.slots[k].count > max {
+        let displaced = std::mem::replace(target, ItemStack::empty());
+        let mut head = hb.slots[k].clone();
+        head.count = max;
+        hb.slots[k].count -= max;
+        *target = head;
+        hb.add(k, displaced)
+    } else {
+        std::mem::swap(&mut hb.slots[k], target);
+        None
+    }
+}
+
+/// 数字键直换·背包槽（ACM SWAP 的 `inventory.getItem(buttonNum)` 侧）：
+/// 全局槽 `i`（0..8 快捷栏 / 9..35 主背包，[`Hotbar::slot_mut`] 同序）↔
+/// 快捷栏槽 `k`。i == k = 原地无操作（vanilla 同槽 set 回自身）。
+pub fn swap_inv_with_hotbar(hb: &mut Hotbar, i: usize, k: usize) -> Option<ItemStack> {
+    if i >= HOTBAR_SLOTS + MAIN_SLOTS || k >= HOTBAR_SLOTS {
+        return None;
+    }
+    if i == k {
+        return None;
+    }
+    if i < HOTBAR_SLOTS {
+        std::mem::swap(&mut hb.slots[i], &mut hb.slots[k]);
+        return None;
+    }
+    // 主背包槽：值拷出复用核心（规避同结构双 &mut），终态写回。
+    let mut tgt = std::mem::replace(&mut hb.main[i - HOTBAR_SLOTS], ItemStack::empty());
+    let rest = swap_with_hotbar(&mut tgt, hb, k);
+    hb.main[i - HOTBAR_SLOTS] = tgt;
+    rest
+}
+
 impl CraftScreen {
     /// `width` 非 2/3 时钳到 2(防御式,UI 层只会传 2 或 3)。
     pub fn new(width: usize) -> Self {
@@ -137,6 +260,103 @@ impl CraftScreen {
             return;
         }
         click_slot(hb.slot_mut(i), &mut self.cursor, left);
+    }
+
+    /// shift+点击快移·背包槽（QUICK_MOVE：ACM:413-427 → CM:122-131）。
+    /// 3x3：先试网格段（CM:118 moveItemStackTo(1,10,false)），颗粒无收再按
+    /// 来源段对调——主背包→热栏（CM:125 段 37..46）/ 热栏→主背包（CM:
+    /// 127-129 段 10..37）；2x2 无网格路由（IM:128-134 同构；装备/副手段 =
+    /// 审计 #24 同债）。部分移动余量留原槽（守恒，ACM:136-139）。
+    pub fn quick_move_inv(&mut self, i: usize, hb: &mut Hotbar) {
+        if i >= HOTBAR_SLOTS + MAIN_SLOTS {
+            return;
+        }
+        let mut st = std::mem::replace(hb.slot_mut(i), ItemStack::empty());
+        if st.is_empty() {
+            return;
+        }
+        let mut moved = false;
+        if self.width == 3 {
+            let mut grid: Vec<&mut ItemStack> = self.grid.iter_mut().collect();
+            moved = move_stack_to(&mut st, &mut grid, false);
+        }
+        if !moved {
+            let mut dst: Vec<&mut ItemStack> = if i < HOTBAR_SLOTS {
+                hb.main.iter_mut().collect()
+            } else {
+                hb.slots.iter_mut().collect()
+            };
+            move_stack_to(&mut st, &mut dst, false);
+        }
+        *hb.slot_mut(i) = st;
+    }
+
+    /// shift+点击快移·网格槽（CM:132 else 段 moveItemStackTo(10,46,false) =
+    /// 背包正向：主背包先、热栏后）。余量留网格槽。
+    pub fn quick_move_grid(&mut self, i: usize, hb: &mut Hotbar) {
+        if i >= self.grid.len() || self.grid[i].is_empty() {
+            return;
+        }
+        let mut st = std::mem::replace(&mut self.grid[i], ItemStack::empty());
+        let mut dst: Vec<&mut ItemStack> = hb.main.iter_mut().chain(hb.slots.iter_mut()).collect();
+        move_stack_to(&mut st, &mut dst, false);
+        self.grid[i] = st;
+    }
+
+    /// shift+点击快移·结果槽（CM:115-121 moveItemStackTo(10,46,true) = 背包
+    /// 倒序、热栏先）。ACM:425-427 重移循环的本仓投影：整份结果全部放得下
+    /// 才消耗网格并提交（克隆 dry-run）；放不下整份 = 原样不动（满则停）——
+    /// 结果槽是配方重算模型，「部分移动 + 消耗」会凭空损耗余量，守恒硬
+    /// 约束优先（债登记 HANDOFF-UITOOLS.md）。
+    pub fn quick_move_result(&mut self, hb: &mut Hotbar) -> bool {
+        let Some(res) = self.result() else {
+            return false;
+        };
+        let fits = {
+            let mut probe = hb.clone();
+            let mut st = res.clone();
+            let mut dst: Vec<&mut ItemStack> = probe
+                .main
+                .iter_mut()
+                .chain(probe.slots.iter_mut())
+                .collect();
+            move_stack_to(&mut st, &mut dst, true);
+            st.is_empty()
+        };
+        if !fits {
+            return false;
+        }
+        let mut dst: Vec<&mut ItemStack> = hb.main.iter_mut().chain(hb.slots.iter_mut()).collect();
+        let mut st = res;
+        move_stack_to(&mut st, &mut dst, true);
+        crafting::consume_grid(&mut self.grid);
+        true
+    }
+
+    /// 数字键直换·网格槽（ACM:471-507 SWAP，核心见 [`swap_with_hotbar`]）。
+    /// 返回放不进背包的换下余量（劈堆换分支，实际不可达；调用方落地）。
+    pub fn hotbar_swap(&mut self, i: usize, hb: &mut Hotbar, k: usize) -> Option<ItemStack> {
+        if i < self.grid.len() {
+            swap_with_hotbar(&mut self.grid[i], hb, k)
+        } else {
+            None
+        }
+    }
+
+    /// 数字键直换·结果槽：mayPlace=false（ResultSlot.java:25-27）→ 只允许
+    /// 「空热栏槽整份取件」（ACM:476-482 源空分支，Slot.mayPickup 默认真，
+    /// Slot.java:89-91）；取到即消耗一次网格（ResultSlot.onTake 链）。
+    /// 热栏槽有物 = 无操作（mayPlace 门挡回放，ACM:493）。
+    pub fn hotbar_swap_result(&mut self, hb: &mut Hotbar, k: usize) -> bool {
+        if k >= HOTBAR_SLOTS || !hb.slots[k].is_empty() {
+            return false;
+        }
+        let Some(res) = self.result() else {
+            return false;
+        };
+        crafting::consume_grid(&mut self.grid);
+        hb.slots[k] = res;
+        true
     }
 
     /// 从结果槽取物(ACM:438-465 + ResultSlot.onTake)。空光标:`right` = true
@@ -382,6 +602,108 @@ impl FurnaceScreen {
             return None;
         }
         Some(std::mem::replace(&mut self.result, ItemStack::empty()))
+    }
+
+    /// shift+点击快移·背包槽（AM:104-119）。canSmelt → 输入段单试（AM:
+    /// 106-108 失败即止，无背包对调回退——与 CM 的先网格后对调两段式
+    /// 不同构）；否则 isFuel → 燃料段单试（AM:109-112，
+    /// FurnaceFuelSlot.mayPlace=isFuel 门）；否则主↔热栏对调（AM:113-119
+    /// 段 3..30 / 30..39）。入输入槽经 [`Self::set_input`]（AFBE setItem
+    /// 面：换品清 cook）。
+    pub fn quick_move_inv(&mut self, i: usize, hb: &mut Hotbar) {
+        if i >= HOTBAR_SLOTS + MAIN_SLOTS {
+            return;
+        }
+        let mut st = std::mem::replace(hb.slot_mut(i), ItemStack::empty());
+        if st.is_empty() {
+            return;
+        }
+        if mcv_item::crafting::find_cooking(st.item).is_some() {
+            let mut next = self.input.clone();
+            {
+                let mut dst: Vec<&mut ItemStack> = vec![&mut next];
+                move_stack_to(&mut st, &mut dst, false);
+            }
+            self.set_input(next);
+        } else if is_fuel(st.item) {
+            let mut dst: Vec<&mut ItemStack> = vec![&mut self.fuel];
+            move_stack_to(&mut st, &mut dst, false);
+        } else if i < HOTBAR_SLOTS {
+            let mut dst: Vec<&mut ItemStack> = hb.main.iter_mut().collect();
+            move_stack_to(&mut st, &mut dst, false);
+        } else {
+            let mut dst: Vec<&mut ItemStack> = hb.slots.iter_mut().collect();
+            move_stack_to(&mut st, &mut dst, false);
+        }
+        *hb.slot_mut(i) = st;
+    }
+
+    /// shift+点击快移·容器槽（input=0 / fuel=1 → AM:120-122 段 3..39 正向 =
+    /// 主背包先、热栏后）。出输入槽经 [`Self::set_input`]（清空 = 品变，
+    /// cook_total/timer 重置，AFBE setItem 面）；结果槽走
+    /// [`Self::quick_move_result`]。
+    pub fn quick_move_slot(&mut self, slot: usize, hb: &mut Hotbar) {
+        if slot > 1 {
+            return;
+        }
+        let empty_now = match slot {
+            0 => self.input.is_empty(),
+            _ => self.fuel.is_empty(),
+        };
+        if empty_now {
+            return;
+        }
+        let mut st = match slot {
+            0 => std::mem::replace(&mut self.input, ItemStack::empty()),
+            _ => std::mem::replace(&mut self.fuel, ItemStack::empty()),
+        };
+        let mut dst: Vec<&mut ItemStack> = hb.main.iter_mut().chain(hb.slots.iter_mut()).collect();
+        move_stack_to(&mut st, &mut dst, false);
+        match slot {
+            0 => self.set_input(st),
+            _ => self.fuel = st,
+        }
+    }
+
+    /// shift+点击快移·结果槽（AM:98-103 moveItemStackTo(3,39,true) = 背包
+    /// 倒序、热栏先）。物理槽：部分移动余量留槽（满则停，ACM:124-128）。
+    pub fn quick_move_result(&mut self, hb: &mut Hotbar) {
+        if self.result.is_empty() {
+            return;
+        }
+        let mut st = std::mem::replace(&mut self.result, ItemStack::empty());
+        let mut dst: Vec<&mut ItemStack> = hb.main.iter_mut().chain(hb.slots.iter_mut()).collect();
+        move_stack_to(&mut st, &mut dst, true);
+        self.result = st;
+    }
+
+    /// 数字键直换·悬停槽（ACM:471-507 SWAP，核心见 [`swap_with_hotbar`]）。
+    /// 准入门：输入槽 mayPlace 恒真（AM:76 普通 Slot）；燃料槽 mayPlace =
+    /// isFuel（FurnaceFuelSlot.java:17-19，源非空且非燃料 = 无操作）；
+    /// 结果槽 mayPlace=false（FurnaceResultSlot.java:24-27）→ 只允许「空
+    /// 热栏槽取件」单向（ACM:476-482，Slot.mayPickup 默认真）。返回放不
+    /// 进背包的换下余量（劈堆换分支，实际不可达；调用方落地）。
+    pub fn hotbar_swap(&mut self, slot: usize, hb: &mut Hotbar, k: usize) -> Option<ItemStack> {
+        if k >= HOTBAR_SLOTS {
+            return None;
+        }
+        match slot {
+            0 => swap_with_hotbar(&mut self.input, hb, k),
+            1 => {
+                if hb.slots[k].is_empty() || is_fuel(hb.slots[k].item) {
+                    swap_with_hotbar(&mut self.fuel, hb, k)
+                } else {
+                    None
+                }
+            }
+            2 => {
+                if hb.slots[k].is_empty() && !self.result.is_empty() {
+                    hb.slots[k] = std::mem::replace(&mut self.result, ItemStack::empty());
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     /// canBurn（AFBE:218-231）：结果空 = 可烧；异品 = 不可；同品按物品

@@ -279,20 +279,29 @@ mod quick_move_furnace {
         assert_eq!(hb.main[0].count, 61, "主背包随后补 1");
     }
 
-    /// 结果槽部分移动：放不下的余量留槽（满则停，ACM:124-128）。
+    /// 结果槽部分移动：放不下的余量留槽（满则停，ACM:124-128）。背包
+    /// 全满（并堆段无同品余量、空位段无空格）才会触发部分移动。
     #[test]
     fn result_partial_move_keeps_remainder() {
         let mut f = FurnaceScreen::new();
         f.result = stack(STONE_ITEM, 10);
         let mut hb = empty_hotbar();
         hb.slots[2] = stack(STONE_ITEM, 60);
-        for s in hb.main.iter_mut() {
-            *s = stack(COBBLESTONE, 64);
+        for s in hb.main.iter_mut().chain(hb.slots.iter_mut()) {
+            if s.is_empty() {
+                *s = stack(COBBLESTONE, 64);
+            }
         }
         f.quick_move_result(&mut hb);
         assert_eq!(f.result.count, 6, "余量留结果槽");
         assert_eq!(hb.slots[2].count, 64);
         assert!(hb.main.iter().all(|s| s.item == COBBLESTONE), "主背包未动");
+        assert!(
+            hb.slots
+                .iter()
+                .all(|s| s.item == COBBLESTONE || s.item == STONE_ITEM),
+            "热栏无额外空位段落地"
+        );
     }
 
     /// 数字键直换（ACM:471-507 SWAP）：燃料槽 mayPlace=isFuel 门——非燃料
@@ -302,11 +311,11 @@ mod quick_move_furnace {
         let mut f = FurnaceScreen::new();
         let mut hb = empty_hotbar();
         hb.slots[1] = stack(IRON_INGOT, 3);
-        f.hotbar_swap(1, &mut hb, 1);
+        assert!(f.hotbar_swap(1, &mut hb, 1).is_none());
         assert!(f.fuel.is_empty(), "非燃料源不得入燃料槽");
         assert_eq!(hb.slots[1].count, 3, "源槽原样");
         hb.slots[1] = stack(COAL, 3);
-        f.hotbar_swap(1, &mut hb, 1);
+        assert!(f.hotbar_swap(1, &mut hb, 1).is_none());
         assert_eq!((f.fuel.item, f.fuel.count), (COAL, 3), "燃料源可入");
         assert!(hb.slots[1].is_empty());
     }
@@ -318,7 +327,7 @@ mod quick_move_furnace {
         f.input = stack(RAW_IRON, 2);
         let mut hb = empty_hotbar();
         hb.slots[6] = stack(COAL, 4);
-        f.hotbar_swap(0, &mut hb, 6);
+        assert!(f.hotbar_swap(0, &mut hb, 6).is_none(), "互换无落地余量");
         assert_eq!((f.input.item, f.input.count), (COAL, 4));
         assert_eq!((hb.slots[6].item, hb.slots[6].count), (RAW_IRON, 2));
     }
@@ -331,11 +340,11 @@ mod quick_move_furnace {
         f.result = stack(STONE_ITEM, 2);
         let mut hb = empty_hotbar();
         hb.slots[3] = stack(STICK, 1);
-        f.hotbar_swap(2, &mut hb, 3);
+        assert!(f.hotbar_swap(2, &mut hb, 3).is_none());
         assert_eq!(f.result.count, 2, "热栏槽非空 = 回放被 mayPlace 挡");
         assert_eq!(hb.slots[3].count, 1);
         hb.slots[3] = ItemStack::empty();
-        f.hotbar_swap(2, &mut hb, 3);
+        assert!(f.hotbar_swap(2, &mut hb, 3).is_none());
         assert!(f.result.is_empty(), "空热栏槽取件");
         assert_eq!((hb.slots[3].item, hb.slots[3].count), (STONE_ITEM, 2));
     }
@@ -352,7 +361,7 @@ mod hotbar_swap {
         let mut cs = CraftScreen::new(3);
         let mut hb = empty_hotbar();
         hb.slots[4] = stack(PLANKS, 12);
-        cs.hotbar_swap(2, &mut hb, 4);
+        assert!(cs.hotbar_swap(2, &mut hb, 4).is_none());
         assert_eq!((cs.grid[2].item, cs.grid[2].count), (PLANKS, 12));
         assert!(hb.slots[4].is_empty());
     }
@@ -365,7 +374,7 @@ mod hotbar_swap {
         cs.grid[2] = stack(COBBLESTONE, 3);
         let mut hb = empty_hotbar();
         hb.slots[4] = stack(PLANKS, 7);
-        cs.hotbar_swap(2, &mut hb, 4);
+        assert!(cs.hotbar_swap(2, &mut hb, 4).is_none());
         assert_eq!((cs.grid[2].item, cs.grid[2].count), (PLANKS, 7));
         assert_eq!((hb.slots[4].item, hb.slots[4].count), (COBBLESTONE, 3));
     }
@@ -376,7 +385,7 @@ mod hotbar_swap {
         let mut hb = empty_hotbar();
         hb.slots[0] = stack(PLANKS, 5);
         hb.slots[3] = stack(STICK, 7);
-        mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 0, 3);
+        assert!(mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 0, 3).is_none());
         assert_eq!((hb.slots[0].item, hb.slots[0].count), (STICK, 7));
         assert_eq!((hb.slots[3].item, hb.slots[3].count), (PLANKS, 5));
     }
@@ -387,7 +396,7 @@ mod hotbar_swap {
         let mut hb = empty_hotbar();
         hb.main[2] = stack(BOW, 1);
         hb.slots[5] = stack(PLANKS, 3);
-        mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 9 + 2, 5);
+        assert!(mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 9 + 2, 5).is_none());
         assert_eq!((hb.slots[5].item, hb.slots[5].count), (BOW, 1));
         assert_eq!((hb.main[2].item, hb.main[2].count), (PLANKS, 3));
     }
@@ -396,9 +405,9 @@ mod hotbar_swap {
     #[test]
     fn same_slot_is_noop() {
         let mut hb = empty_hotbar();
-        hb.slots[2] = stack(COAL, 5);
-        mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 2, 2);
-        assert_eq!((hb.slots[2].item, hb.slots[2].count), (COAL, 5));
+        hb.slots[2] = stack(PLANKS, 5);
+        assert!(mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 2, 2).is_none());
+        assert_eq!((hb.slots[2].item, hb.slots[2].count), (PLANKS, 5));
     }
 
     /// 合成结果槽：空热栏槽整份取件 + 消耗一次网格（ResultSlot mayPickup
@@ -426,9 +435,9 @@ mod hotbar_swap {
     fn out_of_bounds_is_noop() {
         let mut cs = CraftScreen::new(2);
         let mut hb = empty_hotbar();
-        cs.hotbar_swap(4, &mut hb, 0); // 2x2 网格只有 0..4
-        mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 36, 0);
-        mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 0, 9);
+        assert!(cs.hotbar_swap(4, &mut hb, 0).is_none()); // 2x2 网格只有 0..4
+        assert!(mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 36, 0).is_none());
+        assert!(mcv_logic::ui::swap_inv_with_hotbar(&mut hb, 0, 9).is_none());
         assert!(cs.grid.iter().all(|s| s.is_empty()));
         assert!(hb.all_slots().iter().all(|s| s.is_empty()));
     }

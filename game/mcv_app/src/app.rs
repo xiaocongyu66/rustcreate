@@ -536,6 +536,18 @@ fn crafting_table_id() -> u16 {
         .unwrap_or(252) as u16
 }
 
+/// 悬停槽 tooltip 首行（#152）：26.1 AbstractContainerScreen.extractTooltip
+/// （ACS:195-204）→ Screen.getTooltipFromItem（Screen.java:237-242）首行 =
+/// 物品显示名。数据源 i18n::item_name（表内 modern 官方名；legacy 名回退
+/// 注册名，i18n.rs:91-105 回退链）；空堆 = None（ACS:196 hasItem 门）。
+fn tooltip_title(lang: crate::i18n::Lang, st: &mcv_item::ItemStack) -> Option<String> {
+    if st.is_empty() {
+        return None;
+    }
+    let name = crate::i18n::item_name(lang, st.item);
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 impl AppState {
     /// MC 风格按钮：真 MC button 三态贴图九宫格 + 白色阴影文字居中；
     /// 悬停换高亮贴图并染黄（MC AbstractButton 行为）。逻辑 id 与旧版一致，
@@ -1611,9 +1623,14 @@ impl AppState {
             self.craft_hot.clear();
             return Vec::new();
         };
-        let (q, rects) = match self.screen {
+        let (mut q, rects) = match self.screen {
             Screen::Crafting => match &self.craft {
-                Some(c) => crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover),
+                Some(c) => {
+                    let mut q = crate::craft_ui::craft_quads(c, &rt.hotbar, gui, w, h, hover);
+                    // #152：悬停物品名 tooltip（ACS:195-204 extractTooltip）。
+                    q.extend(self.craft_tooltip_quads());
+                    q
+                }
                 None => (Vec::new(), Vec::new()),
             },
             Screen::Creative => match &self.creative {
@@ -1883,6 +1900,119 @@ impl AppState {
         }
     }
 
+    /// 悬停槽物品名 tooltip quads（#152）：光标悬停有物槽 + 光标空手时画
+    /// （26.1 AbstractContainerScreen.extractTooltip，ACS:195-204：
+    /// hoveredSlot.hasItem() + carried 空门；carried 非空的 image-tooltip
+    /// 例外不建模 = 像素级债）。文案 = Screen.getTooltipFromItem（Screen.
+    /// java:237-242）首行 → i18n::item_name（modern 官方名 / legacy 注册
+    /// 名）。锚点 = 鼠标右下（setTooltipForNextFrame 锚定，偏移像素级债）。
+    /// 槽序同 craft_flush_menu 灌入序：0 = 结果槽、1..n²+1 = 网格、其后
+    /// 27 主背包 + 9 快捷栏。
+    fn craft_tooltip_quads(&self) -> Vec<mcv_render::HudQuad> {
+        let Some((mx, my)) = self.last_cursor else {
+            return Vec::new();
+        };
+        let Some((s, _, _)) = self.craft_geom() else {
+            return Vec::new();
+        };
+        let Some(craft) = self.craft.as_ref() else {
+            return Vec::new();
+        };
+        if !craft.cursor.is_empty() {
+            return Vec::new();
+        }
+        let Some(idx) = self
+            .craft_menu
+            .as_ref()
+            .and_then(|cs| cs.hovered_at(mx as f32 / s, my as f32 / s))
+        else {
+            return Vec::new();
+        };
+        let Some(rt) = self.runtime.as_ref() else {
+            return Vec::new();
+        };
+        let base = 1 + craft.width * craft.width;
+        let st = if idx == 0 {
+            craft.result()
+        } else if idx < base {
+            craft.grid.get(idx - 1).cloned()
+        } else if idx < base + 27 {
+            rt.hotbar.main.get(idx - base).cloned()
+        } else {
+            rt.hotbar.slots.get(idx - base - 27).cloned()
+        };
+        let Some(st) = st.filter(|st| !st.is_empty()) else {
+            return Vec::new();
+        };
+        let Some(title) = tooltip_title(self.lang(), &st) else {
+            return Vec::new();
+        };
+        mcv_render::text::tooltip_quads(&title, mx as f32 + 12.0 * s, my as f32 + 2.0 * s, s)
+    }
+
+    /// 数字键 1-9 直换执行器（#152）：门槛 carried 空 + 有悬停槽（ACS:
+    /// 608-611 checkHotbarKeyPressed）。槽路由（序同 craft_flush_menu）：
+    /// 0 = 结果槽（只允许空热栏槽整份取件，ResultSlot mayPlace=false 门，
+    /// 取到消耗一次网格）；1..n²+1 = 网格槽（ACM:471-507 SWAP 全语义）；
+    /// 其后 36 = 背包槽（主背包 27 → 热栏 9）。mcv_ui 未建模 SWAP（其
+    /// 差异表债），本仓走 mcv_logic 状态机直换，下次 craft_flush_menu
+    /// 灌镜像自愈；结果槽直换不触发 consumed 记账（未走 doClick），网格
+    /// 消耗已就地执行，语义自洽。
+    fn craft_key_swap(&mut self, k: usize) {
+        let Some((s, _, _)) = self.craft_geom() else {
+            return;
+        };
+        let Some((cx, cy)) = self.last_cursor else {
+            return;
+        };
+        let Some(h) = self
+            .craft_menu
+            .as_ref()
+            .and_then(|cs| cs.hovered_at(cx as f32 / s, cy as f32 / s))
+        else {
+            return;
+        };
+        if self.craft.as_ref().is_some_and(|c| !c.cursor.is_empty()) {
+            return;
+        }
+        let cw = self.craft.as_ref().map_or(2, |c| c.width);
+        let base = 1 + cw * cw;
+        let Some(rt) = self.runtime.as_mut() else {
+            return;
+        };
+        if h == 0 {
+            let craft = self.craft.as_mut().unwrap();
+            if rt.hotbar.slots[k].is_empty()
+                && let Some(res) = craft.result()
+            {
+                mcv_item::crafting::consume_grid(&mut craft.grid);
+                rt.hotbar.slots[k] = res;
+            }
+        } else if h < base {
+            let i = h - 1;
+            let craft = self.craft.as_mut().unwrap();
+            if let Some(rest) =
+                mcv_logic::ui::swap_with_hotbar(&mut craft.grid[i], &mut rt.hotbar, k)
+            {
+                // 劈堆换余量（ACM:498-500 inventory.add 失败 → drop）。
+                mcv_logic::ui::drop_container_items(rt, std::slice::from_ref(&rest));
+            }
+        } else {
+            let j = h - base;
+            let gi = if j < 27 {
+                mcv_item::HOTBAR_SLOTS + j
+            } else {
+                j - 27
+            };
+            if let Some(rest) = mcv_logic::ui::swap_inv_with_hotbar(&mut rt.hotbar, gi, k) {
+                mcv_logic::ui::drop_container_items(rt, std::slice::from_ref(&rest));
+            }
+        }
+        if let Some(w) = self.window.as_ref() {
+            w.request_redraw();
+        }
+    }
+
     /// Worlds 界面：点击某个世界进入。idx 由 UI 构建时写进 menu_hot 之外的旁路表。
     fn on_world_pick(&mut self, idx: usize) {
         let Some(entry) = self.worlds.get(idx) else {
@@ -2127,6 +2257,18 @@ impl ApplicationHandler for AppState {
                 {
                     let whole = self.ctrl_held;
                     self.craft_key_throw(whole);
+                    return;
+                }
+                // 数字键 1-9 = 悬停槽 ↔ 快捷栏直换（#152；ACS:592-627
+                // keyPressed → checkHotbarKeyPressed → slotClicked(hovered,
+                // i, SWAP)，门槛 carried 空 + 有悬停槽在执行器内）。mcv_ui
+                // 未建模 SWAP（其差异表债），走 mcv_logic 状态机直换，
+                // 下次 craft_flush_menu 灌镜像自愈。
+                if state == ElementState::Pressed
+                    && self.screen == Screen::Crafting
+                    && let Some(k) = mcv_platform::keybind::hotbar_slot(code)
+                {
+                    self.craft_key_swap(k);
                     return;
                 }
                 let Some(runtime) = self.runtime.as_mut() else {
