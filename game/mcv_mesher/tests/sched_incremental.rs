@@ -3,13 +3,17 @@
 //! 远低于整柱；产物缓存（Gate products）只在提交地板准入后写入，kill /
 //! 直算派发即作废——游戏层「有缓存才窄行增量」前提的调度器侧证明。
 
+// golden/cases.rs 是全族测试共用输入规格（场景/哈希/随机），本目标只用
+// 得到其中一块——未用项在 -D warnings 下按死代码红，统一在目标顶层放行。
+#![allow(dead_code)]
+
 #[path = "golden/cases.rs"]
 mod cases;
 
 use cases::{Chunk, chunk, put, scene_by_name};
 use mcv_core::{CHUNK_VOL, ChunkPos};
 use mcv_mesher::{
-    MeshDone, MeshJob, MeshResults, MeshScheduler, Rows, SECTION_COUNT, TOTAL_SCANNED_ROWS,
+    MeshDone, MeshJob, MeshResults, MeshScheduler, Rows, SECTION_COUNT, Slot, TOTAL_SCANNED_ROWS,
     build_mesh, edit_rows, neighborhood_slots, subchunk_enabled_from,
 };
 
@@ -20,8 +24,8 @@ fn flat(center: &Chunk, side: &Chunk) -> (Vec<u16>, Vec<u8>) {
     let mut lit = Vec::with_capacity(9 * CHUNK_VOL);
     for i in 0..9 {
         let c = if i == 4 { center } else { side };
-        vox.extend_from_slice(&c.0);
-        lit.extend_from_slice(&c.1);
+        vox.extend_from_slice(&c.0[..]);
+        lit.extend_from_slice(&c.1[..]);
     }
     (vox, lit)
 }
@@ -79,7 +83,7 @@ fn seed_then_narrow_edit_bit_identical_with_low_work() {
     for kind in [0u32, 1] {
         assert_eq!(
             bytes_of(&done, kind),
-            direct_build(&center_a, &side, kind),
+            Some(direct_build(&center_a, &side, kind)),
             "播种笔 k{kind} 字节 != 直呼"
         );
     }
@@ -105,7 +109,7 @@ fn seed_then_narrow_edit_bit_identical_with_low_work() {
     for kind in [0u32, 1] {
         assert_eq!(
             bytes_of(&done, kind),
-            direct_build(&center_b, &side, kind),
+            Some(direct_build(&center_b, &side, kind)),
             "窄行增量笔 k{kind} 字节 != 直呼"
         );
     }

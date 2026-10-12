@@ -5,12 +5,17 @@
 //! 1. 全柱重放（rows=None）：所有黄金场景 × 两种 kind，产物拼接 == 直呼；
 //! 2. 单格编辑重放（rows=Some(edit)）：旧快照全量产物 + 编辑盒重放 +
 //!    其余桶复用 == 编辑后快照直呼——热路径的字节等价面。
+//!
 //! 另附工作量观测面断言（重放行数 < 全柱，验收 3）。
+
+// golden/cases.rs 是全族测试共用输入规格（场景/哈希/随机），本目标只用
+// 得到其中一块——未用项在 -D warnings 下按死代码红，统一在目标顶层放行。
+#![allow(dead_code)]
 
 #[path = "golden/cases.rs"]
 mod cases;
 
-use cases::{Chunk, Rng, SCENES, chunk, full9, put, random_chunk, scene_by_name};
+use cases::{Chunk, Rng, SCENES, chunk, full9, only_center, put, random_chunk, scene_by_name};
 use mcv_mesher::{
     MESH_OPAQUE, MESH_WATER, Mesher, Rows, SECTION_COUNT, Slot, TOTAL_SCANNED_ROWS, edit_rows,
 };
@@ -30,17 +35,11 @@ fn full_products_combine_equals_direct_build() {
     for (name, loaded) in SCENES {
         let center = scene_by_name(name);
         let side = chunk(0, 0xF0);
+        // only_center：邻槽 None（opaque 边界），复用 cases 共用构造。
         let slots = if loaded {
             slots_of(&center, &side)
         } else {
-            // only_center 等价：邻槽 None
-            let mut s = slots_of(&center, &side);
-            for i in 0..9 {
-                if i != 4 {
-                    s[i] = None;
-                }
-            }
-            s
+            only_center(&center)
         };
         for kind in [MESH_OPAQUE, MESH_WATER] {
             let direct = mesher.build(&slots, kind).expect("direct build");
