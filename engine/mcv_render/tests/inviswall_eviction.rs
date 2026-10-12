@@ -180,12 +180,12 @@ fn cave_density_stream_blinds_committed_chunks() {
     );
 
     // 阶段 2：洞穴洪流取证——真机加载不止一帧铺满 361 块，池字节随
-    // 玩家推进持续增长。以实测洞穴单块均字节把池推过预算（顶多 4×
-    // 预算为止；越界发生在阶段 1 也无需处理——契约断言看最终态）。
+    // 玩家推进持续增长。注意 `enforce_cpu_pool_budget` 在每次
+    // build_chunk 尾部把池修剪回 ≤ 预算，池字节观测值恒不越界——越界
+    // 的取证面是 evicted_chunks 计数，故以「观察到逐出」为续传终止
+    // 条件（逐出若已发生在阶段 1，本段直接跳过，契约断言看最终态）。
     let mut extra = 0usize;
-    while uploader.batching_stats().cpu_pool_bytes <= CPU_POOL_BUDGET_BYTES
-        && uploader.batching_stats().cpu_pool_bytes <= 4 * CPU_POOL_BUDGET_BYTES
-    {
+    while uploader.batching_stats().evicted_chunks == 0 && extra < 4096 {
         // samples 布局：(origin_x 弃用, opaque vbytes, opaque idx,
         // water vbytes, water idx)。
         let s = &samples[extra % samples.len()];
