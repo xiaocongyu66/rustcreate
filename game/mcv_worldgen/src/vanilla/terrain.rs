@@ -87,6 +87,9 @@ pub const DIRT: u16 = 2;
 pub const GRASS: u16 = 3;
 pub const SAND: u16 = 4;
 pub const WATER: u16 = 5;
+/// 岩浆（#175 含水层岩浆带）：blocks_gen.inc.rs:537（liquid、光 15、
+/// 六面贴图 402）。渲染为贴图整盒，流动动画/水面下沉面登记 #148 流体波债。
+pub const LAVA: u16 = 516;
 pub const BEDROCK: u16 = 10;
 pub const SNOW_GRASS: u16 = 11;
 
@@ -448,6 +451,9 @@ pub struct ColumnState {
     /// 实顶扫描）。
     pub surface_ours: i32,
     pub ocean: bool,
+    /// erosion 气候通道原值（含水层 deep dark 门用，
+    /// OverworldBiomeBuilder.java:1008-1010）。
+    pub erosion: f64,
 }
 
 /// density 编排器 — NoiseRouter 式编排（offset/factor/jaggedness 样条 +
@@ -556,16 +562,29 @@ impl Orchestrator {
     /// - 起点 `fill_top = scan_top.max(SEA)`，`scan_top = crossing +
     ///   REAL_TOP_SCAN_MARGIN`（软空气余量保证，见常数注），其上缓冲恒
     ///   AIR（`ChunkVoxels::filled(0)` 起点，`generate` 不上探）；
-    /// - `depth_above` 计数与 SurfaceSystem.java:126-128/146 同式（y>SEA
-    ///   且 density≤0 重置为 0；水格只在 y≤SEA，扫描窗 [SEA+1, …] 不触及）；
-    /// - 首个 density>0 格 y ≤ `TREE_MAX_Y-1` 即返回：材质按柱层循环同款
-    ///   （`y < min_surface` → STONE；`depth_above == 1` → 顶格材质；
-    ///   `≤ 1 + SUBSOIL_DEPTH` → 亚表材质；其余 STONE）——山体内壁在扫描
-    ///   窗顶入窗时 depth_above 已 >1，材质归 STONE，与缓冲读数一致；
+    /// - `depth_above` 计数与 SurfaceSystem.java:126-128/146 同式（空气
+    ///   重置、流体不重置、实心 +1）；
+    /// - #175 含水层落地后**实心判据 = density>0 ∪ Rock 封口袋**：
+    ///   pressure 门可把 y>SEA 的 density≤0 格压回石头（原版同语义，
+    ///   Aquifer.java:255-258 返回 null → defaultBlock），且含水层水体
+    ///   液面可高于 SEA（randomized level ≤ min(地表, 40k+20±9)，
+    ///   Aquifer.java:482-496）——旧「水格只在 y≤SEA、扫描窗不触及」
+    ///   前提作废。判据必须走与缓冲侧同一个 `AquiferField` 语义：免采
+    ///   样线按**树干列所属区块**取（`chunk_skip` 纯世界坐标函数，两侧
+    ///   块重放恒等），否则跨块树基漂移（trees_cross_chunk 锁面）；
+    /// - 首个实心格 y ≤ `TREE_MAX_Y-1` 即返回：材质按柱层循环同款
+    ///   （[`solid_material`]）——山体内壁在扫描窗顶入窗时 depth_above
+    ///   已 >1，材质归 STONE，与缓冲读数一致；
     /// - 窗上界钳 `TREE_MAX_Y-1`（旧 `tree_pass::ground_spot` 同窗），
     ///   全程无实心 → `None`。
     #[must_use]
-    pub fn column_real_top(&self, block_x: i32, block_z: i32) -> Option<(i32, u16)> {
+    pub fn column_real_top(
+        &self,
+        block_x: i32,
+        block_z: i32,
+        field: &mut crate::vanilla::aquifer::AquiferField<'_>,
+    ) -> Option<(i32, u16)> {
+        use crate::vanilla::aquifer::Substance as Sub;
         let cs = self.column_state(block_x, block_z);
         let (surface_id, subsoil_id) = self.column_surface_ids(block_x, block_z, &cs);
         let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
@@ -574,24 +593,24 @@ impl Orchestrator {
             (crossing + REAL_TOP_SCAN_MARGIN).clamp(MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
         let fill_top = scan_top.max(SEA);
         let min_surface = crossing - PRELIM_SURFACE_BAND;
+        // 树干列所属区块的免采样线（缓冲在所属块 generate 时用同线构建）
+        let skip = field.chunk_skip(block_x.div_euclid(16) * 16, block_z.div_euclid(16) * 16);
         let mut depth_above = 0_i32;
         for y in ((SEA + 1)..=fill_top).rev() {
-            if self.density(&cs, block_x, y, block_z) > 0.0 {
+            let dval = self.density(&cs, block_x, y, block_z);
+            let subst = if dval > 0.0 {
+                None // 实心直判（含水层前置，Aquifer.java:150-152）
+            } else {
+                Some(field.substance(block_x, y, block_z, dval, skip))
+            };
+            if dval > 0.0 || matches!(subst, Some(Sub::Rock)) {
                 depth_above += 1; // SurfaceSystem.java:146（同款计数）
                 if y < crate::vanilla::tree_pass::TREE_MAX_Y {
-                    let id = if y < min_surface {
-                        STONE
-                    } else if depth_above == 1 {
-                        surface_id
-                    } else if depth_above <= 1 + SUBSOIL_DEPTH {
-                        subsoil_id
-                    } else {
-                        STONE
-                    };
+                    let id = solid_material(y, min_surface, depth_above, surface_id, subsoil_id);
                     return Some((y + 1, id));
                 }
-            } else {
-                depth_above = 0; // SurfaceSystem.java:126-128（y>SEA 空气重置）
+            } else if subst == Some(Sub::Air) {
+                depth_above = 0; // SurfaceSystem.java:126-128（空气重置；流体不重置）
             }
         }
         None
@@ -633,6 +652,28 @@ impl Orchestrator {
             sp2d_elev,
             surface_ours,
             ocean: surface_ours <= SEA,
+            erosion: sample.erosion,
+        }
+    }
+
+    /// 含水层列探针（`aquifer::ColumnProbe` 的构造点）：crossing =
+    /// 密度场解析过零面（原版 preliminarySurfaceLevel 的语义替身，登记
+    /// AQUI-1），附 deep dark 门两条通道值（erosion 原值 + offset，
+    /// depth = yClampedGradient(−64,320,1.5,−1.5)+offset，
+    /// NoiseRouterData.java:180-182 在探针消费侧合成）。
+    #[must_use]
+    pub fn aquifer_probe(
+        &self,
+        block_x: i32,
+        block_z: i32,
+    ) -> crate::vanilla::aquifer::ColumnProbe {
+        let cs = self.column_state(block_x, block_z);
+        let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
+        let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
+        crate::vanilla::aquifer::ColumnProbe {
+            prelim: crossing,
+            offset: cs.offset,
+            erosion: cs.erosion,
         }
     }
 
@@ -792,6 +833,12 @@ pub fn generate(
     let base_x = chunk_x.wrapping_mul(16);
     let base_z = chunk_z.wrapping_mul(16);
     let orch = Orchestrator::new(seed);
+    // #175 含水层：density≤0 空腔的终判（原版 NoiseBasedAquifer 结构
+    // 移植，aquifer.rs 头注机制摘要）。缓存只省算力；本区块判据用本
+    // 区块免采样线（chunk_skip，Aquifer.java:134-137）。
+    let aq = crate::vanilla::aquifer::Aquifer::new(seed);
+    let mut field = crate::vanilla::aquifer::AquiferField::new(&aq, &orch);
+    let skip = field.chunk_skip(base_x, base_z);
 
     for cz in 0..16_i32 {
         for cx in 0..16_i32 {
@@ -826,6 +873,7 @@ pub fn generate(
             // 实心 +1；depth_above==1 即 ON_FLOOR 顶层格。
             let mut depth_above = 0_i32;
             for y in (MIN_Y..=fill_top).rev() {
+                let dval = orch.density(&cs, wx, y, wz);
                 let id = if y == MIN_Y || (y <= MIN_Y + 4 && bedrock_noise(seed, wx, y, wz)) {
                     // 基岩层 −64..−60：底层恒实心，其上 4 格 50% 噪声
                     // （26.1 BedrockBlock 5 层规则；旧 256 基准为 0..2 三层）。
@@ -833,25 +881,31 @@ pub fn generate(
                     // 石头）——同 vanilla 计入 stoneDepth 上下文但不换材质；
                     // 该深度恒在 abovePreliminarySurface 带下（STONE 兜底）。
                     BEDROCK
-                } else if orch.density(&cs, wx, y, wz) <= 0.0 {
-                    if y <= SEA {
-                        // 流体：不重置 depth_above（SurfaceSystem.java:129-132）。
-                        WATER
-                    } else {
-                        depth_above = 0; // SurfaceSystem.java:126-128
-                        AIR
+                } else if dval <= 0.0 {
+                    // #175：含水层终判取代旧「y≤SEA 一律灌水」平铺模型
+                    //（1.18 前旧语义；原版地下默认干、注水由胞格噪声门控
+                    //——aquifer.rs 头注 file:line 摘要）。流体两态不重置
+                    // depth_above（SurfaceSystem.java:129-132）、空气重置
+                    //（:126-128）、压力封口袋=实心计 +1（原版该位出
+                    // defaultBlock，Aquifer.java:255-258 返回 null 经
+                    // NoiseChunk.java:160 兜底成石头）。
+                    use crate::vanilla::aquifer::Substance as Sub;
+                    let subst = field.substance(wx, y, wz, dval, skip);
+                    match subst {
+                        Sub::Rock => {
+                            depth_above += 1;
+                            solid_material(y, min_surface, depth_above, surface_id, subsoil_id)
+                        }
+                        Sub::Air => {
+                            depth_above = 0; // SurfaceSystem.java:126-128
+                            AIR
+                        }
+                        Sub::Water => WATER,
+                        Sub::Lava => LAVA,
                     }
                 } else {
                     depth_above += 1; // SurfaceSystem.java:146
-                    if y < min_surface {
-                        STONE
-                    } else if depth_above == 1 {
-                        surface_id
-                    } else if depth_above <= 1 + SUBSOIL_DEPTH {
-                        subsoil_id
-                    } else {
-                        STONE
-                    }
+                    solid_material(y, min_surface, depth_above, surface_id, subsoil_id)
                 };
                 out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }
@@ -868,6 +922,29 @@ pub fn generate(
     let hm = crate::recompute_heightmap(out_voxels);
     out_heightmap[..256].copy_from_slice(&hm[..]);
     Ok(())
+}
+
+/// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
+/// `column_real_top` 三处共用，杜绝规则漂移）。语义原样：带下 STONE 兜底
+/// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
+/// 亚表带、其余 STONE。
+#[must_use]
+const fn solid_material(
+    y: i32,
+    min_surface: i32,
+    depth_above: i32,
+    surface_id: u16,
+    subsoil_id: u16,
+) -> u16 {
+    if y < min_surface {
+        STONE
+    } else if depth_above == 1 {
+        surface_id
+    } else if depth_above <= 1 + SUBSOIL_DEPTH {
+        subsoil_id
+    } else {
+        STONE
+    }
 }
 
 fn bedrock_noise(seed: u64, wx: i32, y: i32, wz: i32) -> bool {

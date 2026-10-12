@@ -249,6 +249,10 @@ pub fn tree_spots(seed: u64, chunk_x: i32, chunk_z: i32, orch: &Orchestrator) ->
     let base_z = chunk_z.wrapping_mul(16);
     let ts = crate::vanilla::channel_seed(seed, TREE_DOMAIN);
     let ts_u = ts as u64;
+    // #175：含水层现场（列探针/胞格/免采样线三级缓存）。纯世界坐标
+    // 函数集——两侧块各自新建 field 结果逐字节一致（缓存只省算力）。
+    let aq = crate::vanilla::aquifer::Aquifer::new(seed);
+    let mut field = crate::vanilla::aquifer::AquiferField::new(&aq, orch);
     // 邻域池扫描：树落点世界坐标纯函数；CROWN_REACH 环带内的池（含树干
     // 在邻块的）全部入选——树干所属块投影其裁剪整体，邻块重放伸入部分
     // （模块头注 fix/tree-chunk-clip）。
@@ -280,7 +284,7 @@ pub fn tree_spots(seed: u64, chunk_x: i32, chunk_z: i32, orch: &Orchestrator) ->
             // `continue`，跨界冠两侧皆失 = 真机「树少一边树叶」），且与
             // 树干所属块的读数字节一致（两侧各算各的必同 (base_y, ground)，
             // 否则重放错位出新裂缝）。
-            let Some((base_y, ground)) = orch.column_real_top(wx, wz) else {
+            let Some((base_y, ground)) = orch.column_real_top(wx, wz, &mut field) else {
                 continue;
             };
             if !GROUND.contains(&ground) {

@@ -13,6 +13,7 @@
 //! 函数壳，锚点表达式不引入任何世界常数，恢复「原生 63 归一」；旧
 //! 256 时代的 1.5× 压缩与 96 海平面重标随之作废）。
 
+pub mod aquifer;
 pub mod biomes;
 pub mod blended;
 pub mod climate;
