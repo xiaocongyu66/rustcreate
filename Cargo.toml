@@ -26,6 +26,7 @@ mcv_sync = { path = "engine/mcv_sync" }
 mcv_entity = { path = "game/mcv_entity" }
 mcv_item = { path = "game/mcv_item" }
 mcv_audio = { path = "engine/mcv_audio" }
+mcv_nbt = { path = "engine/mcv_nbt" }
 
 wgpu = "=30.0.1"
 winit = { version = "=0.30.13", features = ["android-native-activity"] }
@@ -36,6 +37,9 @@ log = "0.4"
 env_logger = "0.11"
 # mcv_audio 解析原版 sounds.json(事件名音效表)必需。
 serde_json = "1"
+# 外部依赖白名单:mcv_nbt 的 GZIP/ZLIB 编解码必需(原版 structure .nbt 全为
+# GZIP)。纯 Rust 后端(miniz_oxide),不引入 C 工具链。
+flate2 = "1"
 image = "0.25"
 
 [profile.release]

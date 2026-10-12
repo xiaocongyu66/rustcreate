@@ -1,0 +1,11 @@
+[package]
+name = "mcv_nbt"
+description = "通用 NBT 序列化底座(13 种 tag 二进制读写 + SNBT + 配额防 OOM),零游戏类型"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+# 原版 structure .nbt 全部 GZIP 压缩,自写 inflate 不值;flate2 纯 Rust 后端,
+# 不引入 C 依赖(外部依赖白名单:mcv_nbt 仅此一个外部依赖,ci.yml 有守卫)。
+flate2 = "1"
