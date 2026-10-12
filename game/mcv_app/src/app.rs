@@ -3193,8 +3193,10 @@ impl AppState {
         // #80 结构性指标（真机取证通路，不进 HUD 像素）：~1 Hz 一行，
         // 合批 draw 收敛（entries/chunks）与 staging 上传带宽（staged KB、
         // fallback 笔数恒 0 = 环容量足够）。#115 刀 5a 起带网格域字节
-        // 记账（resident_kb = GPU 驻留、pool_kb = CPU 留存无 LRU 池）——
-        // 真机 Mali 预算取证行，口径表见 docs/memory-budget.md。
+        // 记账（resident_kb = GPU 驻留、pool_kb = CPU 池留存、evicted =
+        // 越预算 LRU 逐出笔数、live_peak_kb = GPU 顶点账峰值——#168 起后
+        // 两者即池 LRU/重建瞬态放大的真机取证面）——真机 Mali 预算取证
+        // 行，口径表见 docs/memory-budget.md。
         // E0（蓝图 §3-E0）：同行扩展帧预算分段耗时——帧内执行序
         // fixed_step（含 ecs 单列）→ stream（init/edge/io/remesh 子段）→
         // flush → draw；mean = 窗口内帧均值、max = 单帧峰值（微秒）。
@@ -3208,7 +3210,7 @@ impl AppState {
             let tt = runtime.take_frame_timing_stats();
             let mean = tt.mean_us();
             log::info!(
-                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} evicted={} live_peak_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
                 st.opaque_draws,
                 st.water_draws,
                 ms.draw_entries,
@@ -3220,6 +3222,8 @@ impl AppState {
                 ms.fallback_uploads,
                 ms.resident_bytes / 1024,
                 ms.cpu_pool_bytes / 1024,
+                ms.evicted_chunks,
+                ms.live_vertex_peak_bytes / 1024,
                 mean.fixed_step_us,
                 mean.ecs_us,
                 mean.stream_us,

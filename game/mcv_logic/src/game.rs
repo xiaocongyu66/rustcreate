@@ -78,6 +78,10 @@ pub struct MeshStats {
     pub resident_bytes: u64,
     /// CPU 侧留存网格字节（#80 无 LRU 池，计入内存预算面）。
     pub cpu_pool_bytes: u64,
+    /// 越 CPU_POOL_BUDGET_BYTES 的 LRU 逐出累计笔数（#168）。
+    pub evicted_chunks: u64,
+    /// GPU 顶点字节账历史峰值（#168 重建瞬态放大实证分子）。
+    pub live_vertex_peak_bytes: u64,
 }
 
 /// Abstraction over the C++ mesher so the runtime wiring can land before
@@ -249,6 +253,8 @@ impl ChunkMesher for RustMesher {
             fallback_uploads: u.fallback_uploads,
             resident_bytes: b.resident_bytes,
             cpu_pool_bytes: b.cpu_pool_bytes,
+            evicted_chunks: b.evicted_chunks,
+            live_vertex_peak_bytes: b.live_vertex_peak_bytes,
         }
     }
 }

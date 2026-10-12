@@ -255,8 +255,10 @@ glam/log/serde_json/image）。
 ### E7 —— 视距天花板工程（rd 16/32 前置，依赖 E4/E6）
 
 - **目标**：把"渲染距离拉满"从内存不可能变成可选项。三件事：
-  1. **palette 压缩**（memory-budget.md §1 已登记"后续刀"：u16 平铺 192 KiB
-     → 常见地形 4 bit ≈ 12 KiB/块，~6-16×）——预算表与两道预算门同步重算；
+  1. **palette 压缩**——**E7a 已落地**（`mcv_core::VoxelStore`，main
+     f4cdec80；memory-budget.md §1 已按 palette 口径重算）。债登记：
+     盘格式仍平铺 u16（save/load 一次编解码，盘 palette 化 = 债）、
+     global 档位宽 16、无 env 回滚开关（回退 = 分支 revert）；
   2. **streaming 增量化**：`level_map`×2、`sorted_keys`×2、票表重建从每帧
      O(N) 改事件驱动/脏标记（票变更沿 + chunks 集合变更沿触发）；
   3. `DIST_MAX` 解禁路径：options.rs:9 的 4..16 → 4..32 与设置 UI 步进域、

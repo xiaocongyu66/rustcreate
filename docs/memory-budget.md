@@ -147,4 +147,3 @@ render-stats 取证（`docs/real-machine-checklist.md` §9）。
   /复活缓存提前落盘释放）留后续刀。
 - **worker 侧在途副本**：worldgen 后台线程每块临时体素缓冲（生成期
   短命，≤4 并发）；不在 resident 口径内。
-- **palette 压缩列待做**（§1 原版对照）：落地后本表全面重算。
