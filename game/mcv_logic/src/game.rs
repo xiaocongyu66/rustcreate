@@ -615,8 +615,9 @@ impl Default for InputState {
 pub struct FrameTiming {
     /// fixed_step 总窗口（一帧内全部固定步累计；含下方 ecs 子段）。
     pub fixed_step_us: u64,
-    /// 其中 ECS Fixed 阶段单列：两次整表快照 insert（`MobServices`/
-    /// `DropWorld` 的 chunks 克隆）+ `schedule.run_stage(Fixed)`。
+    /// 其中 ECS Fixed 阶段单列：两次快照 insert（`MobServices`/
+    /// `DropWorld`，E6 起 chunks/tickets 均为 Arc 计数递增）+
+    /// `schedule.run_stage(Fixed)`。
     pub ecs_us: u64,
     /// stream() 总窗口。
     pub stream_us: u64,
@@ -792,8 +793,15 @@ pub struct GameRuntime {
     /// 票表（刀 3a：原版 TicketStorage + DistanceManager 裁剪镜像，见
     /// [`crate::ticket`]）：玩家加载/模拟票存储与级别派生。卸载候选与
     /// status 推进授权均由级别驱动（原版卸载迟滞 = 票级别语义，
-    /// ChunkMap.java:376-381）。
-    pub(crate) tickets: TicketTable,
+    /// ChunkMap.java:376-381）。E6 同族收口（引擎清洁波）：`Arc` 共享进
+    /// [`MobServices`]（固定步快照 = 计数递增，每步整表克隆已消除），
+    /// 写侧走 `Arc::make_mut`；变更才重建（锚点不变帧不换分配，等价
+    /// 原版 addPlayer/updateViewDistance 才动票表，DistanceManager.java:
+    /// 110-117,:152-157）。
+    pub tickets: Arc<TicketTable>,
+    /// 票表重建锚点缓存（refresh_player_tickets 的「变更才重建」判据，
+    /// 见 [`Self::tickets`] 字段注；None = 尚未建表）。
+    ticket_anchor: Option<(ChunkPos, i32)>,
     /// 卸载复活缓存（原版 ChunkMap.pendingUnloads，ChunkMap.java:388-392）：
     /// 越环区块先从活动 `chunks` 摘除（GPU 网格条目同步释放），数据留在
     /// 此处；重进请求环时原位复活、不重 IO 不重生成；每帧限量落盘，
@@ -1552,7 +1560,8 @@ impl GameRuntime {
             border_synced: HashMap::new(),
             stream_frame: 0,
             req_frames: HashMap::new(),
-            tickets: TicketTable::new(),
+            tickets: Arc::new(TicketTable::new()),
+            ticket_anchor: None,
             pending_unloads: Vec::new(),
             pending_light_edges: Vec::new(),
             mesh_priority: None,
@@ -1894,7 +1903,12 @@ impl GameRuntime {
         self.sim_dist() + 3
     }
 
-    /// 玩家票维护（刀 3a 接线）：每帧从玩家锚点全量重建——
+    /// 玩家票维护（刀 3a 接线；引擎清洁波改「变更才重建」）：锚点
+    /// (center, sim_dist) 与上次重建一致则整帧跳过——原版只在
+    /// addPlayer/removePlayer（跨块迁移）与 updateViewDistance/
+    /// updateSimulationDistance（视距变更）动票表（DistanceManager.java:
+    /// 110-117,:152-157），稳态帧本就不重发；本仓判定同一输入。锚点
+    /// 变更时全量重建：
     /// - PLAYER_SIMULATION 单锚点（玩家块一张，级别 max(0, 31 − sim_dist)；
     ///   DistanceManager.java:110-117 addPlayer / :132-134）；
     /// - PLAYER_LOADING 方环（Chebyshev ≤ view_dist 的每块一张、级别 31；
@@ -1904,18 +1918,25 @@ impl GameRuntime {
     /// 支撑环，票发放半径对齐它后，级别传播给出的加载晕圈恰到 rd+4 ≡
     /// 旧 `unload_dist`，卸载候选集逐块等价，见 [`crate::ticket`] 模块注释）。
     ///
-    /// 债：原版为增量 tracker（addPlayer/removePlayer/updateViewDistance +
-    /// queueLevels 传播队列），本仓每帧重建 + 解析求 min——传播不动点等价
-    /// （ChunkTracker.java:23-27,:66），增量性不复制。
+    /// 重建走 `Arc::make_mut`（[`Self::tickets`] 字段注）：快照存活时
+    /// 复刻换分配、旧快照冻结在写前锚点；无共享时原地改，零复制。
+    ///
+    /// 债：原版为增量 tracker（queueLevels 传播队列 + 票级增删），本仓
+    /// 变更时全量重建 + 解析求 min——传播不动点等价（ChunkTracker.java:
+    /// 23-27,:66），增量性不复制。
     fn refresh_player_tickets(&mut self, center: ChunkPos) {
         let vd = self.sim_dist();
+        if self.ticket_anchor == Some((center, vd)) {
+            return; // 锚点与视距均不变：原版语义下票表无操作（锁见 tests/cow.rs 锁 5）
+        }
+        self.ticket_anchor = Some((center, vd));
         let sim_level = (ticket::ENTITY_TICKING_LEVEL - vd).max(0) as u8;
-        self.tickets.clear();
-        self.tickets
-            .add_ticket(center, TicketType::PlayerSimulation, sim_level);
+        let tickets = Arc::make_mut(&mut self.tickets);
+        tickets.clear();
+        tickets.add_ticket(center, TicketType::PlayerSimulation, sim_level);
         for dx in -vd..=vd {
             for dz in -vd..=vd {
-                self.tickets.add_ticket(
+                tickets.add_ticket(
                     ChunkPos::new(center.x + dx, center.z + dz),
                     TicketType::PlayerLoading,
                     ticket::ENTITY_TICKING_LEVEL as u8,
@@ -2571,6 +2592,13 @@ impl GameRuntime {
         self.io_frames.insert(pos, (self.stream_frame, seq));
     }
 
+    /// 测试钩子：清空在途读记账（等价「全部完成回执已消化」的排空态），
+    /// 供读盘配额「释放→恢复投递」语义在不依赖真实 IO 时序的情况下驱动。
+    #[doc(hidden)]
+    pub fn io_debug_clear_loading(&mut self) {
+        self.io_frames.clear();
+    }
+
     /// 测试钩子：只消化 IO 完成回执（等价 stream 帧头的 drain 半段，不跑
     /// 环扫描/写回预算）——写路径语义测试用它驱动回执而不引入预算流竞争。
     #[doc(hidden)]
@@ -2739,11 +2767,14 @@ impl GameRuntime {
     /// - 加载门 = status ≥ Surface（世界生成完成度），网格/上传另判
     ///   （解耦点①，见 load_gate_parts）；出生投放门维持出生列及邻域
     ///   TerrainReady 现状映射（Spawn 态语义归出生门）。
-    /// - IO 预算化：读盘 ≤4/帧、卸载写盘常态 ≤2/帧（积压超门追加）、
-    ///   脏块写回 ≤2/帧（app.rs 30s 全量存盘退化为兜底扫描）。E4 起
-    ///   这些预算是**投递**预算：region open/read/write 在独立 IO 线程
-    ///   执行（原版同构，ChunkMap.java:773/:566/:924），完成回执在下一帧
-    ///   头消化；`MCV_IO_ASYNC=0` 回落同步执行路。
+    /// - IO 预算化：读盘 ≤4/帧 + 在途读笔数 ≤ [`ticket::in_flight_quota`]
+    ///   名额（回执释放）、卸载写盘常态 ≤2/帧（积压超门追加）、脏块写回
+    ///   ≤2/帧 + 在途写高水位 IO_HIGH_WATER（app.rs 30s 全量存盘退化为
+    ///   兜底扫描；高水位对照原版 MAX_ACTIVE_CHUNK_WRITES=128，
+    ///   ChunkMap.java:125/:505）。E4 起这些预算是**投递**预算：region
+    ///   open/read/write 在独立 IO 线程执行（原版同构，ChunkMap.java:
+    ///   773/:566/:924），完成回执在帧头 drain 段消化（先于本帧投递，
+    ///   投递/回执观测窗跨帧）；`MCV_IO_ASYNC=0` 回落同步执行路。
     pub fn stream(&mut self) {
         // E0：stream 总窗口起点（纯记账，见 [`FrameTiming`]；子段窗口互不
         // 重叠且均落在本窗内——init/edge/io/remesh/flush 之和 ≤ stream）。
@@ -2894,6 +2925,19 @@ impl GameRuntime {
         self.pending_unloads = pend;
         self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
 
+        // E4：IO 完成回执消化（读盘回填 advance_to(TerrainReady) / miss 转
+        // 生成请求 / 写盘清脏或保脏）。置于脏块写回与请求段之前（引擎
+        // 清洁波时序收口）：①读完成的 miss 在本帧直接发生成请求
+        // （req_frames 计入下方节流）；②读/写在途记账先行解除，本帧的
+        // 写回投递（同块重复投递门/高水位）与环扫描看到最新状态；③本帧
+        // 投递的写不再被同帧消化——投递/回执观测窗固定跨帧（旧序下快盘
+        // IO 线程可在「写回段→drain 段」间隙内完成，帧内在途写被同帧吃
+        // 掉，io_async 竞态测把「stream 后在途 ≥1」误判翻红，E4 期偶发红
+        // 真源之一）。
+        while let Some(done) = self.io.as_mut().and_then(|io| io.try_recv()) {
+            self.process_io_done(done);
+        }
+
         // 脏块写回（审计 §5.3：app.rs 30s 全量存盘是周期性掉帧源）：
         // 每帧 ≤2 块，30s 全量兜底通常只剩扫描。SAVE 位只在编辑与新生成
         // 时置位（commit_terrain / mark_dirty，写盘成功即清），脏集本身
@@ -2923,14 +2967,6 @@ impl GameRuntime {
             self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
         }
 
-        // E4：IO 完成回执消化（读盘回填 advance_to(TerrainReady) / miss 转
-        // 生成请求 / 写盘清脏或保脏）。置于请求段之前：读完成的 miss 在本帧
-        // 直接发生成请求（req_frames 计入下方节流），读/写在途记账先行解除，
-        // 本帧的环扫描与投递预算才看到最新状态。
-        while let Some(done) = self.io.as_mut().and_then(|io| io.try_recv()) {
-            self.process_io_done(done);
-        }
-
         // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
         // 段之前：先释放完成任务的在途名额，本帧的 pop 才能把名额补给新
         // 任务（原版 release→popTasks 的衔接；帧驱动下同帧先收后发）。
@@ -2957,20 +2993,30 @@ impl GameRuntime {
         // 动一点就换一批块）。
         //
         // 票驱动节流（原版 ThrottlingChunkTaskDispatcher）：在途生成集合
-        // （pending_generate = req_frames 键集）达到 MAX_CHUNKS_IN_EXECUTION
-        // 前不再 pop 新玩家票任务（ThrottlingChunkTaskDispatcher.java:29-31
-        // popTasks；集合本身 :13；上限 4 = DistanceManager.java:55 构造参
-        // 数）。环序遍历 = 优先级队列按距离出队的等价序（近优先）。三条
+        // （pending_generate = req_frames 键集）达到名额
+        // [`ticket::in_flight_quota`]（= max(4, workers)，下限锚定原版
+        // DistanceManager.java:55 构造参数 4；E2 遗留债本波闭合——不再
+        // 读死常量）前不再 pop 新玩家票任务（ThrottlingChunkTaskDispatcher
+        // .java:29-31 popTasks；集合本身 :13）。环序遍历 = 优先级队列按
+        // 距离出队的等价序（近优先）。三条
         // 填充路径的预算切分（对照原版）：
         // - 复活：即时、无预算（原版 updateChunkScheduling 里 pendingUnloads
         //   命中即原位复活，ChunkMap.java:385-388）；
-        // - 读盘：保留 4/帧时间片（原版 IO 走独立 executor 不入节流器；
-        //   本仓同步 IO 在主线程，无预算会尖刺——自研债）。IO 片耗尽的
-        //   miss 不得绕过读盘直发生成（存档会被生成结果覆盖）；
+        // - 读盘：保留 4/帧时间片 + 在途笔数 ≤ 名额（回执端解除）。原版
+        //   IO 走独立 executor 不入节流器（IOWorker.java:192-204 读走
+        //   FOREGROUND 优先队列），本仓读投递排在主线程请求环内，慢盘时
+        //   无门 = 在途队列无上界——名额门为本仓自研补位（对照差异登记于
+        //   ticket.rs 名额注释）。IO 片耗尽或名额打满都不得绕过读盘直接
+        //   生成（存档会被生成结果覆盖）；
         // - 生成：受在途名额约束；worker TaskPool 本身不设帧预算（原版
         //   worldgen/light dispatcher 无节流，ChunkMap.java:195-196）。
-        let mut pops = ticket::MAX_CHUNKS_IN_EXECUTION.saturating_sub(self.req_frames.len());
+        let quota = ticket::in_flight_quota(mcv_core::world_worker_count());
+        let mut pops = quota.saturating_sub(self.req_frames.len());
         let mut io_budget = 4usize;
+        // 读盘名额门（异步路，环内逐格判定 `io_frames.len() < quota`）：
+        // 在途读 ≥ 名额 → 停投新读（回执消化在帧头 drain，配额在完成回执
+        // 处释放），本帧投递也不突破名额硬不变量。同步路 io_frames 恒空，
+        // 门天然不触发（读在环内即时完成，无在途队列可膨胀）。
         for r in 0..=self.sim_dist() {
             for dx in -r..=r {
                 for dz in -r..=r {
@@ -2989,7 +3035,7 @@ impl GameRuntime {
                         continue;
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
-                    if io_budget > 0 {
+                    if io_budget > 0 && self.io_frames.len() < quota {
                         if let Some(io) = self.io.as_mut() {
                             // E4 读异步化（≤4/帧保留为**投递**预算，不再执行）：
                             // Empty 手柄先在册 + io_frames 记账（复用 300 帧
@@ -3019,8 +3065,9 @@ impl GameRuntime {
                             continue;
                         }
                     } else {
-                        // IO 时间片耗尽：本帧跳过该 miss（未验存档前不得
-                        // 直发生成），留待下帧。
+                        // IO 时间片耗尽或读盘名额打满：本帧跳过该 miss
+                        // （未验存档前不得直发生成），留待下帧——名额门
+                        // 在完成回执处解除（process_io_done 清 io_frames）。
                         continue;
                     }
                     if pops == 0 {
@@ -3805,8 +3852,9 @@ impl GameRuntime {
                 ticks_step: n.min(u32::MAX as u64) as u32,
                 difficulty: self.difficulty.id(),
                 creative: self.mode == GameMode::Creative,
-                // 实体门输入：模拟票级别视图快照（DistanceManager.java:136-138）。
-                tickets: self.tickets.clone(),
+                // 实体门输入：模拟票级别视图快照（DistanceManager.java:
+                // 136-138）。Arc 共享读（计数递增，每步整表克隆已消除）。
+                tickets: Arc::clone(&self.tickets),
             });
             // 掉落物系统同快照（同一 Arc，计数递增）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
@@ -6658,9 +6706,11 @@ pub struct MobServices {
     /// 票表快照（[`TicketTable`]）：实体门按实体所在块查
     /// `level_of_type(PlayerSimulation)` ≤ ENTITY_TICKING——原版
     /// `inEntityTickingRange`（DistanceManager.java:136-138）的消费侧
-    /// 镜像。票表每帧从玩家锚点全量重建（refresh_player_tickets），此处
-    /// 克隆为固定步快照（表恒小，与 chunks 的 Arc 克隆同量级）。
-    pub tickets: TicketTable,
+    /// 镜像。票表按锚点变更重建（refresh_player_tickets），此处 Arc
+    /// 共享为固定步快照（计数递增；每固定步整表克隆已消除，E6 同族，
+    /// 写侧 `Arc::make_mut` 后旧快照冻结在写前锚点——读路径持旧快照
+    /// 安全，语义锁见 tests/cow.rs 锁 5）。
+    pub tickets: Arc<TicketTable>,
 }
 
 /// 近战命中事件（信号）：AI 系统发射，GameRuntime 在固定步末 drain 后结算

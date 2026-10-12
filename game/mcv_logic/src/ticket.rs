@@ -29,8 +29,11 @@
 //! 本仓裁剪（逐条显式登记，禁止沉默近似）：
 //! - **传播队列 → 解析式**：票集合恒小（≤ (2·view_dist+1)² + 1 张），对在册
 //!   区块解析求 min 即传播不动点；原版 queueLevels/runUpdates 的增量性不复制。
-//! - **每帧全量重建玩家票**：原版 addPlayer/removePlayer + updateViewDistance
-//!   走增量 tracker；本仓锚点随 center 迁移每帧重发，不动点等价。
+//! - **玩家票按锚点变更重建**：原版 addPlayer/removePlayer +
+//!   updateViewDistance/updateSimulationDistance 才动票表
+//!   （DistanceManager.java:110-117,:152-157）；本仓锚点 (center,
+//!   sim_dist) 变更时全量重发、不变帧跳过（等价原版的「变更才动」），
+//!   不动点等价。
 //! - **票种只接两类**：PLAYER_LOADING / PLAYER_SIMULATION（本仓无 force/
 //!   chunk-debug/post-teleport 等票种）。
 //! - **每类每块单票**：原版同 pos 同 type 可持票集（SortedArraySet），本仓
@@ -77,10 +80,13 @@ pub const MAX_CHUNKS_IN_EXECUTION: usize = 4;
 /// 不改票级别/卸载/节流机制本身（ThrottlingChunkTaskDispatcher 的
 /// pop 门语义原样保留）。
 ///
-/// 消费侧接线为 E2 遗留债：game.rs 票驱动请求环当前仍读
-/// [`MAX_CHUNKS_IN_EXECUTION`]，改读本函数（传
-/// `mcv_core::pool::world_worker_count()`）属下一波 game.rs 文件面
-/// （本波红线禁触）。
+/// 消费侧（引擎清洁波接线，E2 遗留债闭合）：game.rs 票驱动请求环的
+/// pop 预算与**读盘投递**同读本函数——原版读盘在被节流的票任务流之外
+/// （独立 IO executor + FOREGROUND 优先队列，IOWorker.java:192-204，
+/// 仅保存受 MAX_ACTIVE_CHUNK_WRITES=128 门，ChunkMap.java:125/:505），
+/// 本仓读投递排在主线程请求环内，慢盘时无门则队列无上界，故名额门
+/// 覆盖读侧（读写门独立：写侧高水位 IO_HIGH_WATER 另计，见 game.rs
+/// `post_save`）。
 pub fn in_flight_quota(workers: usize) -> usize {
     MAX_CHUNKS_IN_EXECUTION.max(workers)
 }
@@ -95,8 +101,11 @@ pub enum TicketType {
 }
 
 /// 票存储：pos → [(票种, 级别)]。多票取 min = 原版 min-ticket 语义。
-/// Clone 供固定步快照进 [`MobServices`]（实体门按所在块查模拟票级别，
-/// DistanceManager.java:136-138 的消费侧形态；表恒小，克隆为计数级成本）。
+/// 固定步快照进 [`MobServices`]（实体门按所在块查模拟票级别，
+/// DistanceManager.java:136-138 的消费侧形态）走 `Arc` 共享读 + 写侧
+/// `Arc::make_mut`（E6 COW 同族，game.rs `chunks_mut` 先例；语义锁见
+/// tests/cow.rs 锁 5）——每固定步整表克隆（HashMap 逐节点 + 每块票
+/// Vec）已消除为一次计数递增。
 #[derive(Clone, Default)]
 pub struct TicketTable {
     tickets: HashMap<ChunkPos, Vec<(TicketType, u8)>>,
