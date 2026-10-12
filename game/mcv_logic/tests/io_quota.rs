@@ -56,12 +56,12 @@ fn terrain_chunk(pos: ChunkPos) -> Arc<ChunkHandle> {
         for y in -64..=-63 {
             for zz in 0..16usize {
                 for xx in 0..16usize {
-                    vg[vidx(xx, y, zz)] = BlockId(1);
+                    vg.set_flat(vidx(xx, y, zz), BlockId(1));
                 }
             }
         }
     }
-    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    let ids: Vec<u16> = h.voxels.read().unwrap().decode_column();
     *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
     h.advance_to(Stage::TerrainReady);
     h.mark_dirty(dirty::SAVE);
