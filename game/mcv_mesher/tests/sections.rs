@@ -101,7 +101,7 @@ fn single_edit_products_combine_equals_direct_build() {
         .iter()
         .position(|b| b.name == "stone")
         .unwrap_or(1) as u16;
-    let scenes = ["plains", "cave", "water", "noncube_mix", "bounds"];
+    let scenes = ["plains", "cave_full9", "water", "noncube_mix", "bounds"];
     let mut checked = 0usize;
     for name in scenes {
         let center_a = scene_by_name(name);

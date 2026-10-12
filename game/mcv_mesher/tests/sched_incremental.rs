@@ -75,7 +75,7 @@ fn bytes_of(d: &MeshDone, kind: u32) -> Option<(Vec<u8>, Vec<u32>)> {
 fn seed_then_narrow_edit_bit_identical_with_low_work() {
     let (sched, mut results) = MeshScheduler::new(1);
     let side = chunk(0, 0xF0);
-    let center_a = scene_by_name("cave");
+    let center_a = scene_by_name("cave_full9");
     // 播种笔：rows=ALL、old=None —— 字节必须等于直呼，work = 整柱。
     sched.submit_incremental(job(&center_a, &side), true, Rows::ALL, None);
     let done = wait_one(&mut results);
