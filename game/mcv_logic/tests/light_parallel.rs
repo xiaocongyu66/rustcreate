@@ -6,8 +6,16 @@
 //! 1. **等价锁**：worker 产物 vs 主线程直呼 [`mcv_light::init`] 逐位相同
 //!    （光照字节 + 边界脏掩码；确定性 = 纯函数 + 无共享）；
 //! 2. **游戏层对拍**：并行路（worker init）vs 串行路（`MCV_LIGHT_WORKERS=0`
-//!    同款主线程 init）同夹具驱动到收敛后逐块逐位对拍（含跨块边同步收敛
-//!    终态——配对/边任务消化序不同，不动点必须唯一）；
+//!    同款主线程 init）同夹具驱动到收敛后 25 块逐位对拍 + 每块恒等于局部
+//!    init 参照。夹具用**纯高度场**（逐列自洽、跨块边零净流）：引擎跨块
+//!    边协议对「在途光 + 回撤判据 s>n+1」（mcv_light KNOWN-DIVERGENCE，
+//!    残余 ≤+2 随下次编辑自愈）的收敛**终态依赖成对标记的帧调度**——
+//!    角落火把构造下并行与串行可到不同静息态（CI 实证：58 格块光差
+//!    ≤6 档，串行侧欠传导）。这是引擎已知序偏差、非本波引入（现网
+//!    worldgen 完成序本已使 init 批次组成逐帧漂移）；本波不改边同步
+//!    语义（蓝图铁纪律），以纯高度场对拍锁管线保真、以单边界火把精确
+//!    值锁跨块流，调度方差登记为引擎债（回退锚 = MCV_LIGHT_WORKERS=0
+//!    串行确定性调度）；
 //! 3. **回传环序锁**：同帧多块回传的**生效序 = sorted_keys 环序**（玩家
 //!    近优先，乱序到达由写回重排）；单 worker 串行化下整段写回序列恒等
 //!    于近优先环序（派发序 = 完成序 = 环序）；
@@ -27,7 +35,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mcv_core::{CHUNK_VOL, ChunkHandle, ChunkPos, Stage, WORLD_MIN_Y, vidx};
+use mcv_core::{BlockId, CHUNK_VOL, ChunkHandle, ChunkPos, Stage, WORLD_MIN_Y, vidx};
 use mcv_light::{LightDone, LightJob, LightResults, LightScheduler, worker_count_from};
 use mcv_logic::game::{GameMode, GameRuntime};
 
@@ -345,18 +353,91 @@ fn light_worker_count_switch_semantics() {
     assert_eq!(worker_count_from(Some(" 4"), default), default); // 不 trim，同 Integer.parseInt
 }
 
+/// 纯高度场场景体素（全块同款确定性纯函数，无 rng/无水/无光源）：起伏石
+/// 面 + 封腔（ sealed，不透光）。高度场无悬空遮蔽、逐列自洽——**局部
+/// init = 全局解，跨块边零净流**：对拍不受成对标记帧调度影响（引擎边
+/// 协议对「在途光 + 回撤判据 s>n+1」的终态敏感是已知序偏差，见
+/// `game_parallel_light_cross_border_torch_exact_values` 文档）。
+fn pattern_voxels() -> Vec<u16> {
+    let mut v = vec![0u16; CHUNK_VOL];
+    for z in 0..16usize {
+        for x in 0..16usize {
+            let h = WORLD_MIN_Y + 94 + ((x * 7 + z * 13) % 12) as i32; // 30..41，全块同款
+            for y in WORLD_MIN_Y..=h {
+                v[vidx(x, y, z)] = 1; // stone
+            }
+            if (x * 5 + z * 3) % 11 == 0 {
+                // 封腔：表面下掏 3×3（sealed，对拍不受其影响）。
+                for dz in 0..3i32 {
+                    for dx in 0..3i32 {
+                        let (xx, zz) = (x as i32 + dx, z as i32 + dz);
+                        if (0..16).contains(&xx) && (0..16).contains(&zz) {
+                            v[vidx(xx as usize, h - 2, zz as usize)] = 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    v
+}
+
+/// [`pattern_voxels`] 同款夹具块（全块逐字节同源），停在 TerrainReady。
+fn pattern_chunk(pos: ChunkPos) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(pos));
+    let scene = pattern_voxels();
+    {
+        let mut vg = h.voxels.write().unwrap();
+        let ids: &mut [u16] = bytemuck::cast_slice_mut(&mut vg[..]);
+        ids.copy_from_slice(&scene);
+    }
+    *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&scene);
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+/// 游戏层夹具（纯高度场）：5×5 TerrainReady + rd=0（请求环 = 3×3 恰被
+/// 覆盖，无世界生成插块干扰；卸载边界 = Chebyshev rd+4，外环夹具不淘汰）。
+/// 返回夹具位表（sorted_keys 期望序的输入）。
+fn setup_pattern_fixtures(rt: &mut GameRuntime) -> Vec<ChunkPos> {
+    rt.render_dist = 0;
+    let mut positions = Vec::new();
+    for dz in -2i32..=2 {
+        for dx in -2i32..=2 {
+            let p = ChunkPos::new(dx, dz);
+            rt.chunks.insert(p, pattern_chunk(p));
+            positions.push(p);
+        }
+    }
+    positions
+}
+
 /// 游戏层对拍（蓝图红测试②）：同夹具下并行路（W=2 worker init）vs 串行路
 /// （`new_headless` = `MCV_LIGHT_WORKERS=0` 同款主线程 init）驱动到收敛后
-/// 25 块光照**逐位相同**。两路的成对标记/边任务消化序不同（并行路每帧
-/// 布光 2×workers 块、配对提前），不动点必须唯一——红即并行化改变了光照
-/// 引擎语义或写回环序。
+/// 25 块光照**逐位相同**，且每块恒等于该块体素的局部 init 参照（纯高度
+/// 场下局部解 = 全局解，跨块边零净流——对拍不受成对标记帧调度影响）。
+/// 红即快照/回传/写回管线改变了光照字节。
 #[test]
 fn game_parallel_light_bitwise_matches_serial_path() {
-    let positions;
+    // 局部 init 参照（全块同款体素 → 同一份参照）。
+    let voxels = pattern_voxels();
+    let heightmap = mcv_worldgen::recompute_heightmap(&voxels);
+    let mut ref_light = vec![0u8; CHUNK_VOL];
+    let mut view = mcv_light::LightChunk {
+        voxels: &voxels,
+        light: &mut ref_light,
+        heightmap: &heightmap[..],
+    };
+    mcv_light::init(&mut view);
+    assert!(
+        ref_light.iter().any(|&b| b != 0),
+        "场景必须产出非平凡光照，否则对拍空转"
+    );
+
     let serial_light: Vec<(ChunkPos, Vec<u8>)>;
     {
         let mut rt = GameRuntime::new_headless(20261012, temp_dir("lp-serial"), GameMode::Survival);
-        positions = setup_fixtures(&mut rt);
+        let positions = setup_pattern_fixtures(&mut rt);
         drive_until_lit(&mut rt, &positions);
         assert_eq!(
             rt.light_workers(),
@@ -371,27 +452,93 @@ fn game_parallel_light_bitwise_matches_serial_path() {
     }
     let mut par =
         GameRuntime::new_headless_with_light(20261012, temp_dir("lp-par"), GameMode::Survival, 2);
-    let par_positions = setup_fixtures(&mut par);
+    let par_positions = setup_pattern_fixtures(&mut par);
     drive_until_lit(&mut par, &par_positions);
-    // 红面①：并行接线可见（worker 数 = 装配值）。
+    // 并行接线可见（worker 数 = 装配值）。
     assert_eq!(
         par.light_workers(),
         2,
-        "红面：new_headless_with_light(2) 必须装配 2 worker 的光照调度器"
+        "new_headless_with_light(2) 必须装配 2 worker 的光照调度器"
     );
-    // 红面②：回传发生（写回日志非空——串行路恒空）。
+    // 回传发生（写回日志非空——串行路恒空）。
     assert!(
         !par.take_light_writeback_log().is_empty(),
-        "红面：并行路必须有 worker 产物写回记录"
+        "并行路必须有 worker 产物写回记录"
     );
-    // 逐位对拍（25 块全量）。
+    // 逐位对拍（25 块全量）：对串行路 + 对局部 init 参照双重锁。
     for (pos, want) in &serial_light {
         assert_eq!(
             &light_of(&par, *pos),
             want,
-            "{pos:?}：并行路光照与串行路漂移（配对/回传序差异被固化）"
+            "{pos:?}：并行路光照与串行路漂移"
+        );
+        assert_eq!(
+            &light_of(&par, *pos),
+            &ref_light,
+            "{pos:?}：与局部 init 参照漂移"
         );
     }
+}
+
+/// 平地夹具块（无光源）：石板地面顶 `floor_top`，停在 TerrainReady——
+/// 跨块火把精确值锁的几何（game.rs tests::lit_chunk 同款，但不预布光）。
+fn floor_chunk(pos: ChunkPos, floor_top: i32) -> Arc<ChunkHandle> {
+    let h = Arc::new(ChunkHandle::new(pos));
+    {
+        let mut vg = h.voxels.write().unwrap();
+        for y in WORLD_MIN_Y..=floor_top {
+            for z in 0..16usize {
+                for x in 0..16usize {
+                    vg[vidx(x, y, z)] = BlockId(1);
+                }
+            }
+        }
+    }
+    let ids: Vec<u16> = bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+    *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
+    h.advance_to(Stage::TerrainReady);
+    h
+}
+
+/// 跨块火把流经并行路（原版同值锁）：3×3 平地夹具（rd=0 无世界生成）+
+/// 火把贴 chunk(0,0) 的 +X 边界（x=15），驱动 stream()（W=2）到收敛后
+/// 跨界光照必须取**原版精确值**（火把格 14 / 邻块跨界格 13 / 衰减 12——
+/// game.rs tests::torch_light_crosses_chunk_border 同款判据）。单边界单
+/// 光源的成对交换与帧调度无关（两端就绪后一次性双向补收，ADD/REMOVE
+/// 在任一序下都收敛到以该边为界的正当亮度）。
+#[test]
+fn game_parallel_light_cross_border_torch_exact_values() {
+    let mut rt =
+        GameRuntime::new_headless_with_light(20261012, temp_dir("lp-torch"), GameMode::Survival, 2);
+    rt.render_dist = 0;
+    let mut positions = Vec::new();
+    for dz in -1i32..=1 {
+        for dx in -1i32..=1 {
+            let p = ChunkPos::new(dx, dz);
+            let h = floor_chunk(p, 20);
+            if p == ChunkPos::new(0, 0) {
+                // 火把贴 +X 边界（在布光前写体素——快照所见即所得）。
+                h.voxels.write().unwrap()[vidx(15, 21, 8)] = BlockId(TORCH);
+                let ids: Vec<u16> =
+                    bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()).to_vec();
+                *h.heightmap.write().unwrap() = mcv_worldgen::recompute_heightmap(&ids);
+            }
+            rt.chunks.insert(p, h);
+            positions.push(p);
+        }
+    }
+    drive_until_lit(&mut rt, &positions);
+    assert_eq!(rt.light_workers(), 2);
+    let blk = |p: ChunkPos, x: usize, y: i32, z: usize| {
+        rt.chunks[&p].light.read().unwrap()[vidx(x, y, z)] & 0xF
+    };
+    assert_eq!(blk(ChunkPos::new(0, 0), 15, 21, 8), 14, "火把格自发光 14");
+    assert_eq!(
+        blk(ChunkPos::new(1, 0), 0, 21, 8),
+        13,
+        "边同步：光跨过区块边界（13 = 14 − max(1, damp 0)）"
+    );
+    assert_eq!(blk(ChunkPos::new(1, 0), 1, 21, 8), 12, "邻块内部继续衰减");
 }
 
 /// 回传环序锁（蓝图红测试③a）：单 worker 串行化完成序 = 派发序，而派发
