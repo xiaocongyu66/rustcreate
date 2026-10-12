@@ -37,7 +37,7 @@ fn collect_instances_maps_kinds() {
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
     app.resources.insert(PassiveServices {
-        chunks: chunks.clone(),
+        chunks: Arc::new(chunks.clone()),
         player_pos: Vec3::new(60.0, 64.0, 60.0),
         on_tick: true,
         seed: 9,
@@ -113,7 +113,7 @@ fn radius_clip_drops_far_mobs() {
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
     app.resources.insert(PassiveServices {
-        chunks,
+        chunks: Arc::new(chunks),
         player_pos: Vec3::new(0.0, 64.0, 0.0),
         on_tick: true,
         seed: 1,

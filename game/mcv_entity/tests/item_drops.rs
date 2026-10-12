@@ -53,7 +53,7 @@ fn setup(player_pos: Vec3) -> mcv_ecs::App {
     app.add_system(mcv_ecs::Stage::Fixed, "item_merge", item_merge_system);
     app.add_system(mcv_ecs::Stage::Fixed, "item_pickup", item_pickup_system);
     app.resources.insert(DropWorld {
-        chunks: floor_world(),
+        chunks: Arc::new(floor_world()),
         player_pos,
     });
     app

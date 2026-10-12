@@ -140,10 +140,11 @@ impl AnimState {
 // ---- 宿主快照资源 -----------------------------------------------------------
 
 /// 被动怪系统的宿主快照（与 game.rs `MobServices` 同构的耦合面）：
-/// 每固定步由宿主 `insert` 一份所有权快照；`seed` 由系统内推进（确定性
-/// 随机源——固定种子即完全可复现，测试断言位移有界依赖此性质）。
+/// 每固定步由宿主 `insert` 一份所有权快照（E6 起区块表外层 `Arc` 化，
+/// 克隆只是加计数）；`seed` 由系统内推进（确定性随机源——固定种子即
+/// 完全可复现，测试断言位移有界依赖此性质）。
 pub struct PassiveServices {
-    pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    pub chunks: Arc<HashMap<ChunkPos, Arc<ChunkHandle>>>,
     pub player_pos: Vec3,
     /// 本固定步是否跨过 20 Hz tick 边界（AI 决策门）。
     pub on_tick: bool,

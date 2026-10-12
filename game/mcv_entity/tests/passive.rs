@@ -42,7 +42,7 @@ fn harness(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec3, seed: u64
         .add(mcv_ecs::Stage::Fixed, "passive_ai", passive_ai_system);
     // 注入宿主快照（与运行时 fixed_step 同款耦合面）。
     app.resources.insert(PassiveServices {
-        chunks: chunks.clone(),
+        chunks: Arc::new(chunks.clone()),
         player_pos: player,
         on_tick: true,
         seed,

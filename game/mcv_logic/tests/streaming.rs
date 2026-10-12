@@ -507,7 +507,8 @@ fn physics_frozen_until_own_chunk_terrain_ready() {
     // 就位后物理恢复。注意 step 的次序（physics.rs:389-408）是「先按当前
     // 速度位移、后积分输入速度」——从静止起步第 1 步只建立速度（vel.x>0）
     // 而零位移，位移从第 2 步开始，故恢复断言须走多步。
-    rt.chunks.insert(ChunkPos::new(0, 0), floor_chunk(0, 0));
+    rt.chunks_mut()
+        .insert(ChunkPos::new(0, 0), floor_chunk(0, 0));
     for _ in 0..10 {
         rt.fixed_step(1.0 / 60.0);
     }
@@ -523,7 +524,8 @@ fn edge_clamp_pins_player_inside_ready_ring() {
     rt.render_dist = 4;
     for dx in -1..=1 {
         for dz in -1..=1 {
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.phase = GamePhase::Playing;
@@ -575,7 +577,8 @@ fn edge_clamp_allows_full_ready_margin() {
     rt.render_dist = 4;
     for dx in -2..=2 {
         for dz in -2..=2 {
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.phase = GamePhase::Playing;
@@ -607,7 +610,8 @@ fn unload_hysteresis_keeps_stay_ring() {
     rt.render_dist = 2; // sim=3，unload=6，旧阈值=4
     for dx in -6..=6 {
         for dz in -6..=6 {
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
@@ -636,7 +640,8 @@ fn unload_budget_and_pending_revival() {
     rt.render_dist = 2;
     for dx in -6..=6 {
         for dz in -6..=6 {
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
@@ -693,7 +698,8 @@ fn inflight_request_survives_walkaway() {
             if dx == 3 && dz == 0 {
                 continue; // 故意缺席：让 stream 真实发出 worker 请求
             }
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.player.pos = Vec3::new(8.5, 5.0, 8.5);
@@ -832,7 +838,8 @@ fn unload_backlog_gate_bounds_pending_queue() {
     rt.render_dist = 2; // sim=3，unload=6：13×13 手工装配对 rd=2 足够供淘汰
     for dx in -6..=6 {
         for dz in -6..=6 {
-            rt.chunks.insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
+            rt.chunks_mut()
+                .insert(ChunkPos::new(dx, dz), floor_chunk(dx, dz));
         }
     }
     rt.player.pos = Vec3::new(8.5, 5.0, 8.5);

@@ -51,11 +51,12 @@ pub struct ItemDrop {
     pub pickup_delay: u8,
 }
 
-/// 掉落系统的单步快照：区块表克隆（物理地形）+ 玩家位姿（拾取判定）。
-/// 与 game.rs 的 `MobServices` 同款——Arc 计数级克隆，体素数据共享。
+/// 掉落系统的单步快照：区块表 Arc 快照（物理地形）+ 玩家位姿（拾取判
+/// 定）。与 game.rs 的 `MobServices` 同款——E6 起外层 `Arc` 克隆只是加
+/// 计数，体素数据共享（宿主写路径写时复刻 / COW）。
 #[derive(Clone)]
 pub struct DropWorld {
-    pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    pub chunks: Arc<HashMap<ChunkPos, Arc<ChunkHandle>>>,
     pub player_pos: Vec3,
 }
 

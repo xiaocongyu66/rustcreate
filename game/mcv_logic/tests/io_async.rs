@@ -57,7 +57,7 @@ fn terrain_chunk(pos: ChunkPos, save: bool) -> Arc<ChunkHandle> {
 fn presave(tag: &str, pos: ChunkPos) -> std::path::PathBuf {
     let dir = temp_dir(tag);
     let mut rt = GameRuntime::new_headless(20261010, dir.clone(), GameMode::Survival);
-    rt.chunks.insert(pos, terrain_chunk(pos, true));
+    rt.chunks_mut().insert(pos, terrain_chunk(pos, true));
     rt.save_dirty(None);
     drop(rt);
     dir
@@ -101,7 +101,7 @@ fn write_failure_keeps_dirty_bit_then_retry_clears() {
     std::fs::write(dir.join("region"), b"not a directory").unwrap();
     let mut rt = headless_io("wfail", dir.clone());
     let pos = ChunkPos::new(3, 5);
-    rt.chunks.insert(pos, terrain_chunk(pos, true));
+    rt.chunks_mut().insert(pos, terrain_chunk(pos, true));
 
     // 单块投递（不走 stream 的预算写回——避免预算流竞争让脏位稳态不可
     // 观测），再用 drain-only 钩子消化失败回执：投递即清位，回执失败重置。
@@ -146,7 +146,7 @@ fn edit_during_inflight_write_wins_on_disk() {
     rt.render_dist = 1;
     let pos = ChunkPos::new(1, 3);
     let handle = terrain_chunk(pos, true);
-    rt.chunks.insert(pos, handle.clone());
+    rt.chunks_mut().insert(pos, handle.clone());
 
     // 基线落盘：盘上 = 地板 BlockId(1)。
     let base = pump(
@@ -193,7 +193,7 @@ fn inflight_load_pins_empty_chunk_against_unload() {
     let mut rt = headless_io("pin", dir);
     rt.render_dist = 1; // 缩环降噪：远端请求环不淹没断言
     let pos = ChunkPos::new(0, 0);
-    rt.chunks.insert(pos, Arc::new(ChunkHandle::new(pos)));
+    rt.chunks_mut().insert(pos, Arc::new(ChunkHandle::new(pos)));
     // 测试钩子：登记在途读（等价请求环投递后的 io_frames 记账）。
     rt.io_debug_mark_loading(pos);
 

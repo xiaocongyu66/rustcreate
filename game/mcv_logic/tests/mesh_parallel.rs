@@ -298,7 +298,7 @@ fn game_dispatch_records_and_routes_hi_priority() {
     for dz in -2i32..=2 {
         for dx in -2i32..=2 {
             let p = ChunkPos::new(dx, dz);
-            rt.chunks.insert(p, lit_floor_chunk(p, 40));
+            rt.chunks_mut().insert(p, lit_floor_chunk(p, 40));
         }
     }
     // 参照快照源：中心块 (0,0) 的 3×3 邻域（dz 外层行主序，与

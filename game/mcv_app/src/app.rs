@@ -3368,7 +3368,7 @@ mod tests {
             h.voxels.write().unwrap()[mcv_core::vidx(11, y, 9)] = mcv_core::BlockId(1);
         }
         h.advance_to(mcv_core::Stage::Uploaded);
-        rt.chunks.insert(mcv_core::ChunkPos::new(0, 0), h);
+        rt.chunks_mut().insert(mcv_core::ChunkPos::new(0, 0), h);
         rt.player.pos = glam::Vec3::new(8.5, 68.0, 9.5);
         rt.player.vel = glam::Vec3::ZERO;
         rt.player.yaw = std::f32::consts::FRAC_PI_2;

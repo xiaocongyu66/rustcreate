@@ -723,7 +723,12 @@ impl FrameTimingStats {
 
 pub struct GameRuntime {
     pub seed: u64,
-    pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    /// 活动区块表。E6：外层 `Arc` 化——每固定步喂 ECS 的两次整表快照从
+    /// 逐节点克隆降为一次计数递增（rd16 下省 ~30 万表节点/s）；主线程写
+    /// 路径（stream 的插入/删除，流式事件级频率）走 [`Self::chunks_mut`]
+    /// 写时复刻（COW：快照存活时才复制整表一次，随后原地写）。读路径经
+    /// Deref 透传，行为零变化。一致性锁见 `tests/cow.rs`。
+    pub chunks: Arc<HashMap<ChunkPos, Arc<ChunkHandle>>>,
     pub scheduler: mcv_worldgen::TerrainScheduler,
     pub player: Player,
     pub input: InputState,
@@ -1428,7 +1433,7 @@ impl GameRuntime {
         let hotbar = mcv_item::Hotbar::empty();
         let mut rt = Self {
             seed,
-            chunks: HashMap::new(),
+            chunks: Arc::new(HashMap::new()),
             scheduler: mcv_worldgen::TerrainScheduler::new(seed, mcv_core::world_worker_count()),
             player: Player::default(),
             input: InputState::default(),
@@ -2600,6 +2605,15 @@ impl GameRuntime {
         cam
     }
 
+    /// 区块表唯一写路径（E6 COW）：快照存活（Resources 仍持旧 Arc）时
+    /// `Arc::make_mut` 复刻整表一次、随后原地写；无共享时零复制。插入/
+    /// 删除频率 = 流式事件级（stream 装载/卸载/复活），非每步——平均成本
+    /// 趋近零。旧快照冻结在写前状态：与既有「insert 时点快照」语义一致，
+    /// 持旧快照的读路径（ECS 系统）安全。一致性锁见 `tests/cow.rs`。
+    pub fn chunks_mut(&mut self) -> &mut HashMap<ChunkPos, Arc<ChunkHandle>> {
+        Arc::make_mut(&mut self.chunks)
+    }
+
     /// Request missing chunks in a spiral around the player (a few per call),
     /// unload far ones. 每帧一次（帧驱动流式调度）。
     ///
@@ -2694,13 +2708,13 @@ impl GameRuntime {
                 }
                 self.req_frames.remove(&c);
                 self.io_frames.remove(&c);
-                self.chunks.remove(&c);
+                self.chunks_mut().remove(&c);
                 self.border_synced.remove(&c);
                 self.mesh_fail.remove(&c);
                 evicted += 1;
                 continue;
             }
-            self.chunks.remove(&c);
+            self.chunks_mut().remove(&c);
             self.border_synced.remove(&c);
             self.mesh_fail.remove(&c);
             // 网格记账同步回收：mesher 实现释放该块的网格字节与批次成员
@@ -2857,7 +2871,7 @@ impl GameRuntime {
                     // 392）：数据还在手里就不重开 IO、不重发 worker。
                     if let Some(i) = self.pending_unloads.iter().position(|(p, _)| *p == pos) {
                         let (_, h) = self.pending_unloads.remove(i);
-                        self.chunks.insert(pos, h);
+                        self.chunks_mut().insert(pos, h);
                         continue;
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
@@ -2877,7 +2891,7 @@ impl GameRuntime {
                             self.io_frames.insert(pos, (self.stream_frame, seq));
                             io.post(IoCommand::Load { pos, seq });
                             self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
-                            self.chunks.insert(pos, handle);
+                            self.chunks_mut().insert(pos, handle);
                             continue;
                         }
                         // E0：io 子段（请求环读盘 ≤4）窗口。（同步路 =
@@ -2887,7 +2901,7 @@ impl GameRuntime {
                         self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
                         if loaded {
                             io_budget -= 1;
-                            self.chunks.insert(pos, handle);
+                            self.chunks_mut().insert(pos, handle);
                             continue;
                         }
                     } else {
@@ -2900,7 +2914,7 @@ impl GameRuntime {
                         // 复活/读盘命中——二者不受节流。
                         continue;
                     }
-                    self.chunks.insert(pos, handle);
+                    self.chunks_mut().insert(pos, handle);
                     self.scheduler.request(pos);
                     self.req_frames.insert(pos, self.stream_frame);
                     pops -= 1;
@@ -3493,12 +3507,13 @@ impl GameRuntime {
         }
 
         // ---- mob AI + physics（ECS 调度：固定步驱动一次 Fixed 阶段）----
-        // 系统上下文借自 mobs_app 各字段（disjoint 借用）；区块表克隆与
-        // 玩家位姿每步 insert 进 Resources 快照（Arc 计数级克隆，体素数据
-        // 共享）。近战命中走事件（信号语义）：run_stage 阶段末排空命令、
-        // 翻转事件之后，GameRuntime 统一结算成玩家伤害。
+        // 系统上下文借自 mobs_app 各字段（disjoint 借用）；区块表 Arc 快照
+        // 与玩家位姿每步 insert 进 Resources（E6：外层 Arc 克隆 = 计数递增，
+        // 零表复制；主线程写路径的写时复刻见 [`Self::chunks_mut`]）。近战
+        // 命中走事件（信号语义）：run_stage 阶段末排空命令、翻转事件之后，
+        // GameRuntime 统一结算成玩家伤害。
         {
-            // E0：ECS Fixed 阶段单列（含两次整表快照 insert + run_stage）。
+            // E0：ECS Fixed 阶段单列（含两次快照 insert + run_stage）。
             let ecs_t0 = std::time::Instant::now();
             let mcv_ecs::App {
                 world,
@@ -3508,7 +3523,7 @@ impl GameRuntime {
                 schedule,
             } = &mut self.mobs_app;
             resources.insert(MobServices {
-                chunks: self.chunks.clone(),
+                chunks: Arc::clone(&self.chunks),
                 player_pos: self.player.pos,
                 on_tick: self.on_tick,
                 game_ticks: self.game_ticks,
@@ -3521,9 +3536,9 @@ impl GameRuntime {
                 // 实体门输入：模拟票级别视图快照（DistanceManager.java:136-138）。
                 tickets: self.tickets.clone(),
             });
-            // 掉落物系统同快照（Arc 计数级克隆）+ 玩家位姿（拾取判定）。
+            // 掉落物系统同快照（同一 Arc，计数递增）+ 玩家位姿（拾取判定）。
             resources.insert(mcv_entity::DropWorld {
-                chunks: self.chunks.clone(),
+                chunks: Arc::clone(&self.chunks),
                 player_pos: self.player.pos,
             });
             let mut ctx = mcv_ecs::SysCtx {
@@ -6233,14 +6248,15 @@ impl GameRuntime {
     }
 }
 
-/// mob AI 系统的单步只读快照：区块表克隆（物理步进的地形）+ 玩家位姿
-/// （追踪目标）+ **20 Hz tick 上下文**——ECS 系统拿不到 GameRuntime，
+/// mob AI 系统的单步只读快照：区块表 Arc 快照（物理步进的地形）+ 玩家
+/// 位姿（追踪目标）+ **20 Hz tick 上下文**——ECS 系统拿不到 GameRuntime，
 /// tick 语义（20 tick/s）必须经 Resources 传入（审计 C-1 的接线面）。
-/// 每固定步 `insert` 进 Resources——克隆只是加 Arc 计数，体素/光照数据
-/// 仍与原表共享。
+/// 每固定步 `insert` 进 Resources——E6 起外层 `Arc` 克隆只是加计数，
+/// 体素/光照数据仍与原表共享（宿主写路径写时复刻，
+/// [`GameRuntime::chunks_mut`]）。
 #[derive(Clone)]
 pub struct MobServices {
-    pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
+    pub chunks: Arc<HashMap<ChunkPos, Arc<ChunkHandle>>>,
     pub player_pos: Vec3,
     /// 本固定步是否跨过 20 Hz tick 边界（[`GameRuntime::on_tick`] 快照）：
     /// 所有 tick 语义计时器（noActionTime / 燃烧 / AI 决策 /
@@ -7782,7 +7798,7 @@ mod tests {
         for dx in -3i32..=3 {
             for dz in -3i32..=3 {
                 let pos = ChunkPos::new(dx, dz);
-                rt.chunks
+                rt.chunks_mut()
                     .entry(pos)
                     .or_insert_with(|| lit_chunk(dx, dz, 69));
                 rt.chunks[&pos].advance_to(Stage::Uploaded);
@@ -7881,7 +7897,7 @@ mod tests {
                                 }
                             }
                         }
-                        rt.chunks.insert(pos, h);
+                        rt.chunks_mut().insert(pos, h);
                     }
                 }
                 let new_r = rt.sim_safe_radius(pc);
@@ -7927,7 +7943,7 @@ mod tests {
         assert_eq!(rt.sim_safe_radius(pc), -1, "区块缺席必须 -1");
         let h = Arc::new(ChunkHandle::new(pc));
         h.advance_to(Stage::TerrainReady);
-        rt.chunks.insert(pc, h);
+        rt.chunks_mut().insert(pc, h);
         assert_eq!(
             rt.sim_safe_radius(pc),
             -1,
@@ -7965,7 +7981,7 @@ mod tests {
             let h = Arc::new(ChunkHandle::new(pos));
             h.advance_to(Stage::TerrainReady);
             h.advance_status(ChunkStatus::Full);
-            rt.chunks.insert(pos, h);
+            rt.chunks_mut().insert(pos, h);
         }
         let pad = mcv_game::Player::HALF[0] + 0.02;
         let pc = ChunkPos::new(0, 0);
@@ -8044,7 +8060,8 @@ mod tests {
     #[test]
     fn mob_inside_simulation_ring_ticks() {
         let mut rt = sim_rt("sim-in");
-        rt.chunks.insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
         let cow = spawn_mob(
             &mut rt.mobs_app.world,
             MobId::COW,
@@ -8066,7 +8083,8 @@ mod tests {
     #[test]
     fn mob_outside_simulation_ring_frozen_but_kept() {
         let mut rt = sim_rt("sim-out");
-        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
         let cow = spawn_mob(
             &mut rt.mobs_app.world,
             MobId::COW,
@@ -8099,7 +8117,8 @@ mod tests {
     #[test]
     fn mob_resumes_ticking_after_anchor_moves_closer() {
         let mut rt = sim_rt("sim-resume");
-        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
         let cow = spawn_mob(
             &mut rt.mobs_app.world,
             MobId::COW,
@@ -8134,7 +8153,8 @@ mod tests {
     #[test]
     fn frozen_mob_beyond_despawn_distance_still_despawns() {
         let mut rt = sim_rt("sim-despawn");
-        rt.chunks.insert(ChunkPos::new(8, 0), lit_chunk(8, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(8, 0), lit_chunk(8, 0, 20));
         let cow = spawn_mob(
             &mut rt.mobs_app.world,
             MobId::COW,
@@ -8153,8 +8173,10 @@ mod tests {
     #[test]
     fn arrow_outside_simulation_ring_frozen() {
         let mut rt = sim_rt("sim-arrow");
-        rt.chunks.insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
-        rt.chunks.insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(7, 0), lit_chunk(7, 0, 20));
+        rt.chunks_mut()
+            .insert(ChunkPos::new(3, 0), lit_chunk(3, 0, 20));
         let (far, near) = {
             let world = &mut rt.mobs_app.world;
             let far = world.spawn();
@@ -8358,7 +8380,7 @@ mod tests {
         assert_eq!(rt.phase, GamePhase::Loading);
         rt.player.pos = Vec3::new(8.5, 71.0, 8.5);
         // 只有中心块就绪：49 块邻域未齐 → 不放玩家。
-        rt.chunks
+        rt.chunks_mut()
             .entry(ChunkPos::new(0, 0))
             .or_insert_with(|| lit_chunk(0, 0, 69))
             .advance_to(Stage::Uploaded);
@@ -8415,7 +8437,7 @@ mod tests {
         }
         for (dx, dz) in cells {
             let pos = ChunkPos::new(dx, dz);
-            rt.chunks
+            rt.chunks_mut()
                 .entry(pos)
                 .or_insert_with(|| lit_chunk(dx, dz, 69))
                 .advance_to(Stage::Uploaded);
@@ -8501,7 +8523,7 @@ mod tests {
         // hm+1 的悬空一格）。
         for dx in -3i32..=3 {
             for dz in -3i32..=3 {
-                rt.chunks
+                rt.chunks_mut()
                     .entry(ChunkPos::new(dx, dz))
                     .or_insert_with(|| lit_chunk(dx, dz, 69));
             }

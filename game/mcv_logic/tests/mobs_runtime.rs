@@ -125,7 +125,7 @@ fn step_as(
         schedule,
     } = app;
     resources.insert(MobServices {
-        chunks: chunks.clone(),
+        chunks: Arc::new(chunks.clone()),
         player_pos: player,
         on_tick,
         // 与 on_tick 同步的单步 tick 数（测试无 burst，等价 0/1）。

@@ -164,7 +164,7 @@ fn all_ocean_window_falls_back_above_water_surface() {
         }
     }
     // 水不参与 heightmap（流体跳过），hm 仍 21：所有列上扫见水 → 全拒。
-    rt.chunks.insert(ChunkPos::new(0, 0), h);
+    rt.chunks_mut().insert(ChunkPos::new(0, 0), h);
     rt.stream();
     // fixupSpawnHeight 兜底（PlayerSpawnFinder.java:89-104 收敛等价）：
     // 列内最高流体顶 30 + 1 = 31，落在水面之上，不再埋入海床。
@@ -192,7 +192,7 @@ fn worldgen_spawn_never_buries_or_submerges() {
             for dz in -3i32..=3 {
                 let h = Arc::new(ChunkHandle::new(ChunkPos::new(dx, dz)));
                 mcv_worldgen::generate_into(&h, seed).expect("C++ 地形生成");
-                rt.chunks.insert(ChunkPos::new(dx, dz), h);
+                rt.chunks_mut().insert(ChunkPos::new(dx, dz), h);
             }
         }
         rt.stream();
