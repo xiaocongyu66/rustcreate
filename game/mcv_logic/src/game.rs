@@ -1144,11 +1144,12 @@ impl ChunkMesher for NullMesher {
 /// 主线程 → IO 线程命令。
 enum IoCommand {
     /// 两段式写：主线程已快照的 (voxels u16, heightmap) 投递写盘。
+    /// 载荷 Box 化（~197 KiB 变体尺寸差，clippy::large_enum_variant）。
     Write {
         pos: ChunkPos,
         seq: u64,
-        ids: Vec<u16>,
-        hm: [i16; 256],
+        ids: Box<[u16]>,
+        hm: Box<[i16; 256]>,
     },
     /// 读盘请求（结果经完成通道回主线程走 advance_to(TerrainReady) 接线）。
     Load { pos: ChunkPos, seq: u64 },
@@ -1160,11 +1161,11 @@ enum IoDone {
     /// reportChunkSaveFailure，ChunkMap.java:775-777）。
     Written { pos: ChunkPos, seq: u64, ok: bool },
     /// 读完成：`None` = 未存档/读失败（与同步 try_load_saved 同语义 →
-    /// 回退生成器）。
+    /// 回退生成器）。载荷 Box 化（同上）。
     Loaded {
         pos: ChunkPos,
         seq: u64,
-        found: Option<(Vec<u16>, [i16; 256])>,
+        found: Option<Box<(Vec<u16>, [i16; 256])>>,
     },
 }
 
@@ -1225,7 +1226,7 @@ fn run_io_command(dir: &std::path::Path, cmd: &IoCommand) -> IoDone {
         IoCommand::Load { pos, seq } => IoDone::Loaded {
             pos: *pos,
             seq: *seq,
-            found: load_chunk_from_disk(dir, *pos),
+            found: load_chunk_from_disk(dir, *pos).map(Box::new),
         },
     }
 }
@@ -2367,15 +2368,15 @@ impl GameRuntime {
             return false;
         }
         // 主线程锁内快照（唯一碰 RwLock 的点，拷贝 ~50µs 量级）。
-        let ids: Vec<u16> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
-        let hm: [i16; 256] = **handle.heightmap.read().unwrap();
+        let ids: Box<[u16]> =
+            bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        let hm: Box<[i16; 256]> = Box::new(**handle.heightmap.read().unwrap());
         let seq = self.io_seq.wrapping_add(1);
         self.io_seq = seq;
         self.io_writes.insert(pos, seq);
-        self.io
-            .as_mut()
-            .unwrap()
-            .post(IoCommand::Write { pos, seq, ids, hm });
+        if let Some(io) = self.io.as_mut() {
+            io.post(IoCommand::Write { pos, seq, ids, hm });
+        }
         handle.clear_dirty(mcv_core::dirty::SAVE);
         true
     }
@@ -2415,7 +2416,8 @@ impl GameRuntime {
                 }
                 self.io_frames.remove(&pos);
                 match found {
-                    Some((ids, hm)) => {
+                    Some(data) => {
+                        let (ids, hm) = *data;
                         if let Some(h) = self.chunks.get(&pos) {
                             *h.voxels.write().unwrap() = load_voxels(&ids);
                             **h.heightmap.write().unwrap() = hm;
@@ -2461,10 +2463,8 @@ impl GameRuntime {
     /// 环扫描/写回预算）——写路径语义测试用它驱动回执而不引入预算流竞争。
     #[doc(hidden)]
     pub fn io_debug_drain(&mut self) {
-        if self.io.is_some() {
-            while let Some(done) = self.io.as_mut().unwrap().try_recv() {
-                self.process_io_done(done);
-            }
+        while let Some(done) = self.io.as_mut().and_then(|io| io.try_recv()) {
+            self.process_io_done(done);
         }
     }
 
@@ -2798,10 +2798,8 @@ impl GameRuntime {
         // 生成请求 / 写盘清脏或保脏）。置于请求段之前：读完成的 miss 在本帧
         // 直接发生成请求（req_frames 计入下方节流），读/写在途记账先行解除，
         // 本帧的环扫描与投递预算才看到最新状态。
-        if self.io.is_some() {
-            while let Some(done) = self.io.as_mut().unwrap().try_recv() {
-                self.process_io_done(done);
-            }
+        while let Some(done) = self.io.as_mut().and_then(|io| io.try_recv()) {
+            self.process_io_done(done);
         }
 
         // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
@@ -2863,7 +2861,7 @@ impl GameRuntime {
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
                     if io_budget > 0 {
-                        if self.io.is_some() {
+                        if let Some(io) = self.io.as_mut() {
                             // E4 读异步化（≤4/帧保留为**投递**预算，不再执行）：
                             // Empty 手柄先在册 + io_frames 记账（复用 300 帧
                             // 驻留防乒乓），读盘在独立 IO 线程执行，结果经
@@ -2876,7 +2874,7 @@ impl GameRuntime {
                             let seq = self.io_seq.wrapping_add(1);
                             self.io_seq = seq;
                             self.io_frames.insert(pos, (self.stream_frame, seq));
-                            self.io.as_mut().unwrap().post(IoCommand::Load { pos, seq });
+                            io.post(IoCommand::Load { pos, seq });
                             self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
                             self.chunks.insert(pos, handle);
                             continue;
