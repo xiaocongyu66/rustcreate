@@ -17,8 +17,20 @@
 //! `propagateDecreases`: plain FIFO queues with a head cursor, stale entries
 //! skipped by re-reading the stored level, and removal waves feeding
 //! re-light sources into the increase queue.
+//!
+//! E5 起 init 计算可移入 worker 池（快照-计算-回传三段式，蓝图
+//! docs/engine-roadmap.md §3 E5）：[`sched::LightScheduler`] 投递
+//! voxels+heightmap 快照、worker 调本模块 [`init`] 纯计算、光照字节回传
+//! 主线程写回。**引擎语义零改动**——`init`/`update_block`/边同步三组
+//! 纯函数原样（worker 只换执行位置；跨块边同步保持主线程串行，不经
+//! 调度器）。
 
 use mcv_core::{BlockId, CHUNK_SY, CHUNK_VOL, WORLD_MAX_Y, WORLD_MIN_Y, vidx};
+
+pub mod sched;
+pub use sched::{
+    LightDone, LightJob, LightResults, LightScheduler, light_worker_count, worker_count_from,
+};
 
 /// Channel selector for the packed light byte.
 const SKY_SHIFT: u32 = 4;

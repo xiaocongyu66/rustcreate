@@ -620,7 +620,8 @@ pub struct FrameTiming {
     pub ecs_us: u64,
     /// stream() 总窗口。
     pub stream_us: u64,
-    /// stream 子段：光照 init（≤2 块/帧，主线程双通道 BFS）。
+    /// stream 子段：光照 init（串行路 ≤2 块/帧主线程双通道 BFS；E5 并行
+    /// 路 = worker 产物写回消化 + 快照派发，BFS 在 worker 池）。
     pub init_us: u64,
     /// stream 子段：光照边同步（帧头消化段 + 成对标记后同步，两窗合并）。
     pub edge_us: u64,
@@ -758,6 +759,21 @@ pub struct GameRuntime {
     io_writes: HashMap<ChunkPos, u64>,
     /// io seq 单调源（投递与完成回执的配对键）。
     io_seq: u64,
+    /// E5 光照 init 并行调度器两端（None = 主线程串行 init，
+    /// `MCV_LIGHT_WORKERS=0` 回滚开关/无头）。快照-计算-回传三段式：派发
+    /// 在 stream 的 init 段（[`Self::light_dispatch`]，worker 跑
+    /// `mcv_light::init` 纯计算），回传产物按 `sorted_keys` 环序写回 +
+    /// `advance_to(LightLocalReady)`（[`Self::light_writeback`]）。跨块边
+    /// 同步（`sync_light_edges` + 成对标记）**不经过调度器**——保持主线程
+    /// 串行（蓝图铁纪律：LIFO push→pull 序、REMOVE-before-ADD 两相、
+    /// in-flight 去重、512 步预算、两端 LightLocalReady 门五项时序假设
+    /// 全部建立在「边任务按确定序在同一线程消化」之上，见
+    /// `sync_light_edges` 文档）。
+    light_sched: Option<mcv_light::LightScheduler>,
+    light_results: Option<mcv_light::LightResults>,
+    /// E5 布光写回序日志（环序观测面，[`Self::take_light_writeback_log`]
+    /// 取走即清；超 4096 条清空保有界——生产不读，纯诊断）。
+    light_writeback_log: Vec<ChunkPos>,
     pub save_dir: std::path::PathBuf,
     /// 已建网格区块的记账（#80 起绘制条目表由 mesher 实现自持，游戏层只
     /// 记「哪块已建网格」）。O(1) 判「这块是否已有网格」替代逐帧对全表做
@@ -1404,6 +1420,25 @@ impl GameRuntime {
         Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, io_async)
     }
 
+    /// E5 测试装配（headless + 光照 init worker 数）：`workers == 0` =
+    /// 主线程串行 init（`MCV_LIGHT_WORKERS=0` 回滚开关同款语义），> 0 =
+    /// 快照-计算-回传三段式并行（调度器两端归 [`GameRuntime`]：派发在
+    /// stream 的 init 段、写回消化在 [`Self::light_writeback`]）。生产装配
+    /// 走 [`new`](Self::new)（env 解析一次）。
+    ///
+    /// **红相位桩**：先行为串行路（workers 暂不接线，绿提交经
+    /// `light_channel` 接 `LightScheduler` 两端）——红面 = 并行语义断言
+    /// （worker 数接线/回传环序，tests/light_parallel.rs）。
+    #[doc(hidden)]
+    pub fn new_headless_with_light(
+        seed: u64,
+        save_dir: std::path::PathBuf,
+        mode: GameMode,
+        _workers: usize,
+    ) -> Self {
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, false)
+    }
+
     /// `MCV_IO_ASYNC` 语义（E4 回滚开关，对齐 `MCV_MESHER_WORKERS` /
     /// `MCV_TERRAIN_BACKEND` 先例）：未设或非 `"0"` → 异步（独立 IO 线程）；
     /// `"0"` → 同步路（E3 前行为）。纯函数核，env 解析见 [`io_async_enabled`]。
@@ -1455,6 +1490,11 @@ impl GameRuntime {
             io_frames: HashMap::new(),
             io_writes: HashMap::new(),
             io_seq: 0,
+            // E5：串行路为红相位默认（构造器不接调度器）；绿提交由
+            // `light_channel` 按 workers 装配两端。
+            light_sched: None,
+            light_results: None,
+            light_writeback_log: Vec::new(),
             save_dir,
             meshed: HashSet::new(),
             spawned: false,
@@ -2711,6 +2751,10 @@ impl GameRuntime {
                 self.chunks_mut().remove(&c);
                 self.border_synced.remove(&c);
                 self.mesh_fail.remove(&c);
+                // E5：Empty 态不可能有光照在途任务（派发门 = stage 恰为
+                // TerrainReady，stage 单调不回退），记账回收按 no-op 防御
+                // 性对齐（串行路 None 本就 no-op）。
+                self.light_kill(c);
                 evicted += 1;
                 continue;
             }
@@ -2722,6 +2766,10 @@ impl GameRuntime {
             // 视野时会重建网格（保持两者严格同步）。
             self.meshed.remove(&c);
             self.mesher.unload(c);
+            // E5：光照在途产物记账回收（僵尸锁，[`Self::light_kill`]）——
+            // 与网格卸载记账同点：TerrainReady 块可能带一笔在途 init 任务
+            // 出环，提交地板抬到当前 seq 后其在途产物写回处拒收。
+            self.light_kill(c);
             // 数据不立即落盘/丢弃：进复活缓存，存盘按帧预算推进（原版
             // saveChunksEagerly 时间片）；重进请求环时原位复活。
             let entry = (c, handle);
@@ -2952,38 +3000,65 @@ impl GameRuntime {
             self.player.pos = slot;
             self.spawned = true;
         }
-        // light init on newly-terrain-ready chunks (budgeted, main thread)。
-        // 候选按「离玩家近优先」排序：HashMap 迭代序随每次插入/删除漂移，
-        // 每帧 2 格预算会随机落到世界任何角落——真机上表现为每帧零散点亮
-        // 不同区块（地下/地上无规律闪现）。排序后布光以玩家为圆心成波推进，
-        // 加载门控关心的出生邻域最先就绪。
-        let mut light_budget = 2;
+        // light init on newly-terrain-ready chunks。候选按「离玩家近优先」
+        // 排序：HashMap 迭代序随每次插入/删除漂移，每帧预算会随机落到世界
+        // 任何角落——真机上表现为每帧零散点亮不同区块（地下/地上无规律
+        // 闪现）。排序后布光以玩家为圆心成波推进，加载门控关心的出生邻域
+        // 最先就绪。
+        //
+        // E5 双路分叉（蓝图快照-计算-回传三段式，docs/engine-roadmap.md
+        // §3 E5）：
+        // - **worker 路**（`light_sched` 已装配）：派发预算 2×workers/帧
+        //   （加载期布光波推进 ≈ worker 数倍），主线程只做快照（唯一碰
+        //   RwLock 的点，拷完即发，[`Self::light_dispatch`]）；回传产物按
+        //   `sorted_keys` 环序写回 + advance_to(LightLocalReady)
+        //   （[`Self::light_writeback`]）。**跨块边同步（下方成对标记 +
+        //   `sync_light_edges`）保持主线程串行，不并行**——LIFO push→pull
+        //   序、REMOVE-before-ADD 两相、in-flight 去重、512 步预算、两端
+        //   LightLocalReady 门五项时序假设全部建立在「边任务按确定序在
+        //   同一线程消化」之上（蓝图铁纪律）。
+        // - **串行路**（`MCV_LIGHT_WORKERS=0` 回滚开关/无头）：E5 前逐字
+        //   节同款，2 块/帧主线程双通道 BFS。
         let keys = self.sorted_keys(center);
-        // E0：init 子段（光照 init ≤2，主线程双通道 BFS）窗口起点。
+        // E0：init 子段（光照 init：并行路 = 写回消化 + 快照派发；串行路
+        // = 主线程双通道 BFS）窗口起点。
         let init_t0 = std::time::Instant::now();
-        for pos in &keys {
-            if light_budget == 0 {
-                break;
+        if self.light_sched.is_some() {
+            // 回传消化 + 环序写回（上帧及更早派发的产物）。
+            let done = self
+                .light_results
+                .as_mut()
+                .map(|rs| rs.drain())
+                .unwrap_or_default();
+            self.light_writeback(done, center);
+            // 派发：近优先环序扫描，TerrainReady 且不在途的块。
+            self.light_dispatch(&keys);
+        } else {
+            let mut light_budget = 2;
+            for pos in &keys {
+                if light_budget == 0 {
+                    break;
+                }
+                let handle = self.chunks[pos].clone();
+                if handle.stage() != Stage::TerrainReady {
+                    continue;
+                }
+                {
+                    let voxels_locked = handle.voxels.read().unwrap();
+                    let mut light_locked = handle.light.write().unwrap();
+                    let hm_locked = handle.heightmap.read().unwrap();
+                    let voxels: Vec<u16> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
+                    let hm: Vec<i16> = hm_locked.to_vec();
+                    let mut view = mcv_light::LightChunk {
+                        voxels: &voxels,
+                        light: &mut light_locked[..],
+                        heightmap: &hm,
+                    };
+                    mcv_light::init(&mut view);
+                }
+                handle.advance_to(Stage::LightLocalReady);
+                light_budget -= 1;
             }
-            let handle = self.chunks[pos].clone();
-            if handle.stage() != Stage::TerrainReady {
-                continue;
-            }
-            {
-                let voxels_locked = handle.voxels.read().unwrap();
-                let mut light_locked = handle.light.write().unwrap();
-                let hm_locked = handle.heightmap.read().unwrap();
-                let voxels: Vec<u16> = bytemuck::cast_slice(voxels_locked.as_slice()).to_vec();
-                let hm: Vec<i16> = hm_locked.to_vec();
-                let mut view = mcv_light::LightChunk {
-                    voxels: &voxels,
-                    light: &mut light_locked[..],
-                    heightmap: &hm,
-                };
-                mcv_light::init(&mut view);
-            }
-            handle.advance_to(Stage::LightLocalReady);
-            light_budget -= 1;
         }
         self.timing_frame.init_us += init_t0.elapsed().as_micros() as u64;
 
@@ -3095,6 +3170,135 @@ impl GameRuntime {
         self.mesher.flush();
         self.timing_frame.flush_us += flush_t0.elapsed().as_micros() as u64;
         self.timing_frame.stream_us += stream_t0.elapsed().as_micros() as u64;
+    }
+
+    /// E5 观测面：光照 init 派发 worker 数（0 = 主线程串行路，
+    /// `MCV_LIGHT_WORKERS=0` 回滚开关/无头）。
+    #[doc(hidden)]
+    pub fn light_workers(&self) -> usize {
+        self.light_sched.as_ref().map(|s| s.workers()).unwrap_or(0)
+    }
+
+    /// E5 观测面：布光写回序日志（环序锁取证，tests/light_parallel.rs）。
+    /// 取走即清。
+    #[doc(hidden)]
+    pub fn take_light_writeback_log(&mut self) -> Vec<ChunkPos> {
+        std::mem::take(&mut self.light_writeback_log)
+    }
+
+    /// E5 worker 路派发段：TerrainReady 且不在途的块按近优先环序
+    /// （[`Self::sorted_keys`]）快照投递。只读（chunks 锁窄取快照、submit
+    /// 入池），不改任何记账——stage 推进留在**写回**时点：边同步成对标记
+    /// /网格门槛/出生门都消费 stage 作真实布光证据，派发即推进会让它们
+    /// 读到零光照（与 E3「派发即记账」的差异面，理由在此）。光照字节不进
+    /// 任务——`init` 自零化，见 `mcv_light::sched` 模块文档。
+    fn light_dispatch(&self, keys: &[ChunkPos]) {
+        let Some(sched) = self.light_sched.as_ref() else {
+            return;
+        };
+        // 派发预算 = 2×workers/帧：串行基线 2 块/帧的 worker 数倍（蓝图
+        // E5 目标「加载期布光波推进速度 ≈ worker 数倍」）；worker 饥饿时
+        // 背压门截停（不耗预算，下帧预算流自动重试）。
+        let mut budget = sched.dispatch_budget();
+        for pos in keys {
+            if budget == 0 {
+                break;
+            }
+            let handle = self.chunks[pos].clone();
+            if handle.stage() != Stage::TerrainReady {
+                continue;
+            }
+            if sched.in_flight(pos) {
+                continue; // 同键在途：去重（写回时点解除记账）
+            }
+            if sched.saturated() {
+                break; // 积压护栏：在途 ≥ workers×2+2，停投防字节无界堆积
+            }
+            // 快照：voxels + heightmap（唯一碰 RwLock 的点，拷完即发；
+            // ~197 KiB/笔）。
+            let (voxels, heightmap) = {
+                let vg = handle.voxels.read().unwrap();
+                let hg = handle.heightmap.read().unwrap();
+                (bytemuck::cast_slice(vg.as_slice()).to_vec(), hg.to_vec())
+            };
+            sched.submit(mcv_light::LightJob {
+                pos: *pos,
+                voxels,
+                heightmap,
+            });
+            // 真机取证埋点：与 light_writeback 的 "light worker commit"
+            // 对账可观测回传延迟。
+            log::debug!("light dispatch {pos:?}");
+            budget -= 1;
+        }
+    }
+
+    /// E5 worker 产物写回：按玩家近优先环序（[`Self::sorted_keys`] 序，
+    /// 既有确定性破平规则）整缓冲套用光照字节 + `advance_to(LightLocalReady)`
+    /// ——**同帧多块回传的生效序 = 玩家近优先**，保持「布光以玩家为圆心
+    /// 成波推进」的既有加载门时序（worker 完成序乱序由本函数重排）。
+    /// 三重防御与 E3 同构：①调度器提交地板拒收已卸载键（unload `kill`
+    /// 记账）；②写回时点块不在册 → 弃置（僵尸双保险）；③stage ≠
+    /// TerrainReady → 弃置（已被其他路径推进/卸载重建中——init 是体素
+    /// 的确定性纯函数，重建块的重派发会原值覆盖，不存在陈旧覆盖面）。
+    /// 返回实际写回序（观测面）。**边同步不在此**——保持主线程串行
+    /// （`sync_light_edges` 文档的时序假设清单）。
+    #[doc(hidden)]
+    pub fn light_writeback(
+        &mut self,
+        done: Vec<mcv_light::LightDone>,
+        center: ChunkPos,
+    ) -> Vec<ChunkPos> {
+        if done.is_empty() {
+            return Vec::new();
+        }
+        // 同键多笔（in_flight 门下不可达，防御性归并）：只留最高 seq。
+        // （先取 bool 再插入——NLL 下 match 判定式的 get 借用会延续到
+        // insert 分支，E0502。）
+        let mut by_pos: HashMap<ChunkPos, mcv_light::LightDone> = HashMap::new();
+        for d in done {
+            let newer = match by_pos.get(&d.pos) {
+                Some(old) => old.seq <= d.seq,
+                None => true,
+            };
+            if newer {
+                by_pos.insert(d.pos, d);
+            }
+        }
+        let mut applied = Vec::with_capacity(by_pos.len());
+        for pos in self.sorted_keys(center) {
+            let Some(d) = by_pos.remove(&pos) else {
+                continue;
+            };
+            let Some(handle) = self.chunks.get(&pos) else {
+                continue; // 已卸载（提交地板过滤后的双保险）
+            };
+            if handle.stage() != Stage::TerrainReady {
+                continue;
+            }
+            {
+                let mut lg = handle.light.write().unwrap();
+                lg[..].copy_from_slice(&d.light);
+            }
+            handle.advance_to(Stage::LightLocalReady);
+            log::debug!("light worker commit {pos:?} seq={}", d.seq);
+            applied.push(pos);
+        }
+        self.light_writeback_log.extend_from_slice(&applied);
+        if self.light_writeback_log.len() > 4096 {
+            self.light_writeback_log.clear();
+        }
+        applied
+    }
+
+    /// E5 卸载记账：光照在途产物提交地板抬到当前派发序（僵尸锁）——
+    /// 其后回传的该块产物在写回处拒收，防把光照写进已出环的旧键 / 卸载
+    /// 后重进环（读盘内容可能已不同）时旧快照覆盖新数据。None = 串行路，
+    /// 无在途产物（no-op）。
+    fn light_kill(&mut self, pos: ChunkPos) {
+        if let Some(rs) = self.light_results.as_mut() {
+            rs.kill(pos);
+        }
     }
 
     /// 单个区块的建网格+记账（stream remesh 流水与编辑源块优先通道共用）。
