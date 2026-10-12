@@ -19,7 +19,8 @@ use std::time::{Duration, Instant};
 use mcv_core::{CHUNK_VOL, ChunkHandle, ChunkPos, Stage, dirty, vidx};
 use mcv_logic::game::{GameMode, GamePhase, GameRuntime};
 use mcv_mesher::{
-    MESH_OPAQUE, MESH_WATER, MeshJob, MeshResults, Mesher, neighborhood_slots, worker_count_from,
+    MESH_OPAQUE, MESH_WATER, MeshJob, MeshResults, MeshScheduler, Mesher, neighborhood_slots,
+    worker_count_from,
 };
 
 /// 唯一临时存档目录（并行安全，镜像 streaming.rs temp_dir 的做法）。
@@ -319,7 +320,7 @@ fn game_dispatch_records_and_routes_hi_priority() {
     );
 
     // 回传产物：中心块 hi=true；另有一笔邻块首建走预算流 hi=false。
-    let mut got = Vec::new();
+    let mut got: Vec<mcv_mesher::MeshDone> = Vec::new();
     let t0 = Instant::now();
     while !got.iter().any(|d| d.hi) {
         assert!(t0.elapsed() < Duration::from_secs(60), "worker 产物超时");
