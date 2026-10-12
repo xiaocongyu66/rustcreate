@@ -271,7 +271,11 @@ fn try_spot(ts: u64, cx: i32, cz: i32, variant: u8, rp: &mut Replay<'_, '_>) -> 
         // 否则步进 down 再测）
         let mut y = rng.next_int(mcv_core::WORLD_MAX_Y as u32) as i32;
         let mut found = None;
-        for _ in 0..32 {
+        // 33 个测试位（循环内 32 次 + 步进 32 格后补测 1 次，
+        // EnvironmentScanPlacement.java:54-70 实物）；
+        // inside_world_bounds(−5) 失败位永不命中，扫到即止与原版
+        // 「继续下探但条件恒假」结果等价（minY+5 以下必非目标）。
+        for _ in 0..=32 {
             if !rp.air(wx, y, wz) {
                 found = Some(y);
                 break;
