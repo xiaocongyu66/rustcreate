@@ -6538,6 +6538,100 @@ mod tests {
         GameRuntime::new_headless(20261010, dir, GameMode::Survival)
     }
 
+    // ---- E0 帧预算分段计时（engine-roadmap.md §3-E0：观测先行）----
+
+    /// E0 验收面（纯函数侧）：分段结构体覆盖全部段名（段序 = 帧内执行序，
+    /// 蓝图 §2）、Debug 形态携带段名（日志汇总结构的可序列化面）、数值
+    /// 非负且逐段饱和累加单调可累计（不回绕）；1Hz 汇总器 record/mean
+    /// 语义（帧数、和、单帧峰值、均值 = sum/frames）。
+    #[test]
+    fn frame_timing_segments_named_and_accumulable() {
+        assert_eq!(
+            FrameTiming::SEGMENTS,
+            [
+                "fixed_step",
+                "ecs",
+                "stream",
+                "init",
+                "edge",
+                "io",
+                "remesh",
+                "flush",
+                "draw"
+            ]
+        );
+        let dbg = format!("{:?}", FrameTiming::default());
+        for name in FrameTiming::SEGMENTS {
+            assert!(dbg.contains(name), "Debug 缺段名 {name}: {dbg}");
+        }
+        // 逐段饱和累加：单调不减、不回绕（u64 域数值非负由类型保证）。
+        let a = FrameTiming {
+            fixed_step_us: 5,
+            stream_us: 7,
+            ..Default::default()
+        };
+        let b = a.saturating_add(FrameTiming {
+            fixed_step_us: u64::MAX,
+            stream_us: 1,
+            ..Default::default()
+        });
+        assert!(b.fixed_step_us >= a.fixed_step_us);
+        assert!(b.stream_us >= a.stream_us);
+        // 1Hz 汇总：record 归并帧；峰值逐段取 max；均值 = sum/frames。
+        let mut stats = FrameTimingStats::default();
+        stats.record(FrameTiming {
+            stream_us: 100,
+            init_us: 10,
+            ..Default::default()
+        });
+        stats.record(FrameTiming {
+            stream_us: 300,
+            edge_us: 40,
+            ..Default::default()
+        });
+        assert_eq!(stats.frames, 2);
+        assert_eq!(stats.sum.stream_us, 400);
+        assert_eq!(stats.max.stream_us, 300);
+        assert_eq!(stats.max.init_us, 10);
+        assert_eq!(stats.max.edge_us, 40);
+        assert_eq!(stats.mean_us().stream_us, 200);
+        assert_eq!(stats.mean_us().edge_us, 20);
+        // 零帧均值恒零（无除零）。
+        assert_eq!(
+            FrameTimingStats::default().mean_us(),
+            FrameTiming::default()
+        );
+    }
+
+    /// E0 验收面（接线侧）：headless 帧循环里分段计时可观测——
+    /// fixed_step/stream 各段被记账、子段 ⊆ 总段（同一 Instant 排尺的
+    /// 窗口包含关系）、帧界归并后 1Hz 取走即清零。
+    #[test]
+    fn frame_timing_measured_in_headless_frames() {
+        let mut rt = headless_rt("e0-timing");
+        for _ in 0..5 {
+            rt.fixed_step(1.0 / 60.0);
+        }
+        rt.stream();
+        // 子段 ⊆ 总段：ecs ⊆ fixed_step；stream 五子段之和 ⊆ stream。
+        assert!(rt.timing_frame.ecs_us <= rt.timing_frame.fixed_step_us);
+        let sub = rt.timing_frame.init_us
+            + rt.timing_frame.edge_us
+            + rt.timing_frame.io_us
+            + rt.timing_frame.remesh_us
+            + rt.timing_frame.flush_us;
+        assert!(sub <= rt.timing_frame.stream_us);
+        // 帧界归并 → 1Hz 取走（累计器清零）。
+        rt.end_frame_timing();
+        let stats = rt.take_frame_timing_stats();
+        assert_eq!(stats.frames, 1);
+        assert!(stats.sum.fixed_step_us > 0, "fixed_step 段必须被记账");
+        assert!(stats.sum.stream_us > 0, "stream 段必须被记账");
+        let again = rt.take_frame_timing_stats();
+        assert_eq!(again.frames, 0);
+        assert_eq!(again.sum, FrameTiming::default());
+    }
+
     /// 把玩家摆到地表并把出生点邻域（半径 3，49 块 = 26.1
     /// EXPECTED_PLAYER_CHUNKS = Mth.square(7)，LevelLoadProgressTracker
     /// .java:15）全部顶到 Uploaded。
