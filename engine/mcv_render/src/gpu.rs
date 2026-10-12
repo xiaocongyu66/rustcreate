@@ -381,9 +381,9 @@ impl MeshUploader {
             .max(self.live_vertex_bytes);
     }
 
-    /// 出册一个绘制条目（② 并存记账）。
-    fn track_entry_out(&mut self, e: &RenderChunk) {
-        self.live_vertex_bytes -= entry_gpu_bytes(e);
+    /// 出册一个绘制条目（② 并存记账；字节数由调用方先算好，免双借）。
+    fn track_entry_out(&mut self, bytes: u64) {
+        self.live_vertex_bytes -= bytes;
     }
 
     /// 池内 CPU 网格逻辑字节总量（预算门控与 cpu_pool_bytes 同一公式）。
@@ -604,7 +604,8 @@ impl MeshUploader {
             // 世代在途拷贝无条件摘除（②）。
             self.purge_uploads(self.entry_serial[bi]);
             self.handed.remove(&self.entry_serial[bi]);
-            self.track_entry_out(&self.entries[bi]);
+            let out = entry_gpu_bytes(&self.entries[bi]);
+            self.track_entry_out(out);
             self.batch_members.remove(bi);
             self.entries.remove(bi);
             self.entry_serial.remove(bi);
@@ -760,7 +761,8 @@ impl MeshUploader {
             self.purge_uploads(old_serial);
         }
         self.handed.remove(&old_serial);
-        self.track_entry_out(&self.entries[bi]);
+        let out = entry_gpu_bytes(&self.entries[bi]);
+        self.track_entry_out(out);
         self.entries[bi] = self.placeholder.clone();
         let serial = self.next_serial;
         self.next_serial += 1;
