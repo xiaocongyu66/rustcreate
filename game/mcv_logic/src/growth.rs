@@ -98,7 +98,7 @@ pub const SAPLINGS: [u16; 6] = [
     ids::DARK_OAK_SAPLING,
 ];
 
-/// 六树叶 id（tree_pass.rs LEAF_IDS 同表，`vanilla/tree_pass.rs:100-107`）。
+/// 六树叶 id（tree_pass.rs LEAF_IDS 同表，`vanilla/tree_pass.rs:129-136`）。
 const LEAVES: [u16; 6] = [7, 19, 82, 303, 495, 947];
 
 pub fn is_sapling(id: u16) -> bool {
@@ -219,7 +219,7 @@ pub enum Growth {
     GrowTree(TreeKind),
 }
 
-/// 树立地白名单（tree_pass.rs:87 GROUND 同表 = SUPPORTS_VEGETATION 的本仓
+/// 树立地白名单（tree_pass.rs:116 GROUND 同表 = SUPPORTS_VEGETATION 的本仓
 /// 生成子集，`docs/KNOWN-DIVERGENCE.md` TREES-2；farmland 在原版 tag 内但
 /// 本仓苗立地语义复用 tree_pass 生成面三 id）。
 pub const TREE_GROUND: [u16; 3] = [ids::GRASS, ids::DIRT, ids::SNOW_GRASS];
@@ -427,7 +427,7 @@ pub fn tree_stream_seed(world_seed: u64, game_tick: u64, pos: BlockPos) -> u64 {
 // 树写入门（tree_pass ChunkClipper 语义复用）
 // ---------------------------------------------------------------------------
 
-/// 树投影写槽（tree_pass.rs:169-189 三门同表）。
+/// 树投影写槽（tree_pass.rs:190-222 三门同表）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TreeSlot {
     /// 原木位：validTreePos（TreeFeature.java:53-55 → TrunkPlacer.java:93-99
