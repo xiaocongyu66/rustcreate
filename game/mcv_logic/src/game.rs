@@ -1373,12 +1373,31 @@ impl GameRuntime {
             RustMesher::new_with_workers(uploader, mcv_mesher::mesh_worker_count());
         // E4：IO 异步开关同点解析一次（MCV_IO_ASYNC=0 → 同步路回滚）。
         let io_async = Self::io_async_enabled();
-        Self::assemble(seed, Box::new(mesher), save_dir, mode, mesh_sched, io_async)
+        // E5：光照 init worker 数同点解析一次（MCV_LIGHT_WORKERS=0 →
+        // 主线程串行 init 回滚）。
+        let light = Self::light_channel(mcv_light::light_worker_count());
+        Self::assemble(
+            seed,
+            Box::new(mesher),
+            save_dir,
+            mode,
+            mesh_sched,
+            io_async,
+            light,
+        )
     }
 
     /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。
     pub fn new_headless(seed: u64, save_dir: std::path::PathBuf, mode: GameMode) -> Self {
-        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, false)
+        Self::assemble(
+            seed,
+            Box::new(NullMesher),
+            save_dir,
+            mode,
+            None,
+            false,
+            None,
+        )
     }
 
     /// E3 测试装配（headless + 真实网格调度器）：NullMesher 不触 GPU、
@@ -1402,6 +1421,7 @@ impl GameRuntime {
                 mode,
                 Some(sched),
                 false,
+                None,
             ),
             results,
         )
@@ -1417,7 +1437,15 @@ impl GameRuntime {
         mode: GameMode,
         io_async: bool,
     ) -> Self {
-        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, io_async)
+        Self::assemble(
+            seed,
+            Box::new(NullMesher),
+            save_dir,
+            mode,
+            None,
+            io_async,
+            None,
+        )
     }
 
     /// E5 测试装配（headless + 光照 init worker 数）：`workers == 0` =
@@ -1425,18 +1453,31 @@ impl GameRuntime {
     /// 快照-计算-回传三段式并行（调度器两端归 [`GameRuntime`]：派发在
     /// stream 的 init 段、写回消化在 [`Self::light_writeback`]）。生产装配
     /// 走 [`new`](Self::new)（env 解析一次）。
-    ///
-    /// **红相位桩**：先行为串行路（workers 暂不接线，绿提交经
-    /// `light_channel` 接 `LightScheduler` 两端）——红面 = 并行语义断言
-    /// （worker 数接线/回传环序，tests/light_parallel.rs）。
     #[doc(hidden)]
     pub fn new_headless_with_light(
         seed: u64,
         save_dir: std::path::PathBuf,
         mode: GameMode,
-        _workers: usize,
+        workers: usize,
     ) -> Self {
-        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, false)
+        Self::assemble(
+            seed,
+            Box::new(NullMesher),
+            save_dir,
+            mode,
+            None,
+            false,
+            Self::light_channel(workers),
+        )
+    }
+
+    /// E5 装配：`workers > 0` → 并行（[`mcv_light::LightScheduler`] 两端归
+    /// [`GameRuntime`]）；`workers == 0` → 主线程串行 init（回滚开关），
+    /// 两端均 None。
+    fn light_channel(
+        workers: usize,
+    ) -> Option<(mcv_light::LightScheduler, mcv_light::LightResults)> {
+        (workers > 0).then(|| mcv_light::LightScheduler::new(workers))
     }
 
     /// `MCV_IO_ASYNC` 语义（E4 回滚开关，对齐 `MCV_MESHER_WORKERS` /
@@ -1459,7 +1500,14 @@ impl GameRuntime {
         mode: GameMode,
         mesh_sched: Option<mcv_mesher::MeshScheduler>,
         io_async: bool,
+        light: Option<(mcv_light::LightScheduler, mcv_light::LightResults)>,
     ) -> Self {
+        // E5：光照 init 调度器两端归位（派发端 stream init 段、回传端
+        // light_writeback）；None = 主线程串行 init（回滚开关/无头）。
+        let (light_sched, light_results) = match light {
+            Some((s, r)) => (Some(s), Some(r)),
+            None => (None, None),
+        };
         // 新档背包全模式为空（26.1 Inventory.java:56 items 初始化为
         // 36×ItemStack.EMPTY，:62-65 构造只挂 player/equipment 引用、从不
         // 发放物品；生存/创造皆然）。旧实现无条件发铁剑（旧单格行为）+
@@ -1490,10 +1538,10 @@ impl GameRuntime {
             io_frames: HashMap::new(),
             io_writes: HashMap::new(),
             io_seq: 0,
-            // E5：串行路为红相位默认（构造器不接调度器）；绿提交由
-            // `light_channel` 按 workers 装配两端。
-            light_sched: None,
-            light_results: None,
+            // E5：由 `light` 参数装配（`light_channel` 按 workers 分叉，
+            // 回滚开关/无头 = None → 串行路）。
+            light_sched,
+            light_results,
             light_writeback_log: Vec::new(),
             save_dir,
             meshed: HashSet::new(),
