@@ -27,7 +27,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use mcv_core::{BlockId, CHUNK_VOL, ChunkHandle, ChunkPos, Stage, WORLD_MIN_Y, vidx};
+use mcv_core::{CHUNK_VOL, ChunkHandle, ChunkPos, Stage, WORLD_MIN_Y, vidx};
 use mcv_light::{LightDone, LightJob, LightResults, LightScheduler, worker_count_from};
 use mcv_logic::game::{GameMode, GameRuntime};
 
@@ -64,12 +64,12 @@ fn scene_voxels(seed: u64) -> Vec<u16> {
         .position(|d| d.name == "water")
         .expect("原版方块表必有 water") as u16;
     let mut rng = Lcg(seed);
-    let mut v = vec![BlockId(0); CHUNK_VOL];
+    let mut v = vec![0u16; CHUNK_VOL];
     for z in 0..16usize {
         for x in 0..16usize {
             let h = WORLD_MIN_Y + 94 + (rng.next() % 12) as i32; // 表面高 -64+94.. ≈ 30..41
             for y in WORLD_MIN_Y..=h {
-                v[vidx(x, y, z)] = BlockId(1); // stone
+                v[vidx(x, y, z)] = 1; // stone
             }
             // 封闭腔：表面下掏 3×3（无邻面进光的暗腔，init 只亮腔口）。
             if rng.next() % 7 == 0 {
@@ -77,7 +77,7 @@ fn scene_voxels(seed: u64) -> Vec<u16> {
                     for dx in 0..3i32 {
                         let (xx, zz) = (x as i32 + dx, z as i32 + dz);
                         if (0..16).contains(&xx) && (0..16).contains(&zz) {
-                            v[vidx(xx as usize, h - 2, zz as usize)] = BlockId(0);
+                            v[vidx(xx as usize, h - 2, zz as usize)] = 0;
                         }
                     }
                 }
@@ -85,12 +85,12 @@ fn scene_voxels(seed: u64) -> Vec<u16> {
             // 水池：低洼处灌水（damp 1 → 天光柱 14、13、12 …衰减）。
             if h <= 33 {
                 for y in (h + 1)..=35 {
-                    v[vidx(x, y, z)] = BlockId(water);
+                    v[vidx(x, y, z)] = water;
                 }
             }
             // 火把群（只在岸上，避免与水池互相覆盖）。
             if h > 35 && rng.next() % 13 == 0 {
-                v[vidx(x, h + 1, z)] = BlockId(TORCH);
+                v[vidx(x, h + 1, z)] = TORCH;
             }
         }
     }
@@ -270,7 +270,7 @@ fn in_flight_tracking_follows_job_lifecycle() {
     sched.submit(LightJob {
         pos,
         voxels,
-        heightmap,
+        heightmap: heightmap.to_vec(),
     });
     assert!(sched.in_flight(&pos), "派发后必须记在途");
     wait_all(&mut results, 1);
