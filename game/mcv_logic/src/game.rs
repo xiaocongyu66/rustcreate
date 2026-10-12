@@ -533,6 +533,121 @@ impl Default for InputState {
     }
 }
 
+/// E0 帧预算分段计时（engine-roadmap.md §3-E0，观测先行）：一帧内各预算
+/// 段的 wall-clock 耗时（微秒）。段序 = 帧内执行序（蓝图 §2 的预算模型）：
+/// fixed_step（内含 ECS 阶段单列）→ stream（init/edge/io/remesh 子段）→
+/// flush → draw。纯计时记账：`Instant` 排尺 + u64 累加，不改任何执行
+/// 顺序、调度或预算数值。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FrameTiming {
+    /// fixed_step 总窗口（一帧内全部固定步累计；含下方 ecs 子段）。
+    pub fixed_step_us: u64,
+    /// 其中 ECS Fixed 阶段单列：两次整表快照 insert（`MobServices`/
+    /// `DropWorld` 的 chunks 克隆）+ `schedule.run_stage(Fixed)`。
+    pub ecs_us: u64,
+    /// stream() 总窗口。
+    pub stream_us: u64,
+    /// stream 子段：光照 init（≤2 块/帧，主线程双通道 BFS）。
+    pub init_us: u64,
+    /// stream 子段：光照边同步（帧头消化段 + 成对标记后同步，两窗合并）。
+    pub edge_us: u64,
+    /// stream 子段：region IO（卸载落盘/积压门/脏块写回/请求环读盘，
+    /// 多窗合并）。
+    pub io_us: u64,
+    /// stream 子段：remesh（编辑源块优先通道 + 近优先预算流）。
+    pub remesh_us: u64,
+    /// MeshUploader staging flush（stream 末尾 submit；独立列）。
+    pub flush_us: u64,
+    /// draw 段：HUD/Scene 装配 + draw_frame 提交（app 层归账）。
+    pub draw_us: u64,
+}
+
+impl FrameTiming {
+    /// 段名表（render-stats 日志字段名，序 = 帧内执行序；E0 验收面）。
+    pub const SEGMENTS: [&'static str; 9] = [
+        "fixed_step",
+        "ecs",
+        "stream",
+        "init",
+        "edge",
+        "io",
+        "remesh",
+        "flush",
+        "draw",
+    ];
+
+    /// 逐段饱和累加（跨帧累计：单调不减、不回绕）。
+    pub fn saturating_add(self, rhs: Self) -> Self {
+        Self {
+            fixed_step_us: self.fixed_step_us.saturating_add(rhs.fixed_step_us),
+            ecs_us: self.ecs_us.saturating_add(rhs.ecs_us),
+            stream_us: self.stream_us.saturating_add(rhs.stream_us),
+            init_us: self.init_us.saturating_add(rhs.init_us),
+            edge_us: self.edge_us.saturating_add(rhs.edge_us),
+            io_us: self.io_us.saturating_add(rhs.io_us),
+            remesh_us: self.remesh_us.saturating_add(rhs.remesh_us),
+            flush_us: self.flush_us.saturating_add(rhs.flush_us),
+            draw_us: self.draw_us.saturating_add(rhs.draw_us),
+        }
+    }
+
+    /// 逐段取较大值（1Hz 汇总的单帧峰值归并）。
+    fn max_zip(self, rhs: Self) -> Self {
+        Self {
+            fixed_step_us: self.fixed_step_us.max(rhs.fixed_step_us),
+            ecs_us: self.ecs_us.max(rhs.ecs_us),
+            stream_us: self.stream_us.max(rhs.stream_us),
+            init_us: self.init_us.max(rhs.init_us),
+            edge_us: self.edge_us.max(rhs.edge_us),
+            io_us: self.io_us.max(rhs.io_us),
+            remesh_us: self.remesh_us.max(rhs.remesh_us),
+            flush_us: self.flush_us.max(rhs.flush_us),
+            draw_us: self.draw_us.max(rhs.draw_us),
+        }
+    }
+}
+
+/// E0：1Hz 汇总累计器——自上次取走以来逐帧分段值的和（求均值）与单帧
+/// 峰值。app 层每渲染帧末 [`GameRuntime::end_frame_timing`] 归并一帧；
+/// 1Hz 日志端 [`GameRuntime::take_frame_timing_stats`] 取走并清零。
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct FrameTimingStats {
+    /// 已归并的渲染帧数。
+    pub frames: u64,
+    /// 帧分段值之和（均值 = sum / frames）。
+    pub sum: FrameTiming,
+    /// 单帧峰值（逐段 max）。
+    pub max: FrameTiming,
+}
+
+impl FrameTimingStats {
+    /// 归并一帧的分段值（帧界记账）。
+    pub fn record(&mut self, frame: FrameTiming) {
+        self.frames = self.frames.saturating_add(1);
+        self.sum = self.sum.saturating_add(frame);
+        self.max = self.max.max_zip(frame);
+    }
+
+    /// 逐段均值（微秒，整数除法；frames=0 时全 0）。
+    pub fn mean_us(&self) -> FrameTiming {
+        if self.frames == 0 {
+            return FrameTiming::default();
+        }
+        let n = self.frames;
+        FrameTiming {
+            fixed_step_us: self.sum.fixed_step_us / n,
+            ecs_us: self.sum.ecs_us / n,
+            stream_us: self.sum.stream_us / n,
+            init_us: self.sum.init_us / n,
+            edge_us: self.sum.edge_us / n,
+            io_us: self.sum.io_us / n,
+            remesh_us: self.sum.remesh_us / n,
+            flush_us: self.sum.flush_us / n,
+            draw_us: self.sum.draw_us / n,
+        }
+    }
+}
+
 pub struct GameRuntime {
     pub seed: u64,
     pub chunks: HashMap<ChunkPos, Arc<ChunkHandle>>,
@@ -709,6 +824,13 @@ pub struct GameRuntime {
     /// lavaIgnite/fireIgnite，:607-640）。创造不死但同样挂燃烧账
     /// （hurt_player 创造豁免在伤害侧，燃烧账照记——与原版一致）。
     pub fire_ticks: i32,
+    /// E0 帧预算分段计时：本帧各段累计（微秒）。fixed_step/stream 内部在
+    /// 段边界累积；draw 段由 app 层归账（app.rs 唯一渲染帧的装配点）；
+    /// 帧界由 [`Self::end_frame_timing`] 归并。纯记账，不参与任何逻辑。
+    pub timing_frame: FrameTiming,
+    /// E0：1Hz 汇总累计器（均值/峰值），日志端经
+    /// [`Self::take_frame_timing_stats`] 取走。
+    timing_stats: FrameTimingStats,
 }
 
 /// 视角模式（26.1 CameraType 子集；固定第一人称俯仰不变）。
@@ -1025,6 +1147,9 @@ impl GameRuntime {
             swimming: false,
             was_in_water: false,
             fire_ticks: 0,
+            // E0 分段计时（纯观测，构造期全零）。
+            timing_frame: FrameTiming::default(),
+            timing_stats: FrameTimingStats::default(),
         };
         // 行走 bob 的位移计量基准 = 出生点（首个 tick 只计量构造后的真实位移，
         // 防把 ZERO→出生点的一次性差值灌进 walkDist）。
@@ -1949,6 +2074,9 @@ impl GameRuntime {
     /// - IO 预算化：读盘 ≤4/帧、卸载写盘常态 ≤2/帧（积压超门追加）、
     ///   脏块写回 ≤2/帧（app.rs 30s 全量存盘退化为兜底扫描）。
     pub fn stream(&mut self) {
+        // E0：stream 总窗口起点（纯记账，见 [`FrameTiming`]；子段窗口互不
+        // 重叠且均落在本窗内——init/edge/io/remesh/flush 之和 ≤ stream）。
+        let stream_t0 = std::time::Instant::now();
         let center = ChunkPos::new(
             (self.player.pos.x / 16.0).floor() as i32,
             (self.player.pos.z / 16.0).floor() as i32,
@@ -1963,9 +2091,12 @@ impl GameRuntime {
         // 跨帧处理，未完保留（原版 LevelLightEngine 重排语义）。放在最前，
         // 让标脏的 MESH 当帧进入下面的 remesh 预算流。
         if !self.pending_light_edges.is_empty() {
+            // E0：edge 子段（帧头消化段，512 步预算）。
+            let edge_t0 = std::time::Instant::now();
             let mut q = std::mem::take(&mut self.pending_light_edges);
             sync_light_edges(&self.chunks, &mut q);
             self.pending_light_edges = q;
+            self.timing_frame.edge_us += edge_t0.elapsed().as_micros() as u64;
         }
 
         // ---- unload：票级别 > MAX_LEVEL（卸载迟滞=票级别语义）、每帧 ≤4、
@@ -2030,6 +2161,8 @@ impl GameRuntime {
         // 复活缓存落盘：常态每帧把最前 ≤2 块脏数据写盘；积压门与硬顶见下
         // （超限从最旧端强制落盘后出队，有界内存）。
         let mut pend = std::mem::take(&mut self.pending_unloads);
+        // E0：io 子段（卸载落盘 + 积压/溢出门）窗口起点。
+        let io_t0 = std::time::Instant::now();
         // 卸载队列积压门（刀 3b，原版 ChunkMap.java:489-495）：unloadQueue
         // 积压 ≥2000 时忽略 haveTime 强制排空 size−2000。本仓对应物 =
         // pending_unloads 超门即从最旧端强制落盘后出队（无 SAVE 位的条目
@@ -2071,6 +2204,7 @@ impl GameRuntime {
             }
         }
         self.pending_unloads = pend;
+        self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
 
         // 脏块写回（审计 §5.3：app.rs 30s 全量存盘是周期性掉帧源）：
         // 每帧 ≤2 块，30s 全量兜底通常只剩扫描。SAVE 位只在编辑与新生成
@@ -2090,11 +2224,14 @@ impl GameRuntime {
             .map(|(p, _)| *p)
             .collect();
         if !dirty_keys.is_empty() {
+            // E0：io 子段（脏块写回 ≤2）窗口起点。
+            let io_t0 = std::time::Instant::now();
             dirty_keys.sort_unstable_by_key(|p| (p.z, p.x));
             for pos in dirty_keys.into_iter().take(2) {
                 let handle = self.chunks[&pos].clone();
                 self.save_handle_io(&handle);
             }
+            self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
         }
 
         // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
@@ -2156,7 +2293,11 @@ impl GameRuntime {
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
                     if io_budget > 0 {
-                        if self.try_load_saved(&handle) {
+                        // E0：io 子段（请求环读盘 ≤4）窗口。
+                        let io_t0 = std::time::Instant::now();
+                        let loaded = self.try_load_saved(&handle);
+                        self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
+                        if loaded {
                             io_budget -= 1;
                             self.chunks.insert(pos, handle);
                             continue;
@@ -2216,6 +2357,8 @@ impl GameRuntime {
         // 加载门控关心的出生邻域最先就绪。
         let mut light_budget = 2;
         let keys = self.sorted_keys(center);
+        // E0：init 子段（光照 init ≤2，主线程双通道 BFS）窗口起点。
+        let init_t0 = std::time::Instant::now();
         for pos in &keys {
             if light_budget == 0 {
                 break;
@@ -2240,6 +2383,7 @@ impl GameRuntime {
             handle.advance_to(Stage::LightLocalReady);
             light_budget -= 1;
         }
+        self.timing_frame.init_us += init_t0.elapsed().as_micros() as u64;
 
         // status 阶梯推进（刀 3a）：由票级别派生驱动，替换刀 2 的「同点同
         // 条件」接线（worldgen commit→Surface / 光照 init→Light）。本帧的
@@ -2256,6 +2400,8 @@ impl GameRuntime {
         // border sync: mark pairs once both ends are LightLocalReady。
         // C1：新成对（两端都已本地布光）时真正交换边快照——init 只做块内
         // 播种，跨界的火把/阴影在此对齐（双向各发一条边，REMOVE+ADD 两相）。
+        // E0：edge 子段（成对边标记 + 同步）窗口起点。
+        let edge_t0 = std::time::Instant::now();
         let mut pair_edges: Vec<(ChunkPos, u8)> = Vec::new();
         for pos in &keys {
             let handle = self.chunks[pos].clone();
@@ -2290,6 +2436,7 @@ impl GameRuntime {
             }
         }
         sync_light_edges(&self.chunks, &mut pair_edges);
+        self.timing_frame.edge_us += edge_t0.elapsed().as_micros() as u64;
         // 成对边任务同样「预算耗尽不丢」（审计 A3 对 pair 路径的收口）：
         // border_synced 已先行记账，残留若随手 Vec 丢弃即永久暗缝——并入
         // 持久队列，下一帧 stream 开头的消化段续跑。
@@ -2307,6 +2454,8 @@ impl GameRuntime {
         // 预算（审计 §4.3/A2）：初始装载（门控期）放宽 8/帧，进世界后
         // 2/帧。可见网格半径 ≤ sim_dist（物理安全区 ≥ 可见区，杜绝
         // 「看得见却穿透」；待卸滞留环不建网格不占预算）。
+        // E0：remesh 子段（编辑源块优先通道 + 近优先预算流）窗口起点。
+        let remesh_t0 = std::time::Instant::now();
         let mut remesh_budget: i32 = if self.phase == GamePhase::Loading {
             8
         } else {
@@ -2329,10 +2478,15 @@ impl GameRuntime {
                 remesh_budget -= 1;
             }
         }
+        self.timing_frame.remesh_us += remesh_t0.elapsed().as_micros() as u64;
         // 异步上传冲刷（#80 第二刀）：本帧 build/unload 攒下的网格拷贝在
         // 此记入 staging 并 submit——先于同帧 draw_frame 的 submit（单队列
         // 按提交序执行），draw 必见数据；状态机 Uploaded 推进时序不变。
+        // E0：flush 子段（staging submit，独立列）+ stream 总窗口收账。
+        let flush_t0 = std::time::Instant::now();
         self.mesher.flush();
+        self.timing_frame.flush_us += flush_t0.elapsed().as_micros() as u64;
+        self.timing_frame.stream_us += stream_t0.elapsed().as_micros() as u64;
     }
 
     /// 单个区块的建网格+记账（stream remesh 流水与编辑源块优先通道共用）。
@@ -2576,6 +2730,9 @@ impl GameRuntime {
     }
 
     pub fn fixed_step(&mut self, dt: f32) {
+        // E0 帧预算分段计时：fixed_step 总窗口起点（纯记账，见
+        // [`FrameTiming`]；一帧 n 步在帧窗内逐笔累加）。
+        let step_t0 = std::time::Instant::now();
         // ---- 20 Hz tick 基建（原版 tick 语义的唯一换算点）----
         let n = accumulate_ticks(&mut self.tick_frac, dt);
         self.on_tick = n > 0;
@@ -2698,6 +2855,8 @@ impl GameRuntime {
         // 共享）。近战命中走事件（信号语义）：run_stage 阶段末排空命令、
         // 翻转事件之后，GameRuntime 统一结算成玩家伤害。
         {
+            // E0：ECS Fixed 阶段单列（含两次整表快照 insert + run_stage）。
+            let ecs_t0 = std::time::Instant::now();
             let mcv_ecs::App {
                 world,
                 resources,
@@ -2731,6 +2890,7 @@ impl GameRuntime {
                 commands,
             };
             schedule.run_stage(mcv_ecs::Stage::Fixed, &mut ctx);
+            self.timing_frame.ecs_us += ecs_t0.elapsed().as_micros() as u64;
         }
         let hits: Vec<MobMeleeHit> = self.mobs_app.events.channel::<MobMeleeHit>().take();
         for h in hits {
@@ -3364,6 +3524,8 @@ impl GameRuntime {
                 self.player.flying = self.mode == GameMode::Creative;
             }
         }
+        // E0：fixed_step 总窗口收账（纯记账）。
+        self.timing_frame.fixed_step_us += step_t0.elapsed().as_micros() as u64;
     }
 
     /// 玩家箭命中 mob 结算（`arrow_system` 事件 → 伤害/击退/击杀掉落）。
@@ -4725,6 +4887,20 @@ impl GameRuntime {
     /// 网格侧结构性统计（#80 可观测性：draw 收敛 + 异步上传带宽）。
     pub fn mesh_stats(&self) -> MeshStats {
         self.mesher.mesh_stats()
+    }
+
+    /// E0 帧界归并：把本帧分段窗口（[`Self::timing_frame`]）并入 1Hz
+    /// 累计器并清零帧窗。app 层每渲染帧末调用一次（draw 段须先行归账）；
+    /// 纯计时记账，零行为变化。
+    pub fn end_frame_timing(&mut self) {
+        let frame = std::mem::take(&mut self.timing_frame);
+        self.timing_stats.record(frame);
+    }
+
+    /// E0：取走自上次取走以来累计的 1Hz 汇总（均值/峰值在日志端派生），
+    /// 累计器清零。
+    pub fn take_frame_timing_stats(&mut self) -> FrameTimingStats {
+        std::mem::take(&mut self.timing_stats)
     }
 
     /// HUD：MC 26.1 风格（准星 / 快捷栏 / 心 / 饥饿，Gui.java 常数），

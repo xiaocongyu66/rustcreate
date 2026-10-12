@@ -2832,6 +2832,9 @@ impl AppState {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
 
+        // E0：draw 段计时起点（HUD/Scene 装配 + draw_frame 提交；帧界归并
+        // 在下方日志行前统一做。纯计时记账，见 mcv_logic::game::FrameTiming）。
+        let draw_t0 = std::time::Instant::now();
         let camera = runtime.camera(sp.config.width as f32 / sp.config.height as f32);
         let (sun, day) = mcv_render::sun_state(runtime.time_ticks);
         // 天气视觉（WeatherAttributes SKY_LIGHT_FACTOR/雾修饰；雾端点 =
@@ -2956,11 +2959,19 @@ impl AppState {
         };
         let renderer = self.renderer.as_mut().unwrap();
         renderer.draw_frame(&view, &sp.depth, &scene);
+        // E0：draw 段归账（HUD/Scene 装配 + draw_frame 提交）。
+        runtime.timing_frame.draw_us += draw_t0.elapsed().as_micros() as u64;
+        // E0：帧界归并——本帧分段窗口并入 1Hz 均值/峰值累计器（取帧失败
+        // 提前 return 的帧不归并，帧数略欠计，纯观测口径无行为影响）。
+        runtime.end_frame_timing();
         // #80 结构性指标（真机取证通路，不进 HUD 像素）：~1 Hz 一行，
         // 合批 draw 收敛（entries/chunks）与 staging 上传带宽（staged KB、
         // fallback 笔数恒 0 = 环容量足够）。#115 刀 5a 起带网格域字节
         // 记账（resident_kb = GPU 驻留、pool_kb = CPU 留存无 LRU 池）——
         // 真机 Mali 预算取证行，口径表见 docs/memory-budget.md。
+        // E0（蓝图 §3-E0）：同行扩展帧预算分段耗时——帧内执行序
+        // fixed_step（含 ecs 单列）→ stream（init/edge/io/remesh 子段）→
+        // flush → draw；mean = 窗口内帧均值、max = 单帧峰值（微秒）。
         let log_due = self
             .stats_log
             .is_none_or(|t| t.elapsed() >= std::time::Duration::from_secs(1));
@@ -2968,8 +2979,10 @@ impl AppState {
             self.stats_log = Some(std::time::Instant::now());
             let st = renderer.last_frame_stats();
             let ms = runtime.mesh_stats();
+            let tt = runtime.take_frame_timing_stats();
+            let mean = tt.mean_us();
             log::info!(
-                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={}",
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
                 st.opaque_draws,
                 st.water_draws,
                 ms.draw_entries,
@@ -2981,6 +2994,25 @@ impl AppState {
                 ms.fallback_uploads,
                 ms.resident_bytes / 1024,
                 ms.cpu_pool_bytes / 1024,
+                mean.fixed_step_us,
+                mean.ecs_us,
+                mean.stream_us,
+                mean.init_us,
+                mean.edge_us,
+                mean.io_us,
+                mean.remesh_us,
+                mean.flush_us,
+                mean.draw_us,
+                tt.max.fixed_step_us,
+                tt.max.ecs_us,
+                tt.max.stream_us,
+                tt.max.init_us,
+                tt.max.edge_us,
+                tt.max.io_us,
+                tt.max.remesh_us,
+                tt.max.flush_us,
+                tt.max.draw_us,
+                tt.frames,
             );
         }
         renderer.queue().present(frame);
