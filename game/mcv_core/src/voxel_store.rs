@@ -56,6 +56,7 @@ const fn ceillog2(n: usize) -> usize {
 }
 
 /// palette 表示（值域 u16；id 从 0 递增，插入序 = 首现序）。
+#[derive(Clone)]
 enum Pal {
     /// SingleValuePalette：恒 0 号值，无存储。
     Single(u16),
