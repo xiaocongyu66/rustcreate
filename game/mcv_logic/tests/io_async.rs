@@ -27,7 +27,7 @@ fn temp_dir(tag: &str) -> std::path::PathBuf {
 }
 
 /// 异步路测试装配（独立 IO 线程开启）。
-fn headless_io(tag: &str, dir: std::path::PathBuf) -> GameRuntime {
+fn headless_io(_tag: &str, dir: std::path::PathBuf) -> GameRuntime {
     GameRuntime::new_headless_with_io(20261010, dir, GameMode::Survival, true)
 }
 
@@ -121,10 +121,7 @@ fn write_failure_keeps_dirty_bit_then_retry_clears() {
     );
     assert!(cleared, "重试成功后 SAVE 位应清");
     let ids = disk_ids(&dir, pos).expect("重试成功后盘上应可读回");
-    assert!(
-        ids.iter().any(|&b| b == 1),
-        "盘上内容应等于快照（地板 BlockId(1)）"
-    );
+    assert!(ids.contains(&1), "盘上内容应等于快照（地板 BlockId(1)）");
 }
 
 /// 红测试 ②：同帧编辑 + 落盘 → 最终盘上内容 = 最后编辑（竞态窗行为锁）。
@@ -230,7 +227,8 @@ fn async_load_restores_saved_chunk() {
     assert_eq!(vg[vidx(0, 100, 0)], BlockId(0));
     drop(vg);
     let hm = h.heightmap.read().unwrap();
-    assert_eq!(hm[0], -63, "heightmap = 盘上值（地板顶层 -63）");
+    // recompute_heightmap 语义 = 首个非遮光格绝对 y = 遮光顶(-63) + 1。
+    assert_eq!(hm[0], -62, "heightmap = 盘上值");
 }
 
 /// 回滚开关语义：`new_headless_with_io(_io_async)` 分叉同步/异步两路

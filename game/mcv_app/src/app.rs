@@ -1460,7 +1460,9 @@ impl AppState {
     /// 退出到主菜单（保存并释放世界）。
     fn quit_to_menu(&mut self, delete: bool) {
         if let Some(mut runtime) = self.runtime.take() {
-            runtime.save_dirty(None);
+            // E4：退出安全落盘 = 全量投递 + 阻塞排空在途 IO（delete 时
+            // remove_dir_all 前必须保证写盘收尾）。
+            runtime.flush_save_blocking();
             runtime.save_meta();
             // 设备所有权链（本波 #143）：把 AudioManager 收回 App 级菜单
             // 音频（主菜单/设置按钮音续用同一输出设备）；runtime 留
@@ -2230,7 +2232,9 @@ impl ApplicationHandler for AppState {
         // 自动保存的 30s 墙钟节拍（redraw 内）挂起后不再推进——进后台首件事
         // 同步落盘（CloseRequested 同款通路），被杀丢档上限 30s → 0。
         if let Some(runtime) = self.runtime.as_mut() {
-            runtime.save_dirty(None);
+            // E4：进后台首件事 = 投递 + 阻塞排空（原 save_dirty 同点，语义
+            // 升级为等在途写盘收尾——被杀丢档上限 30s → 0 不回退）。
+            runtime.flush_save_blocking();
             runtime.save_meta();
         }
         // C-2（波#127-3）：后台音频挂起——cpal 回调线程独立于事件循环，
@@ -2258,7 +2262,8 @@ impl ApplicationHandler for AppState {
         match event {
             WindowEvent::CloseRequested => {
                 if let Some(runtime) = self.runtime.as_mut() {
-                    runtime.save_dirty(None);
+                    // E4：关窗 = 全量投递 + 阻塞排空在途 IO 后再落 meta。
+                    runtime.flush_save_blocking();
                     runtime.save_meta();
                 }
                 self.save_options();

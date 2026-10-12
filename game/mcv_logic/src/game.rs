@@ -742,6 +742,17 @@ pub struct GameRuntime {
     /// 回滚开关）。回传端在 RustMesher 内（flush 消化）；派发端在此供
     /// remesh 预算流投递快照字节（hi/lo 通道选择在 [`Self::build_chunk_mesh`]）。
     mesh_sched: Option<mcv_mesher::MeshScheduler>,
+    /// E4 独立 IO 通道（None = 同步路，`MCV_IO_ASYNC=0` 回滚开关/无头）。
+    /// 提交与回执消化都在主线程；region open/read/write 全部移出主线程。
+    io: Option<IoChannel>,
+    /// 在途读盘记账：pos → (投递帧, seq)。复用「Empty 在途 300 帧驻留」
+    /// 防乒乓机制（与 req_frames 并列的 or 条件），读回填走
+    /// advance_to(TerrainReady) 既有接线。
+    io_frames: HashMap<ChunkPos, (u64, u64)>,
+    /// 在途写记账：pos → 最新快照 seq（同块新快照接管后，旧回执按 seq 丢弃）。
+    io_writes: HashMap<ChunkPos, u64>,
+    /// io seq 单调源（投递与完成回执的配对键）。
+    io_seq: u64,
     pub save_dir: std::path::PathBuf,
     /// 已建网格区块的记账（#80 起绘制条目表由 mesher 实现自持，游戏层只
     /// 记「哪块已建网格」）。O(1) 判「这块是否已有网格」替代逐帧对全表做
@@ -1120,6 +1131,212 @@ impl ChunkMesher for NullMesher {
     }
 }
 
+// ---- E4 独立单 IO 线程（存/读盘异步化，docs/engine-roadmap.md §3 E4）----
+//
+// 原版同构：IO 走独立 executor 不入节流器——存盘编码
+// `CompletableFuture.supplyAsync(data::write, Util.backgroundExecutor())`
+// （ChunkMap.java:773），解析同（:566、:924）；写失败报告
+// reportChunkSaveFailure（:775-777）。本仓对应物 = 专属 std::thread（非
+// TaskPool——IO 与生成争 worker 会互饿），mpsc 命令通道（命令低频）。
+// 帧预算（读 4/写 2+积压/脏 2）保留为**投递预算**，不再是执行预算；
+// E0 的 io 子段计时自动覆盖新路径（量的是快照+投递成本）。
+
+/// 主线程 → IO 线程命令。
+enum IoCommand {
+    /// 两段式写：主线程已快照的 (voxels u16, heightmap) 投递写盘。
+    Write {
+        pos: ChunkPos,
+        seq: u64,
+        ids: Vec<u16>,
+        hm: [i16; 256],
+    },
+    /// 读盘请求（结果经完成通道回主线程走 advance_to(TerrainReady) 接线）。
+    Load { pos: ChunkPos, seq: u64 },
+}
+
+/// IO 线程 → 主线程完成回执。
+enum IoDone {
+    /// 写完成：`ok=false` = 写失败（回执端保脏位重试；报告路径对应原版
+    /// reportChunkSaveFailure，ChunkMap.java:775-777）。
+    Written { pos: ChunkPos, seq: u64, ok: bool },
+    /// 读完成：`None` = 未存档/读失败（与同步 try_load_saved 同语义 →
+    /// 回退生成器）。
+    Loaded {
+        pos: ChunkPos,
+        seq: u64,
+        found: Option<(Vec<u16>, [i16; 256])>,
+    },
+}
+
+/// 在途投递高水位（`save_dirty(None)` 全量扫描/常规预算路的停投线）：
+/// 64 × ~197 KiB 快照 ≈ 12.6 MiB 上界（对齐复活缓存 64 硬顶量级）。
+const IO_HIGH_WATER: usize = 64;
+
+/// 单区块 region 写盘（IO 线程侧）。错误文案与同步路 save_handle_io
+/// 两处 log::error 逐字同源（region open / chunk save）。
+fn write_chunk_to_disk(
+    dir: &std::path::Path,
+    pos: ChunkPos,
+    ids: &[u16],
+    hm: &[i16; 256],
+) -> std::io::Result<()> {
+    let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
+    let local = mcv_save::chunk_local(pos.x, pos.z);
+    let mut region = match mcv_save::RegionFile::open(dir, rx, rz) {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("region open failed {rx},{rz}: {e}");
+            return Err(e);
+        }
+    };
+    if let Err(e) = region.save_chunk(local, ids, hm) {
+        log::error!("chunk save failed {pos:?}: {e}");
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// 单区块 region 读盘（IO 线程侧）。与同步 try_load_saved 同语义同静默：
+/// region 文件不存在/打开失败/记录缺失或版本不符（v1/v2）→ None → 回退
+/// 生成器。exists() 前置避免 open 在 miss 上创建空 region 文件。
+fn load_chunk_from_disk(dir: &std::path::Path, pos: ChunkPos) -> Option<(Vec<u16>, [i16; 256])> {
+    let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
+    let path = dir.join(format!("region/r.{rx}.{rz}.mcrv"));
+    if !path.exists() {
+        return None;
+    }
+    let mut region = mcv_save::RegionFile::open(dir, rx, rz).ok()?;
+    let mut ids = vec![0u16; mcv_core::CHUNK_VOL];
+    let mut hm = [mcv_core::WORLD_MIN_Y as i16; 256];
+    region
+        .load_chunk(mcv_save::chunk_local(pos.x, pos.z), &mut ids, &mut hm)
+        .ok()?;
+    Some((ids, hm))
+}
+
+/// 单命令执行（IO 线程侧；panic 由 [`spawn_io_worker`] 隔离成失败回执）。
+fn run_io_command(dir: &std::path::Path, cmd: &IoCommand) -> IoDone {
+    match cmd {
+        IoCommand::Write { pos, seq, ids, hm } => IoDone::Written {
+            pos: *pos,
+            seq: *seq,
+            ok: write_chunk_to_disk(dir, *pos, ids, hm).is_ok(),
+        },
+        IoCommand::Load { pos, seq } => IoDone::Loaded {
+            pos: *pos,
+            seq: *seq,
+            found: load_chunk_from_disk(dir, *pos),
+        },
+    }
+}
+
+/// 失败回执合成（命令 panic 时；保脏位/回退生成的语义不因线程侧异常失效）。
+fn failed_io_done(cmd: &IoCommand) -> IoDone {
+    match cmd {
+        IoCommand::Write { pos, seq, .. } => IoDone::Written {
+            pos: *pos,
+            seq: *seq,
+            ok: false,
+        },
+        IoCommand::Load { pos, seq } => IoDone::Loaded {
+            pos: *pos,
+            seq: *seq,
+            found: None,
+        },
+    }
+}
+
+/// IO 线程主循环：逐命令执行并回执；任务 panic 隔离（镜像 TaskPool
+/// run_isolated——worker 存活，命令以失败回执收场）；主线程撤发送端后
+/// 通道清空断开，循环自然退出。
+fn spawn_io_worker(
+    save_dir: std::path::PathBuf,
+    rx: std::sync::mpsc::Receiver<IoCommand>,
+    tx: std::sync::mpsc::Sender<IoDone>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::Builder::new()
+        .name("mcv-io".into())
+        .spawn(move || {
+            while let Ok(cmd) = rx.recv() {
+                let done = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_io_command(&save_dir, &cmd)
+                }))
+                .unwrap_or_else(|_| {
+                    log::error!("[io] command panicked; worker survives, failure reported");
+                    failed_io_done(&cmd)
+                });
+                if tx.send(done).is_err() {
+                    break; // 主线程已弃收（退出），不再产回执
+                }
+            }
+        })
+        .expect("spawn mcv-io thread")
+}
+
+/// E4 IO 通道：主线程持有（提交 + 回执消化都在主线程）。`outstanding`
+/// 主线程侧计数即可（投递 +1、消化 -1），无需与 worker 共享。
+struct IoChannel {
+    tx: Option<std::sync::mpsc::Sender<IoCommand>>,
+    rx: std::sync::mpsc::Receiver<IoDone>,
+    outstanding: usize,
+    worker: Option<std::thread::JoinHandle<()>>,
+}
+
+impl IoChannel {
+    fn new(save_dir: std::path::PathBuf) -> Self {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = spawn_io_worker(save_dir, rx, done_tx);
+        Self {
+            tx: Some(tx),
+            rx: done_rx,
+            outstanding: 0,
+            worker: Some(worker),
+        }
+    }
+
+    fn post(&mut self, cmd: IoCommand) {
+        if self.tx.as_ref().is_some_and(|tx| tx.send(cmd).is_ok()) {
+            self.outstanding += 1;
+        }
+    }
+
+    fn try_recv(&mut self) -> Option<IoDone> {
+        match self.rx.try_recv() {
+            Ok(done) => {
+                self.outstanding = self.outstanding.saturating_sub(1);
+                Some(done)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn recv_timeout(&mut self, t: std::time::Duration) -> Option<IoDone> {
+        match self.rx.recv_timeout(t) {
+            Ok(done) => {
+                self.outstanding = self.outstanding.saturating_sub(1);
+                Some(done)
+            }
+            Err(_) => None,
+        }
+    }
+
+    fn outstanding(&self) -> usize {
+        self.outstanding
+    }
+}
+
+impl Drop for IoChannel {
+    fn drop(&mut self) {
+        // 先撤发送端（worker 收完通道余量后退出），再 join—— Drop 不 join
+        // 会detach：退出期在途写盘命令执行完才收线程，保证尽量多落盘。
+        self.tx.take();
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
+        }
+    }
+}
+
 impl GameRuntime {
     pub fn new(
         seed: u64,
@@ -1132,12 +1349,14 @@ impl GameRuntime {
         // 先例），>0 → 快照-计算-回传三段式并行。
         let (mesher, mesh_sched) =
             RustMesher::new_with_workers(uploader, mcv_mesher::mesh_worker_count());
-        Self::assemble(seed, Box::new(mesher), save_dir, mode, mesh_sched)
+        // E4：IO 异步开关同点解析一次（MCV_IO_ASYNC=0 → 同步路回滚）。
+        let io_async = Self::io_async_enabled();
+        Self::assemble(seed, Box::new(mesher), save_dir, mode, mesh_sched, io_async)
     }
 
     /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。
     pub fn new_headless(seed: u64, save_dir: std::path::PathBuf, mode: GameMode) -> Self {
-        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None)
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, false)
     }
 
     /// E3 测试装配（headless + 真实网格调度器）：NullMesher 不触 GPU、
@@ -1154,7 +1373,14 @@ impl GameRuntime {
         assert!(workers > 0, "workers=0 是同步路径，无调度器可返回");
         let (sched, results) = mcv_mesher::MeshScheduler::new(workers);
         (
-            Self::assemble(seed, Box::new(NullMesher), save_dir, mode, Some(sched)),
+            Self::assemble(
+                seed,
+                Box::new(NullMesher),
+                save_dir,
+                mode,
+                Some(sched),
+                false,
+            ),
             results,
         )
     }
@@ -1169,21 +1395,8 @@ impl GameRuntime {
         mode: GameMode,
         io_async: bool,
     ) -> Self {
-        let _ = io_async;
-        Self::new_headless(seed, save_dir, mode)
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None, io_async)
     }
-
-    /// IO 在途记账观测面（测试取证；非调度依据）：`(在途写, 在途读)`。
-    /// 在途写 = 已投递快照未收到完成回执；在途读 = 已投递读请求未回填。
-    #[doc(hidden)]
-    pub fn io_inflight(&self) -> (usize, usize) {
-        (0, 0)
-    }
-
-    /// 测试钩子：登记一笔在途读记账（等价请求环投递后的驻留标记），
-    /// 供防乒乓驻留断言在不依赖真实 IO 时序的情况下驱动。
-    #[doc(hidden)]
-    pub fn io_debug_mark_loading(&mut self, _pos: ChunkPos) {}
 
     /// `MCV_IO_ASYNC` 语义（E4 回滚开关，对齐 `MCV_MESHER_WORKERS` /
     /// `MCV_TERRAIN_BACKEND` 先例）：未设或非 `"0"` → 异步（独立 IO 线程）；
@@ -1204,6 +1417,7 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
         mesh_sched: Option<mcv_mesher::MeshScheduler>,
+        io_async: bool,
     ) -> Self {
         // 新档背包全模式为空（26.1 Inventory.java:56 items 初始化为
         // 36×ItemStack.EMPTY，:62-65 构造只挂 player/equipment 引用、从不
@@ -1227,6 +1441,14 @@ impl GameRuntime {
             on_tick: false,
             mesher,
             mesh_sched,
+            io: if io_async {
+                Some(IoChannel::new(save_dir.clone()))
+            } else {
+                None
+            },
+            io_frames: HashMap::new(),
+            io_writes: HashMap::new(),
+            io_seq: 0,
             save_dir,
             meshed: HashSet::new(),
             spawned: false,
@@ -2076,9 +2298,14 @@ impl GameRuntime {
     /// bit. Called periodically and at exit.
     ///
     /// 帧内常态写回不在这里：stream() 每帧 ≤2 块走 FIFO 落盘队列（写回
-    /// 预算，审计 §5.3），30s 全量调用通常只剩扫描。`None` = 全量兜底（退出安全，
-    /// 含 pending_unloads 复活缓存同步清空——这些块已离开活动表，退出
-    /// 前必须落盘）。`Some(pos)` = 单块即时存盘（未在册则跳过）。
+    /// 预算，审计 §5.3），30s 全量调用通常只剩扫描。`None` = 全量兜底（退出
+    /// 安全需接 [`Self::flush_save_blocking`]，含 pending_unloads 复活缓存
+    /// 清空——这些块已离开活动表，退出前必须落盘）。`Some(pos)` = 单块即时
+    /// 存盘（未在册则跳过）。
+    ///
+    /// E4：异步路（`io` 在册）时本方法退化为**投递扫描**——锁内快照 +
+    /// 投递独立 IO 线程，不执行 region IO；同步路（`MCV_IO_ASYNC=0` 回滚
+    /// 开关/无头）保持 E3 前的同步写盘逐字不变。
     pub fn save_dirty(&mut self, only: Option<ChunkPos>) {
         if only.is_none() {
             let pend = std::mem::take(&mut self.pending_unloads);
@@ -2086,7 +2313,7 @@ impl GameRuntime {
                 if h.dirty() & mcv_core::dirty::SAVE != 0
                     && (h.stage() as u8) >= (Stage::TerrainReady as u8)
                 {
-                    self.save_handle_io(&h);
+                    self.save_handle(&h, false);
                 }
             }
         }
@@ -2104,8 +2331,173 @@ impl GameRuntime {
             if (handle.stage() as u8) < (Stage::TerrainReady as u8) {
                 continue;
             }
-            self.save_handle_io(&handle);
+            self.save_handle(&handle, false);
         }
+    }
+
+    /// 单区块落盘分叉：异步（E4 两段式投递，见 [`Self::post_save`]）或同步
+    /// （`MCV_IO_ASYNC=0` 回滚开关/无头，[`Self::save_handle_io`] 原样）。
+    /// `force` = 强制路径（复活缓存积压门/64 硬顶溢出）绕过在途高水位门。
+    fn save_handle(&mut self, handle: &Arc<ChunkHandle>, force: bool) -> bool {
+        if self.io.is_some() {
+            self.post_save(handle, force)
+        } else {
+            self.save_handle_io(handle)
+        }
+    }
+
+    /// E4 两段式写·投递段（原版锚 ChunkMap.java:773
+    /// `CompletableFuture.supplyAsync(data::write, Util.backgroundExecutor())`
+    /// 的同构：编码/写盘在后台，拷贝快照在主线程）：锁内快照
+    /// voxels+heightmap（~197 KiB）→ 投递 IO 线程 → 完成回执在
+    /// [`Self::process_io_done`] 消化。
+    ///
+    /// 脏位纪律（保住「失败保脏位」，game.rs 既有语义）：**投递即清
+    /// SAVE 位**——在途窗内的编辑再次置位 → 下轮以新快照重写（盘上内容
+    /// = 最后编辑）；完成回执失败 → 回执端重置脏位重试。同块已有在途
+    /// 快照则跳过（最新快照覆盖语义由下轮投递承担，不重复投递）。
+    /// 返回 true = 已快照并投递（预算记账）。
+    fn post_save(&mut self, handle: &Arc<ChunkHandle>, force: bool) -> bool {
+        let pos = handle.pos;
+        if handle.dirty() & mcv_core::dirty::SAVE == 0
+            || (handle.stage() as u8) < (Stage::TerrainReady as u8)
+            || self.io_writes.contains_key(&pos)
+            || (!force && self.io_outstanding() >= IO_HIGH_WATER)
+        {
+            return false;
+        }
+        // 主线程锁内快照（唯一碰 RwLock 的点，拷贝 ~50µs 量级）。
+        let ids: Vec<u16> = bytemuck::cast_slice(handle.voxels.read().unwrap().as_slice()).to_vec();
+        let hm: [i16; 256] = **handle.heightmap.read().unwrap();
+        let seq = self.io_seq.wrapping_add(1);
+        self.io_seq = seq;
+        self.io_writes.insert(pos, seq);
+        self.io
+            .as_mut()
+            .unwrap()
+            .post(IoCommand::Write { pos, seq, ids, hm });
+        handle.clear_dirty(mcv_core::dirty::SAVE);
+        true
+    }
+
+    /// E4：IO 完成回执消化（stream 每帧、[`Self::flush_save_blocking`] 退出
+    /// 排空共用）。读回填走 `advance_to(TerrainReady)` 既有接线；写失败保
+    /// 脏位；过期回执（卸载超时后重投的旧读/同块更新快照已接管的旧写）
+    /// 按 seq 丢弃。
+    fn process_io_done(&mut self, done: IoDone) {
+        match done {
+            IoDone::Written { pos, seq, ok } => {
+                // 同块更晚快照在途（seq 已更新）→ 旧回执丢弃：盘序无关
+                // （per-position region 槽位，最新快照覆盖），失败保脏位由
+                // 最新在途回执负责。
+                if self.io_writes.get(&pos) == Some(&seq) {
+                    self.io_writes.remove(&pos);
+                }
+                if !ok && !self.io_writes.contains_key(&pos) {
+                    // 写失败：保脏位（下帧队头重试并 log::error，与同步路
+                    // save_handle_io 同文案）。手柄可能在册或在复活缓存。
+                    let h = self.chunks.get(&pos).cloned().or_else(|| {
+                        self.pending_unloads
+                            .iter()
+                            .find(|(p, _)| *p == pos)
+                            .map(|(_, h)| h.clone())
+                    });
+                    if let Some(h) = h {
+                        h.mark_dirty(mcv_core::dirty::SAVE);
+                    }
+                }
+            }
+            IoDone::Loaded { pos, seq, found } => {
+                // 过期回执（超时卸载后重投的旧读）——丢弃，不惊动新一轮记账。
+                let current = self.io_frames.get(&pos).map(|(_, s)| *s);
+                if current != Some(seq) {
+                    return;
+                }
+                self.io_frames.remove(&pos);
+                match found {
+                    Some((ids, hm)) => {
+                        if let Some(h) = self.chunks.get(&pos) {
+                            *h.voxels.write().unwrap() = load_voxels(&ids);
+                            **h.heightmap.write().unwrap() = hm;
+                            h.advance_to(Stage::TerrainReady);
+                        }
+                        // 手柄已超时卸载 → 数据随回执丢弃，下轮重投读。
+                    }
+                    None => {
+                        // 未存档/读失败 → 回退生成器（与同步 try_load_saved
+                        // 同语义）。手柄已在册（Empty），直接发 worker 生成
+                        // 请求并计入节流记账（本帧 pops 相应收缩）。
+                        let miss = self
+                            .chunks
+                            .get(&pos)
+                            .is_some_and(|h| h.stage() == Stage::Empty);
+                        if miss {
+                            self.scheduler.request(pos);
+                            self.req_frames.insert(pos, self.stream_frame);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// IO 在途记账观测面（测试取证；非调度依据）：`(在途写, 在途读)`。
+    /// 在途写 = 已投递快照未收到完成回执；在途读 = 已投递读请求未回填。
+    #[doc(hidden)]
+    pub fn io_inflight(&self) -> (usize, usize) {
+        (self.io_writes.len(), self.io_frames.len())
+    }
+
+    /// 测试钩子：登记一笔在途读记账（等价请求环投递后的驻留标记），
+    /// 供防乒乓驻留断言在不依赖真实 IO 时序的情况下驱动。
+    #[doc(hidden)]
+    pub fn io_debug_mark_loading(&mut self, pos: ChunkPos) {
+        let seq = self.io_seq.wrapping_add(1);
+        self.io_seq = seq;
+        self.io_frames.insert(pos, (self.stream_frame, seq));
+    }
+
+    /// 退出安全落盘：全量投递扫描（[`Self::save_dirty(None)`]）+ **阻塞排空
+    /// 在途 IO**。仅退出/挂起/关窗路径调用（quit_to_menu、suspended、
+    /// CloseRequested）——周期 30s 存盘保持纯投递（不掉帧）。写持续失败时
+    /// 有界自旋（截稿 5s）后放弃并 log::error（保脏位语义在退出场景失效
+    /// 与同步路「一次重试后丢弃」同形）。
+    pub fn flush_save_blocking(&mut self) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            self.save_dirty(None);
+            // 排空在途：回执总数 = 在途投递数，recv_timeout 有界等待。
+            while self.io_outstanding() > 0 && std::time::Instant::now() < deadline {
+                let Some(done) = self
+                    .io
+                    .as_mut()
+                    .and_then(|io| io.recv_timeout(std::time::Duration::from_millis(100)))
+                else {
+                    continue;
+                };
+                self.process_io_done(done);
+            }
+            let pending = self.chunks.values().any(|h| {
+                h.dirty() & mcv_core::dirty::SAVE != 0
+                    && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+            }) || self.pending_unloads.iter().any(|(_, h)| {
+                h.dirty() & mcv_core::dirty::SAVE != 0
+                    && (h.stage() as u8) >= (Stage::TerrainReady as u8)
+            });
+            if !pending {
+                return;
+            }
+            if std::time::Instant::now() >= deadline {
+                log::error!("flush_save_blocking deadline: SAVE-dirty chunks remain");
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    /// 在途投递总数（含未消化回执）；高水位门数据源（内存有界）。
+    fn io_outstanding(&self) -> usize {
+        self.io.as_ref().map_or(0, IoChannel::outstanding)
     }
 
     /// 单区块 region 写盘（save_dirty 全量/预算流/pending_unloads 落盘
@@ -2216,7 +2608,10 @@ impl GameRuntime {
     ///   （解耦点①，见 load_gate_parts）；出生投放门维持出生列及邻域
     ///   TerrainReady 现状映射（Spawn 态语义归出生门）。
     /// - IO 预算化：读盘 ≤4/帧、卸载写盘常态 ≤2/帧（积压超门追加）、
-    ///   脏块写回 ≤2/帧（app.rs 30s 全量存盘退化为兜底扫描）。
+    ///   脏块写回 ≤2/帧（app.rs 30s 全量存盘退化为兜底扫描）。E4 起
+    ///   这些预算是**投递**预算：region open/read/write 在独立 IO 线程
+    ///   执行（原版同构，ChunkMap.java:773/:566/:924），完成回执在下一帧
+    ///   头消化；`MCV_IO_ASYNC=0` 回落同步执行路。
     pub fn stream(&mut self) {
         // E0：stream 总窗口起点（纯记账，见 [`FrameTiming`]；子段窗口互不
         // 重叠且均落在本窗内——init/edge/io/remesh/flush 之和 ≤ stream）。
@@ -2272,14 +2667,21 @@ impl GameRuntime {
             if handle.stage() == Stage::Empty {
                 // 在途请求驻留：worker 未回且发出 <5s（300 帧）不卸载，
                 // 杜绝「请求→出环撤回→回环重请求→再生成」乒乓（症状 5）。
+                // E4：在途记账区分生成（req_frames）/读盘（io_frames）两类，
+                // 任一未超时都驻留。
                 let expired = self
                     .req_frames
                     .get(&c)
-                    .is_none_or(|f| self.stream_frame - f >= 300);
+                    .is_none_or(|f| self.stream_frame - f >= 300)
+                    && self
+                        .io_frames
+                        .get(&c)
+                        .is_none_or(|(f, _)| self.stream_frame - f >= 300);
                 if !expired {
                     continue;
                 }
                 self.req_frames.remove(&c);
+                self.io_frames.remove(&c);
                 self.chunks.remove(&c);
                 self.border_synced.remove(&c);
                 self.mesh_fail.remove(&c);
@@ -2324,7 +2726,7 @@ impl GameRuntime {
             }
             if h.dirty() & mcv_core::dirty::SAVE != 0
                 && (h.stage() as u8) >= (Stage::TerrainReady as u8)
-                && self.save_handle_io(h)
+                && self.save_handle(h, false)
             {
                 saved += 1;
             }
@@ -2334,7 +2736,9 @@ impl GameRuntime {
             if h.dirty() & mcv_core::dirty::SAVE != 0
                 && (h.stage() as u8) >= (Stage::TerrainReady as u8)
             {
-                self.save_handle_io(&h);
+                // 强制路径：绕过在途高水位门（投递后条目照常出队——写盘
+                // 由 IO 线程收尾，不因出队丢失）。
+                self.save_handle(&h, true);
             }
             log::debug!("pending_unloads backlog gate, flushed {pos:?}");
         }
@@ -2343,7 +2747,7 @@ impl GameRuntime {
             if h.dirty() & mcv_core::dirty::SAVE != 0
                 && (h.stage() as u8) >= (Stage::TerrainReady as u8)
             {
-                self.save_handle_io(&h);
+                self.save_handle(&h, true);
                 log::debug!("pending_unloads overflow, flushed {pos:?}");
             }
         }
@@ -2357,7 +2761,8 @@ impl GameRuntime {
         // 成功清脏自动前进）。不用轮转游标：脏集变小时游标取模会回卷，
         // 加载洪流期对同一批 2 块逐帧重复 open+write（原版
         // saveChunksEagerly 也只扫 dirty 集限时间片，ChunkMap.java:500-513）。
-        // IO 失败保脏位，下帧队头重试并 log::error。
+        // IO 失败保脏位，下帧队头重试并 log::error。E4：≤2 保留为**投递**
+        // 预算（锁内快照 + mpsc 投递），region 写盘在独立 IO 线程执行。
         let mut dirty_keys: Vec<ChunkPos> = self
             .chunks
             .iter()
@@ -2373,9 +2778,19 @@ impl GameRuntime {
             dirty_keys.sort_unstable_by_key(|p| (p.z, p.x));
             for pos in dirty_keys.into_iter().take(2) {
                 let handle = self.chunks[&pos].clone();
-                self.save_handle_io(&handle);
+                self.save_handle(&handle, false);
             }
             self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
+        }
+
+        // E4：IO 完成回执消化（读盘回填 advance_to(TerrainReady) / miss 转
+        // 生成请求 / 写盘清脏或保脏）。置于请求段之前：读完成的 miss 在本帧
+        // 直接发生成请求（req_frames 计入下方节流），读/写在途记账先行解除，
+        // 本帧的环扫描与投递预算才看到最新状态。
+        if self.io.is_some() {
+            while let Some(done) = self.io.as_mut().unwrap().try_recv() {
+                self.process_io_done(done);
+            }
         }
 
         // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
@@ -2437,7 +2852,26 @@ impl GameRuntime {
                     }
                     let handle = Arc::new(ChunkHandle::new(pos));
                     if io_budget > 0 {
-                        // E0：io 子段（请求环读盘 ≤4）窗口。
+                        if self.io.is_some() {
+                            // E4 读异步化（≤4/帧保留为**投递**预算，不再执行）：
+                            // Empty 手柄先在册 + io_frames 记账（复用 300 帧
+                            // 驻留防乒乓），读盘在独立 IO 线程执行，结果经
+                            // 完成通道回主线程走 advance_to(TerrainReady) 既有
+                            // 接线（原版解析同走后台 executor，
+                            // ChunkMap.java:566/:924）。miss 的生成请求由回执
+                            // 端补发（本帧 pops 节流照算）。
+                            let io_t0 = std::time::Instant::now();
+                            io_budget -= 1;
+                            let seq = self.io_seq.wrapping_add(1);
+                            self.io_seq = seq;
+                            self.io_frames.insert(pos, (self.stream_frame, seq));
+                            self.io.as_mut().unwrap().post(IoCommand::Load { pos, seq });
+                            self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
+                            self.chunks.insert(pos, handle);
+                            continue;
+                        }
+                        // E0：io 子段（请求环读盘 ≤4）窗口。（同步路 =
+                        // MCV_IO_ASYNC=0 回滚开关/无头）
                         let io_t0 = std::time::Instant::now();
                         let loaded = self.try_load_saved(&handle);
                         self.timing_frame.io_us += io_t0.elapsed().as_micros() as u64;
