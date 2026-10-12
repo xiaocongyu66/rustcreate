@@ -156,8 +156,8 @@ fn edit_during_inflight_write_wins_on_disk() {
     );
     assert!(base, "基线落盘应在预算内完成");
     let ids = disk_ids(&dir, pos).expect("基线盘上可读");
-    assert_eq!(ids[vidx(0, -63, 0)], 1);
-    assert_eq!(ids[vidx(1, -63, 0)], 0);
+    assert_eq!(ids[vidx(0, -63, 0)], 1, "基线：地板列 v0");
+    assert_eq!(ids[vidx(1, -62, 0)], 0, "基线：地板上方空气列 v1");
 
     // 编辑 A → 同帧投递快照 A（在途）。
     handle.voxels.write().unwrap()[vidx(0, -63, 0)] = BlockId(42);
@@ -169,7 +169,7 @@ fn edit_during_inflight_write_wins_on_disk() {
     );
 
     // 竞态窗内再编辑 B（置 SAVE）→ 完成回执后下轮以新快照重写。
-    handle.voxels.write().unwrap()[vidx(1, -63, 0)] = BlockId(43);
+    handle.voxels.write().unwrap()[vidx(1, -62, 0)] = BlockId(43);
     handle.mark_dirty(dirty::SAVE);
     let done = pump(
         &mut rt,
@@ -180,7 +180,7 @@ fn edit_during_inflight_write_wins_on_disk() {
     let ids = disk_ids(&dir, pos).expect("重写后盘上可读");
     assert_eq!(ids[vidx(0, -63, 0)], 42, "盘上内容 = 快照 A（首次编辑）");
     assert_eq!(
-        ids[vidx(1, -63, 0)],
+        ids[vidx(1, -62, 0)],
         43,
         "盘上内容 = 最后编辑（在途期间的再编辑必须落盘）"
     );
