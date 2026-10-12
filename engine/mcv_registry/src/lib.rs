@@ -40,7 +40,7 @@ impl Identifier {
     /// 在 const fn 中非稳定，trait 调用亦不可。
     pub const fn is_valid_namespace(s: &str) -> bool {
         // 整串 ".." 特判（isValidNamespace 首行）：长度 2 且两字节皆 '.'。
-        if s.as_bytes().len() == 2 && s.as_bytes()[0] == b'.' && s.as_bytes()[1] == b'.' {
+        if s.len() == 2 && s.as_bytes()[0] == b'.' && s.as_bytes()[1] == b'.' {
             return false;
         }
         let b = s.as_bytes();
