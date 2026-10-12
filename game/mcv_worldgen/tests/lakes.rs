@@ -113,7 +113,8 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     }
     eprintln!(
         "K-LAKES-BUF surface_candidates={surf_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=64x64)",
-        survivors.len()
+        survivors.len(),
+        chunks.len()
     );
     assert!(
         !survivors.is_empty(),

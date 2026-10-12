@@ -16,8 +16,8 @@
 pub mod aquifer;
 pub mod biomes;
 pub mod blended;
-pub mod lake_pass;
 pub mod climate;
+pub mod lake_pass;
 pub mod noise;
 pub mod perlin;
 pub mod spline;
