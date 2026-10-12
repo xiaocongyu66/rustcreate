@@ -8,12 +8,14 @@
 
 mod mesher;
 mod sched;
+mod sections;
 
-pub use mesher::{MeshData, block_geom, build_mesh};
+pub use mesher::{MeshData, Rows, block_geom, build_mesh};
 pub use sched::{
     MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
     neighborhood_slots, worker_count_from,
 };
+pub use sections::{KindProducts, SECTION_COUNT, TOTAL_SCANNED_ROWS, build_products, edit_rows};
 
 /// One loaded chunk slot: voxel ids (98304 u16) and light bytes (98304),
 /// layout `mcv_core::vidx`（v6：384 高，y 为绝对世界 y）; light low nibble =
@@ -63,5 +65,34 @@ impl Mesher {
             }
         }
         Ok(mesher::build_mesh(&voxels, &lights, kind))
+    }
+
+    /// #172 sub-chunk 重网格入口：语义同 [`build`]（中心区块、kind 校验），
+    /// 但产分 section 产物并可基于 `old` 只重放 `rows` 覆盖的扫描行。
+    /// `rows = None` = 整柱重算；返回值第二项 = 重放工作量
+    /// （(轴,向,层) 行数 + 形状 section 数，整柱 = [`TOTAL_SCANNED_ROWS`] +
+    /// [`SECTION_COUNT`]）。`combine()` 后的 [`MeshData`] 与 [`build`] 直呼
+    /// 逐字节相同（tests/sections.rs 锁）。
+    pub fn build_products(
+        &self,
+        neighborhood: &[Option<Slot<'_>>; 9],
+        kind: u32,
+        rows: Option<Rows>,
+        old: Option<KindProducts>,
+    ) -> Result<(KindProducts, usize), i32> {
+        if kind > 1 {
+            return Err(BAD_ARG);
+        }
+        let mut voxels: [Option<&[u16]>; 9] = [None; 9];
+        let mut lights: [Option<&[u8]>; 9] = [None; 9];
+        for (i, slot) in neighborhood.iter().enumerate() {
+            if let Some(s) = slot {
+                debug_assert!(s.voxels.len() >= mcv_core::CHUNK_VOL);
+                debug_assert!(s.light.len() >= mcv_core::CHUNK_VOL);
+                voxels[i] = Some(s.voxels);
+                lights[i] = Some(s.light);
+            }
+        }
+        Ok(sections::build_products(&voxels, &lights, kind, rows, old))
     }
 }

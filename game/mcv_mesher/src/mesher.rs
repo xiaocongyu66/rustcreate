@@ -426,7 +426,146 @@ impl MeshData {
             self.indices.len() as u32,
         )
     }
+}
 
+/// 扫描行过滤器（任务板 #172）：编辑脏 AABB（±1 邻接膨胀）折算成
+/// 「哪些 (axis, dir, layer) 扫描行需要重放」。位掩码/区间由脏盒唯一
+/// 派生，行选择只影响「跳过不算」，不影响任何被保留行的字节——被保留
+/// 行始终**整高**重放（axis0/2 的 v=y 贪心前向合并可跨 section 缝、
+/// visited 前沿沿 +y 传播，段裁剪不可字节精确，见 sections.rs 头注）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rows {
+    /// axis0 层 = 区块内 x 列（位掩码）。
+    x: u16,
+    /// axis2 层 = 区块内 z 列（位掩码）。
+    z: u16,
+    /// axis1 层 = 全局 y 行（行号 = y − WORLD_MIN_Y），半开区间。
+    y_lo: usize,
+    y_hi: usize,
+}
+
+impl Rows {
+    /// 全柱（与分 section 之前的整柱扫描等价）。
+    pub const ALL: Rows = Rows {
+        x: 0xFFFF,
+        z: 0xFFFF,
+        y_lo: 0,
+        y_hi: mcv_core::CHUNK_SY,
+    };
+
+    /// 空集（什么都不重算；仅配合旧产物复用有语义）。
+    pub const NONE: Rows = Rows {
+        x: 0,
+        z: 0,
+        y_lo: usize::MAX,
+        y_hi: usize::MAX,
+    };
+
+    /// 并集：x/z 掩码按位或；y 取包络区间（不相交的多段编辑会连带
+    /// 中间干净段一并重放——保守多算不少算，登记债 sections.rs 头注）。
+    pub fn union(&self, o: &Rows) -> Rows {
+        if self.y_lo > self.y_hi {
+            return *o;
+        }
+        if o.y_lo > o.y_hi {
+            return *self;
+        }
+        Rows {
+            x: self.x | o.x,
+            z: self.z | o.z,
+            y_lo: self.y_lo.min(o.y_lo),
+            y_hi: self.y_hi.max(o.y_hi),
+        }
+    }
+
+    /// 脏盒（绝对 y，x/z 区块内局部；含端点）→ 行集，各轴 ±1 膨胀：
+    /// 面剔除/AO/平滑光只读 ±1 邻格（block_at/corner_ao/corner_smooth/
+    /// light_at 的全部采样半径），跨区块缝读取落在快照里、与行列选择
+    /// 无关，膨胀 1 即完备。
+    pub fn from_bbox(x0: i32, y0: i32, z0: i32, x1: i32, y1: i32, z1: i32) -> Rows {
+        let row = |a: i32, b: i32| -> u16 {
+            let a = (a - 1).clamp(0, 15) as u32;
+            let b = (b + 1).clamp(0, 15) as u32;
+            let mut m = 0u16;
+            for i in a..=b {
+                m |= 1 << i;
+            }
+            m
+        };
+        let y_lo = (y0 - 1 - mcv_core::WORLD_MIN_Y).clamp(0, mcv_core::CHUNK_SY as i32) as usize;
+        let y_hi = (y1 + 2 - mcv_core::WORLD_MIN_Y).clamp(0, mcv_core::CHUNK_SY as i32) as usize;
+        Rows {
+            x: row(x0, x1),
+            z: row(z0, z1),
+            y_lo,
+            y_hi,
+        }
+    }
+
+    pub(crate) fn active(&self, axis: usize, layer: usize) -> bool {
+        match axis {
+            0 => (self.x >> layer) & 1 != 0,
+            1 => layer >= self.y_lo && layer < self.y_hi,
+            _ => (self.z >> layer) & 1 != 0,
+        }
+    }
+
+    /// 形状段 section 活动判定：section 的 y 区间与脏 y 行区间相交。
+    pub(crate) fn shape_active(&self, sec: usize) -> bool {
+        sec * 16 < self.y_hi && sec * 16 + 16 > self.y_lo
+    }
+}
+
+/// 顶点字节打包（mesher.cpp:303-320 push_vertex 的平铺表达）：手写 LE
+/// 字节保证布局与 C++ 结构体逐字节一致（偏移 0/12/16/18/19/20/21，
+/// pad=0）。病灶#2 起 blk/sky 逐顶点取值（平滑层），由调用方按角解包
+/// 传入；参数列与 oracle 同构（一条顶点的全部字段），不可再拆。
+/// #172 起为两条 sink 路由（MeshData 直写 / sections 分 section）的唯一
+/// 打包出处，保证两路字节逐位同源。
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn vertex_bytes(
+    x: f32,
+    y: f32,
+    z: f32,
+    uu: u16,
+    vv: u16,
+    tex: u16,
+    blk: u8,
+    sky: u8,
+    ao: u8,
+    flags: u8,
+) -> [u8; VERTEX_STRIDE] {
+    let mut b = [0u8; VERTEX_STRIDE];
+    b[0..4].copy_from_slice(&x.to_le_bytes());
+    b[4..8].copy_from_slice(&y.to_le_bytes());
+    b[8..12].copy_from_slice(&z.to_le_bytes());
+    b[12..14].copy_from_slice(&uu.to_le_bytes());
+    b[14..16].copy_from_slice(&vv.to_le_bytes());
+    b[16..18].copy_from_slice(&tex.to_le_bytes());
+    b[18] = blk;
+    b[19] = sky;
+    b[20] = ao;
+    b[21] = flags;
+    // b[22..24] = pad 0
+    b
+}
+
+/// 发射落点路由（任务板 #172 sub-chunk 重网格）。扫描与发射主体零改动，
+/// 两条实现只差「字节落在哪」：
+/// - [`MeshData`] 直写：整柱扫描序直写整柱网格（与分 section 前的直写
+///   实现逐字节同款，golden/mesh/perf 锁面走此路）；
+/// - `sections::SectionedSink`：按 [`Self::begin_greedy`]/[`Self::begin_shape`]
+///   声明的归属（锚行所在 section）落到各 section 产物缓冲，索引改记
+///   section 基（combine 重定基拼回整柱字节序）。
+pub(crate) trait Sink {
+    /// 贪心 quad 起笔：`sec` = 锚行 section，`tag` = 桶键
+    /// （bit0-1 axis | bit2 dir | bit3-6 层内层号），[`KindProducts`](crate::KindProducts)
+    /// combine 的归位依据。每条 quad（4 顶点组）恰好一次。
+    fn begin_greedy(&mut self, sec: usize, tag: u8);
+    /// 形状 quad 起笔（非立方模板，含 cross 的一次 4 顶点双端组）：
+    /// 归属 = 方块所在 section，combine 时按 section 顺序整体接尾。
+    fn begin_shape(&mut self, sec: usize);
+    fn vertex_base(&self) -> u32;
     #[allow(clippy::too_many_arguments)]
     fn push_vertex(
         &mut self,
@@ -440,32 +579,43 @@ impl MeshData {
         sky: u8,
         ao: u8,
         flags: u8,
-    ) {
-        // mesher.cpp:303-320 push_vertex 的平铺表达：手写 LE 字节保证布局
-        // 与 C++ 结构体逐字节一致（偏移 0/12/16/18/19/20/21，pad=0）。
-        // 病灶#2 起 blk/sky 逐顶点取值（平滑层），由调用方按角解包传入；
-        // 参数列与 oracle 同构（一条顶点的全部字段），不可再拆。
-        self.vertices.extend_from_slice(&x.to_le_bytes());
-        self.vertices.extend_from_slice(&y.to_le_bytes());
-        self.vertices.extend_from_slice(&z.to_le_bytes());
-        self.vertices.extend_from_slice(&uu.to_le_bytes());
-        self.vertices.extend_from_slice(&vv.to_le_bytes());
-        self.vertices.extend_from_slice(&tex.to_le_bytes());
-        self.vertices.push(blk);
-        self.vertices.push(sky);
-        self.vertices.push(ao);
-        self.vertices.push(flags);
-        self.vertices.extend_from_slice(&[0, 0]);
+    );
+    /// 以 quad 基 `base` 追加 6 索引（外视 CCW，(0,1,2)(0,2,3)；
+    /// mesher.cpp:365-370 / 457-462）。
+    fn end_quad(&mut self, base: u32) {
+        self.push_indices(base, &[0, 1, 2, 0, 2, 3]);
     }
+    /// 以 quad 基 `base` 追加一组 6 索引（cross 的双面翻转索引第二组
+    /// 走此口，mesher.cpp:508-511）。
+    fn push_indices(&mut self, base: u32, rel: &[u32; 6]);
+}
 
+impl Sink for MeshData {
+    fn begin_greedy(&mut self, _sec: usize, _tag: u8) {}
+    fn begin_shape(&mut self, _sec: usize) {}
     fn vertex_base(&self) -> u32 {
         (self.vertices.len() / VERTEX_STRIDE) as u32
     }
-
-    fn push_quad_indices(&mut self, base: u32) {
-        // mesher.cpp:365-370 / 457-462：外视 CCW，(0,1,2)(0,2,3)。
-        self.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
+    fn push_vertex(
+        &mut self,
+        x: f32,
+        y: f32,
+        z: f32,
+        uu: u16,
+        vv: u16,
+        tex: u16,
+        blk: u8,
+        sky: u8,
+        ao: u8,
+        flags: u8,
+    ) {
+        self.vertices
+            .extend_from_slice(&vertex_bytes(x, y, z, uu, vv, tex, blk, sky, ao, flags));
+    }
+    fn push_indices(&mut self, base: u32, rel: &[u32; 6]) {
+        for r in rel {
+            self.indices.push(base + r);
+        }
     }
 }
 
@@ -476,8 +626,8 @@ impl MeshData {
 /// 的远角顶点 = 远格同序角）；`smooth == false` 或水 pass（水取光平采
 /// 语义，M8/129-L，FluidRenderer.java:430-432）回落面单采值。
 #[allow(clippy::too_many_arguments)]
-fn emit_quad(
-    out: &mut MeshData,
+fn emit_quad<S: Sink>(
+    out: &mut S,
     water_pass: bool,
     axis: usize,
     dir: usize,
@@ -497,6 +647,15 @@ fn emit_quad(
     let u_max = uv_coord(wq as f32);
     let v_max = uv_coord(hq as f32);
     let flags = (face as u8) | if anchor.wave != 0 { 0x08 } else { 0x00 };
+    // #172 产物归属：桶键 = axis(bit0-1) | dir(bit2) | 层号(bit3-6，
+    // axis0/2 层号 = x/z 列 0..15，axis1 层号 = 全局 y 行的低 4 位)；
+    // section = 锚行所在 section（axis1 锚行 = layer，axis0/2 锚行 = v0，
+    // v 轴 = 世界 y）。跨缝合并 quad（v 向 hq 伸入邻 section）整体记在
+    // 锚 section——整柱扫描按锚 (v,u) 升序发射，combine 按
+    // (轴↑, 向, 层, section↑) 归位即复现整柱字节序（sections.rs 论证）。
+    let y_row = if axis == 1 { layer as usize } else { v0 };
+    let tag = (axis | (dir << 2) | ((layer as usize & 15) << 3)) as u8;
+    out.begin_greedy(y_row >> 4, tag);
     let base = out.vertex_base();
     for [a, b] in CORNER_ORDER[face] {
         let uu = (u0 as i32 + a * wq) as f32;
@@ -532,7 +691,7 @@ fn emit_quad(
         };
         out.push_vertex(x, y, z, cu, cv, anchor.tex, blk, sky, ao, flags);
     }
-    out.push_quad_indices(base);
+    out.end_quad(base);
 }
 
 /// 方块内局部盒（mesher.cpp:388-391 Box3，0..1 局部坐标）。
@@ -561,16 +720,18 @@ fn face_uv_axes(axis: usize) -> (usize, usize) {
 /// emit_stairs。面剔除、光照、AO、UV 全部复用 Cube 路径函数
 /// （mesher.cpp:373-377 段注释语义）。病灶#2：`smooth` 直通 box_face
 /// 顶点光（平滑层）；cross 恒平采（植物不遮自身格，无暴露层语义）。
-struct ShapeEmitter<'a, 'v> {
+struct ShapeEmitter<'a, S: Sink> {
     n: &'a Nb<'a>,
-    out: &'v mut MeshData,
+    out: &'a mut S,
     x: i32,
     y: i32,
     z: i32,
+    /// 方块所在 section（产物归属；直写 sink 忽略）。
+    sec: usize,
     smooth: bool,
 }
 
-impl ShapeEmitter<'_, '_> {
+impl<S: Sink> ShapeEmitter<'_, S> {
     /// 发射盒子的一个面（mesher.cpp:405-463 emit_box_face）。expose=true
     /// 强制发射（半砖中层面：邻格是本方块自身格的另一半，不属「不透明
     /// 邻格」判据）。UV 取盒子在格内的实际局部区间，与 Cube 同一 uv_coord
@@ -605,6 +766,7 @@ impl ShapeEmitter<'_, '_> {
             bmin[axis]
         };
         let flags = face as u8;
+        self.out.begin_shape(self.sec);
         let base = self.out.vertex_base();
         for [a, bq] in CORNER_ORDER[face] {
             let mut pos = [0.0f32; 3];
@@ -644,7 +806,7 @@ impl ShapeEmitter<'_, '_> {
                 flags,
             );
         }
-        self.out.push_quad_indices(base);
+        self.out.end_quad(base);
     }
 
     /// 六面发射；force_face >= 0 的面强制暴露（mesher.cpp:465-473 emit_box）。
@@ -682,6 +844,7 @@ impl ShapeEmitter<'_, '_> {
         // 底角（y=0）v=v_max、顶角 v=0：row 0=贴图顶边须落方块顶（同 emit_quad）。
         let cuv = [[0u16, v_max], [u_max, v_max], [u_max, 0], [0, 0]];
         for diag in DIAGONALS {
+            self.out.begin_shape(self.sec);
             let base = self.out.vertex_base();
             for k in 0..4 {
                 self.out.push_vertex(
@@ -698,13 +861,8 @@ impl ShapeEmitter<'_, '_> {
                 );
             }
             // 正面 (0,1,2)(0,2,3) + 反面 (0,2,1)(0,3,2)（mesher.cpp:508-511）。
-            let (i0, i1, i2, i3) = (base, base + 1, base + 2, base + 3);
-            self.out
-                .indices
-                .extend_from_slice(&[i0, i1, i2, i0, i2, i3]);
-            self.out
-                .indices
-                .extend_from_slice(&[i0, i2, i1, i0, i3, i2]);
+            self.out.push_indices(base, &[0, 1, 2, 0, 2, 3]);
+            self.out.push_indices(base, &[0, 2, 1, 0, 3, 2]);
         }
     }
 
@@ -859,8 +1017,15 @@ impl ShapeEmitter<'_, '_> {
 /// 不透明 pass 调用；生成表出 shape 0..15（1..5 黄金冻结实现、6..15 走
 /// mcv_core::shape::template_boxes 模板，M 波 #138），default 整盒为
 /// 防御性回退。
-fn emit_shapes(n: &Nb, out: &mut MeshData, smooth: bool) {
+fn emit_shapes<S: Sink>(n: &Nb, out: &mut S, smooth: bool, rows: Rows) {
+    // #172：形状段按 section 复用——形状 quad 只读方块自身 ±1 邻格
+    // （box_face/cross 的全部采样半径），脏行区间（±1 膨胀后）不相交的
+    // section 其形状产物在快照其余部分不变时可安全复用。
     for y in mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y {
+        let sec = (y - mcv_core::WORLD_MIN_Y) as usize >> 4;
+        if !rows.shape_active(sec) {
+            continue;
+        }
         for z in 0..16 {
             for x in 0..16 {
                 let raw = block_at(n, x, y, z);
@@ -878,6 +1043,7 @@ fn emit_shapes(n: &Nb, out: &mut MeshData, smooth: bool) {
                     x,
                     y,
                     z,
+                    sec,
                     smooth,
                 };
                 match info.shape {
@@ -954,7 +1120,19 @@ fn emit_shapes(n: &Nb, out: &mut MeshData, smooth: bool) {
 /// 格 u 轴扩宽、再沿 v 轴扩高；仅整格 quad 键（方块/贴图/天空/方块光/
 /// 打包 AO/波动）全等才合并。贪心仅限 shape==0（Cube）；非立方由
 /// emit_shapes 另行发射。
-fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: bool) {
+///
+/// #172：`rows` 选「哪些 (axis, dir, layer) 扫描行重放」；被选中的行
+/// **整高**重放（axis0/2 的 v=y 前向合并在 u 列内跨 y 耦合，y 向裁剪
+/// 不可字节精确，sections.rs 头注论证），未选中行整体跳过、由调用方
+/// 复用旧产物字节。跳过决策只读行列号，与被跳行内容无关。
+fn build_pass<S: Sink>(
+    n: &Nb,
+    water_pass: bool,
+    out: &mut S,
+    t: &Tables,
+    smooth: bool,
+    rows: Rows,
+) {
     for axis in 0..3 {
         let (gu, gv, layers) = slice_geom(axis);
         let grid_len = gu * gv;
@@ -970,6 +1148,9 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: 
             let nz_step = if axis == 2 { step } else { 0 };
 
             for layer in 0..layers as i32 {
+                if !rows.active(axis, layer as usize) {
+                    continue;
+                }
                 cells.iter_mut().for_each(|c| *c = Cell::default());
 
                 for v in 0..gv {
@@ -1123,6 +1304,28 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: 
     }
 }
 
+/// 扫描主体（#172 起供整柱直写与分 section 桶两条 sink 共用）：贪心
+/// pass + 不透明 pass 的非立方形状模板（mesher.cpp:829-833 结构）。
+pub(crate) fn build_into<S: Sink>(
+    voxels: &[Option<&[u16]>; 9],
+    lights: &[Option<&[u8]>; 9],
+    kind: u32,
+    rows: Rows,
+    out: &mut S,
+) {
+    let n = Nb {
+        voxels: *voxels,
+        light: *lights,
+    };
+    // 病灶#2：顶点光走平滑光照层（原版默认语义）；`MCV_SMOOTH_LIGHT=0`
+    // 回落每面单采（M8 平采语义，回滚面）。
+    let smooth = smooth_light_enabled();
+    build_pass(&n, kind == 1, out, tables(), smooth, rows);
+    if kind == 0 {
+        emit_shapes(&n, out, smooth, rows);
+    }
+}
+
 /// 入口（mesher.cpp:814-861 mcv_mesh_build 的纯 Rust 等价，去池化）：先
 /// 贪心 pass，不透明 pass 追加非立方形状模板（mesher.cpp:829-833）。
 /// 邻域缺格/越界语义与 C++ 一致（block_at/light_at，见各函数出处）。
@@ -1131,17 +1334,7 @@ pub fn build_mesh(
     lights: &[Option<&[u8]>; 9],
     kind: u32,
 ) -> MeshData {
-    let n = Nb {
-        voxels: *voxels,
-        light: *lights,
-    };
-    // 病灶#2：顶点光走平滑光照层（原版默认语义）；`MCV_SMOOTH_LIGHT=0`
-    // 回落每面单采（M8 平采语义，回滚面）。
-    let smooth = smooth_light_enabled();
     let mut out = MeshData::default();
-    build_pass(&n, kind == 1, &mut out, tables(), smooth);
-    if kind == 0 {
-        emit_shapes(&n, &mut out, smooth);
-    }
+    build_into(voxels, lights, kind, Rows::ALL, &mut out);
     out
 }
