@@ -261,13 +261,15 @@ fn right_click_does_not_force_growth() {
     assert_eq!(growth::sapling_stage(cell), 0, "右键不得催熟（STAGE 仍 0）");
 }
 
-/// 作物收获物品缺口锁（GROWTH-1 ②）：ITEMS（#144 在扩）现无 wheat/
-/// wheat_seeds → item_by_name 解析 None。#144 合入后本断言翻转、掉落
-/// 自动接通——红即提示勿重复登记 DROP_TABLE 小麦行（双重掉落）。
+/// 物品地基波（#144）已落地：wheat/wheat_seeds 现已注册，
+/// [`growth::harvest_drops`] 的规格名在接线侧 item_by_name 可解析
+/// （GROWTH-1 ②「缺项不掉」豁免随之解除）。作物方块掉落归
+/// [`growth::harvest_drops`]，勿在 inventory::DROP_TABLE 重复登记
+/// 小麦行（双重掉落）。
 #[test]
-fn wheat_items_absent_until_items_wave_lands() {
-    assert!(mcv_item::item_by_name("wheat").is_none());
-    assert!(mcv_item::item_by_name("wheat_seeds").is_none());
+fn wheat_items_present_after_items_wave_lands() {
+    assert!(mcv_item::item_by_name("wheat").is_some());
+    assert!(mcv_item::item_by_name("wheat_seeds").is_some());
 }
 
 /// 作物 age 位随体素存储 roundtrip（状态 nibble 进存档面：SAVE 标记 +
