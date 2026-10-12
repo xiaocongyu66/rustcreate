@@ -146,27 +146,42 @@ fn worker_output_bit_identical_to_direct_build() {
 }
 
 /// 顺序锁（蓝图红测试②）：编辑源块 hi 通道先于**排队中**的 lo 预算流
-/// 到达。单 worker 串行化完成序 = 出队序：lo(A) 执行中、队列 [lo(B), hi(C)]
-/// 时，A 完成后 worker 必须先取 hi(C)——到达序恒 [A, C, B]。
+/// 到达。确定性构造：先投一笔**重活**钉死单 worker（随机噪声场整块
+/// 构建毫秒级 ≫ 三次 submit 的微秒级窗口），A/B/C 必在 worker 忙碌期
+/// 入队——出队序 = 优先级序。旧写法用空场景（µs 级构建）与 worker
+/// 线程启动/轮询赛跑：runner 空闲时 worker 抢走 A 得 [A,C,B]，runner
+/// 满载时三笔全在队里 worker 首取 hi(C) 得 [C,A,B]——后者恰是优先级
+/// 正确生效，断言却红（CI run 38303726392 实锤）。跨竞态不变式：
+/// hi(C) 先于 A、B（两者在 C 入队时要么在队要么在跑，单 worker 下
+/// 完成必晚于 C）；lo 同档 A 先于 B（FIFO）。
 #[test]
 fn hi_job_jumps_queued_lo_jobs() {
     let scene = empty_scene();
+    let heavy = scene_bytes(0xC0_FFEE);
     let (sched, mut results) = MeshScheduler::new(1);
+    let blocker = ChunkPos::new(-7, 0);
     let a = ChunkPos::new(0, 0);
     let b = ChunkPos::new(1, 0);
     let c = ChunkPos::new(2, 0);
+    sched.submit(job_of(blocker, &heavy), false);
     sched.submit(job_of(a, &scene), false);
     sched.submit(job_of(b, &scene), false);
     sched.submit(job_of(c, &scene), true);
 
-    let got = wait_all(&mut results, 3);
+    let got = wait_all(&mut results, 4);
     let seq: Vec<ChunkPos> = got.iter().map(|d| d.pos).collect();
-    assert_eq!(
-        seq,
-        vec![a, c, b],
-        "hi 通道必须跳过排队中的 lo（到达序 [A,hi(C),B]，得 {seq:?}）"
+    let idx = |p: ChunkPos| seq.iter().position(|&q| q == p).expect("四笔必有产物");
+    assert!(
+        idx(c) < idx(a) && idx(a) < idx(b),
+        "hi(C) 必须跳过排队中的 lo、lo 同档 FIFO（到达序应 C…A…B，得 {seq:?}）"
     );
-    assert!(!got[0].hi && got[1].hi && !got[2].hi, "hi 位必须随产物回传");
+    for d in &got {
+        assert_eq!(
+            d.hi,
+            d.pos == c,
+            "hi 位必须随产物回传（只有 C 是 hi 通道），得 {seq:?}"
+        );
+    }
 }
 
 /// 回滚开关语义锁：`MCV_MESHER_WORKERS` 的纯函数核（env 不触真实环境，
