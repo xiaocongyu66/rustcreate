@@ -264,13 +264,14 @@ pub fn build_products(
     (product, scanned)
 }
 
-/// `rows` 覆盖的 (轴,向,层) 扫描行数（含两向）。
+/// `rows` 覆盖的 (轴,向,层) 扫描行数（含两向）。三轴各自计数——每向每
+/// 轴的层是独立扫描行（ALL = 16 + 16 + 384 = 416/向，两向 832），x/z
+/// 掩码不可按位或合并计数。
 fn scanned_rows(rows: &Rows) -> usize {
     (0..2)
         .map(|_| {
-            (0..16)
-                .filter(|l| rows.active(0, *l) || rows.active(2, *l))
-                .count()
+            (0..16).filter(|l| rows.active(0, *l)).count()
+                + (0..16).filter(|l| rows.active(2, *l)).count()
                 + (0..mcv_core::CHUNK_SY)
                     .filter(|l| rows.active(1, *l))
                     .count()
