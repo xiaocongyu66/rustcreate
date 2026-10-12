@@ -596,14 +596,22 @@ impl Orchestrator {
         // 树干列所属区块的免采样线（缓冲在所属块 generate 时用同线构建）
         let skip = field.chunk_skip(block_x.div_euclid(16) * 16, block_z.div_euclid(16) * 16);
         let mut depth_above = 0_i32;
+        // #175 终修实顶门（generate 同型，见该处注）：首个实心位
+        // 以上 = 开放柱，本扫描窗恒 y>SEA → 恒 Air，不进胞格噪声
+        // （压力封口袋不允许悬浮在半空被认作实顶——否则树基落点与
+        // 缓冲实顶漂移）。
+        let mut hit_solid = false;
         for y in ((SEA + 1)..=fill_top).rev() {
             let dval = self.density(&cs, block_x, y, block_z);
             let subst = if dval > 0.0 {
                 None // 实心直判（含水层前置，Aquifer.java:150-152）
+            } else if !hit_solid {
+                Some(Sub::Air)
             } else {
                 Some(field.substance(block_x, y, block_z, dval, skip))
             };
             if dval > 0.0 || matches!(subst, Some(Sub::Rock)) {
+                hit_solid = true;
                 depth_above += 1; // SurfaceSystem.java:146（同款计数）
                 if y < crate::vanilla::tree_pass::TREE_MAX_Y {
                     let id = solid_material(y, min_surface, depth_above, surface_id, subsoil_id);
@@ -872,6 +880,15 @@ pub fn generate(
             // 空气重置 stoneAboveDepth、流体不重置只记水面（:129-132）、
             // 实心 +1；depth_above==1 即 ON_FLOOR 顶层格。
             let mut depth_above = 0_i32;
+            // #175 终修（geometry_locks 裁决）实顶门：自顶向下扫描
+            // 未碰到首个实心格前 = 开放大气柱，走无条件全局流体
+            // （`aquifer::open_column`，引注集中在该函数头注：原版
+            // skip 线以上 globalFluid.at 短路 Aquifer.java:159-161 +
+            // 胞体戳出修正面的 pokes/global 段 :416-429）；碰到实心
+            // 后 = 地表以下岩层空腔，才允许进含水层胞格终判。
+            // column_real_top 与 lake_pass Replay 共用同型门，缓冲与
+            // 重放由构造一致。
+            let mut hit_solid = false;
             for y in (MIN_Y..=fill_top).rev() {
                 let dval = orch.density(&cs, wx, y, wz);
                 let id = if y == MIN_Y || (y <= MIN_Y + 4 && bedrock_noise(seed, wx, y, wz)) {
@@ -880,8 +897,9 @@ pub fn generate(
                     // 基岩是实心非 defaultBlock（SurfaceSystem.java:149 只换
                     // 石头）——同 vanilla 计入 stoneDepth 上下文但不换材质；
                     // 该深度恒在 abovePreliminarySurface 带下（STONE 兜底）。
+                    hit_solid = true;
                     BEDROCK
-                } else if dval <= 0.0 {
+                } else if dval <= 0.0 && hit_solid {
                     // #175：含水层终判取代旧「y≤SEA 一律灌水」平铺模型
                     //（1.18 前旧语义；原版地下默认干、注水由胞格噪声门控
                     //——aquifer.rs 头注 file:line 摘要）。流体两态不重置
@@ -903,7 +921,17 @@ pub fn generate(
                         Sub::Water => WATER,
                         Sub::Lava => LAVA,
                     }
+                } else if dval <= 0.0 {
+                    // 开放柱：洋面恒灌满 / 大气 / 全局岩浆海（三态
+                    // 见 open_column；流体不重置 depth_above，此时
+                    // 计数恒 0 无需动作）。
+                    match crate::vanilla::aquifer::open_column(y) {
+                        crate::vanilla::aquifer::Substance::Lava => LAVA,
+                        crate::vanilla::aquifer::Substance::Water => WATER,
+                        _ => AIR,
+                    }
                 } else {
+                    hit_solid = true;
                     depth_above += 1; // SurfaceSystem.java:146
                     solid_material(y, min_surface, depth_above, surface_id, subsoil_id)
                 };

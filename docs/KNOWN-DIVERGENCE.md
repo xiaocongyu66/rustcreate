@@ -265,3 +265,13 @@ clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐
    无 0.9 水面下沉、非水 pass 半透）——流体保真归 #148 E2 流体波债；
    光照面 lava 光 15 经 blocks_gen 表进 mcv_light 自动生效（tests 锁
    「注岩浆格邻近方块光 >0」）。
+6. **开放柱门 = 本列实顶扫描位**（#175 终修，geometry_locks 裁决）：
+   原版「修正 preliminary 面以上恒 globalFluid」由区块 skip 线
+   （max prelim，Aquifer.java:136-138/:159-161）+ 胞体 pokes/global 段
+   （:416-429）两段合成；本仓以本列首个实心位为门（`aquifer::
+   open_column`，generate/column_real_top/lake_pass Replay 同型）——
+   skip 线的跨列取 max 与本列近面的压力带细节不复刻（锁面等价：洋面
+   恒灌 + 胞格噪声限岩层内空腔两结论不变）。液面含 y=SEA 为本仓几何
+   契约（geometry_locks 锁死；原版最高水行 = seaLevel−1，
+   FluidStatus.at y<fluidLevel）。
+

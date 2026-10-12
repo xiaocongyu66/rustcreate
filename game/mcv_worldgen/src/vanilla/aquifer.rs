@@ -88,6 +88,37 @@ pub const LAVA_SEA_LEVEL: i32 = -54;
 /// DimensionType.java:54 语义；MIN_Y=−64 → −1024）。
 pub const WAY_BELOW: i32 = MIN_Y << 4;
 
+/// 开放柱（实顶以上大气柱）的无条件全局流体——#175 终修
+/// （geometry_locks::vanilla_surface_bounds_and_sea_fill 裁决：洋面
+/// 水体恒灌满，含水层胞格噪声只作用于地表以下岩层空腔）。原版
+/// 「修正 preliminary 面（= prelim+8，`adjustSurfaceLevel`，
+/// Aquifer.java:441-442）以上 = globalFluid」由两段无条件路合成：
+/// - 区块免采样线（= max prelim+8+12 网格化，:136-138）以上
+///   `computeSubstance` 直返 `globalFluid.at(posY)`（:159-161），
+///   不进胞格逻辑；
+/// - 胞体全在修正面上（`bottomOfAquiferCell > adj` → 直返
+///   globalFluid，:416-417）或戳出修正面且面上有流体（→ 直返
+///   globalFluidAtSurface，:420-429）——floodedness 噪声门
+///   （computeSurfaceLevel :445+）只有面上全部岩层内的胞才可达。
+/// globalFluid = seaStatus/lavaStatus（NoiseBasedChunkGenerator.java:
+/// 69-81，`FluidStatus.at` y<fluidLevel 出流体，Aquifer.java:52-55）。
+/// 本仓以**本列实顶扫描位**（terrain.rs `hit_solid` 门，
+/// `column_real_top` 与 lake_pass `Replay` 同型共用）为面判据——
+/// 原版 skip 线取区块最大 prelim（邻列抬高本列的线），但洋面恒灌
+/// 结论不依赖该最大值（低列自身的 pokes/global 路同为恒水），
+/// 两式在锁面等价。液面含 y=SEA 行为本仓几何契约（geometry_locks
+/// 锁死，承刀 A 前平铺灌水面；原版最高水行 = seaLevel−1）。
+#[must_use]
+pub const fn open_column(y: i32) -> Substance {
+    if y > SEA {
+        Substance::Air
+    } else if y < LAVA_SEA_LEVEL {
+        Substance::Lava // 全局岩浆海（lavaStatus，:70/:78）
+    } else {
+        Substance::Water // 洋面恒灌满段
+    }
+}
+
 /// 终判材质（原版 null=石头 / AIR / WATER / LAVA 四态）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Substance {
