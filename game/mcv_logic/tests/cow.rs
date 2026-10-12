@@ -145,6 +145,70 @@ fn cow_write_replicates_table_only_while_snapshot_alive() {
     assert!(!rt.chunks.contains_key(&ChunkPos::new(1, 0)));
 }
 
+/// 锁 5：票表快照零拷贝（E6 同族收口，本波）——`MobServices.tickets`
+/// 在收口前是每固定步一次整表克隆（TicketTable HashMap 逐节点 + 每块
+/// 票 Vec）；收口后 = 一次计数递增。同时锁「变更才重建」：玩家锚点
+/// （center, sim_dist）不变时票表分配跨帧恒定（每帧全量重建 → 变更
+/// 重建，等价原版 addPlayer/removePlayer/updateViewDistance 才动票表，
+/// DistanceManager.java:110-117,:152-157），锚点迁移则换分配且旧快照
+/// 冻结（读路径持旧快照安全，级别场与逐帧重建逐块等价）。
+#[test]
+fn tickets_snapshot_shares_arc_and_rebuilds_only_on_change() {
+    let mut rt = rt_with_center_chunk("tickets");
+    rt.stream();
+    let p0 = std::sync::Arc::as_ptr(&rt.tickets);
+    rt.stream();
+    assert_eq!(
+        p0,
+        std::sync::Arc::as_ptr(&rt.tickets),
+        "锚点不变的稳态帧不得更换票表分配（每帧全量重建已废止）"
+    );
+    rt.fixed_step(1.0 / 60.0);
+    let ms_tickets = rt
+        .mobs_app
+        .resources
+        .get::<MobServices>()
+        .expect("fixed_step 必注入 MobServices")
+        .tickets
+        .clone(); // Arc 计数递增，非表克隆
+    assert!(
+        std::sync::Arc::ptr_eq(&ms_tickets, &rt.tickets),
+        "票表快照必须与主表共享同一 Arc（每步整表克隆已消除）"
+    );
+    // 「变更才重建 vs 恒重建」判别锁：快照存活（主表 Arc 强计数 ≥ 2）时
+    // 锚点不变的稳态帧仍不换分配——恒 make_mut 的实现在这里必然换分配。
+    rt.stream();
+    assert!(
+        std::sync::Arc::ptr_eq(&ms_tickets, &rt.tickets),
+        "快照存活期稳态帧不得更换票表分配（变更才重建，非每帧复刻）"
+    );
+    // 语义保持：级别场 = 锚点解析式（ticket.rs 同式），快照读安全。
+    let vd = rt.sim_dist();
+    let sim_level = (mcv_logic::ticket::ENTITY_TICKING_LEVEL - vd).max(0) as i32;
+    assert_eq!(
+        ms_tickets.level(ChunkPos::new(0, 0)) as i32,
+        sim_level,
+        "快照内玩家块级别 = 模拟锚点级别（min-ticket）"
+    );
+    // 锚点迁移（跨区块边界）→ 变更重建：主表换新分配，旧快照冻结。
+    rt.player.pos = Vec3::new(40.5, 70.0, 8.5);
+    rt.stream();
+    assert!(
+        !std::sync::Arc::ptr_eq(&ms_tickets, &rt.tickets),
+        "锚点迁移必须重建票表（换分配；旧快照冻结在新锚点之外）"
+    );
+    assert_eq!(
+        ms_tickets.level(ChunkPos::new(2, 0)) as i32,
+        (sim_level + 2).min(mcv_logic::ticket::NOT_LOADED as i32),
+        "旧快照冻结在写前锚点（持旧快照读安全）"
+    );
+    assert_eq!(
+        rt.tickets.level(ChunkPos::new(2, 0)) as i32,
+        sim_level,
+        "新表按新锚点 (2,0) 重建：玩家块级别 = 模拟锚点级别"
+    );
+}
+
 /// 锁 4：无共享时写路径原地变（COW 另一面）：Resources 无快照存活，
 /// `chunks_mut` 连续写不换主表分配（零复制）。
 #[test]

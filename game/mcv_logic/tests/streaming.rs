@@ -153,6 +153,27 @@ fn ring_ready(rt: &GameRuntime, center: ChunkPos) -> bool {
     true
 }
 
+/// 显式帧驱动泵：每帧一次 stream() + 2ms 短眠（让 worldgen worker 线程
+/// 推进），直到 cond 成立或帧预算耗尽；返回 cond 是否达成。**驱动手段，
+/// 不是断言**——E2/E3 两波偶发红的真源即「帧预算 × 2ms 墙钟」把收敛判定
+/// 绑在 worker 到达时序上（runner 争用期生成线程不归还，帧到预算条件未
+/// 满足）；等待段与断言段分离后，等待预算只管 liveness，断言段全部在
+/// 确定性驱动点上求值（收敛计数不再被在途生成拖尾污染，见下方 drain 段）。
+fn pump_until(
+    rt: &mut GameRuntime,
+    mut cond: impl FnMut(&GameRuntime) -> bool,
+    cap: usize,
+) -> bool {
+    for _ in 0..cap {
+        rt.stream();
+        if cond(rt) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    cond(rt)
+}
+
 #[test]
 fn small_step_movement_no_flap_and_converges() {
     let mut rt = headless("flap");
@@ -160,26 +181,25 @@ fn small_step_movement_no_flap_and_converges() {
 
     // 等出生投放（spawn 投放块按 heightmap 落地；本测试不改该块逻辑，
     // 只等它发生——投放后 player.pos 离开 ZERO，center 才稳定可控）。
-    // 预算 600→3000：#91 vanilla 后端 NormalNoise 两层独立 fBm 使每区块
-    // 噪声成本约 ×2/通道，且 streaming.rs 各测在 CI runner 上并行挤占，
-    // ±load_radius 窗在 600 轮内到不了 TerrainReady（就绪即 break，放宽
-    // 不增加常态耗时；本文件其余等待环本就取 1200-5000 量级）。
+    // 等待走 pump_until（驱动与断言分离）；预算 3000→8000：#91 vanilla
+    // 后端 NormalNoise 成本 ×2 后 CI 争用尖峰实测 600+ 帧量级，8000 ≈
+    // 尖峰观测 ×5~8（timeout 类断言 2 倍余量原则的等待段放大版；就绪即
+    // break，放宽不增加常态耗时）。
     let mut n_ready = 0usize;
-    for _ in 0..3000 {
-        rt.stream();
-        if rt.player.pos != Vec3::ZERO {
-            break;
-        }
-        n_ready = rt
-            .chunks
-            .values()
-            .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
-            .count();
-        std::thread::sleep(Duration::from_millis(2));
-    }
-    assert_ne!(
-        rt.player.pos,
-        Vec3::ZERO,
+    let spawned = pump_until(
+        &mut rt,
+        |rt| {
+            n_ready = rt
+                .chunks
+                .values()
+                .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+                .count();
+            rt.player.pos != Vec3::ZERO
+        },
+        8000,
+    );
+    assert!(
+        spawned,
         "出生投放未发生（地形未就绪：{n_ready}/{} 块 TerrainReady）",
         rt.chunks.len()
     );
@@ -251,30 +271,28 @@ fn small_step_movement_no_flap_and_converges() {
     // —— 收敛段：停止移动。静止判定 = 环内全 Uploaded 且在册区块全部完成
     //    本地布光（成对边同步的全部输入就绪，尾波走完的前提）；此后 30 帧
     //    余量 + 60 帧零变更窗。
-    //    收敛预算 600→1200 帧（循环 1500→2500）：#91 vanilla 后端每区块
-    //    噪声成本约 ×2（NormalNoise 两层独立 fBm），本测又与其余 streaming
-    //    用例并行挤占 CI runner，环内 81 块全到 Uploaded 实测 ~900 帧——
-    //    本段断的是「能收敛 + 收敛后零漂移」，不是生成吞吐（吞吐归 #80）。
-    //    预算 1200→1800 帧（循环 2500→3000）：#84 CI 实测 runner 争用尖峰下
-    //    收敛 1347 帧 > 1200（run 38082863903 取证；main 同 commit 绿跑仅
-    //    边缘擦线）——同族 runner 争用余量，仍远低于病态循环阈值。
+    //    帧预算史：600→1200（#91 NormalNoise 成本 ×2，环内 81 块实测
+    //    ~900 帧）、1200→1800（#84 CI 争用尖峰实测 1347 帧，run
+    //    38082863903 取证）——两次放宽都只是压低翻红概率：帧数上限断言把
+    //    「收敛速度」绑在 worker 生成线程到达时序上（runner 争用期线程不
+    //    归还，帧到预算条件未满足），就是本测偶发红的真源。本波修驱动
+    //    方式（不修实装：静止判定后收敛即终态，零变更窗内无振荡证据）：
+    //    等待段 = liveness 泵 6000 帧（≈尖峰观测 ×4，就绪即 break，不
+    //    增加常态耗时），只断「必须收敛」；强度断言（零变更窗/光照逐
+    //    字节）全部在确定性驱动点求值，并追加 30 帧扩展窗逐帧对拍——
+    //    本段断「能收敛 + 收敛后零漂移」，不是生成吞吐（吞吐归 #80）。
     let center = player_chunk(&rt);
-    let mut quiescent_at: Option<u32> = None;
     let mut settled = 0u32;
-    let mut frame = 0u32;
     let mut window: Vec<Vec<(i32, i32, u32, u32)>> = Vec::new();
     let mut light_at_window_start: Option<Vec<(i32, i32, Vec<u8>)>> = None;
-    for _ in 0..3000u32 {
-        frame += 1;
+    let mut converged = false;
+    for _ in 0..6000u32 {
         rt.stream();
         let all_lit = rt
             .chunks
             .values()
             .all(|h| (h.stage() as u8) >= (Stage::LightLocalReady as u8));
         if ring_ready(&rt, center) && all_lit {
-            if quiescent_at.is_none() {
-                quiescent_at = Some(frame);
-            }
             settled += 1;
             if settled > 30 {
                 if window.is_empty() {
@@ -282,11 +300,11 @@ fn small_step_movement_no_flap_and_converges() {
                 }
                 window.push(signature(&rt));
                 if window.len() == 60 {
+                    converged = true;
                     break;
                 }
             }
         } else {
-            quiescent_at = None;
             settled = 0;
             window.clear();
             light_at_window_start = None;
@@ -294,19 +312,27 @@ fn small_step_movement_no_flap_and_converges() {
         emulate_upload(&mut rt);
         std::thread::sleep(Duration::from_millis(1));
     }
-    let at = quiescent_at.expect("停止移动后环内未全部到达 Uploaded（未收敛）");
-    assert!(at <= 1800, "环内收敛过慢：静止后 {at} 帧才就绪");
-    assert_eq!(window.len(), 60, "未凑齐 60 帧零变更窗（未收敛）");
-    let first = &window[0];
     assert!(
-        window.iter().all(|s| s == first),
+        converged,
+        "停止移动后未收敛（liveness 预算 6000 帧内未凑齐 60 帧零变更窗）"
+    );
+    let first = window[0].clone();
+    assert!(
+        window.iter().all(|s| *s == first),
         "收敛后状态仍漂移（持续重网格/反复标脏）"
     );
     // 光照逐字节零变化：第二轮起边同步必须幂等（乒乓即在此暴露）。
-    let light_at_end = snapshot_light(&rt);
+    let light_at_start = light_at_window_start.unwrap();
+    // 扩展窗（断言增强）：零变更窗之后再多推 30 帧静止，逐帧状态签名与
+    // 窗基线对拍——「收敛是终态」从 60 帧一次性核查升级为 90 帧逐帧断言。
+    for _ in 0..30u32 {
+        rt.stream();
+        emulate_upload(&mut rt);
+        assert_eq!(signature(&rt), first, "扩展窗内状态回漂（收敛非终态）");
+    }
     assert_eq!(
-        light_at_window_start.as_ref().unwrap(),
-        &light_at_end,
+        &light_at_start,
+        &snapshot_light(&rt),
         "收敛后光照数组仍变化（边同步不幂等/乒乓）"
     );
 }
@@ -795,12 +821,17 @@ fn y_out_of_bounds_never_wraps() {
 // ---------------------------------------------------------------------------
 
 /// 玩家票任务节流：在途生成集合（pending_generate = req_frames）达到
-/// MAX_CHUNKS_IN_EXECUTION(4) 前不发新请求——ThrottlingChunkTaskDispatcher
-/// .java:13-14,:29-31（集合 :13、popTasks 门 :30）、上限 4 =
-/// DistanceManager.java:55 构造参数。在途规模经
-/// [`GameRuntime::inflight_generation_count`]（getDebugStatus :39-46 同类
-/// 运行时状态暴露）。恒 ≤4 是节流器的硬不变量；不断言下界（快机同帧
-/// drain 会清零，与节流语义无关）。加载照常推进（liveness 尾断言）。
+/// 名额前不发新请求——ThrottlingChunkTaskDispatcher.java:13-14,:29-31
+/// （集合 :13、popTasks 门 :30）。名额取值 = 本仓 E2 调参位
+/// [`mcv_logic::ticket::in_flight_quota`]（原版硬上限恒 4，
+/// DistanceManager.java:55 构造参数 = [`mcv_logic::ticket::
+/// MAX_CHUNKS_IN_EXECUTION`]；workers > 4 时随池扩到 worker 数——
+/// pop 门语义原样，纯吞吐调参，ticket.rs 名额注释）。消费侧接线即本波
+/// 闭合的 E2 遗留债（game.rs 请求环 pop 预算读 in_flight_quota，不再
+/// 读死常量）。在途规模经 [`GameRuntime::inflight_generation_count`]
+/// （getDebugStatus :39-46 同类运行时状态暴露）。恒 ≤ 名额是节流器的
+/// 硬不变量；不断言下界（快机同帧 drain 会清零，与节流语义无关）。
+/// 加载照常推进（liveness 尾断言）。
 #[test]
 fn player_ticket_throttle_caps_inflight_generation() {
     let mut rt = headless("throttle");
@@ -815,8 +846,8 @@ fn player_ticket_throttle_caps_inflight_generation() {
         std::thread::sleep(Duration::from_millis(2));
     }
     assert!(
-        max_inflight <= mcv_logic::ticket::MAX_CHUNKS_IN_EXECUTION,
-        "在途生成集合峰值 {max_inflight} 超过节流上限 4（票任务 pop 未受限）"
+        max_inflight <= mcv_logic::ticket::in_flight_quota(mcv_core::world_worker_count()),
+        "在途生成集合峰值 {max_inflight} 超过节流名额（票任务 pop 未受限）"
     );
     let terrain_ready = rt
         .chunks

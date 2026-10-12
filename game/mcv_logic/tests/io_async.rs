@@ -159,14 +159,23 @@ fn edit_during_inflight_write_wins_on_disk() {
     assert_eq!(ids[vidx(0, -63, 0)], 1, "基线：地板列 v0");
     assert_eq!(ids[vidx(1, -62, 0)], 0, "基线：地板上方空气列 v1");
 
-    // 编辑 A → 同帧投递快照 A（在途）。
+    // 编辑 A → 投递快照 A（在途）。驱动 = save_dirty 单块直投（确定性
+    // 投递点），不再走 stream 预算写回：①预算写回 ≤2/帧可能被周边生成
+    // 落地脏块挤占，目标块第几帧投递取决于脏集 (z,x) 排序——②帧头回执
+    // 消化段可能把本帧刚投的写在**同一帧**吃掉（快盘 + IO 线程亚毫秒完成，
+    // 本文件 E4 期实测翻红）——两个独立真实时序假设都曾被旧「stream 后
+    // ≥1」断言误当语义锁。单块直投后投递与回执消化解耦，断言升级为精确
+    // 计数 + 投递即清位；stream 预算写回的 liveness 面仍由本测收敛段
+    // （pump 到在途归零）覆盖。
     handle.voxels.write().unwrap()[vidx(0, -63, 0)] = BlockId(42);
     handle.mark_dirty(dirty::SAVE);
-    rt.stream();
-    assert!(
-        rt.io_inflight().0 >= 1,
-        "编辑 A 的快照应已投递在途（两段式写）"
+    rt.save_dirty(Some(pos));
+    assert_eq!(
+        rt.io_inflight().0,
+        1,
+        "编辑 A 的快照应已投递在途（两段式写，恰 1 笔在途写）"
     );
+    assert_eq!(handle.dirty() & dirty::SAVE, 0, "投递即清 SAVE 位");
 
     // 竞态窗内再编辑 B（置 SAVE）→ 完成回执后下轮以新快照重写。
     handle.voxels.write().unwrap()[vidx(1, -62, 0)] = BlockId(43);
