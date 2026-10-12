@@ -9,7 +9,7 @@
 //! - 重力 0.03 块/tick²（`getDefaultGravity` ExperienceOrb.java:97-99）；
 //! - 初速 xz=(rand×0.2−0.1)×2.0、y=rand×0.2×2.0（块/tick，构造器
 //!   ExperienceOrb.java:56-61）；
-//! - 落地反弹 vy=+|impact|×0.4（:135-138 竖直碰撞且 fallSpeed<−gravity）；
+//! - 落地反弹 vy=+|impact|×0.4（:141-142 竖直碰撞且 fallSpeed<−gravity）；
 //! - 寿命 LIFETIME=6000 tick（:32、:145-146 到期 discard）；
 //! - 拾取：无球侧 pickupDelay，节流全在玩家侧 takeXpDelay（`playerTouch`
 //!   :274-291 的 `takeXpDelay == 0` 门，命中置 2；Player.java:237-238 每
@@ -107,7 +107,7 @@ pub fn spawn_xp_orb(
 }
 
 /// 固定步系统：物理积分（重力缩放 0.375）+ 落地小弹（vy=+|impact|×0.4，
-/// ExperienceOrb.java:135-138）+ age 步进 + 到期/虚空销毁（延迟命令）。
+/// ExperienceOrb.java:141-142）+ age 步进 + 到期/虚空销毁（延迟命令）。
 /// 经验球无合并（原版 scanForMerges/tryMergeToExisting 同 id%40 桶合并是
 /// 大量掉落场景的记账优化，登记债——矿石单次 ≤3 球，量级无害）。
 pub fn xp_orb_physics_system(ctx: &mut mcv_ecs::SysCtx) {
@@ -127,7 +127,7 @@ pub fn xp_orb_physics_system(ctx: &mut mcv_ecs::SysCtx) {
         let mut eng = body.body();
         let impact = eng.vel.y;
         mcv_game::step_entity(&VoxelView(dw), &mut eng, XP_ORB_HALF, &input);
-        // 落地小弹（ExperienceOrb.java:135-138：verticalCollisionBelow 且
+        // 落地小弹（ExperienceOrb.java:141-142：verticalCollisionBelow 且
         // fallSpeed < −gravity → vy = −fallSpeed×0.4；fallSpeed 阈值
         // 0.03 块/tick = 0.6 m/s，低于不弹——贴地微动不算碰撞回落）。
         if eng.on_ground && impact < -0.6 {
