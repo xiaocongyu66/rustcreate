@@ -3401,6 +3401,35 @@ mod tests {
         );
     }
 
+    /// I-21+#128-1（isUsingItem 第三门，行为级）：按住右键**蓄弓**期间，
+    /// 周期 use 必须被 `!player.isUsingItem()` 门挡住（Minecraft.java:2036——
+    /// isUsingItem 覆盖进食与弓蓄力两种在账使用态）。修复前 busy 只查进食，
+    /// 蓄力中周期发火会打穿 right_use（准星下是工作台/熔炉时中途开屏）。
+    #[test]
+    fn use_repeat_blocked_while_bow_charging() {
+        let mut rt = GameRuntime::new_headless(31, tmp_world("i21-bow"), GameMode::Survival);
+        rt.phase = mcv_logic::game::GamePhase::Playing;
+        let bow = mcv_item::item_by_name("bow").expect("bow 物品在档");
+        rt.hotbar.slots[0] = mcv_item::ItemStack::new(bow, 1);
+        rt.player.sel_slot = 0;
+        rt.input.placing = true;
+        rt.fixed_step(1.0 / 60.0);
+        assert!(rt.using_item(), "按住右键持弓 = isUsingItem（蓄力在账）");
+        let mut u = RightUseRepeat::default();
+        u.on_fire();
+        let mut fires = 0usize;
+        for _ in 0..60 {
+            rt.fixed_step(1.0 / 60.0);
+            if u.step(true, rt.using_item()) {
+                fires += 1;
+            }
+        }
+        assert_eq!(
+            fires, 0,
+            "蓄力期间周期 use 全被 isUsingItem 门挡住（Minecraft.java:2036）"
+        );
+    }
+
     /// D-2（双击前进冲刺窗，行为级）：26.1 LocalPlayer:764-766/798-810 +
     /// Options sprintWindow 默认 7 tick。第一次按下开窗；窗口内第二次按下
     /// latch 冲刺（=setSprinting）；第 8 tick（21 步）后窗口过期，二次按下

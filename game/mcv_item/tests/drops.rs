@@ -363,3 +363,58 @@ fn unlisted_blocks_drop_nothing() {
         );
     }
 }
+
+/// 8. 方块经验掉落表（任务 #128-3）：矿石族区间逐一锚定 26.1 注册行——
+///    `DropExperienceBlock` 的 `xpRange`（DropExperienceBlock.java:24-37
+///    spawnAfterBreak → tryDropExperience，Block.java:619-624）：
+///    - iron/gold/copper 恒 0（ConstantInt.of(0)，Blocks.java:262-277、:5208-5211）
+///    - coal Uniform(0,2)（:282,:287）、nether_gold Uniform(0,1)（:292）
+///    - lapis Uniform(2,5)（:520,:525）、quartz Uniform(2,5)（:2376）
+///    - diamond/emerald Uniform(3,7)（:1024-1029、:2177-2182）
+///    - redstone Uniform(1,5)（RedStoneOreBlock.java:94-98）
+///    非矿石方块无经验（无 DropExperienceBlock 语义）。
+#[test]
+fn block_experience_ore_table_matches_vanilla() {
+    // LCG 确定性采样（同 drops 用例 rng 风格，区间两界都要掷到）。
+    let mut state = 0x9E37_79B9_u32;
+    let mut rng = move || {
+        state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        state
+    };
+    for (name, lo, hi) in [
+        ("coal_ore", 0, 2),
+        ("deepslate_coal_ore", 0, 2),
+        ("nether_gold_ore", 0, 1),
+        ("lapis_ore", 2, 5),
+        ("deepslate_lapis_ore", 2, 5),
+        ("diamond_ore", 3, 7),
+        ("deepslate_diamond_ore", 3, 7),
+        ("emerald_ore", 3, 7),
+        ("deepslate_emerald_ore", 3, 7),
+        ("nether_quartz_ore", 2, 5),
+        ("redstone_ore", 1, 5),
+        ("deepslate_redstone_ore", 1, 5),
+        ("copper_ore", 0, 0),
+        ("deepslate_copper_ore", 0, 0),
+        ("iron_ore", 0, 0),
+        ("deepslate_iron_ore", 0, 0),
+        ("gold_ore", 0, 0),
+        ("deepslate_gold_ore", 0, 0),
+    ] {
+        for i in 0..64 {
+            let v = mcv_item::block_experience(bid(name), &mut rng);
+            assert!(
+                (lo..=hi).contains(&v),
+                "{name} 第 {i} 次采样 {v} 越界 [{lo},{hi}]（26.1 xpRange）"
+            );
+        }
+    }
+    // 非矿石：石头/泥土/圆石无经验掉落语义。
+    for name in ["stone", "dirt", "cobble"] {
+        assert_eq!(
+            mcv_item::block_experience(bid(name), &mut rng),
+            0,
+            "{name} 不得产经验（非 DropExperienceBlock）"
+        );
+    }
+}

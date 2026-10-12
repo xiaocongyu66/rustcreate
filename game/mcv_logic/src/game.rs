@@ -9144,6 +9144,157 @@ mod tests {
         assert_eq!(rt.hotbar.slots[0].count, 2, "拒放不消耗");
     }
 
+    /// B3+（任务 #128-2 replaceClicked）：准星点中**可替换方块本身** → 就地
+    /// 替换该格（26.1 BlockPlaceContext.java:29-30 构造置位 replaceClicked、
+    /// :51-53 getClickedPos 取被点格、:55-57 canPlace 直通真），而非偏移到
+    /// 命中面邻格。① 草（short_grass Cross 有拾取形状）② 雪层（snow）——
+    /// 修复前两例都把方块架到可替换格上方的空气格里；③ 水面板：水无拾取
+    /// 形状（pick_boxes 拒流体，blockshapes.rs）→ 射线穿水命中下方实心 →
+    /// 目标格 = 水格 → 邻格可替换路径替换水（波 0 B3③ 同路回归锁）。
+    #[test]
+    fn placement_replaces_clicked_replaceable_block() {
+        let mut rt = playing_rt("b3-replace-clicked");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::COBBLESTONE, 3);
+        // 同 B3 ③ 位姿：悬空 y=72.5、俯视命中 (8,70,8)/(8,69,8) 顶面。
+        rt.player.pos = Vec3::new(8.5, 72.5, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        look_down(&mut rt);
+        let v = |rt: &GameRuntime, x: usize, y: usize, z: usize| -> u16 {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.read().unwrap()[lidx(x, y, z)].id()
+        };
+        let set = |rt: &mut GameRuntime, x: usize, y: usize, z: usize, id: u16| {
+            rt.chunks[&ChunkPos::new(0, 0)].voxels.write().unwrap()[lidx(x, y, z)] = BlockId(id);
+        };
+        // 千块表 id：short_grass = 907（Cross）、雪层 snow = 930。
+        const SHORT_GRASS: u16 = 907;
+        const SNOW_LAYER: u16 = 930;
+        // ① 草被点中 → 草格原地替换成圆石；草上方空气格不得被放。
+        set(&mut rt, 8, 70, 8, SHORT_GRASS);
+        rt.interact(true);
+        assert_eq!(
+            v(&rt, 8, 70, 8),
+            9,
+            "replaceClicked：点中草即就地替换（BlockPlaceContext.java:51-53）"
+        );
+        assert_eq!(v(&rt, 8, 71, 8), 0, "不得把方块架到草上方的空气格");
+        assert_eq!(rt.hotbar.slots[0].count, 2, "替换成功消耗一格");
+        // ② 雪层被点中 → 雪层格原地替换成圆石。
+        set(&mut rt, 8, 71, 8, 0);
+        set(&mut rt, 8, 70, 8, SNOW_LAYER);
+        rt.interact(true);
+        assert_eq!(
+            v(&rt, 8, 70, 8),
+            9,
+            "雪层可替换：点中即就地替换（SnowLayerBlock.canBeReplaced :113-121 单层语义）"
+        );
+        assert_eq!(v(&rt, 8, 71, 8), 0, "不得把方块架到雪层上方");
+        assert_eq!(rt.hotbar.slots[0].count, 1, "替换成功消耗一格");
+        // ③ 水面板：水无拾取形状 → 射线穿水命中石顶 → 邻格水被替换（回归锁）。
+        set(&mut rt, 8, 71, 8, 0);
+        set(&mut rt, 8, 70, 8, WATER);
+        rt.hotbar.slots[0].count = 2;
+        rt.interact(true);
+        assert_eq!(
+            v(&rt, 8, 70, 8),
+            9,
+            "水上面板：目标格水被替换（26.1 water .replaceable() Blocks.java:202）"
+        );
+        assert_eq!(v(&rt, 8, 69, 8), STONE, "下方石不被波及");
+        assert_eq!(rt.hotbar.slots[0].count, 1, "替换水成功消耗一格");
+    }
+
+    // ---- 交互波 #128-3：方块经验球（DropExperienceBlock 矿石族）----
+
+    /// 矿石经验掉落（26.1 ServerPlayerGameMode.destroyBlock :287-296
+    /// `if (changed && canDestroy) playerDestroy` → Block.playerDestroy →
+    /// dropResources Block.java:404-415 spawnAfterBreak :412 →
+    /// DropExperienceBlock.java:30-37 → tryDropExperience Block.java:619-624
+    /// → popExperience :449-453 → ExperienceOrb.award :187-196，位置 =
+    /// Vec3.atCenterOf 方块精确中心）：生存、正确工具门内挖 lapis_ore
+    /// （Uniform(2,5) Blocks.java:520）→ 产出 ≥1 只经验球、值合计 ∈ 2..=5、
+    /// 每只值 ∈ 拆分桶（getExperienceValue ExperienceOrb.java:346-369）；
+    /// 创造不产（preventsBlockDrops 语义，本仓同掉落门）。
+    #[test]
+    fn mining_lapis_ore_spawns_experience_orbs() {
+        const LAPIS_ORE: u16 = 513;
+        let mut rt = playing_rt("xp-drop");
+        rt.hotbar = mcv_item::Hotbar::empty();
+        rt.hotbar.slots[0] = ItemSt::new(mcv_item::IRON_PICKAXE_INDEX, 1);
+        rt.player.sel_slot = 0;
+        set_under_player(&mut rt, LAPIS_ORE);
+        rt.destroy_block(BlockPos::new(8, 69, 8));
+        let orbs: Vec<u16> = rt
+            .mobs_app
+            .world
+            .read::<mcv_entity::XpOrb>()
+            .iter()
+            .map(|(_, o)| o.value)
+            .collect();
+        assert!(
+            !orbs.is_empty(),
+            "lapis 经验 Uniform(2,5) 恒 >0，必须产出经验球"
+        );
+        let total: u32 = orbs.iter().map(|v| u32::from(*v)).sum();
+        assert!(
+            (2..=5).contains(&total),
+            "经验值合计 ∈ Uniform(2,5) 采样，got {total}（orbs={orbs:?}）"
+        );
+        for v in orbs {
+            assert!(
+                [1u16, 3, 7, 17, 37, 73, 149, 307, 617, 1237, 2477].contains(&v),
+                "球值必须是拆分桶值（ExperienceOrb.java:346-369），got {v}"
+            );
+        }
+        // 创造：无掉落门 → 无经验球（同物品掉落共门）。
+        rt.mode = GameMode::Creative;
+        set_under_player(&mut rt, LAPIS_ORE);
+        rt.destroy_block(BlockPos::new(8, 69, 8));
+        assert_eq!(
+            rt.mobs_app.world.read::<mcv_entity::XpOrb>().iter().count(),
+            0,
+            "创造破坏不产经验球"
+        );
+    }
+
+    /// 拾取节流（26.1 Player.java:156 takeXpDelay 字段、:237-238 每 tick −1；
+    /// ExperienceOrb.playerTouch :277-279 命中时 `takeXpDelay == 0` 门、命中
+    /// 置 2）：玩家与两只球重叠，首 tick 恰吸一只并置延迟；延迟未走尽不得
+    /// 吸第二只；走尽后下一拍补吸（每 tick 最多一只的节拍）。
+    #[test]
+    fn xp_orb_pickup_throttled_by_take_xp_delay() {
+        let mut rt = playing_rt("xp-throttle");
+        let base = rt.player.pos;
+        let mut rng = spawn_rng();
+        mcv_entity::spawn_xp_orb(
+            &mut rt.mobs_app.world,
+            base + Vec3::new(0.0, 0.3, 0.0),
+            3,
+            &mut rng,
+        );
+        mcv_entity::spawn_xp_orb(
+            &mut rt.mobs_app.world,
+            base + Vec3::new(0.0, 0.4, 0.0),
+            2,
+            &mut rng,
+        );
+        let orb_count =
+            |rt: &GameRuntime| rt.mobs_app.world.read::<mcv_entity::XpOrb>().iter().count();
+        assert_eq!(orb_count(&rt), 2, "前置：两只经验球在册");
+        rt.fixed_step(1.0 / 20.0);
+        let first = rt.player_xp;
+        assert!(first == 3 || first == 2, "首 tick 恰吸一只，got {first}");
+        assert_eq!(orb_count(&rt), 1, "另一只仍在场");
+        // takeXpDelay=2 未走尽：第二球不得吸收（Player.java:237-238 每 tick −1）。
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.player_xp, first, "takeXpDelay 期内禁止再吸收");
+        assert_eq!(orb_count(&rt), 1, "第二球仍在场等待");
+        // 延迟走尽（命中后第 3 tick）：下一拍补吸第二只。
+        rt.fixed_step(1.0 / 20.0);
+        assert_eq!(rt.player_xp, 5, "延迟走尽后补吸第二球（3+2 全收）");
+        assert_eq!(orb_count(&rt), 0, "两只球全部吸收销毁");
+    }
+
     /// 129-L/L0（129-C §1 漏洞 A——「编辑后黑带」复现）：from 端未完成本地
     /// 布光（TerrainReady，读盘块 game.rs:2316 / 生成块等 init 席位
     /// :2082-2106，光数组全零）的 pull 任务，extract_edge 抽出全零边，
