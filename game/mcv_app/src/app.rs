@@ -1623,7 +1623,7 @@ impl AppState {
             self.craft_hot.clear();
             return Vec::new();
         };
-        let (mut q, rects) = match self.screen {
+        let (q, rects) = match self.screen {
             Screen::Crafting => match &self.craft {
                 Some(c) => {
                     let (mut q, hot) =
