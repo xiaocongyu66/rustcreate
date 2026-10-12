@@ -268,7 +268,7 @@ fn wait_quiescent(results: &mut MeshResults) -> Vec<mcv_mesher::MeshDone> {
         );
         let before = got.len();
         got.extend(results.drain_committed());
-        if got.len() >= 1 && got.len() == before {
+        if !got.is_empty() && got.len() == before {
             std::thread::sleep(Duration::from_millis(250));
             if results.drain_committed().is_empty() {
                 break;
@@ -320,9 +320,10 @@ fn game_dispatch_records_and_routes_hi_priority() {
     );
 
     // 回传产物：中心块 hi=true；另有一笔邻块首建走预算流 hi=false。
+    // 注意单 worker 串行：hi 跑完才轮到 lo——必须收齐 hi+lo 两笔再收口。
     let mut got: Vec<mcv_mesher::MeshDone> = Vec::new();
     let t0 = Instant::now();
-    while !got.iter().any(|d| d.hi) {
+    while !(got.iter().any(|d| d.hi) && got.iter().any(|d| !d.hi)) {
         assert!(t0.elapsed() < Duration::from_secs(60), "worker 产物超时");
         got.extend(results.drain_all());
         std::thread::sleep(Duration::from_millis(1));
