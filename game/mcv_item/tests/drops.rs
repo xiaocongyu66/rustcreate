@@ -372,6 +372,7 @@ fn unlisted_blocks_drop_nothing() {
 ///    - lapis Uniform(2,5)（:520,:525）、quartz Uniform(2,5)（:2376）
 ///    - diamond/emerald Uniform(3,7)（:1024-1029、:2177-2182）
 ///    - redstone Uniform(1,5)（RedStoneOreBlock.java:94-98）
+///
 ///    非矿石方块无经验（无 DropExperienceBlock 语义）。
 #[test]
 fn block_experience_ore_table_matches_vanilla() {
