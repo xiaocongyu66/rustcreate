@@ -1431,6 +1431,7 @@ dependencies = [
  "bytemuck",
  "image",
  "log",
+ "mcv_registry",
 ]
 
 [[package]]
@@ -1525,6 +1526,10 @@ dependencies = [
  "mcv_game",
  "winit",
 ]
+
+[[package]]
+name = "mcv_registry"
+version = "0.1.0"
 
 [[package]]
 name = "mcv_render"

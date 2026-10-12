@@ -169,6 +169,13 @@ type GenBlock = (&'static str, bool, bool, bool, u8, [u16; 6], f32, u8);
 // 14+ 按官方名字典序。格式/来源/限制见 blocks_gen.inc.rs 头部注释。
 include!("blocks_gen.inc.rs");
 
+/// 原版方块 tag 静态表（id 域 = GEN_BLOCKS 行序）：构建期已解出全部
+/// `#` 引用，运行期零解引用。生成与语义登记见 ci/gen-tags.py；
+/// 等价锁 tests/tags_gen.rs。消费端硬编码切换是 #178 刀2。
+pub mod tags {
+    include!("tags_gen.inc.rs");
+}
+
 /// 生成表元组 → BlockDef。model_kind（第 8 字段）是网格器未来字段，此处丢弃；
 /// `f32::from_bits` 保证 const 路径与旧表字面量逐位一致（含 INFINITY）。
 const fn gen_def(t: &GenBlock) -> BlockDef {

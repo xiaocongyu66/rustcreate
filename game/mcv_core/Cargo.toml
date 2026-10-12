@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+mcv_registry.workspace = true
 log.workspace = true
 image.workspace = true
 bytemuck.workspace = true

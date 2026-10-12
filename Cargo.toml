@@ -27,6 +27,7 @@ mcv_entity = { path = "game/mcv_entity" }
 mcv_item = { path = "game/mcv_item" }
 mcv_audio = { path = "engine/mcv_audio" }
 mcv_nbt = { path = "engine/mcv_nbt" }
+mcv_registry = { path = "engine/mcv_registry" }
 
 wgpu = "=30.0.1"
 winit = { version = "=0.30.13", features = ["android-native-activity"] }

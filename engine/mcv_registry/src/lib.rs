@@ -24,27 +24,29 @@ pub struct Identifier {
 }
 
 /// 命名空间字符集（`Identifier.java:245-247` `validNamespaceChar`）。
-pub const fn valid_namespace_char(c: char) -> bool {
-    matches!(c, 'a'..='z' | '0'..='9' | '_' | '-' | '.')
+pub const fn valid_namespace_char(c: u8) -> bool {
+    matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'.')
 }
 
 /// 路径字符集（`Identifier.java:252-254` `validPathChar`，多 `/`）。
-pub const fn valid_path_char(c: char) -> bool {
-    matches!(c, 'a'..='z' | '0'..='9' | '_' | '-' | '/' | '.')
+pub const fn valid_path_char(c: u8) -> bool {
+    matches!(c, b'a'..=b'z' | b'0'..=b'9' | b'_' | b'-' | b'/' | b'.')
 }
 
 impl Identifier {
     /// 原版 `isValidNamespace`：字符集全合法且整串非 `".."`。
-    /// 照抄原版：空串按「逐字符全称真」通过（构造入口另有非空要求处见 parse）。
+    /// 照抄原版：空串按「逐字符全称真」通过。
+    /// const 友好实现：只用 as_bytes/len/下标——str 切片与 `==`
+    /// 在 const fn 中非稳定，trait 调用亦不可。
     pub const fn is_valid_namespace(s: &str) -> bool {
-        if s == ".." {
+        // 整串 ".." 特判（isValidNamespace 首行）：长度 2 且两字节皆 '.'。
+        if s.as_bytes().len() == 2 && s.as_bytes()[0] == b'.' && s.as_bytes()[1] == b'.' {
             return false;
         }
         let b = s.as_bytes();
         let mut i = 0;
         while i < b.len() {
-            // 非 ASCII 直接判非法；ASCII 再按字符集核对。
-            if !(b[i].is_ascii() && valid_namespace_char(b[i] as char)) {
+            if !valid_namespace_char(b[i]) {
                 return false;
             }
             i += 1;
@@ -57,7 +59,7 @@ impl Identifier {
         let b = s.as_bytes();
         let mut i = 0;
         while i < b.len() {
-            if !(b[i].is_ascii() && valid_path_char(b[i] as char)) {
+            if !valid_path_char(b[i]) {
                 return false;
             }
             i += 1;
@@ -77,25 +79,19 @@ impl Identifier {
     /// 字符串解析（原版 `tryParse`+`bySeparator`，`Identifier.java:59-71`）：
     /// 按**首个** `:` 分割；`:` 前为空或无 `:` 时命名空间缺省 `minecraft`；
     /// 空输入、非法字符 → None。
-    pub const fn parse(s: &'static str) -> Option<Self> {
+    ///
+    /// 非 const（str 切片 const 未稳定）；构造期校验仍走 const 的
+    /// `is_valid_*`。热路径请用 [`Identifier::new`] 直接给两静态段。
+    pub fn parse(s: &'static str) -> Option<Self> {
         if s.is_empty() {
             return None;
         }
-        let b = s.as_bytes();
-        let mut i = 0;
-        while i < b.len() {
-            if b[i] == b':' {
-                // 首个冒号处分割（Java indexOf 语义）。
-                let path = &s[i + 1..];
-                if i == 0 {
-                    return Self::new("minecraft", path);
-                }
-                return Self::new(&s[..i], path);
-            }
-            i += 1;
+        match s.find(':') {
+            // 首个冒号处分割（Java indexOf 语义）；冒号前置空 → 缺省命名空间。
+            Some(0) => Self::new("minecraft", &s[1..]),
+            Some(i) => Self::new(&s[..i], &s[i + 1..]),
+            None => Self::new("minecraft", s),
         }
-        // 无冒号：整串为路径，命名空间缺省。
-        Self::new("minecraft", s)
     }
 
     pub const fn namespace(&self) -> &'static str {
@@ -204,11 +200,24 @@ mod tests {
         // 路径非法字符（大写、空格、#）。
         assert!(Identifier::parse("minecraft:Stone").is_none());
         assert!(Identifier::parse("minecraft:mi de").is_none());
+        assert!(Identifier::parse("minecraft:a#b").is_none());
         // 命名空间整串 ".."（isValidNamespace 特判）。
         assert!(Identifier::new("..", "x").is_none());
-        // 路径含冒号前的命名空间为空串 OK，但显式 new 空命名空间照抄原版
-        // 逐字符真 → 允许；这里锁「非 .. 即可」的现状。
+        // 非 ASCII 命名空间/路径。
+        assert!(Identifier::new("中文", "x").is_none());
+        assert!(Identifier::new("m", "中文").is_none());
+        // 照抄原版：显式 new 空命名空间（非 ".."）逐字符真 → 允许。
         assert!(Identifier::new("", "x").is_some());
+    }
+
+    #[test]
+    fn identifier_const_construction() {
+        // const 路径（gen 产物/静态表用法）。
+        const ID: Option<Identifier> = Identifier::new("minecraft", "mineable/pickaxe");
+        let id = ID.unwrap();
+        assert_eq!(id.path(), "mineable/pickaxe");
+        const BAD: Option<Identifier> = Identifier::new("Bad_NS", "x");
+        assert!(BAD.is_none());
     }
 
     #[test]
