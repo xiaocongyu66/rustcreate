@@ -7,8 +7,13 @@
 //! 逐字节对拍。生产消费方（mcv_logic）只经由 [`MeshData`] 的读取接口消费。
 
 mod mesher;
+mod sched;
 
 pub use mesher::{MeshData, block_geom, build_mesh};
+pub use sched::{
+    MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
+    neighborhood_slots, worker_count_from,
+};
 
 /// One loaded chunk slot: voxel ids (98304 u16) and light bytes (98304),
 /// layout `mcv_core::vidx`（v6：384 高，y 为绝对世界 y）; light low nibble =

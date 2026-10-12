@@ -107,38 +107,73 @@ pub trait ChunkMesher: Send {
     }
 }
 
+/// E3 快照核：3×3 邻域拷出为裸字节（voxels u16 + light u8，布局
+/// `mcv_core::vidx`，行主序 dz 外层）。网格路径上唯一碰区块 RwLock 的点
+/// ——必须在主线程同步段内串行完成（拷贝不可被编辑打断 → 无快照撕裂），
+/// worker 只见字节。同步路径（[`RustMesher::build`]）与 worker 派发
+/// （[`GameRuntime::build_chunk_mesh`]）共用同一装配，保证两路快照与
+/// `mcv_mesher::neighborhood_slots` 的输入逐字节同源。
+fn snapshot_neighborhood(handles: &[Arc<ChunkHandle>; 9]) -> (Vec<u16>, Vec<u8>) {
+    let vol = mcv_core::CHUNK_VOL;
+    let mut voxels = vec![0u16; 9 * vol];
+    let mut lights = vec![0xF0; 9 * vol]; // sky=15 until light wires in
+    for (i, h) in handles.iter().enumerate() {
+        voxels[i * vol..(i + 1) * vol]
+            .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
+        lights[i * vol..(i + 1) * vol].copy_from_slice(&h.light.read().unwrap()[..]);
+    }
+    (voxels, lights)
+}
+
 /// Real mesher: pure-Rust greedy mesh via mcv_mesher + GPU upload.
+/// E3 起双路分叉（[`ChunkMesher`] trait 与各实现签名零改动）：
+/// - **worker 路**（`results: Some`）：[`Self::build`] 从不被调用，派发走
+///   `GameRuntime::mesh_sched`（快照在 `build_chunk_mesh`），回传在
+///   [`Self::flush`] 消化——每帧 stream 末尾必达，无结果饿死；
+/// - **同步路**（`results: None`，`MCV_MESHER_WORKERS=0` 回滚开关）：与
+///   E3 前逐字节同款——`build` 内快照+计算+上传一体。
 pub struct RustMesher {
     mesher: mcv_mesher::Mesher,
     uploader: mcv_render::gpu::MeshUploader,
+    /// E3 回传端（None = 同步路径，不建池）。
+    results: Option<mcv_mesher::MeshResults>,
 }
 
 impl RustMesher {
-    pub fn new(uploader: mcv_render::gpu::MeshUploader) -> Self {
-        Self {
-            mesher: mcv_mesher::Mesher::new(),
-            uploader,
+    /// E3 装配：`workers > 0` → 并行（返回调度器提交端给
+    /// [`GameRuntime`]）；`workers == 0`（`MCV_MESHER_WORKERS=0` 回滚
+    /// 开关）→ 同步路径，返回 None。
+    pub fn new_with_workers(
+        uploader: mcv_render::gpu::MeshUploader,
+        workers: usize,
+    ) -> (Self, Option<mcv_mesher::MeshScheduler>) {
+        if workers == 0 {
+            return (
+                Self {
+                    mesher: mcv_mesher::Mesher::new(),
+                    uploader,
+                    results: None,
+                },
+                None,
+            );
         }
+        let (sched, results) = mcv_mesher::MeshScheduler::new(workers);
+        (
+            Self {
+                mesher: mcv_mesher::Mesher::new(),
+                uploader,
+                results: Some(results),
+            },
+            Some(sched),
+        )
     }
 }
 
 impl ChunkMesher for RustMesher {
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
-        // Copy the 9 neighbourhoods out (locks taken one at a time).
-        let vol = mcv_core::CHUNK_VOL;
-        let mut voxels = vec![0u16; 9 * vol];
-        let mut lights = vec![0xF0; 9 * vol]; // sky=15 until light wires in
-        for (i, h) in handles.iter().enumerate() {
-            voxels[i * vol..(i + 1) * vol]
-                .copy_from_slice(bytemuck::cast_slice(h.voxels.read().unwrap().as_slice()));
-            lights[i * vol..(i + 1) * vol].copy_from_slice(&h.light.read().unwrap()[..]);
-        }
-        let slots: [Option<mcv_mesher::Slot>; 9] = std::array::from_fn(|i| {
-            Some(mcv_mesher::Slot {
-                voxels: &voxels[i * vol..(i + 1) * vol],
-                light: &lights[i * vol..(i + 1) * vol],
-            })
-        });
+        // 同步路径（回滚开关）：快照核 + 直呼 mesher（E3 前同款时序）。
+        let (voxels, lights) = snapshot_neighborhood(handles);
+        let slots = mcv_mesher::neighborhood_slots(&voxels, &lights);
         let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
         let water = self.mesher.build(&slots, mcv_mesher::MESH_WATER).ok();
         // 裸字节交给引擎上传；水顶点+索引都传（build_chunk 拼接共用 vb 并
@@ -153,6 +188,11 @@ impl ChunkMesher for RustMesher {
     }
 
     fn unload(&mut self, pos: ChunkPos) {
+        // E3：卸载记账同步回收在途产物（僵尸锁）——地板抬到当前 gen，
+        // 其后回传的该块产物在 flush 处拒收，防网格条目复活到已卸载键。
+        if let Some(results) = self.results.as_mut() {
+            results.kill(pos);
+        }
         self.uploader.unload(pos);
     }
 
@@ -161,6 +201,38 @@ impl ChunkMesher for RustMesher {
     }
 
     fn flush(&mut self) {
+        // E3 回传段：worker 产物在此消化——主线程 uploader.build_chunk 进
+        // staging（提交地板过滤僵尸/陈旧产物），随后 uploader.flush 把本帧
+        // 全部 staging 拷贝 submit（先于同帧 draw 提交，draw 必见数据）。
+        // 每帧 stream 末尾必达，无结果饿死；消化成本落 E0 flush 子段窗。
+        if let Some(results) = self.results.as_mut() {
+            for done in results.drain_committed() {
+                // 产物缺失 = worker 侧 build 报错（kind 为编译期常量，
+                // BAD_ARG 不可达；若真发生与同步路失败同级别响亮记账），
+                // 不炸主线程：记 error 跳过该笔（该块网格缺失，MESH 位
+                // 已在派发时清除——下一笔编辑/重网格恢复）。
+                let Some(opaque) = done.opaque else {
+                    log::error!(
+                        "mesh worker产物缺失 {:?}（worker 侧报错，跳过提交）",
+                        done.pos
+                    );
+                    continue;
+                };
+                let rc = self.uploader.build_chunk(
+                    done.origin,
+                    &opaque.vertex,
+                    &opaque.index,
+                    done.water.as_ref().map(|w| (&w.vertex, &w.index)),
+                );
+                // 真机取证埋点：worker 回传提交带区块坐标——与派发日志
+                // 对账可观测回传延迟（帧数差）。
+                log::debug!(
+                    "mesh worker commit {:?} idx={}",
+                    done.pos,
+                    rc.opaque_range.end
+                );
+            }
+        }
         self.uploader.flush();
     }
 
@@ -665,6 +737,10 @@ pub struct GameRuntime {
     /// （无敌帧、攻击冷却、AI 节奏）必须在此为真时 +1，不许按 60 Hz 步计。
     pub on_tick: bool,
     pub mesher: Box<dyn ChunkMesher>,
+    /// E3 网格计算调度器提交端（None = 同步路径，`MCV_MESHER_WORKERS=0`
+    /// 回滚开关）。回传端在 RustMesher 内（flush 消化）；派发端在此供
+    /// remesh 预算流投递快照字节（hi/lo 通道选择在 [`Self::build_chunk_mesh`]）。
+    mesh_sched: Option<mcv_mesher::MeshScheduler>,
     pub save_dir: std::path::PathBuf,
     /// 已建网格区块的记账（#80 起绘制条目表由 mesher 实现自持，游戏层只
     /// 记「哪块已建网格」）。O(1) 判「这块是否已有网格」替代逐帧对全表做
@@ -1050,12 +1126,36 @@ impl GameRuntime {
         save_dir: std::path::PathBuf,
         mode: GameMode,
     ) -> Self {
-        Self::assemble(seed, Box::new(RustMesher::new(uploader)), save_dir, mode)
+        // E3：worker 数在构造时点解析一次（主线程；env 不入后台线程）。
+        // MCV_MESHER_WORKERS=0 → 同步路径（回滚开关，对齐 MCV_TERRAIN_BACKEND
+        // 先例），>0 → 快照-计算-回传三段式并行。
+        let (mesher, mesh_sched) =
+            RustMesher::new_with_workers(uploader, mcv_mesher::mesh_worker_count());
+        Self::assemble(seed, Box::new(mesher), save_dir, mode, mesh_sched)
     }
 
     /// 无头构造（集成测试/CI）：NullMesher 不触 GPU，其余接线与 [`new`](Self::new) 全同。
     pub fn new_headless(seed: u64, save_dir: std::path::PathBuf, mode: GameMode) -> Self {
-        Self::assemble(seed, Box::new(NullMesher), save_dir, mode)
+        Self::assemble(seed, Box::new(NullMesher), save_dir, mode, None)
+    }
+
+    /// E3 测试装配（headless + 真实网格调度器）：NullMesher 不触 GPU、
+    /// 不接回传端，派发产物由测试持有的 [`mcv_mesher::MeshResults`] 取用
+    /// （派发记账/hi 路由/快照字节的游戏层断言面，tests/mesh_parallel.rs）。
+    /// 生产装配走 [`new`](Self::new)（回传端在 RustMesher 内 flush 消化）。
+    #[doc(hidden)]
+    pub fn new_headless_with_mesh(
+        seed: u64,
+        save_dir: std::path::PathBuf,
+        mode: GameMode,
+        workers: usize,
+    ) -> (Self, mcv_mesher::MeshResults) {
+        assert!(workers > 0, "workers=0 是同步路径，无调度器可返回");
+        let (sched, results) = mcv_mesher::MeshScheduler::new(workers);
+        (
+            Self::assemble(seed, Box::new(NullMesher), save_dir, mode, Some(sched)),
+            results,
+        )
     }
 
     fn assemble(
@@ -1063,6 +1163,7 @@ impl GameRuntime {
         mesher: Box<dyn ChunkMesher>,
         save_dir: std::path::PathBuf,
         mode: GameMode,
+        mesh_sched: Option<mcv_mesher::MeshScheduler>,
     ) -> Self {
         // 新档背包全模式为空（26.1 Inventory.java:56 items 初始化为
         // 36×ItemStack.EMPTY，:62-65 构造只挂 player/equipment 引用、从不
@@ -1085,6 +1186,7 @@ impl GameRuntime {
             game_ticks: 0,
             on_tick: false,
             mesher,
+            mesh_sched,
             save_dir,
             meshed: HashSet::new(),
             spawned: false,
@@ -2462,8 +2564,11 @@ impl GameRuntime {
             2
         };
         // 编辑源块当帧优先（审计 A2/F3）：级联标脏的邻块仍走近优先预算流。
+        // E3：mesh_priority 走 hi 通道（worker 池优先队列跳过排队 lo），
+        // 预算流走 lo——到达上传的先后由完成序决定，hi 保证编辑源块不排在
+        // 旧预算任务之后（tests/mesh_parallel.rs 顺序锁）。
         if let Some(p) = self.mesh_priority.take()
-            && self.build_chunk_mesh(p)
+            && self.build_chunk_mesh(p, true)
         {
             remesh_budget = remesh_budget.saturating_sub(1);
         }
@@ -2474,7 +2579,7 @@ impl GameRuntime {
             if (pos.x - center.x).abs().max((pos.z - center.z).abs()) > self.sim_dist() {
                 continue;
             }
-            if self.build_chunk_mesh(pos) {
+            if self.build_chunk_mesh(pos, false) {
                 remesh_budget -= 1;
             }
         }
@@ -2482,6 +2587,9 @@ impl GameRuntime {
         // 异步上传冲刷（#80 第二刀）：本帧 build/unload 攒下的网格拷贝在
         // 此记入 staging 并 submit——先于同帧 draw_frame 的 submit（单队列
         // 按提交序执行），draw 必见数据；状态机 Uploaded 推进时序不变。
+        // E3：worker 回传的产物也在此消化（RustMesher::flush 内先
+        // drain_committed → uploader.build_chunk，再 staging submit）——
+        // 回传≠上传：派发预算（上）由主线程执行，回传只搬字节。
         // E0：flush 子段（staging submit，独立列）+ stream 总窗口收账。
         let flush_t0 = std::time::Instant::now();
         self.mesher.flush();
@@ -2493,7 +2601,19 @@ impl GameRuntime {
     /// 返回 true = 本帧实际建了一块（消耗一格预算）。门槛：中心
     /// ≥LightLocalReady、3×3 邻域就绪（[`Self::neighbors_ready`]）、且
     /// （未建过 或 MESH 脏）。
-    fn build_chunk_mesh(&mut self, pos: ChunkPos) -> bool {
+    ///
+    /// E3 双路分叉（蓝图快照-计算-回传三段式）：
+    /// - **worker 路**（默认）：门槛通过后主线程快照 3×3（唯一碰 RwLock
+    ///   的点，拷完即发），worker 跑 `Mesher::build`（opaque+water，~10ms
+    ///   纯计算移出主线程，2 块/帧预算的实际帧成本 ~20ms → 快照拷贝 +
+    ///   结果入池）；回传字节由 RustMesher::flush 经 uploader.build_chunk
+    ///   进 staging。派发即记账（meshed/stage/MESH 脏位）：快照与脏位清除
+    ///   在同一主线程瞬时——此前的编辑已在快照里，此后的编辑重新置位
+    ///   MESH 触发下轮重建（同块在途产物由提交地板过滤，陈旧不覆盖），
+    ///   无丢失更新。`hi` 选通道（编辑源块 hi / 预算流 lo）。
+    /// - **同步路**（`MCV_MESHER_WORKERS=0` 回滚开关）：与 E3 前逐字节
+    ///   同款，快照+计算+上传一体。
+    fn build_chunk_mesh(&mut self, pos: ChunkPos, hi: bool) -> bool {
         let Some(handle) = self.chunks.get(&pos).cloned() else {
             return false;
         };
@@ -2515,6 +2635,40 @@ impl GameRuntime {
                 handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
             }
         }
+        // E3 worker 路：快照-计算-回传三段式（默认）。
+        if let Some(sched) = self.mesh_sched.as_ref() {
+            // 背压门：在途（排队+执行）≥ 高水位时本帧不投递（不耗预算，
+            // 下帧预算流自动重试）——worker 饥饿时快照/产物字节（~5 MiB/笔
+            // 双端）不得无界堆积；峰值在途 ≈ workers+2 笔。
+            if sched.saturated() {
+                return false;
+            }
+            let (voxels, lights) = snapshot_neighborhood(&handles);
+            sched.submit(
+                mcv_mesher::MeshJob {
+                    pos,
+                    origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
+                    voxels,
+                    lights,
+                },
+                hi,
+            );
+            // 派发即记账：快照与脏位清除在同一主线程瞬时（见函数 doc）。
+            // meshed 记账同步：记新。
+            self.meshed.insert(pos);
+            handle.clear_dirty(mcv_core::dirty::MESH);
+            // 网格派发即推进状态机终点 Uploaded（GPU 字节经回传异步到位，
+            // 差 1-2 帧；加载门谓词是 status ≥ Surface——刀 3b 解耦点①，
+            // 不读 stage，加载语义不变；loading_progress_parts 的显示统计
+            // 相应提前 1-2 帧，非行为面）。无头 NullMesher + 同步路径不进
+            // 本分支，记账仍由下方同步路承担。
+            handle.advance_to(Stage::Uploaded);
+            // 真机取证埋点（logcat -s RustMcv）：派发事件带区块坐标——
+            // 与 flush 的 "mesh worker commit" 对账可观测回传延迟。
+            log::debug!("mesh dispatch {} {pos:?}", if hi { "hi" } else { "lo" });
+            return true;
+        }
+        // 同步路径（回滚开关）：E3 前逐字节同款。
         let Some(rc) = self.mesher.build(pos, &handles) else {
             // 失败分支不得静默（审计 B2/F6）：首建失败 = 该块不在
             // render_chunks——不可见却按真实体素碰撞（另一种「看不见却
