@@ -181,7 +181,7 @@ pub fn xp_orb_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
         .resources
         .get::<crate::items::DropWorld>()
         .expect("xp_orb_pickup：DropWorld 快照未注入 Resources");
-    let (pmin, pmax) = crate::items::player_pickup_box(dw.player_pos);
+    let (pmin, pmax) = player_pickup_box(dw.player_pos);
     let world: &mcv_ecs::World = ctx.world;
     let events = &mut *ctx.events;
     let (phys, orbs) = (world.read::<PhysBody>(), world.read::<XpOrb>());
