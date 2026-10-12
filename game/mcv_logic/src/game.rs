@@ -6412,7 +6412,11 @@ fn fast_rand() -> u32 {
 /// 1.0 + (r1−r2)×0.2，RandomSource.java:63-65。随机源取本仓 fast_rand
 /// 1024 档近似，同溅落音 jitter 惯例）。
 fn eat_volume_pitch() -> (f32, f32) {
-    let vol = if fast_rand() % 2 == 0 { 0.5 } else { 1.0 };
+    let vol = if fast_rand().is_multiple_of(2) {
+        0.5
+    } else {
+        1.0
+    };
     let r1 = (fast_rand() % 1024) as f32 / 1024.0;
     let r2 = (fast_rand() % 1024) as f32 / 1024.0;
     (vol, 1.0 + (r1 - r2) * 0.2)

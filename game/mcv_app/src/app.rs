@@ -1593,11 +1593,11 @@ impl AppState {
             let hit = self.world_hot.iter().find(|(_, bx, by, bw, bh)| {
                 px >= *bx && px <= bx + bw && py >= *by && py <= by + bh
             });
-            if let Some((idx, ..)) = hit {
+            if let Some(&(idx, ..)) = hit {
                 // 世界行按下音（WorldSelectionList.java:579：forUI
                 // (UI_BUTTON_CLICK, 1.0F)，先音后交互同 mouseClicked 序）。
+                // 先按值拷出 idx 再播（hit 借 world_hot，播音需 &mut self）。
                 self.play_ui_click();
-                let idx = *idx;
                 self.on_world_pick(idx);
                 return;
             }
