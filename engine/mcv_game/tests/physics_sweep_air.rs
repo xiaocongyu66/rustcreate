@@ -47,7 +47,9 @@ fn fly(dir: Vec3) -> StepInput {
 /// d ≡ v_pre·dt 逐速精确（失败读数 0.2058 = 12.35/60 正是无碰撞路）。
 /// 本版把绝对下限挪到渐近充分热身后（各测 i≥120/200，均 ≥ 2×τ90），并
 /// 对每一步加更强的一致性锁「位移 ≥ 步初速度×dt×98% 且速度不减」——
-/// 任何假钳制（无论何时发生）都破坏其一，比旧窗口断言更严。
+/// 任何假钳制（无论何时发生）都破坏其一，比旧窗口断言更严。一致性锁
+/// 用 `>=`+eps 而非 `>`：步 0 v_pre=0 时引擎一阶滞后 d≡0，`0 > 0` 恒假
+/// 是断言退化（run 38398420888 红因），非引擎阻挡——v_pre>0 后锁强不变。
 fn step_floor() -> f32 {
     mcv_game::consts::FLY_SPEED * mcv_game::consts::SPRINT_FLY_MULTIPLIER * (1.0 / 60.0) * 0.9
 }
@@ -72,7 +74,7 @@ fn high_speed_flight_in_pure_air_never_collides() {
         // 每步一致性锁（窗口无关）：纯空气位移必须 ≡ 步初速度×dt，
         // 速度不得回退——任何隐形钳制都破坏其一。
         assert!(
-            d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+            d >= v_pre * mcv_game::consts::FIXED_DT * 0.98 - 1e-9,
             "步 {i} 纯空气位移与速度脱节 d={d} v_pre={v_pre}（隐形阻挡假说）vel={:?}",
             p.vel
         );
@@ -125,7 +127,7 @@ fn cavity_shell_1m4_clearance_is_collision_free() {
         step(&w, &mut p, &inp);
         let d = p.pos.z - before;
         assert!(
-            d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+            d >= v_pre * mcv_game::consts::FIXED_DT * 0.98 - 1e-9,
             "步 {i}：贴腔壁 1.4 m 位移与速度脱节 = 假碰撞 d={d} v_pre={v_pre} vel={:?} pos={}",
             p.vel,
             p.pos
@@ -192,7 +194,7 @@ fn grazing_flight_over_floor() {
             // 贴面每一步都不得啃掉速度（旧断言 i=0 就要 vel>18，
             // 渐近爬坡期恒假 = 电池窗口 bug，见 step_floor 注）。
             assert!(
-                d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+                d >= v_pre * mcv_game::consts::FIXED_DT * 0.98 - 1e-9,
                 "{tag}：贴面位移与速度脱节 = 地坪误钳 i={i} d={d} v_pre={v_pre} vel={:?}",
                 p.vel
             );
