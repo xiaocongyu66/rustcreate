@@ -333,3 +333,14 @@ clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐
 4. **STRU-BE**：block `nbt`（方块实体）与 `entities` 读取后忽略。
 5. **STRU-LOOKUP**：Name→BlockId 线性查 mcv_core::BLOCKS，O(n)；刀 7
    统一换名称→索引表。
+
+## NBT-STACK mcv_nbt 栈安全口径（#177 追加,CI run 38324618498 实测驱动）
+
+1. **读侧零递归**：原版 Java 递归下降靠 JVM 栈扛 depth 512;Rust debug 帧
+   大,同深度在测试线程栈上直接 SIGABRT(CI 实测)。本仓二进制读改显式栈
+   状态机(栈外语义——深度上限、记账、错误类型——与原版一致)。
+2. **SNBT 读限深 512**：parser 仍递归但显式限深(与 NbtAccounter 对齐),
+   深嵌套文本报 BadSnbt 不炸栈。
+3. **写侧仍递归(NBT-WRITE-DEPTH)**：write_raw/write_snbt 递归深度=树深;
+   消费方从本仓 parser 拿到的树天然 ≤512 层安全,程序化手构超深树属调用方
+   责任,未设防。

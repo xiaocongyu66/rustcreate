@@ -16,7 +16,11 @@ use crate::tag::{NbtCompound, NbtList, NbtValue};
 /// 解析完整 SNBT 文本(不允许尾随数据)。
 pub fn parse_snbt(input: &str) -> Result<NbtValue, NbtError> {
     let chars: Vec<char> = input.chars().collect();
-    let mut p = Parser { s: &chars, pos: 0 };
+    let mut p = Parser {
+        s: &chars,
+        pos: 0,
+        depth: 0,
+    };
     p.skip_ws();
     let v = p.parse_value()?;
     p.skip_ws();
@@ -159,9 +163,13 @@ fn write_quoted(s: &str, out: &mut String) {
     out.push('"');
 }
 
+/// SNBT 文本嵌套深度上限(与二进制侧 NbtAccounter 512 对齐)。
+const MAX_SNBT_DEPTH: u32 = 512;
+
 struct Parser<'a> {
     s: &'a [char],
     pos: usize,
+    depth: u32,
 }
 
 impl<'a> Parser<'a> {
@@ -202,6 +210,19 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_value(&mut self) -> Result<NbtValue, NbtError> {
+        // 递归深度护栏:深层嵌套文本(`{{{{…`)不炸栈(原版 TagParser 亦
+        // 递归,JVM 有栈护栏;本仓显式限深,错误路径不回退计数——解析
+        // 已整体中止,计数无后续消费者)。
+        if self.depth >= MAX_SNBT_DEPTH {
+            return Err(self.err_here("nesting too deep"));
+        }
+        self.depth += 1;
+        let v = self.parse_value_inner();
+        self.depth -= 1;
+        v
+    }
+
+    fn parse_value_inner(&mut self) -> Result<NbtValue, NbtError> {
         match self.peek() {
             Some('{') => self.parse_compound(),
             Some('[') => self.parse_list_or_array(),
@@ -576,6 +597,13 @@ mod tests {
     #[test]
     fn bad_input_reports_offset() {
         let e = parse_snbt("{a:}").unwrap_err();
+        assert!(matches!(e, NbtError::BadSnbt { .. }), "{e}");
+    }
+
+    #[test]
+    fn deep_nesting_reports_error_not_stack_overflow() {
+        let src = "{".repeat(1000);
+        let e = parse_snbt(&src).unwrap_err();
         assert!(matches!(e, NbtError::BadSnbt { .. }), "{e}");
     }
 }

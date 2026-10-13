@@ -5,6 +5,10 @@
 //! - 字符串:u16 长度 + modified UTF-8。
 //!
 //! 压缩嗅探:0x1F 0x8B → GZIP、0x78 → ZLIB、否则 RAW。
+//!
+//! 实现口径:容器读为**显式栈状态机(零递归)**——原版 Java 是递归下降,
+//! 靠 JVM 栈扛 512 层;Rust debug 帧大,同深度在 2 MiB 线程栈上直接 SIGABRT
+//! (CI 实测)。栈外语义(深度上限、记账、错误类型)与原版一致。
 
 use std::io::Read;
 
@@ -15,7 +19,7 @@ use crate::error::NbtError;
 use crate::tag::{NbtCompound, NbtList, NbtValue, TagType};
 use crate::utf8;
 
-/// 读取入口公共 trait:`&[u8]` 与压缩流都走它。
+/// 读取入口 trait(切片源;解压流先整体读入再走同一状态机)。
 trait PayloadRead {
     fn read_u8(&mut self) -> Result<u8, NbtError>;
     fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), NbtError>;
@@ -105,13 +109,13 @@ fn read_array_len<R: PayloadRead + ?Sized>(
     Ok(n as usize)
 }
 
-fn read_payload<R: PayloadRead + ?Sized>(
+/// 标量/定长数组 payload(平坦,零递归)。
+fn read_scalar<R: PayloadRead + ?Sized>(
     r: &mut R,
     ty: TagType,
     acc: &mut NbtAccounter,
 ) -> Result<NbtValue, NbtError> {
     Ok(match ty {
-        TagType::End => NbtValue::End,
         TagType::Byte => NbtValue::Byte(r.read_u8()? as i8),
         TagType::Short => NbtValue::Short(read_i16(r)?),
         TagType::Int => NbtValue::Int(read_i32(r)?),
@@ -149,65 +153,147 @@ fn read_payload<R: PayloadRead + ?Sized>(
             NbtValue::LongArray(v)
         }
         TagType::String => NbtValue::String(read_string(r, acc)?),
-        TagType::List => {
-            acc.push_depth()?;
-            let inner = read_list(r, acc)?;
-            acc.pop_depth();
-            NbtValue::List(inner)
-        }
-        TagType::Compound => {
-            acc.push_depth()?;
-            let c = read_compound_payload(r, acc)?;
-            acc.pop_depth();
-            NbtValue::Compound(c)
-        }
+        other => unreachable!("read_scalar 只收标量/数组类型,收到 {other:?}"),
     })
 }
 
-fn read_list<R: PayloadRead + ?Sized>(
-    r: &mut R,
-    acc: &mut NbtAccounter,
-) -> Result<NbtList, NbtError> {
-    let raw_ty = r.read_u8()?;
-    let elem_ty = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
-    let n = if elem_ty == TagType::End {
-        // 原版空 list:类型 0 + 长度(通常 0)。长度仍要读掉。
-        let n = read_i32(r)?;
-        if n > 0 {
-            // 类型 End 却给正长度:legacy 文件不会这样,保守拒绝。
-            return Err(NbtError::TooLarge {
-                what: "end-typed list length",
-                got: n as i64,
-                max: 0,
-            });
-        }
-        0usize
-    } else {
-        // 每元素至少 1 字节(payload 前的最小尺寸),记账防超长声明。
-        read_array_len(r, acc, 2, "list length")?
-    };
-    // legacy 文件可含混型:payload 一律按声明类型读,类型字节原样保留。
-    let mut items = Vec::with_capacity(n.min(1 << 16));
-    for _ in 0..n {
-        items.push(read_payload(r, elem_ty, acc)?);
-    }
-    Ok(NbtList::from_raw(elem_ty, items))
+/// 显式栈容器帧。
+enum Frame {
+    /// compound 构造中;key = 刚读完键名、等值的挂起键。
+    Compound {
+        map: NbtCompound,
+        key: Option<String>,
+    },
+    /// list 构造中;left = 还差几个元素(payload 全按 elem 类型读,
+    /// legacy 混型文件 payload 类型不符时读出异型值原样保留——原版同语义)。
+    List {
+        elem: TagType,
+        items: Vec<NbtValue>,
+        left: u64,
+    },
 }
 
-fn read_compound_payload<R: PayloadRead + ?Sized>(
+/// 零递归地读一个 `start_ty` 类型的 payload,返回完成值。
+/// 深度/记账全走 accounter;栈占用 O(容器嵌套层数) 但全在堆上。
+fn read_value_iter<R: PayloadRead + ?Sized>(
     r: &mut R,
     acc: &mut NbtAccounter,
-) -> Result<NbtCompound, NbtError> {
-    let mut c = NbtCompound::new();
+    start_ty: TagType,
+) -> Result<NbtValue, NbtError> {
+    let mut stack: Vec<Frame> = Vec::new();
+    // 双态驱动:`ty` = 待读 payload 类型;`value` = 已读完待挂到上层框架的值。
+    let mut ty = Some(start_ty);
+    let mut value: Option<NbtValue> = None;
     loop {
-        let raw_ty = r.read_u8()?;
-        if raw_ty == 0 {
-            return Ok(c);
+        // ① 有待挂值:挂到顶帧;栈空则整体完成。
+        if let Some(v) = value.take() {
+            match stack.last_mut() {
+                None => return Ok(v),
+                Some(Frame::Compound { map, key }) => {
+                    map.insert(key.take().unwrap_or_default(), v);
+                }
+                Some(Frame::List { items, .. }) => {
+                    // left 只在 ③Elem 发出读取请求时扣减;此处仅收集。
+                    items.push(v);
+                }
+            }
         }
-        let ty = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
-        let name = read_string(r, acc)?;
-        let value = read_payload(r, ty, acc)?;
-        c.insert(name, value);
+        // ② 有待读类型:标量即完成;容器读头并压栈。
+        if let Some(t) = ty.take() {
+            match t {
+                TagType::End => return Err(NbtError::BadTagType(0)),
+                TagType::List => {
+                    acc.push_depth()?;
+                    let raw_ty = r.read_u8()?;
+                    let elem = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
+                    let n = if elem == TagType::End {
+                        // 原版空 list:类型 0 + 长度(通常 0)。长度仍要读掉。
+                        let n = read_i32(r)?;
+                        if n > 0 {
+                            // 类型 End 却给正长度:legacy 文件不会这样,保守拒绝。
+                            return Err(NbtError::TooLarge {
+                                what: "end-typed list length",
+                                got: n as i64,
+                                max: 0,
+                            });
+                        }
+                        0usize
+                    } else {
+                        // 每元素至少 2 字节(payload 前的最小尺寸),记账防超长声明。
+                        read_array_len(r, acc, 2, "list length")?
+                    };
+                    stack.push(Frame::List {
+                        elem,
+                        items: Vec::with_capacity(n.min(1 << 16)),
+                        left: n as u64,
+                    });
+                }
+                TagType::Compound => {
+                    acc.push_depth()?;
+                    stack.push(Frame::Compound {
+                        map: NbtCompound::new(),
+                        key: None,
+                    });
+                }
+                s => {
+                    value = Some(read_scalar(r, s, acc)?);
+                }
+            }
+            continue;
+        }
+        // ③ 推进顶帧:读下一个条目,或完成(弹栈出值)。
+        enum Next {
+            CompoundEntry,
+            Complete,
+            Elem(TagType),
+        }
+        let next = match stack.last() {
+            None => return Err(NbtError::UnexpectedEof),
+            Some(Frame::Compound { .. }) => Next::CompoundEntry,
+            Some(Frame::List { elem, left, .. }) => {
+                if *left > 0 {
+                    Next::Elem(*elem)
+                } else {
+                    Next::Complete
+                }
+            }
+        };
+        match next {
+            Next::CompoundEntry => {
+                let tb = r.read_u8()?;
+                if tb == 0 {
+                    let Some(Frame::Compound { map, .. }) = stack.pop() else {
+                        unreachable!("Next::CompoundEntry 与栈顶型别同步");
+                    };
+                    acc.pop_depth();
+                    value = Some(NbtValue::Compound(map));
+                } else {
+                    let t = TagType::from_id(tb).ok_or(NbtError::BadTagType(tb))?;
+                    let name = read_string(r, acc)?;
+                    if let Some(Frame::Compound { key, .. }) = stack.last_mut() {
+                        *key = Some(name);
+                    }
+                    ty = Some(t);
+                }
+            }
+            Next::Elem(t) => {
+                if let Some(Frame::List { left, .. }) = stack.last_mut() {
+                    *left -= 1;
+                }
+                ty = Some(t);
+            }
+            Next::Complete => match stack.pop() {
+                Some(Frame::Compound { map, .. }) => {
+                    acc.pop_depth();
+                    value = Some(NbtValue::Compound(map));
+                }
+                Some(Frame::List { elem, items, .. }) => {
+                    acc.pop_depth();
+                    value = Some(NbtValue::List(NbtList::from_raw(elem, items)));
+                }
+                None => unreachable!("Next::Complete 时栈非空"),
+            },
+        }
     }
 }
 
@@ -221,11 +307,10 @@ pub fn read_unnamed_tag(bytes: &[u8], acc: &mut NbtAccounter) -> Result<NbtValue
     }
     let ty = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
     skip_name(&mut r)?;
-    read_payload(&mut r, ty, acc)
+    read_value_iter(&mut r, acc, ty)
 }
 
-/// 读任意「有名/无名 tag 载荷」用于 list 等已剥名字的上下文之外的通用入口:
-/// 类型字节 + payload(无名字)。原版 NbtIo.readAnyTag 语义。
+/// 读「类型字节 + payload(无名字)」的通用入口。原版 NbtIo.readAnyTag 语义。
 pub fn read_any_tag(bytes: &[u8], acc: &mut NbtAccounter) -> Result<NbtValue, NbtError> {
     let mut r = bytes;
     let raw_ty = r.read_u8()?;
@@ -233,7 +318,7 @@ pub fn read_any_tag(bytes: &[u8], acc: &mut NbtAccounter) -> Result<NbtValue, Nb
         return Ok(NbtValue::End);
     }
     let ty = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
-    read_payload(&mut r, ty, acc)
+    read_value_iter(&mut r, acc, ty)
 }
 
 /// 从裸(big-endian、未压缩)字节读根 compound。
@@ -254,10 +339,11 @@ pub fn read_raw_with(bytes: &[u8], acc: &mut NbtAccounter) -> Result<NbtCompound
         return Err(NbtError::BadRootType(raw_ty));
     }
     skip_name(&mut r)?;
-    acc.push_depth()?;
-    let c = read_compound_payload(&mut r, acc)?;
-    acc.pop_depth();
-    Ok(c)
+    match read_value_iter(&mut r, acc, TagType::Compound)? {
+        NbtValue::Compound(c) => Ok(c),
+        // read_value_iter 以 Compound 起步不可能返回他型。
+        other => Err(NbtError::BadRootType(other.tag_type().id())),
+    }
 }
 
 /// 自动识别 RAW/GZIP/ZLIB 并读根 compound(魔数:0x1F 0x8B / 0x78 / 其余)。
@@ -332,20 +418,43 @@ mod tests {
 
     #[test]
     fn depth_limit_triggers() {
-        // 嵌套 600 层 compound,远超 512 上限。键名一律空串(读侧允许覆盖)。
+        // 嵌套 600 层 compound,远超 512 上限。显式栈读:零递归,超限必须
+        // 返回 TooDeep 而不是栈溢出(CI 曾实测递归版 SIGABRT)。键名一律
+        // 空串(读侧允许覆盖)。
         let mut bytes: Vec<u8> = Vec::new();
         bytes.extend([10u8, 0, 0]); // 根 compound + 空名
         for _ in 0..600 {
-            // 键:类型 Compound、空名、空名嵌套 compound 的 payload 稍后统一收尾。
             bytes.extend([10u8, 0, 0]);
         }
-        // 每层 compound 需要一个 End;倒序补齐 End 与外层无关,读侧按 End 逐层弹栈。
+        // 每层 compound 需要一个 End;读侧按 End 逐层弹栈。
         bytes.extend(std::iter::repeat_n(0u8, 600));
         let r = read_raw(&bytes);
         assert!(
             matches!(r, Err(NbtError::TooDeep { max_depth: 512 })),
             "{r:?}"
         );
+    }
+
+    #[test]
+    fn deep_but_legal_nesting_parses_in_constant_stack() {
+        // 511 层合法深度 + 一个 Int 叶子 + 逐层 End:必须完整读回。
+        let mut bytes: Vec<u8> = Vec::new();
+        bytes.extend([10u8, 0, 0]); // 根
+        for _ in 0..510 {
+            bytes.extend([10u8, 0, 0]);
+        }
+        bytes.extend([3u8, 0, 1, b'v', 0, 0, 0, 7]); // 键 v = Int(7)
+        bytes.extend(std::iter::repeat_n(0u8, 511));
+        let c = read_raw(&bytes).expect("511 层合法深度必须解析成功");
+        // 逐层钻到叶子。
+        let mut node = &c;
+        let mut depth = 0;
+        while let Some(inner) = node.get_compound("") {
+            node = inner;
+            depth += 1;
+        }
+        assert_eq!(node.get_i32("v"), Some(7));
+        assert_eq!(depth, 510);
     }
 
     #[test]
@@ -360,5 +469,24 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn list_of_lists_roundtrip_shape() {
+        // 显式栈的状态机对嵌套 list 的回归锁:[[1,2],[3]] 形态。
+        let b: Vec<u8> = vec![
+            10, 0, 0, // 根 compound
+            9, 0, 1, b'l', // 键 l: List
+            9,    // 元素类型 List
+            0, 0, 0, 2, // 2 个内层 list
+            9, 3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, // [1,2]
+            9, 3, 0, 0, 0, 1, 0, 0, 0, 3, // [3]
+            0, // 根 End
+        ];
+        let c = read_raw(&b).expect("嵌套 list 解析");
+        let outer = c.get_list("l").unwrap();
+        assert_eq!(outer.len(), 2);
+        assert_eq!(outer.get(0).unwrap().as_list().unwrap().len(), 2);
+        assert_eq!(outer.get(1).unwrap().as_list().unwrap().len(), 1);
     }
 }
