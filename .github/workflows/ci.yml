@@ -86,7 +86,11 @@ jobs:
       # 测试侧按「资产目录在否」优雅 skip(打印 K-STRUCT skip 行)。
       - name: Fetch vanilla structures (.nbt tree, warn-allowed)
         run: bash ci/fetch-structures.sh || echo "::warning::fetch-structures 失败,结构测试走 skip 路径"
-      - run: cargo test --workspace --locked
+      # --no-fail-fast：单包红不再遮蔽后续包执行。本分支 ore 黄金锚定两度被
+      # 上述遮蔽挡道（run 38439382386 attempt1=mesher perf flake 停批、
+      # attempt2=streaming flap flake 停批，ore 测试两次整包未跑）。与
+      # feat/surface-deepslate 494a7b43 同修，合并时同文无冲突。
+      - run: cargo test --workspace --locked --no-fail-fast
 
   render-headless:
     runs-on: ubuntu-24.04
