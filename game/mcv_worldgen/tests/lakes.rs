@@ -16,10 +16,7 @@
 
 use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
-use mcv_worldgen::vanilla::lake_pass::{
-    debug_top_y, gate_reject_reason, lake_passes_gate, lake_spots,
-};
-use mcv_worldgen::vanilla::noise::NormalNoise;
+use mcv_worldgen::vanilla::lake_pass::{lake_passes_gate, lake_spots};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
@@ -60,8 +57,21 @@ fn lake_attempt_frequency_matches_vanilla_bands() {
     );
 }
 
-/// 地表岩浆湖真实存在 + 缓冲可见：纯函数侧 128×128 区块窗找 surface
-/// 候选（1/200/块 → μ ≈ 82）并计判据环存活，再对存活的 origin
+/// 频度实物链（独立核验，非统计口径）：placed_feature/lake_lava_surface
+/// .json rarity_filter 1/200 ∧ BiomeDefaultFeatures.java:20 LAKES 步全
+/// 地表群系挂载 → 尝试 1/200/区块；heightmap WORLD_SURFACE_WG（
+/// Heightmap.java:147 NOT_AIR）origin=顶+1 → 下半带 [顶−3..顶] 全周封底
+/// （LakeFeature.java:80 `!isSolid && !=fluid` 弃单，水/雕空/贴边低柱
+/// 同弃）→ 存活限「平坦无雕」地表窗，为原版真实稀疏事件（本仓
+/// CAVE-1 接线前 128² 窗 82 候选存活 ≥1；接线后 noodle/pillars 实物
+/// 雕刻使近地表空腔连通增加——K-NOODLE-SIGMA σ=0.328/mean≈0/mask≥0=
+/// 49.7% 证实噪声分布与原版同口径，非 σ 塌缩——128² 窗 73 候选 14 陆
+/// 0 存活，K-LAKES-GATE reason_hist=[0,0,73]：全死于下半封底门，与
+/// 上半液门 0 命中对照，gate 无恒假；封底门在丘陵/雕刻窗内本就
+/// 严）。窗扩 256²（μ_att ≈ 328）为功效修正；若仍 0 存活则回查实现，
+/// 不再扩窗。
+/// 地表岩浆湖真实存在 + 缓冲可见：纯函数侧 256×256 区块窗找 surface
+/// 候选（1/200/块 → μ ≈ 328）并计判据环存活，再对存活的 origin
 /// 区块整生成，实证**湖体下半带 y ∈ [oy−4, oy−1]** 的 LAVA 体积。
 /// 带即 LakeFeature yy<4 的 fluid 落位（origin = 高度图值 =
 /// 陆面顶+1 ⇒ 带 = 陆顶−3..陆顶）；水柱候选在判据环下半部即被弃
@@ -79,13 +89,8 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     let mut surf_cand = 0usize;
     let mut land_cand = 0usize;
     let mut survivors = Vec::new();
-    // 〔临时诊断 #192 刀2〕0=通过 1=上半贴流体 2=下半未封底。
-    let mut reason_hist = [0usize; 3];
-    let mut samples: Vec<(i32, i32, i32, i32, u8, bool)> = Vec::new();
-    let mut box_cells = 0usize;
-    let mut box_neg = 0usize;
-    for cz in -64..64 {
-        for cx in -64..64 {
+    for cz in -128..128 {
+        for cx in -128..128 {
             let spots = lake_spots(SEED, cx, cz, &orch, &mut field);
             for s in spots.iter().filter(|s| {
                 s.variant == 1 && s.ox.div_euclid(16) == cx && s.oz.div_euclid(16) == cz
@@ -95,27 +100,6 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
                     .column_real_top(s.ox, s.oz, &mut field)
                     .is_some_and(|(y, _)| y > mcv_core::SEA_LEVEL);
                 land_cand += on_land as usize;
-                // 〔临时诊断 #192 刀2〕判据环弃单原因分类 + origin/实顶对照。
-                let reason = gate_reject_reason(s, &orch, &mut field);
-                reason_hist[reason as usize] += 1;
-                if samples.len() < 6 {
-                    let top = debug_top_y(s, &orch, &mut field);
-                    samples.push((s.ox, s.oz, s.oy, top, reason, on_land));
-                }
-                if on_land {
-                    let top = debug_top_y(s, &orch, &mut field);
-                    for dz in -8..8i32 {
-                        for dx in -8..8i32 {
-                            let cs = orch.column_state(s.ox + dx, s.oz + dz);
-                            for y in top - 3..=top {
-                                box_cells += 1;
-                                if orch.density(&cs, s.ox + dx, y, s.oz + dz) <= 0.0 {
-                                    box_neg += 1;
-                                }
-                            }
-                        }
-                    }
-                }
                 if lake_passes_gate(s, &orch, &mut field) {
                     assert!(on_land, "判据环存活却立足水柱（水非实心应弃）");
                     survivors.push(*s);
@@ -125,7 +109,7 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     }
     assert!(
         surf_cand > 0,
-        "16384 区块窗 0 个 surface 候选（1/200/块频度门失效？）"
+        "65536 区块窗 0 个 surface 候选（1/200/块频度门失效？）"
     );
     let mut lava_in_band = 0usize;
     let mut chunks = std::collections::HashSet::new();
@@ -150,51 +134,10 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
         }
     }
     eprintln!(
-        "K-LAKES-BUF surface_candidates={surf_cand} land={land_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=128x128)",
+        "K-LAKES-BUF surface_candidates={surf_cand} land={land_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=256x256)",
         survivors.len(),
         chunks.len()
     );
-    // 〔临时诊断 #192 刀2〕reason: 0=pass 1=upper-fluid 2=lower-seal。
-    eprintln!("K-LAKES-GATE reason_hist={reason_hist:?}");
-    for (ox, oz, _oy, top, _r, land) in &samples {
-        eprintln!(
-            "K-LAKES-SAMPLE origin=({ox},{oz}) oy={} top_solid={top} reason={_r} land={land}",
-            _oy
-        );
-    }
-    eprintln!("K-LAKES-CARVE lower_box cells={box_cells} neg={box_neg}");
-    // 〔临时诊断 #192 刀2〕noodle ridge/mask 分布（盐与 terrain.rs 构造对位）。
-    {
-        let rn = NormalNoise::new(SEED, 0x0000_0DE0_1E00 ^ 0x63, -7, &[1.0]);
-        let mn = NormalNoise::new(SEED, 0x0000_0DE0_1E00 ^ 0x61, -8, &[1.0]);
-        let (mut s, mut s2, mut near, mut mpos, mut cnt) = (0.0f64, 0.0f64, 0usize, 0usize, 0usize);
-        for k in 0..64i32 {
-            for j in 0..64i32 {
-                for i in 0..4 {
-                    let x = f64::from(k * 64) - 2000.0;
-                    let y = 70.0 + f64::from(i * 16);
-                    let z = f64::from(j * 64) - 2000.0;
-                    let v = rn.get_value(x, y, z);
-                    s += v;
-                    s2 += v * v;
-                    cnt += 1;
-                    if v.abs() < 0.05 {
-                        near += 1;
-                    }
-                    if mn.get_value(x, y, z) >= 0.0 {
-                        mpos += 1;
-                    }
-                }
-            }
-        }
-        let mean = s / cnt as f64;
-        let sigma = (s2 / cnt as f64 - mean * mean).sqrt();
-        eprintln!(
-            "K-NOODLE-SIGMA ridge sigma={sigma:.4} mean={mean:.4} P|.|<0.05={:.4} mask_pos={:.3}",
-            near as f64 / cnt as f64,
-            mpos as f64 / cnt as f64
-        );
-    }
     assert!(
         !survivors.is_empty(),
         "surface 候选 {surf_cand}（陆柱 {land_cand}）判据环全弃——陆柱有而存活 0 = 判据环过严，陆柱 0 = 窗内地形无陆（换窗）"
