@@ -163,6 +163,29 @@ impl ImprovedNoise {
         Self { xo, yo, zo, p }
     }
 
+    /// 同机制的**原版种子流**构造（#192 RNG-1 家族）：xo/yo/zo =
+    /// nextDouble()·256 + Fisher-Yates `nextInt(256−i)`，随机源换成
+    /// Xoroshiro128++（vanilla ImprovedNoise 构造即此流，
+    /// XoroshiroRandomSource.java:48-70 的 Lemire 归约含 bound=1 也消耗
+    /// 一次 long——next_int_bounded 同构）。给 `NormalNoise::
+    /// from_vanilla_name`（SurfaceSystem 表层噪声族）用；与 new() 的
+    /// splitmix 流互不互通（既有通道种子不动，无历史锚可破）。
+    #[must_use]
+    pub fn from_xoroshiro(rng: &mut crate::vanilla::xoroshiro::Xoroshiro) -> Self {
+        let xo = rng.next_double() * 256.0;
+        let yo = rng.next_double() * 256.0;
+        let zo = rng.next_double() * 256.0;
+        let mut p = [0_u8; 256];
+        for (i, v) in p.iter_mut().enumerate() {
+            *v = i as u8;
+        }
+        for i in 0..256_usize {
+            let offset = rng.next_int_bounded((256 - i) as u32) as usize;
+            p.swap(i, i + offset);
+        }
+        Self { xo, yo, zo, p }
+    }
+
     /// 排列查询（ImprovedNoise.java:81-83：`p[x & 0xFF] & 0xFF`）。
     #[inline]
     fn p_at(&self, x: i64) -> usize {

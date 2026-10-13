@@ -14,7 +14,7 @@
 //! 断言只放宽松包络（防空洞塌方/全实心两类系统病），数值本身入日志。
 
 use mcv_core::{ChunkPos, WORLD_MIN_Y};
-use mcv_worldgen::vanilla::terrain::BEDROCK;
+use mcv_worldgen::vanilla::terrain::{BEDROCK, Orchestrator};
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SEED: u64 = 0x7E_A20_0B1;
@@ -167,4 +167,44 @@ fn cave_audit_stats() {
     // 连通性下限只防「洞网全碎片化」系统病（carver 管层缺席导致的细洞
     // 连通性偏弱是已知缺口 CAVE-2，量化数值以 K-CAVE-AUDIT 日志为准）。
     assert!(biggest > 50, "最大洞体仅 {biggest} 格——洞网全碎片化病");
+}
+
+/// K-SURFACE-DEPTH：实物亚表带量化（#192 SURF-1 ② 销账门）。
+/// 原版 getSurfaceDepth（SurfaceSystem.java:165-168）=
+/// `int(surface噪声·2.75 + 3.0 + nextDouble·0.25)`，σ(噪声)≈0.3 ⇒
+/// 逐列典型 0..5、截断均值 ≈2.6（旧常数 3 = 均值锚但零方差）。断言只防
+/// 「分布塌回常数」与「均值出带」两类病；histogram 入日志供跨提交对照。
+#[test]
+fn surface_depth_distribution() {
+    let orch = Orchestrator::new(SEED);
+    let mut hist = [0usize; 8];
+    let (mut sum, mut n) = (0_i64, 0_usize);
+    let (mut lo, mut hi) = (i32::MAX, i32::MIN);
+    for dz in (0..128_i32).step_by(2) {
+        for dx in (0..128_i32).step_by(2) {
+            let d = orch.surface_depth(dx, dz);
+            *hist.get_mut(d.clamp(0, 7) as usize).unwrap() += 1;
+            sum += i64::from(d);
+            n += 1;
+            lo = lo.min(d);
+            hi = hi.max(d);
+        }
+    }
+    let mean = sum as f64 / n as f64;
+    let distinct = hist.iter().filter(|&&c| c > 0).count();
+    println!(
+        "K-SURFACE-DEPTH seed={SEED:#x} n={n} mean={mean:.3} range=[{lo},{hi}] \
+         distinct={distinct} hist={hist:?}"
+    );
+    assert!(
+        (2.0..3.5).contains(&mean),
+        "surfaceDepth 均值 {mean:.3} 出带——噪声/抖动物理接线路径异常"
+    );
+    assert!(
+        distinct >= 4 && lo <= 1 && hi >= 4,
+        "surfaceDepth 分布塌缩（distinct={distinct} range=[{lo},{hi}]）——\
+         疑似回退常数带"
+    );
+    // 确定性：同列两次求值逐位一致（E2 口径的局部镜像）。
+    assert_eq!(orch.surface_depth(37, -91), orch.surface_depth(37, -91));
 }

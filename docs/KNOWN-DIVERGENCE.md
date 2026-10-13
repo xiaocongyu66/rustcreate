@@ -126,9 +126,13 @@ vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场
    多数不在 10 群系点表（biomes.rs v1），可达者（海洋/河流底）以沙近似；
    扩群系表/扩千块表后须按 SurfaceRuleData 逐群系补全，本波只锁「内陆
    草群系顶格 = 草、滩/沙漠 = 沙、水下沉底 ∈ {沙,土}」（tests/surface_rules.rs）。
-2. **UNDER_FLOOR 带宽取块级常数 3**：原版带宽 = 1 + surfaceDepth（surface
-   噪声 0..4 + 0.25 随机抖动，SurfaceSystem.java:165-168）逐列变化；本仓
-   恒 `SUBSOIL_DEPTH=3`（terrain.rs）。
+2. **UNDER_FLOOR 带宽取块级常数 3**〔已销账 #192 主世界地形波〕：实物接线
+   `Orchestrator::surface_depth` = getSurfaceDepth 逐列值（噪声·2.75+3+jitter
+   ·0.25 截断，SurfaceSystem.java:165-168）；surface 通道（surface.json
+   −6 [1,1,1]）与 jitter 均走 RNG-1 同族**原版种子链**
+   （`NormalNoise::from_vanilla_name`/根位置随机工厂直传），同 seed 与原版
+   同位型（内核求值口径同 perlin.rs 头注）。量化门 = cave_audit.rs
+   K-SURFACE-DEPTH（均值带 + 分布塌缩哨兵，histogram 入 CI 日志）。
 3. **abovePreliminarySurface 门简化**：原版 = 无 jag 初始密度零点按 16 格
    单元双线性插值 + surfaceDepth − 8（SurfaceRules.java:351-383
    preliminarySurfaceLevel/`HOW_FAR_BELOW…=8` :264）；本仓 = 逐列含 jag

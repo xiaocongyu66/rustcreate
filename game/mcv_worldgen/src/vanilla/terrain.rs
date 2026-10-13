@@ -73,11 +73,12 @@ const CARVE_OFF: f64 = -1.0e6;
 /// noodle_ridge_a/b 求值缩放（noodle.json `2.6666666666666665`）。
 const NOODLE_RIDGE_SCALE: f64 = 2.666_666_666_666_666_5_f64;
 
-/// 表层亚表带深（depth_above ∈ [2, 4] 层 = 26.1 UNDER_FLOOR 带
-/// `stoneDepthCheck(0, true, FLOOR)` = stoneDepthAbove ≤ 1 + surfaceDepth
-/// （SurfaceRules.java:676-680；surfaceDepth = surface 噪声 0..4 取块级常数 3，
-/// SurfaceSystem.java:165-168）。
-const SUBSOIL_DEPTH: i32 = 3;
+/// Noises.SURFACE 注册名（Noises.java:78-83 instantiate 用
+/// `factory.fromHashOf(name.identifier())` 的字符串形态）与 surface.json
+/// 参数表（firstOctave −6、amplitudes [1,1,1]）——#192 SURF-1 ② 销账，
+/// 消费侧 [`Orchestrator::surface_depth`]。
+const SURFACE_NOISE_NAME: &str = "minecraft:surface";
+const AMPS_SURFACE: [f64; 3] = [1.0, 1.0, 1.0];
 
 /// 真实实顶扫描上限余量：过零面上方的「软空气」半支（quarterNegative 负
 /// 支斜率 ÷4 ⇒ 每格仅 −factor/128 ≈ −0.03..−0.05）叠加 base_3d 极值尾
@@ -491,6 +492,13 @@ pub struct Orchestrator {
     /// 同坐标与原版同位型。
     bedrock_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
     deepslate_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
+    /// SurfaceSystem 根噪声随机工厂（= RandomState.java:37 `this.random`
+    /// 直传，SurfaceSystem.java:50 的 noiseRandom 槽位）——
+    /// [`Self::surface_depth`] 抖动用（#192 SURF-1 ② 销账）。
+    noise_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
+    /// Noises.SURFACE（surface.json -6 [1,1,1]），原版种子链
+    /// （`NormalNoise::from_vanilla_name`）。
+    surface_noise: NormalNoise,
     climate: ClimateSampler,
     offset_spline: Spline,
     factor_spline: Spline,
@@ -538,6 +546,13 @@ impl Orchestrator {
         Self {
             bedrock_random: root.named_factory(BEDROCK_FLOOR_RANDOM),
             deepslate_random: root.named_factory(DEEPSLATE_RANDOM),
+            noise_random: root,
+            surface_noise: NormalNoise::from_vanilla_name(
+                &root,
+                SURFACE_NOISE_NAME,
+                -6,
+                &AMPS_SURFACE,
+            ),
             climate: ClimateSampler::new(world_seed),
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
@@ -604,8 +619,11 @@ impl Orchestrator {
 
     /// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
     /// `column_real_top` 三处共用，杜绝规则漂移）。语义原样：带下 STONE 兜底
-    /// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
-    /// 亚表带；#192：两个 STONE 出口统一过 [`stone_replacement`]
+    /// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+surface_depth
+    /// 亚表带（#192 SURF-1 ② 销账：`surface_depth` = 实物
+    /// [`Self::surface_depth`] 逐列值，替旧常数 3——原版 UNDER_FLOOR
+    /// `stoneDepth ≤ 1 + surfaceDepth`，SurfaceRules.java:676-684）；
+    /// #192：两个 STONE 出口统一过 [`Self::stone_replacement`]
     /// （vertical_gradient bedrock/deepslate 实物规则替换——表层草/土/沙位
     /// 不受影响）。
     #[must_use]
@@ -619,16 +637,37 @@ impl Orchestrator {
         depth_above: i32,
         surface_id: u16,
         subsoil_id: u16,
+        surface_depth: i32,
     ) -> u16 {
         if y < min_surface {
             self.stone_replacement(wx, y, wz)
         } else if depth_above == 1 {
             surface_id
-        } else if depth_above <= 1 + SUBSOIL_DEPTH {
+        } else if depth_above <= 1 + surface_depth {
             subsoil_id
         } else {
             self.stone_replacement(wx, y, wz)
         }
+    }
+
+    /// SurfaceSystem.getSurfaceDepth（SurfaceSystem.java:165-168）实物：
+    /// `int(surfaceNoise.getValue(bx, 0, bz) · 2.75 + 3.0 +
+    /// noiseRandom.at(bx, 0, bz).nextDouble() · 0.25)`——
+    /// - surfaceNoise = `Noises.SURFACE`（surface.json firstOctave −6、
+    ///   amplitudes [1,1,1]），种子链 = getOrCreateNoise 实物
+    ///   （[`NormalNoise::from_vanilla_name`]，同 seed 与原版同位型）；
+    /// - noiseRandom = RandomState 根位置随机工厂本身（SurfaceSystem.java:50
+    ///   `new SurfaceSystem(this, …, this.random)` 直传，非 named fork）；
+    /// - (int) 截断 = Java 向零取整，Rust `as i32` 同语义。
+    /// 消费侧 = UNDER_FLOOR 亚表带 `stoneDepth ≤ 1 + surfaceDepth`
+    /// （SurfaceRules.java:676-684 `addSurfaceDepth`），典型 0..5、均值 ≈3。
+    #[must_use]
+    pub fn surface_depth(&self, block_x: i32, block_z: i32) -> i32 {
+        let n = self
+            .surface_noise
+            .get_value(f64::from(block_x), 0.0, f64::from(block_z));
+        let jitter = self.noise_random.double_at(block_x, 0, block_z);
+        (n * 2.75 + 3.0 + jitter * 0.25) as i32
     }
 
     /// pass-1 体素缓冲中该列的**实顶**（自顶向下第一个非空气格）+1 = 树基
@@ -666,6 +705,8 @@ impl Orchestrator {
         use crate::vanilla::aquifer::Substance as Sub;
         let cs = self.column_state(block_x, block_z);
         let (surface_id, subsoil_id) = self.column_surface_ids(block_x, block_z, &cs);
+        // 实物亚表带（#192 SURF-1 ②，与 generate 柱层循环同式）。
+        let surface_depth = self.surface_depth(block_x, block_z);
         let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
         let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
         let scan_top =
@@ -701,6 +742,7 @@ impl Orchestrator {
                         depth_above,
                         surface_id,
                         subsoil_id,
+                        surface_depth,
                     );
                     return Some((y + 1, id));
                 }
@@ -1051,6 +1093,9 @@ pub fn generate(
             // 引注集中在 Orchestrator::column_surface_ids，树 pass 的
             // column_real_top 共用同一函数，杜绝两套表层规则漂移）。
             let (surface_id, subsoil_id) = orch.column_surface_ids(wx, wz, &cs);
+            // 实物亚表带（#192 SURF-1 ②：getSurfaceDepth 逐列值替旧常数 3，
+            // SurfaceSystem.java:165-168 实物；与 column_real_top 同式）。
+            let surface_depth = orch.surface_depth(wx, wz);
             // 表层锚 = 密度场**真实过零面**（逐列实顶扫描），不再锚样条估计
             // 面 `surface_ours`（旧 y==surface→GRASS 的 ±1-2 格偏差把暴露层
             // 打进 DIRT 带 = 用户可见整片裸土）。26.1 同语义：
@@ -1112,6 +1157,7 @@ pub fn generate(
                                 depth_above,
                                 surface_id,
                                 subsoil_id,
+                                surface_depth,
                             )
                         }
                         Sub::Air => {
@@ -1133,7 +1179,16 @@ pub fn generate(
                 } else {
                     hit_solid = true;
                     depth_above += 1; // SurfaceSystem.java:146
-                    orch.solid_material(wx, y, wz, min_surface, depth_above, surface_id, subsoil_id)
+                    orch.solid_material(
+                        wx,
+                        y,
+                        wz,
+                        min_surface,
+                        depth_above,
+                        surface_id,
+                        subsoil_id,
+                        surface_depth,
+                    )
                 };
                 out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }

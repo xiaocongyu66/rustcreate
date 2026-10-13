@@ -79,34 +79,6 @@ impl NormalNoise {
         let seed = noise_seed(world_seed, salt);
         let seed2 = splitmix64(seed);
         let octaves = amplitudes.len();
-        // expectedDeviation 按「非零倍频的下标跨度」计（NormalNoise.java:59-70
-        // 扫非零 amplitude 求 min/maxOctave，:97-103 expectedDeviation(span)），
-        // 不是 amplitudes.len()——temperature [1.5,0,1] 这类含零表的通道
-        // 若按 len 计会系统性抬高 σ。全零表不在 26.1 数据集中，防御按 0。
-        let mut min_oct = usize::MAX;
-        let mut max_oct = 0_usize;
-        for (i, &a) in amplitudes.iter().enumerate() {
-            if a != 0.0 {
-                min_oct = min_oct.min(i);
-                max_oct = max_oct.max(i);
-            }
-        }
-        let span = if min_oct == usize::MAX {
-            0
-        } else {
-            max_oct - min_oct
-        };
-        let expected_deviation = 0.1_f64 * (1.0 + 1.0 / (span as f64 + 1.0));
-        let value_factor = 0.166_666_666_666_666_66_f64 / expected_deviation;
-        // edgeValue(2.0)（PerlinNoise.edgeValue:168-182）：全倍频和哨兵值
-        let mut edge = 0.0_f64;
-        let mut vf = 2.0_f64.powi(octaves as i32 - 1) / (2.0_f64.powi(octaves as i32) - 1.0);
-        let mut i = 0;
-        while i < octaves {
-            edge += amplitudes[i] * 2.0 * vf;
-            vf /= 2.0;
-            i += 1;
-        }
         // 逐倍频实例（NormalNoise.java:51-53 两次独立 create 的 clean-room
         // 种子派生；PerlinNoise 每倍频一个 ImprovedNoise）。
         let mut first = Vec::with_capacity(octaves);
@@ -119,13 +91,67 @@ impl NormalNoise {
                 seed2.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)),
             ));
         }
+        let (value_factor, max_value) = factors(amplitudes);
         Self {
             first,
             second,
             first_octave,
             amplitudes,
             value_factor,
-            max_value: edge,
+            max_value,
+        }
+    }
+
+    /// **原版种子链**构造（#192 RNG-1 家族，SurfaceSystem 表层噪声用）：
+    /// `RandomState.getOrCreateNoise(key)` = `Noises.instantiate` =
+    /// `NormalNoise.create(root.fromHashOf("minecraft:{name}"), params)`
+    /// （Noises.java:78-83）。逐 fork 对位：
+    /// - NormalNoise.java:51-53：`first`/`second` = 同一随机源先后两次
+    ///   `PerlinNoise.create`（每次开首 `random.forkPositional()` 消耗 2
+    ///   个 nextLong——PerlinNoise.java:87）；
+    /// - PerlinNoise.java:88-96：每个**非零** amplitude 的倍频 =
+    ///   `ImprovedNoise(positional.fromHashOf("octave_" + octave))`，
+    ///   零 amplitude 倍频**不消耗**随机数（无 else 分支）；
+    /// - ImprovedNoise 构造流见 [`ImprovedNoise::from_xoroshiro`]。
+    /// 同 world_seed 下排列/原点平移与原版同位型（内核求值 = 既有
+    /// ImprovedNoise 机制转写，口径与其头注一致）。
+    #[must_use]
+    pub fn from_vanilla_name(
+        root: &crate::vanilla::xoroshiro::PositionalRandomFactory,
+        name: &str,
+        first_octave: i32,
+        amplitudes: &'static [f64],
+    ) -> Self {
+        let mut source = root.random_from_hash(name);
+        let build = |source: &mut crate::vanilla::xoroshiro::Xoroshiro| {
+            let positional = source.fork_positional();
+            amplitudes
+                .iter()
+                .enumerate()
+                .map(|(i, &a)| {
+                    if a != 0.0 {
+                        let octave = first_octave + i as i32;
+                        ImprovedNoise::from_xoroshiro(
+                            &mut positional.random_from_hash(&format!("octave_{octave}")),
+                        )
+                    } else {
+                        // 零 amplitude：原版不建实例也不消耗随机数；本结构
+                        // 按索引 zip 求值恒跳过，占位值不参与任何输出。
+                        ImprovedNoise::new(0)
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
+        let first = build(&mut source);
+        let second = build(&mut source);
+        let (value_factor, max_value) = factors(amplitudes);
+        Self {
+            first,
+            second,
+            first_octave,
+            amplitudes,
+            value_factor,
+            max_value,
         }
     }
 
@@ -161,6 +187,40 @@ impl NormalNoise {
         }
         value
     }
+}
+
+/// value_factor / edgeValue 归一（NormalNoise.new 与 from_vanilla_name 共用）：
+/// expectedDeviation 按「非零倍频的下标跨度」计（NormalNoise.java:59-70 扫
+/// 非零 amplitude 求 min/maxOctave，:97-103 expectedDeviation(span)），不是
+/// amplitudes.len()——temperature [1.5,0,1] 这类含零表的通道若按 len 计会
+/// 系统性抬高 σ。全零表不在 26.1 数据集中，防御按 0。
+fn factors(amplitudes: &[f64]) -> (f64, f64) {
+    let mut min_oct = usize::MAX;
+    let mut max_oct = 0_usize;
+    for (i, &a) in amplitudes.iter().enumerate() {
+        if a != 0.0 {
+            min_oct = min_oct.min(i);
+            max_oct = max_oct.max(i);
+        }
+    }
+    let span = if min_oct == usize::MAX {
+        0
+    } else {
+        max_oct - min_oct
+    };
+    let expected_deviation = 0.1_f64 * (1.0 + 1.0 / (span as f64 + 1.0));
+    let value_factor = 0.166_666_666_666_666_66_f64 / expected_deviation;
+    // edgeValue(2.0)（PerlinNoise.edgeValue:168-182）：全倍频和哨兵值
+    let octaves = amplitudes.len();
+    let mut edge = 0.0_f64;
+    let mut vf = 2.0_f64.powi(octaves as i32 - 1) / (2.0_f64.powi(octaves as i32) - 1.0);
+    let mut i = 0;
+    while i < octaves {
+        edge += amplitudes[i] * 2.0 * vf;
+        vf /= 2.0;
+        i += 1;
+    }
+    (value_factor, edge)
 }
 
 /// 巨坐标封装（PerlinNoise.wrap:188-190）。
