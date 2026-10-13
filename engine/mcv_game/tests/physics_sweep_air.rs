@@ -111,7 +111,7 @@ fn cavity_shell_1m4_clearance_is_collision_free() {
     }
     // 收尾自查：全程未触壳（AABB 与石壳严格不相交）。
     let b = Aabb::from_player(p.pos);
-    for k in m.keys() {
+    for k in w.0.keys() {
         let cell = Aabb {
             min: Vec3::new(k.0 as f32, k.1 as f32, k.2 as f32),
             max: Vec3::new(k.0 as f32 + 1.0, k.1 as f32 + 1.0, k.2 as f32 + 1.0),

@@ -83,7 +83,9 @@ fn vertex_y(mesh: &mcv_mesher::MeshData) -> Vec<f32> {
     // 顶点布局：偏移 0..12 = f32 LE (x, y, z)（QuadVertex 平铺，
     // mesher.rs push_vertex 注）。
     mesh.vertices
-        .chunks_exact(VERTEX_STRIDE)
+        .as_chunks::<VERTEX_STRIDE>()
+        .0
+        .iter()
         .map(|v| f32::from_le_bytes([v[4], v[5], v[6], v[7]]))
         .collect()
 }
