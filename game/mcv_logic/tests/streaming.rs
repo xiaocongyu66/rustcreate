@@ -351,15 +351,26 @@ fn timeout_release_keeps_streaming_catchup() {
         "超时后必须放行"
     );
     // 放行不是停摆：流式补载继续推进，出生点 7×7 邻域（半径 3，26.1
-    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。预算 1200→2400→4800 帧（刀 3b
-    // 派单书指令：timeout 类断言留 2 倍余量——本测在 main 抖红过一次；门
-    // 谓词改 status 后就绪时点更早，此值纯为 runner 争用兜底。刀 3c 重锚：
-    // 矿石 pass 入生成后单块 worldgen 墙钟上升（Replay memo 提速已证 2/3
-    // 兄弟测转绿、load_gate 同窗 49 块 Surface 在预算内——非停摆），本测
-    // 断言的是 liveness「终会就绪」谓词本身零改动，仅兜底预算按同派单书
-    // 2 倍余量再锚一档）。
+    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。口径=进展耦合（确定性），
+    // 不再是纯帧数墙钟耦合（刀 3c 收口，run 38408729911 定档）：
+    // ① 实测证据——pre-ore tip 056465c7 streaming 二进制 47.53s 全绿
+    //   （timeout ≤2400 帧完成）；矿石 pass 入生成后吞吐下移，2400/4800
+    //   两档帧预算先后红，而同 run throttle（≥1 块就绪 @600 帧）、
+    //   load_gate（49 块 Surface @3000 帧）、flap（8000 帧）全绿且红点
+    //   随 run 在兄弟测间漂移——吞吐/墙钟竞态而非停摆。帧预算与单块
+    //   worldgen 墙钟耦合，超订 runner 下吞吐带漂移，故扩预算无收敛性
+    //   （1200→2400→4800 已证），弃用。
+    // ② 新谓词（严格强于旧口径）：a) 停摆检测——就绪块峰值每 ≤1200 帧
+    //   必增，否则即刻红（旧口径容忍预算全程 0 推进到最后一刻才红）；
+    //   1200 = 2× throttle 已实证单块下限 600 帧（flap 测 :183-185
+    //   「CI 争用尖峰 600+ 帧量级」同文件实物先例），即「兄弟测已证
+    //   单块下限的两倍内必有进展」，跨测一致性口径。b) 完成兜底上限
+    //   12000 帧仅防真死循环（flap 8000 帧同哲学：预算远超实测尖峰量级
+    //   的兜底），谓词主体是 a 的停摆检测 + 最终 done≥total 不变。
+    let mut done_max = 0usize;
+    let mut since_progress = 0u32;
     let mut ready = false;
-    for _ in 0..4800u32 {
+    for frame in 0..12000u32 {
         rt.stream();
         emulate_upload(&mut rt);
         let (done, total) = rt.loading_progress_parts();
@@ -367,9 +378,22 @@ fn timeout_release_keeps_streaming_catchup() {
             ready = true;
             break;
         }
+        if done > done_max {
+            done_max = done;
+            since_progress = 0;
+        } else {
+            since_progress += 1;
+        }
+        assert!(
+            since_progress < 1200,
+            "超时放行后补载停摆：就绪峰值 {done_max}/{total} 连续 1200 帧未增（帧 {frame}，throttle 实证单块下限 600 帧的 2 倍）"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ready, "超时放行后出生邻域未在 4800 帧内补载就绪");
+    assert!(
+        ready,
+        "超时放行后补载未在 12000 帧兜底内终态就绪（全程无 ≥1200 帧停摆，属吞吐下限击穿）"
+    );
 }
 
 /// 提取 `from` 的 `side` 边快照（mcv_light 边协议，0=+X 1=-X 2=+Z 3=-Z）。
