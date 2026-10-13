@@ -147,11 +147,12 @@ impl SimplexNoise {
         for (i, v) in p.iter_mut().enumerate().take(256) {
             *v = i as i32;
         }
-        for ix in 0..256 {
-            let offset = random.next_int_bound(256 - ix);
+        for ix in 0..256usize {
+            let ix32 = ix as i32;
+            let swap = (random.next_int_bound(256 - ix32) + ix32) as usize;
             let tmp = p[ix];
-            p[ix] = p[offset + ix];
-            p[offset + ix] = tmp;
+            p[ix] = p[swap];
+            p[swap] = tmp;
         }
         p.copy_within(0..256, 256);
         Self { xo, yo, zo, p }
