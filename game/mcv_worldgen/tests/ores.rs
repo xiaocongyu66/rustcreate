@@ -63,7 +63,9 @@ fn ore_v7_byte_golden() {
     ];
     // v7：+矿石（gen-ores 25 行 + ore_pass 执行器）锚定哈希。
     // 锚定证据：首锚通道（表值 0 打印→填回）闭环——run 38439382386
-    // （20fd55a0）与 38458062994（1618d1fc）六例逐位一致；case0/1/2
+    // （20fd55a0，六例出自其 attempt 2：attempt1=mesher perf flake、
+    // attempt3=flap 红先停批，--no-fail-fast 入 ci.yml 后 attempt2 才
+    // 跑到 ore 包）与 38458062994（1618d1fc）六例逐位一致；case0/1/2
     // 另跨 38422516959(bb785e14)/38433188961(4a5ac2f2) 三 sha 稳定。
     // 实现定稿于 4a5ac2f2（Replay 深度梯真实密度修复，唯一生产代码
     // 改动），其后仅测试口径提交，哈希零漂移自洽。
@@ -169,8 +171,9 @@ fn cross_chunk_vein_stitching() {
 
 #[test]
 fn ores_only_replace_pass1_stone() {
-    // 最终缓冲每个 ore 格的 pass-1 重放态必为 STONE。普查面只取 18 个
-    // 真矿态（ore_type_ids，freq_band 同源）：替代岩行（ore_dirt/
+    // 最终缓冲每个 ore 格的 pass-1 重放态必为 STONE。普查面=16 真矿行
+    // 的全部 target 态（ore_type_ids 32 项，freq_band 同源）：替代岩行
+    // （ore_dirt/
     // ore_gravel/ore_granite 等，data placed_feature 同名 json）写的
     // state 与表层系统自然材质**同 id**（如 ore_dirt state=dirt=2 =
     // subsoil 带），id 普查无法区分「矿写」与「表层天然格」，对其断言
@@ -205,7 +208,7 @@ fn ores_only_replace_pass1_stone() {
             }
         }
     }
-    // 下限实物推导（gen-ores 25 行逐行 placed json 实物参数）：18 真矿
+    // 下限实物推导（gen-ores 25 行逐行 placed json 实物参数）：16 真矿
     // 行单 chunk 期望 = Σ count×P(rarity_filter)×E[带下实格]（python 几
     // 何 MC：OreFeature.java:55-166 椭球格 + :44-52 OCEAN_FLOOR_WG 探针
     // 上带截断 + RarityFilter.java:24 + CountPlacement.java:23-24）
@@ -213,7 +216,7 @@ fn ores_only_replace_pass1_stone() {
     // 44 / lapis 系 28 / diamond 系 30 / gold 系 30 / iron_small 18 /
     // 上带行 ≈0）；未计入洞穴邻空气 discard（OreFeature.java:183-189，
     // 深层岩浆海腔密集）再削 ~20% → 实测量级 ~300。旧 500 是对含替代
-    // 岩大 blob 的普查面定的，按 18 真矿普查面重立 = 推导 ×0.52。
+    // 岩大 blob 的普查面定的，按 16 真矿行普查面重立 = 推导 ×0.52。
     assert!(checked > 200, "采样 chunk 矿格过少（{checked}）——接线失效?");
 }
 
@@ -271,7 +274,7 @@ fn freq_band_mu_derivation() {
     assert!(per_chunk.iter().any(|&n| n > 0), "全零 = 接线失效");
 }
 
-/// ore 型矿物 id（18 个 *_ore；替代岩行除外）。
+/// ore 型矿物 id（16 真矿行的全部 target 态，共 32 项；替代岩行除外）。
 fn ore_type_ids() -> Vec<u16> {
     let skip = ["granite", "diorite", "andesite", "tuff", "dirt", "gravel"];
     ORE_ROWS
