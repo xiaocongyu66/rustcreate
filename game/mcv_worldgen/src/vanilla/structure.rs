@@ -1,29 +1,51 @@
 //! 结构模板运行时（StructureTemplate 机制的 clean-room 转写）。
 //!
-//! 消费 mcv_nbt 读原版结构 `.nbt`（26.1 data 树实物格式:根 compound
-//! `size`(IntList 3)/`blocks`(List of `{pos: IntList3, state: Int, nbt?}`)/
-//! `palette`(List of `{Name, Properties?}`)/`entities`/`DataVersion`；
-//! 旧世代文件的 `palettes` 多调色板变体只取第 0 个,登记 STRU-1）。
+//! 消费 mcv_nbt 读原版结构 `.nbt`。load 双格式路径按 26.1 实物
+//! `StructureTemplate.load`（StructureTemplate.java:710-721）：
+//! - `palettes`（List of List）存在 → 每个调色板变体对**同一** blocks
+//!   列表各展开一份（loadPalette 对每个 palette 复用 blockList,
+//!   :716-720）；放置时按 `getRandomPalette` 选取（见下）。
+//! - 否则 `palette` 单调色板（:721）。
+//! - blocks `state` 越界/负数 → **空气**（SimplePalette.stateFor
+//!   :867-870 的 DEFAULT_BLOCK_STATE = Blocks.AIR 实物）。
+//! - 旧世代 `width/height/length`+`BlockIndices` 格式：26.1 代码树中
+//!   **不存在**读取路径（全树 grep 无 `BlockIndices`;旧文件由 DataFixer
+//!   在进入本类前升级）——按实物不复刻。
 //!
-//! `place_at` 复刻 26.1 掷骰序实物:变换用 `StructureTemplate.transform`
-//! （先 mirror 后 rotation,pivot 公式照抄）;air 不放置对应
-//! `BlockIgnoreProcessor.STRUCTURE_AND_AIR`；integrity 对应
-//! `BlockRotProcessor`:逐 block(模板序)`random.nextFloat() <= integrity`
-//! 保留,否则丢弃。
+//! 放置调用序逐行对照实物（详见 `place_at` 行内注释）：
+//! 1. `getRandomPalette`（StructurePlaceSettings.java:138-143）：
+//!    `getRandom(position).nextInt(palettes.size())`,无 settings.random
+//!    时 = `RandomSource.create(Mth.getSeed(position))` 播种一次取
+//!    nextInt（getRandom:110-115;26.1 `RandomSource.create(long)` =
+//!    LegacyRandomSource LCG,RandomSource.java:24-26——Xoroshiro 系不在
+//!    该路径,见 `mcv_core::rand` 模块头注）。
+//! 2. 逐 block `BlockRotProcessor.processBlock`（BlockRotProcessor.java:
+//!    43-53）:`settings.getRandom(world_pos)`——无共享流时**每块全新
+//!    播种** `Mth.getSeed(世界坐标)`,掷一次 `nextFloat()`;
+//!    `!(roll <= integrity)` 丢弃。integrity 处理器在 OceanRuinPieces
+//!    实物里先于 ignore 添加（OceanRuinPieces.java:296-297）→ air 同样
+//!    消耗掷骰,之后才被 `BlockIgnoreProcessor.STRUCTURE_AND_AIR` 滤除。
+//! 3. 变换用 `StructureTemplate.transform` 公式（先 mirror 后 rotation,
+//!    pivot 公式照抄）。
 //!
-//! 登记的债:
-//! - STRU-RNG:原版 `StructurePlaceSettings.getRandom(pos)` 在有 random 时
-//!   共享单流、无 random 时按 `Mth.getSeed(pos)` 逐位播种;本刀用单流
-//!   SplitMix64(seed),同 seed 两次放置逐字节一致(测试锁定),但与原版
-//!   Xoroshiro128++ 不位同。
+//! 实物 `buildInfoList`（StructureTemplate.java:156-171）把 block 按
+//! full/other/BE 三桶 (y,x,z) 排序后才进处理器;掷骰按世界坐标独立播种
+//! （第 2 步）使排序**不影响放置结果**,仅影响 setBlock 先后——本仓输出
+//! 保持 blockList 文件序。
+//!
+//! 登记的债（KNOWN-DIVERGENCE STRU-*）:
 //! - STRU-STATE:mirror/rotation 只变换 block pos;palette 条目 Name 的
 //!   facing 等 blockstate 属性旋转（原版 `BlockState.mirror/rotate` 经
 //!   BlockRotationUtil）未实装——ruined_portal 主要受影响的楼梯/熔接器
 //!   朝向会保持模板原向。
-//! - STRU-BE:block `nbt`(方块实体)与 entities 读取后忽略。
-//! - STRU-LOOKUP:Name→BlockId 线性查 `mcv_core::BLOCKS`;刀 7 统一换
-//!   名称→索引表。
+//! - STRU-BE:block `nbt`（方块实体）与 `entities` 已解析随 Template
+//!   保留,但放置面不落地（世界层无 BE/实体通道;原版对带 nbt 的 block
+//!   先铺 BARRIER 再写 BE,StructureTemplate.java:288-290）。
 
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use mcv_core::rand::{Lcg, mth_get_seed};
 use mcv_core::{BLOCKS, BlockId};
 use mcv_nbt::{NbtCompound, NbtError, NbtValue, read_auto};
 
@@ -58,6 +80,19 @@ pub struct TemplateBlock {
     pub pos: [i32; 3],
     /// palette 解析结果。
     pub block: BlockId,
+    /// 该 block 带 `nbt`（方块实体,STRU-BE:已解析保留,放置不落地）。
+    pub has_nbt: bool,
+}
+
+/// 模板实体（`entities` 条目,STRU-BE:已解析保留,放置不落地）。
+#[derive(Debug, Clone)]
+pub struct TemplateEntity {
+    /// 实体系坐标（原版 Vec3）。
+    pub pos: [f64; 3],
+    /// 所在方块坐标（原版 BlockPos）。
+    pub block_pos: [i32; 3],
+    /// 实体 NBT（原版直接挂载,本仓保留待消费）。
+    pub nbt: Option<NbtValue>,
 }
 
 /// 结构模板运行时。
@@ -65,12 +100,29 @@ pub struct TemplateBlock {
 pub struct Template {
     /// (width=x, height=y, length=z)。
     pub size: [i32; 3],
-    /// 模板序方块列表（原版 blocks+palette 展开）。
-    pub blocks: Vec<TemplateBlock>,
-    /// palette 顺序解析表（插入序即文件序）。
-    pub palette: Vec<BlockId>,
+    /// 调色板变体（原版 `palettes`）:每变体对同一 blockList 独立展开
+    /// （loadPalette:716-721）,至少一个。
+    pub variants: Vec<Vec<TemplateBlock>>,
+    /// 各变体的 palette 解析表（插入序即文件序）。
+    pub palettes: Vec<Vec<BlockId>>,
+    /// `entities` 解析结果（STRU-BE）。
+    pub entities: Vec<TemplateEntity>,
     /// 未识别方块名个数（解析时计数,>0 时 warn 一次）。
     pub unknown_names: u32,
+}
+
+impl Template {
+    /// 第 0 变体的方块列表（单调色板模板即全体;测试/单变体消费便捷口）。
+    #[must_use]
+    pub fn blocks(&self) -> &[TemplateBlock] {
+        &self.variants[0]
+    }
+
+    /// 第 0 变体的 palette。
+    #[must_use]
+    pub fn palette(&self) -> &[BlockId] {
+        &self.palettes[0]
+    }
 }
 
 /// 模板解析错误:复用 mcv_nbt 错误 + 字段结构错误。
@@ -106,39 +158,31 @@ impl Template {
         Self::from_compound(&root)
     }
 
-    /// 从已解析 compound 构造。
+    /// 从已解析 compound 构造（load 双格式路径:StructureTemplate.java:
+    /// 710-721——`palettes` 优先,逐变体 loadPalette;否则 `palette` 单变体;
+    /// 两缺=空 palette 单变体,全部 stateFor 回落空气,同实物
+    /// getListOrEmpty 语义）。
     pub fn from_compound(root: &NbtCompound) -> Result<Template, TemplateError> {
         let size = root
             .get("size")
             .and_then(int3_of)
             .ok_or(TemplateError::BadField("size"))?;
-        // `palettes` 多调色板变体只取第 0 个（STRU-1）。
-        let palette_tag: &[NbtValue] = if let Some(l) = root.get_list("palette") {
-            l.items()
-        } else if let Some(all) = root.get_list("palettes") {
-            all.get(0)
-                .and_then(NbtValue::as_list)
-                .map_or(&[][..], |l| l.items())
+        // 调色板变体列表（原版 load:715-722）。
+        let palette_tags: Vec<Vec<NbtValue>> = if let Some(all) = root.get_list("palettes") {
+            all.items()
+                .iter()
+                .map(|v| v.as_list().map_or_else(Vec::new, |l| l.items().to_vec()))
+                .collect()
+        } else if let Some(single) = root.get_list("palette") {
+            vec![single.items().to_vec()]
         } else {
-            &[][..]
+            vec![Vec::new()]
         };
-        let mut palette = Vec::with_capacity(palette_tag.len());
-        let mut unknown = 0u32;
-        for entry in palette_tag {
-            let name = entry
-                .as_compound()
-                .and_then(|c| c.get_string("Name"))
-                .ok_or(TemplateError::BadField("palette.Name"))?;
-            let id = block_by_name(name);
-            if id.is_none() {
-                unknown += 1;
-            }
-            palette.push(id.unwrap_or_else(air_id));
-        }
+        // 共享 blockList 先解析一遍(loadPalette 对每 palette 复用同列)。
         let blocks_tag = root
             .get_list("blocks")
             .ok_or(TemplateError::BadField("blocks"))?;
-        let mut blocks = Vec::new();
+        let mut raw_blocks: Vec<([i32; 3], i32, bool)> = Vec::new();
         for b in blocks_tag.items() {
             let Some(c) = b.as_compound() else {
                 continue;
@@ -146,29 +190,84 @@ impl Template {
             let Some(pos) = c.get("pos").and_then(int3_of) else {
                 continue;
             };
+            // getIntOr("state", 0) 实物:缺失/非 int 一律 0。
             let idx = c.get_i32("state").unwrap_or(0);
-            // 越界索引 → 空气（原版 palette.stateFor 缺省回落 first状态,
-            // 保守取空气更安全;偏差随 STRU-1 登记）。
-            let block = usize::try_from(idx)
-                .ok()
-                .and_then(|i| palette.get(i).copied())
-                .unwrap_or_else(air_id);
-            blocks.push(TemplateBlock { pos, block });
+            raw_blocks.push((pos, idx, c.get("nbt").is_some()));
+        }
+        let mut variants = Vec::with_capacity(palette_tags.len());
+        let mut palettes = Vec::with_capacity(palette_tags.len());
+        let mut unknown = 0u32;
+        for pal in &palette_tags {
+            let mut palette = Vec::with_capacity(pal.len());
+            for entry in pal {
+                let name = entry
+                    .as_compound()
+                    .and_then(|c| c.get_string("Name"))
+                    .ok_or(TemplateError::BadField("palette.Name"))?;
+                let id = block_by_name(name);
+                if id.is_none() {
+                    unknown += 1;
+                }
+                palette.push(id.unwrap_or_else(air_id));
+            }
+            variants.push(
+                raw_blocks
+                    .iter()
+                    .map(|&(pos, idx, has_nbt)| TemplateBlock {
+                        pos,
+                        // stateFor 越界/负数 → DEFAULT_BLOCK_STATE=AIR
+                        // (SimplePalette.java:867-870)。
+                        block: usize::try_from(idx)
+                            .ok()
+                            .and_then(|i| palette.get(i).copied())
+                            .unwrap_or_else(air_id),
+                        has_nbt,
+                    })
+                    .collect(),
+            );
+            palettes.push(palette);
         }
         if unknown > 0 {
             // 未知方块名 → 空气,整模板只 warn 一次（指令口径）。
             log::warn!("structure template: {unknown} 个未知方块名按空气处理");
         }
+        // entities(load:724-731):pos(Vec3 f64)/blockPos(Vec3i)/nbt。
+        let mut entities = Vec::new();
+        if let Some(list) = root.get_list("entities") {
+            for e in list.items() {
+                let Some(c) = e.as_compound() else { continue };
+                let pos = c
+                    .get("pos")
+                    .and_then(|v| v.as_list())
+                    .filter(|l| l.len() >= 3)
+                    .map(|l| {
+                        [
+                            l.get(0).and_then(f64_of).unwrap_or(0.0),
+                            l.get(1).and_then(f64_of).unwrap_or(0.0),
+                            l.get(2).and_then(f64_of).unwrap_or(0.0),
+                        ]
+                    })
+                    .unwrap_or([0.0; 3]);
+                let block_pos = c.get("blockPos").and_then(int3_of).unwrap_or([0; 3]);
+                entities.push(TemplateEntity {
+                    pos,
+                    block_pos,
+                    nbt: c.get("nbt").cloned(),
+                });
+            }
+        }
         Ok(Template {
             size,
-            blocks,
-            palette,
+            variants,
+            palettes,
+            entities,
             unknown_names: unknown,
         })
     }
 
-    /// 放置:变换(mirror→rotate,绕 pivot)+ anchor 平移 + integrity 掷骰 +
-    /// air 不放置。返回世界坐标方块列表(模板序,integrity 掷骰同 seed 确定)。
+    /// 放置:palette 选取 + 变换(mirror→rotate,绕 pivot)+ anchor 平移 +
+    /// integrity 掷骰 + air 不放置。返回世界坐标方块列表(blockList 文件序;
+    /// 原版为位置播种掷骰,两次调用必然逐字节一致,见实物 getRandom)。
     #[must_use]
     pub fn place_at(
         &self,
@@ -177,27 +276,32 @@ impl Template {
         mirror: Mirror,
         rotation: Rotation,
         integrity: f32,
-        seed: u64,
     ) -> Vec<(i32, i32, i32, BlockId)> {
         let air = air_id();
-        let mut rng = PlaceRng::new(seed);
-        let mut out = Vec::with_capacity(self.blocks.len());
-        for b in &self.blocks {
-            // BlockRotProcessor 掷骰序实物:processBlockInfos 阶段模板序
-            // 逐 block 一掷(air 也消耗掷骰——ignore 在其后的处理器链),
-            // `nextFloat() <= integrity` 保留。
-            let roll = rng.next_f32();
-            // BlockIgnoreProcessor.STRUCTURE_AND_AIR 语义:air 不放置。
-            if b.block == air || roll > integrity {
+        // getRandomPalette(StructurePlaceSettings.java:138-143):
+        // getRandom(position).nextInt(size);getRandom(:110-115)无共享流时
+        // = RandomSource.create(Mth.getSeed(position))——每放置播种一次,
+        // 单变体模板同样消耗一次 nextInt(1)(实物无条件调用)。
+        let mut sel = Lcg::new(mth_get_seed(anchor[0], anchor[1], anchor[2]));
+        let variant = &self.variants[sel.next_int_bounded(self.variants.len() as i32) as usize];
+        let mut out = Vec::with_capacity(variant.len());
+        for b in variant {
+            let t = transform(b.pos, mirror, rotation, pivot);
+            let wp = [t[0] + anchor[0], t[1] + anchor[1], t[2] + anchor[2]];
+            // BlockRotProcessor.processBlock(BlockRotProcessor.java:48-51):
+            // settings.getRandom(processedBlockInfo.pos)——无共享流时每块
+            // 全新 Mth.getSeed(世界坐标) 播种,恰一次 nextFloat();
+            // `!(roll <= integrity)` → 丢弃。rot 先于 ignore 添加
+            // (OceanRuinPieces.java:296-297)→ air 也掷骰。
+            let roll = Lcg::new(mth_get_seed(wp[0], wp[1], wp[2])).next_float();
+            if roll > integrity {
                 continue;
             }
-            let t = transform(b.pos, mirror, rotation, pivot);
-            out.push((
-                t[0] + anchor[0],
-                t[1] + anchor[1],
-                t[2] + anchor[2],
-                b.block,
-            ));
+            // BlockIgnoreProcessor.STRUCTURE_AND_AIR:air 不放置。
+            if b.block == air {
+                continue;
+            }
+            out.push((wp[0], wp[1], wp[2], b.block));
         }
         out
     }
@@ -233,47 +337,39 @@ fn int3_of(v: &NbtValue) -> Option<[i32; 3]> {
     }
 }
 
-/// Name → BlockId。剥 `minecraft:` 前缀,线性查注册表(STRU-LOOKUP)。
+/// list 元素的 f64 读取(entities pos 实物为 Double;容忍整型位)。
+fn f64_of(v: &NbtValue) -> Option<f64> {
+    match v {
+        NbtValue::Double(d) | NbtValue::Float(d) => Some(*d as f64),
+        NbtValue::Int(i) => Some(*i as f64),
+        NbtValue::Long(l) => Some(*l as f64),
+        _ => None,
+    }
+}
+
+/// Name → BlockId(`minecraft:` 前缀可省)。注册表名→下标一次性建表
+/// (OnceLock),O(1) 查表。
 #[must_use]
 pub fn block_by_name(name: &str) -> Option<BlockId> {
     let bare = name.strip_prefix("minecraft:").unwrap_or(name);
     // 带属性串(如 "stone[slab=bottom]")按基名解析——属性旋转未实装
     // (STRU-STATE),palette Name 实物也不带方括号属性。
     let base = bare.split('[').next().unwrap_or(bare);
-    BLOCKS
-        .iter()
-        .position(|d| d.name == base)
-        .map(|i| BlockId(i as u16))
+    static INDEX: OnceLock<HashMap<&'static str, BlockId>> = OnceLock::new();
+    INDEX
+        .get_or_init(|| {
+            BLOCKS
+                .iter()
+                .enumerate()
+                .map(|(i, d)| (d.name, BlockId(i as u16)))
+                .collect()
+        })
+        .get(base)
+        .copied()
 }
 
 fn air_id() -> BlockId {
     block_by_name("air").unwrap_or(BlockId(0))
-}
-
-/// 放置掷骰流:SplitMix64(与 lake_pass LakeRng 同族先例,见 STRU-RNG)。
-struct PlaceRng {
-    s: u64,
-}
-
-impl PlaceRng {
-    const fn new(seed: u64) -> Self {
-        Self { s: seed }
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut z = self
-            .s
-            .wrapping_add(0x9E37_79B9_7F4A_7C15)
-            .wrapping_mul(0xFF51_AFD7_ED55_8CCD);
-        z = (z ^ (z >> 27)).wrapping_mul(0xC4CE_B9FE_1A85_EC53);
-        self.s = z ^ (z >> 31);
-        self.s
-    }
-
-    /// [0,1) 单精度(原版 nextFloat 同精度面)。
-    fn next_f32(&mut self) -> f32 {
-        (self.next_u64() >> 40) as f32 / (1u32 << 24) as f32
-    }
 }
 
 #[cfg(test)]
@@ -300,116 +396,58 @@ mod tests {
         );
     }
 
+    /// 测试侧复刻实物 getRandomPalette/BlockRotProcessor 的种子+比较,
+    /// 与 place_at 实现互证(独立重推,不共享中间量)。
+    fn roll_at(wp: [i32; 3]) -> f32 {
+        Lcg::new(mth_get_seed(wp[0], wp[1], wp[2])).next_float()
+    }
+
     #[test]
     fn synthetic_template_roundtrip_and_place() {
         // 不依赖资产的自构造模板:2x1x2,palette [stone, air]。
-        let mut root = NbtCompound::new();
-        root.insert(
-            "size",
-            NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
-                NbtValue::Int(2),
-                NbtValue::Int(1),
-                NbtValue::Int(2),
-            ])),
+        let root = synth(
+            &[("minecraft:stone", "minecraft:air")],
+            &[
+                ([0, 0, 0], 0),
+                ([1, 0, 0], 0),
+                ([0, 0, 1], 0),
+                ([1, 0, 1], 1),
+            ],
         );
-        let mut pal = mcv_nbt::NbtList::new();
-        for n in ["minecraft:stone", "minecraft:air"] {
-            let mut e = NbtCompound::new();
-            e.insert("Name", NbtValue::String(n.into()));
-            pal.push(NbtValue::Compound(e)).unwrap();
-        }
-        root.insert("palette", NbtValue::List(pal));
-        let mut blocks = mcv_nbt::NbtList::new();
-        for (i, p) in [[0, 0, 0], [1, 0, 0], [0, 0, 1], [1, 0, 1]]
-            .iter()
-            .enumerate()
-        {
-            let mut b = NbtCompound::new();
-            b.insert(
-                "pos",
-                NbtValue::List(mcv_nbt::NbtList::from_vec(
-                    p.iter().map(|v| NbtValue::Int(*v)).collect(),
-                )),
-            );
-            // 第 4 格放 air(palette 1),验证不放置。
-            b.insert("state", NbtValue::Int(if i == 3 { 1 } else { 0 }));
-            blocks.push(NbtValue::Compound(b)).unwrap();
-        }
-        root.insert("blocks", NbtValue::List(blocks));
-
         let t = Template::from_compound(&root).unwrap();
         assert_eq!(t.size, [2, 1, 2]);
-        assert_eq!(t.blocks.len(), 4);
+        assert_eq!(t.blocks().len(), 4);
+        assert_eq!(t.variants.len(), 1);
         assert!(
-            t.palette
+            t.palette()
                 .iter()
                 .all(|b| *b == block_by_name("stone").unwrap() || *b == air_id())
         );
 
-        // 同 seed 两次一致;air 不放置。
-        let a = t.place_at(
-            [10, 20, 30],
-            [0, 0, 0],
-            Mirror::None,
-            Rotation::None,
-            1.0,
-            42,
-        );
-        let b = t.place_at(
-            [10, 20, 30],
-            [0, 0, 0],
-            Mirror::None,
-            Rotation::None,
-            1.0,
-            42,
-        );
+        // 两次调用逐字节一致(实物位置播种无流状态,天然确定);air 不放置。
+        let a = t.place_at([10, 20, 30], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
+        let b = t.place_at([10, 20, 30], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
         assert_eq!(a, b);
         assert_eq!(a.len(), 3, "air 不放置");
-        // integrity=-0.5 → 数学保证全丢（roll ≥ 0 > -0.5）。
+        // integrity=-0.5 → 数学保证全丢(roll ≥ 0 > -0.5)。
         assert!(
-            t.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, -0.5, 7)
+            t.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, -0.5)
                 .is_empty()
         );
 
         // 90° 旋转:局部包围盒 x/z 互换律——用沿 x 轴的 3x1x1 直条。
-        let mut root2 = NbtCompound::new();
-        root2.insert(
-            "size",
-            NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
-                NbtValue::Int(3),
-                NbtValue::Int(1),
-                NbtValue::Int(1),
-            ])),
+        let root2 = synth(
+            &[("minecraft:stone",)],
+            &[([0, 0, 0], 0), ([1, 0, 0], 0), ([2, 0, 0], 0)],
         );
-        let mut pal2 = mcv_nbt::NbtList::new();
-        let mut pe = NbtCompound::new();
-        pe.insert("Name", NbtValue::String("minecraft:stone".into()));
-        pal2.push(NbtValue::Compound(pe)).unwrap();
-        root2.insert("palette", NbtValue::List(pal2));
-        let mut blks2 = mcv_nbt::NbtList::new();
-        for x in 0..3 {
-            let mut b = NbtCompound::new();
-            b.insert(
-                "pos",
-                NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
-                    NbtValue::Int(x),
-                    NbtValue::Int(0),
-                    NbtValue::Int(0),
-                ])),
-            );
-            b.insert("state", NbtValue::Int(0));
-            blks2.push(NbtValue::Compound(b)).unwrap();
-        }
-        root2.insert("blocks", NbtValue::List(blks2));
         let t2 = Template::from_compound(&root2).unwrap();
-        let plain = t2.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 1.0, 1);
+        let plain = t2.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
         let rot = t2.place_at(
             [0, 0, 0],
             [0, 0, 0],
             Mirror::None,
             Rotation::Clockwise90,
             1.0,
-            1,
         );
         let ext = |v: &[(i32, i32, i32, BlockId)]| {
             let xs: Vec<i32> = v.iter().map(|p| p.0).collect();
@@ -421,5 +459,195 @@ mod tests {
         };
         assert_eq!(ext(&plain), (3, 1));
         assert_eq!(ext(&rot), (1, 3), "90° 旋转包围盒 x/z 互换律");
+    }
+
+    #[test]
+    fn integrity_dice_are_position_seeded_vanilla() {
+        // 实物:每块 = 新 Lcg(Mth.getSeed(世界坐标)).nextFloat() > integrity
+        // → 丢弃(BlockRotProcessor.java:48-51)。自实现向量:同一局部块在
+        // 两个不同 anchor 下命运一般不同(位置种子),而在相同世界坐标下
+        // 命运相同。
+        let root = synth(
+            &[("minecraft:stone",)],
+            &[([0, 0, 0], 0), ([1, 0, 0], 0), ([2, 0, 0], 0)],
+        );
+        let t = Template::from_compound(&root).unwrap();
+        let stone = block_by_name("stone").unwrap();
+        // integrity 取某块 roll 的临界值:对 anchor=(0,0,0),块 (1,0,0) 的
+        // roll 恰为阈值 ±ε 时,±ε 必须翻转其保留/丢弃(边界语义 <=)。
+        let r1 = roll_at([1, 0, 0]);
+        assert!(r1 > 0.0, "本用例需要非零下界");
+        let at_thresh_excl = t.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, r1);
+        // roll <= integrity 保留:integrity = r1 → (1,0,0) 保留。
+        assert!(
+            at_thresh_excl
+                .iter()
+                .any(|p| p.0 == 1 && p.3 == stone && p.1 == 0 && p.2 == 0),
+            "integrity == roll 必须保留(<= 实物): roll {r1}"
+        );
+        let just_below = f32::from_bits(r1.to_bits() - 1);
+        let at_thresh_incl = t.place_at(
+            [0, 0, 0],
+            [0, 0, 0],
+            Mirror::None,
+            Rotation::None,
+            just_below,
+        );
+        assert!(
+            !at_thresh_incl.iter().any(|p| p.0 == 1 && p.2 == 0),
+            "integrity 比 roll 低 1ulp 必须丢弃: roll {r1}"
+        );
+        // 位置种子:块 (0,0,0)@anchor0 的世界坐标 = 块 (1,0,0)@anchor(-1,0,0),
+        // 两处掷骰同值 → 同 integrity 下同命运。
+        let w0 = t.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 0.5);
+        let w1 = t.place_at([-1, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 0.5);
+        let in0 = w0.iter().any(|p| p.0 == 0 && p.2 == 0);
+        let in1 = w1.iter().any(|p| p.0 == 0 && p.2 == 0);
+        assert_eq!(in0, in1, "同世界坐标必须同命运(位置播种)");
+    }
+
+    #[test]
+    fn multi_palette_variants_selected_by_seed() {
+        // 实物:palettes 逐变体展开同列 blocks;放置按
+        // Xor…(实为 LCG)create(Mth.getSeed(anchor)).nextInt(n) 选一
+        // (StructurePlaceSettings.java:138-143)。
+        let root = synth_multi(
+            &[
+                &["minecraft:stone", "minecraft:dirt"],
+                &["minecraft:dirt", "minecraft:stone"],
+            ],
+            &[([0, 0, 0], 0), ([1, 0, 0], 1)],
+        );
+        let t = Template::from_compound(&root).unwrap();
+        assert_eq!(t.variants.len(), 2);
+        // 两变体 pos 相同、方块互换。
+        assert_eq!(t.variants[0][0].block, t.variants[1][1].block);
+        assert_eq!(t.variants[0][1].block, t.variants[1][0].block);
+        // 选取确定性:同 anchor 两次一致;且两 anchor 覆盖两个变体。
+        let a = t.place_at([5, 6, 7], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
+        let b = t.place_at([5, 6, 7], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
+        assert_eq!(a, b);
+        // 实物种子推导:nextInt(2) 选出的变体,其方块组合必须整体命中
+        // (不会混用两变体)。
+        let idx = Lcg::new(mth_get_seed(5, 6, 7)).next_int_bounded(2) as usize;
+        let stone = block_by_name("stone").unwrap();
+        let dirt = block_by_name("dirt").unwrap();
+        let expect_pair: [BlockId; 2] = [t.variants[idx][0].block, t.variants[idx][1].block];
+        assert!(
+            expect_pair.contains(&stone)
+                && expect_pair.contains(&dirt)
+                && a.iter().all(|p| p.3 == stone || p.3 == dirt)
+        );
+        let got: Vec<BlockId> = a.iter().map(|p| p.3).collect();
+        assert!(
+            (expect_pair[0] == expect_pair[1])
+                || (got.contains(&expect_pair[0]) && got.contains(&expect_pair[1])),
+            "单次放置只能来自选中变体: {got:?} expect {expect_pair:?}"
+        );
+    }
+
+    #[test]
+    fn state_out_of_range_falls_back_to_air_first_entry_is_not_used() {
+        // SimplePalette.stateFor:867-870——越界回落 DEFAULT_BLOCK_STATE
+        // = Blocks.AIR(**不是** palette 首元素;任务书「首元素」说法与
+        // 26.1 实物不符,以实物为准)。
+        let root = synth(
+            &[("minecraft:stone", "minecraft:dirt")],
+            &[([0, 0, 0], 5), ([1, 0, 0], -3), ([2, 0, 0], 1)],
+        );
+        let t = Template::from_compound(&root).unwrap();
+        assert_eq!(t.blocks()[0].block, air_id(), "state=5 越界 → 空气");
+        assert_eq!(t.blocks()[1].block, air_id(), "state=-3 → 空气");
+        assert_eq!(t.blocks()[2].block, block_by_name("dirt").unwrap());
+        // air 越界位不放置:
+        let placed = t.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
+        assert_eq!(placed.len(), 1);
+        assert_eq!(placed[0].3, block_by_name("dirt").unwrap());
+    }
+
+    #[test]
+    fn entities_and_block_nbt_parsed() {
+        let mut root = synth(&[("minecraft:stone",)], &[([0, 0, 0], 0)]);
+        let mut ent = NbtCompound::new();
+        let mut pos = mcv_nbt::NbtList::new();
+        for v in [1.5f64, 2.0, 3.25] {
+            pos.push(NbtValue::Double(v)).unwrap();
+        }
+        ent.insert("pos", NbtValue::List(pos));
+        ent.insert(
+            "blockPos",
+            NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
+                NbtValue::Int(1),
+                NbtValue::Int(2),
+                NbtValue::Int(3),
+            ])),
+        );
+        let mut inner = NbtCompound::new();
+        inner.insert("id", NbtValue::String("minecraft:zombie".into()));
+        ent.insert("nbt", NbtValue::Compound(inner));
+        let mut ents = mcv_nbt::NbtList::new();
+        ents.push(NbtValue::Compound(ent)).unwrap();
+        root.insert("entities", NbtValue::List(ents));
+        let t = Template::from_compound(&root).unwrap();
+        assert_eq!(t.entities.len(), 1);
+        assert_eq!(t.entities[0].pos, [1.5, 2.0, 3.25]);
+        assert_eq!(t.entities[0].block_pos, [1, 2, 3]);
+        assert!(t.entities[0].nbt.is_some(), "实体 nbt 必须保留(STRU-BE)");
+        // block nbt 标记(STRU-BE:保留待消费)。
+        assert!(!t.blocks()[0].has_nbt);
+    }
+
+    fn synth_entry(pal: &str) -> NbtValue {
+        let mut e = NbtCompound::new();
+        e.insert("Name", NbtValue::String(pal.into()));
+        NbtValue::Compound(e)
+    }
+
+    fn synth(palettes: &[&[&str]], blocks: &[([i32; 3], i32)]) -> NbtCompound {
+        assert_eq!(palettes.len(), 1);
+        synth_multi(palettes, blocks)
+    }
+
+    fn synth_multi(palettes: &[&[&str]], blocks: &[([i32; 3], i32)]) -> NbtCompound {
+        let mut root = NbtCompound::new();
+        root.insert(
+            "size",
+            NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
+                NbtValue::Int(4),
+                NbtValue::Int(1),
+                NbtValue::Int(4),
+            ])),
+        );
+        if palettes.len() == 1 {
+            let mut pal = mcv_nbt::NbtList::new();
+            for n in palettes[0] {
+                pal.push(synth_entry(n)).unwrap();
+            }
+            root.insert("palette", NbtValue::List(pal));
+        } else {
+            let mut all = mcv_nbt::NbtList::new();
+            for pal in palettes {
+                let mut l = mcv_nbt::NbtList::new();
+                for n in *pal {
+                    l.push(synth_entry(n)).unwrap();
+                }
+                all.push(NbtValue::List(l)).unwrap();
+            }
+            root.insert("palettes", NbtValue::List(all));
+        }
+        let mut blks = mcv_nbt::NbtList::new();
+        for &(p, st) in blocks {
+            let mut b = NbtCompound::new();
+            b.insert(
+                "pos",
+                NbtValue::List(mcv_nbt::NbtList::from_vec(
+                    p.iter().map(|v| NbtValue::Int(*v)).collect(),
+                )),
+            );
+            b.insert("state", NbtValue::Int(st));
+            blks.push(NbtValue::Compound(b)).unwrap();
+        }
+        root.insert("blocks", NbtValue::List(blks));
+        root
     }
 }

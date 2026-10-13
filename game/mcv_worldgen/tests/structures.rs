@@ -43,8 +43,8 @@ fn ruined_portal_templates_load_and_reencode_stable() {
             f.display(),
             tpl.size
         );
-        assert!(!tpl.palette.is_empty(), "{}: palette 空", f.display());
-        assert!(!tpl.blocks.is_empty(), "{}: blocks 空", f.display());
+        assert!(!tpl.palette().is_empty(), "{}: palette 空", f.display());
+        assert!(!tpl.blocks().is_empty(), "{}: blocks 空", f.display());
         // 重编码字节稳定:root compound 读→写→读→写,两次写字节相同。
         let root = mcv_nbt::read_auto(&bytes).unwrap();
         let b1 = mcv_nbt::write_raw(&root).unwrap();
@@ -66,34 +66,13 @@ fn ruined_portal_place_deterministic_and_rotation_size_law() {
         return;
     };
     let tpl = Template::from_nbt(&std::fs::read(&files[0]).unwrap()).unwrap();
-    // 同 seed 两次输出逐字节一致。
-    let a = tpl.place_at(
-        [0, 0, 0],
-        [0, 0, 0],
-        Mirror::None,
-        Rotation::None,
-        1.0,
-        0x5EED,
-    );
-    let b = tpl.place_at(
-        [0, 0, 0],
-        [0, 0, 0],
-        Mirror::None,
-        Rotation::None,
-        1.0,
-        0x5EED,
-    );
+    // 实物位置播种(无流状态):两次调用逐字节一致。
+    let a = tpl.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
+    let b = tpl.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 1.0);
     assert_eq!(a, b);
     assert!(!a.is_empty());
-    // integrity 半量必少于全量(同 seed 单调前缀?掷骰独立,只断言 ≤)。
-    let half = tpl.place_at(
-        [0, 0, 0],
-        [0, 0, 0],
-        Mirror::None,
-        Rotation::None,
-        0.5,
-        0x5EED,
-    );
+    // integrity 半量必少于全量(位置种子掷骰相互独立,只断言 ≤)。
+    let half = tpl.place_at([0, 0, 0], [0, 0, 0], Mirror::None, Rotation::None, 0.5);
     assert!(half.len() <= a.len());
 
     // 90° 旋转包围盒 x/z 互换律(对模板整体包围盒,用 pivot=中心)。
@@ -111,7 +90,6 @@ fn ruined_portal_place_deterministic_and_rotation_size_law() {
         Mirror::None,
         Rotation::Clockwise90,
         1.0,
-        0x5EED,
     ));
     // 90° 旋转是刚体变换 (x,z)→(±z+c, ±x+c):包围盒 x/z 跨度严格互换。
     assert_eq!(
@@ -126,7 +104,6 @@ fn ruined_portal_place_deterministic_and_rotation_size_law() {
         Mirror::LeftRight,
         Rotation::None,
         1.0,
-        0x5EED,
     ));
     assert_eq!(mir, plain, "mirror 应保包围盒尺寸");
 }
