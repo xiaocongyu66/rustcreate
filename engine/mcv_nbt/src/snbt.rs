@@ -714,7 +714,7 @@ fn decimal_or_float(body: &[u8], minus: bool, default: NumKind) -> Result<NbtVal
     }
     match body.get(j) {
         None => build_signed_decimal(&whole, minus, default),
-        Some(&c) if c == b'.' => {
+        Some(&b'.') => {
             // 支 1:小数位可空(`5.` 合法,Double.parseDouble 同义)。
             let (frac, k, err) = scan_run(body, j + 1, |c| c.is_ascii_digit());
             if let Some(e) = err {

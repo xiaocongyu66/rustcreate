@@ -340,7 +340,8 @@ fn int3_of(v: &NbtValue) -> Option<[i32; 3]> {
 /// list 元素的 f64 读取(entities pos 实物为 Double;容忍整型位)。
 fn f64_of(v: &NbtValue) -> Option<f64> {
     match v {
-        NbtValue::Double(d) | NbtValue::Float(d) => Some(*d as f64),
+        NbtValue::Double(d) => Some(*d),
+        NbtValue::Float(d) => Some(f64::from(*d)),
         NbtValue::Int(i) => Some(*i as f64),
         NbtValue::Long(l) => Some(*l as f64),
         _ => None,
