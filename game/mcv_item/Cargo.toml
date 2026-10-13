@@ -6,4 +6,5 @@ license.workspace = true
 
 [dependencies]
 mcv_core.workspace = true
+mcv_registry.workspace = true
 log.workspace = true

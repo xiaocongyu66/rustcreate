@@ -3,7 +3,9 @@
 //! 硬度 ≤0 秒碎。tick 数按 hardness 直接推（石头 1.5、泥土 0.5）。
 
 use mcv_core::BlockId;
-use mcv_item::mining::{block_mining, destroy_speed, has_correct_tool, progress_per_tick};
+use mcv_item::mining::{
+    DropNeed, block_mining, destroy_speed, has_correct_tool, progress_per_tick,
+};
 use mcv_item::{
     DIAMOND_PICKAXE_INDEX, IRON, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemKind, ItemStack,
     STONE_PICKAXE_INDEX, ToolKind, WOODEN_AXE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX,
@@ -162,13 +164,54 @@ fn bedrock_never_and_flowers_instant() {
 }
 
 #[test]
-fn unregistered_blocks_are_hand_mineable_plain() {
-    // 不在工具表/速度族的方块：徒手正确、无工具速度（宁缺勿错）。
+fn tag_driven_speed_and_free_blocks() {
+    // #178 刀2b：速度族 = mineable/* tag 全量（手写表已删）。玻璃
+    // ∈ mineable/pickaxe（原版镐加速）但无掉落门 → 徒手掉落正确。
     assert!(!has_correct_tool(COBBLE, None), "圆石要镐");
-    let bm = block_mining(BlockId(419)); // glass：无掉落门、无速度族
-    assert!(bm.need.is_none() && bm.speed_tool.is_none());
+    let bm = block_mining(BlockId(419)); // glass
+    assert_eq!(bm.need, DropNeed::None);
+    assert_eq!(
+        bm.speed_tool,
+        Some(ToolKind::Pickaxe),
+        "glass ∈ mineable/pickaxe"
+    );
     assert_eq!(block_mining(STONE).speed_tool, Some(ToolKind::Pickaxe));
     assert_eq!(mining::mining_tier(mcv_item::COPPER), 3);
+    // 无 tag 无门：徒手正确、恒 1.0 速（bedrock 之外的真无族代表 = 火把）。
+    let torch = block_mining(BlockId(
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "torch")
+            .unwrap() as u16,
+    ));
+    assert_eq!(torch.need, DropNeed::None);
+    assert_eq!(
+        torch.speed_tool, None,
+        "torch 不在任何 mineable tag（原版无加速）"
+    );
+    // snow_grass（引擎状态行）经 tag_row_of 别名吃铲速 = grass 行。
+    let sg = block_mining(BlockId(mcv_core::SNOW_GRASS_ROW));
+    assert_eq!(
+        sg.speed_tool,
+        Some(ToolKind::Shovel),
+        "grass_block ∈ mineable/shovel"
+    );
+    assert_eq!(sg.need, DropNeed::None);
+    // 掉落门 = 生成列：命令块 = Never（任何工具不正确，徒手也错）。
+    let cmd = BlockId(
+        mcv_core::BLOCKS
+            .iter()
+            .position(|b| b.name == "command_block")
+            .unwrap() as u16,
+    );
+    assert_eq!(block_mining(cmd).need, DropNeed::Never);
+    assert!(!has_correct_tool(cmd, tool(DIAMOND_PICKAXE_INDEX).as_ref()));
+    assert!(!has_correct_tool(cmd, None));
+    assert_eq!(
+        block_mining(cmd).speed_tool,
+        None,
+        "命令块无 mineable tag = 恒 1.0 速"
+    );
 }
 
 /// 耐久消耗对齐 26.1 `Item.mineBlock`（Item.java:257-268，任务板 #90）：

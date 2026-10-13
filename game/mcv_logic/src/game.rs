@@ -5549,7 +5549,7 @@ impl GameRuntime {
         // ）——准星点中的可替换方块（草/雪层/火族，拾取形状可命中）就地
         // 替换该格本身，而非偏移到命中面邻格。水/岩浆无拾取形状（pick_boxes
         // 拒流体），点不中 → 走邻格路径由下方可替换门覆盖。
-        let target = if self.block_at(hit).def().is_replaceable() {
+        let target = if self.block_at(hit).is_replaceable() {
             hit
         } else {
             BlockPos::new(hit.x + normal[0], hit.y + normal[1], hit.z + normal[2])
@@ -5562,12 +5562,12 @@ impl GameRuntime {
         // 目标格可替换门（26.1 `BlockPlaceContext.canPlace`
         // BlockPlaceContext.java:55-57 → `BlockState.canBeReplaced`
         // BlockBehaviour.java:270-272/819-829：空气 ∥ Properties.replaceable
-        // ——雪层/植被/火/水岩浆族；判据表实现见 `BlockDef::is_replaceable`）。
+        // ——雪层/植被/火/水岩浆族；判据实现见 `BlockId::is_replaceable`（tag 查询））。
         // replaceClicked 命中时 target=被点格本身恒可替换、门直通（上方）；
         // 邻格路径照旧。原版 canPlace 失败即整个 useOn 中止——不放方块、
         // 不消耗手持（ItemStack.useOn → place 返回 FAIL 路径 shrink 不到），
         // 故本门置于体素写与 take_one 之前：实心格点右键 = 无事发生。
-        if !self.block_at(target).def().is_replaceable() {
+        if !self.block_at(target).is_replaceable() {
             return;
         }
         // 放置物 = 选中槽 Block 物品；非方块物品/空槽右键无事发生
@@ -9326,8 +9326,10 @@ mod tests {
     /// B3 放置可替换校验（26.1 `BlockPlaceContext.canPlace` :55-57 →
     /// `canBeReplaced` = 空气 ∥ `Properties.replaceable()`）：目标格实心
     /// 拒放（不写体素、不扣手持）；空气成功；水（replaceable+liquid）
-    /// 被替换。判据表实现 = `BlockDef::is_replaceable`（名单锁定测试见
-    /// mcv_core::lib 的 is_replaceable_matches_vanilla_property）。
+    /// 被替换。判据实现 = `BlockId::is_replaceable`（#178 刀2b 起查生成的
+    /// replaceable tag；名单锁定测试见 mcv_core::lib 的
+    /// is_replaceable_matches_vanilla_property 与
+    /// tests/tool_gate_snapshot.rs::replaceable_snapshot_all_1171）。
     #[test]
     fn placement_requires_replaceable_target() {
         let mut rt = playing_rt("b3-replace");

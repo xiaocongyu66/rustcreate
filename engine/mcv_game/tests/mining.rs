@@ -302,4 +302,21 @@ fn requires_correct_tool_follows_261_data_table() {
     for id in [2, 4, 431, 419, 6, 7] {
         assert!(!t(id), "id {id} 不应需工具");
     }
+    // #178 刀2b Never 族（gate=true ∧ ∉任何 mineable tag）：cobweb 226、
+    // command_block 228——requires_correct_tool 为真，但 `Tool
+    // .isCorrectForDrops` 对一切工具 = false（Tool.java:50-57），
+    // 连「手持侧自称正确」也不算正确（原版命令块 strength(-1) 不可破 +
+    // noLootTable，此处只锁掉落门语义）。
+    let claimed_correct = HeldTool {
+        speed: TOOL_SPEED_WOOD,
+        correct_for_drops: true,
+    };
+    for id in [226u16, 228] {
+        assert!(t(id), "id {id} 命令块族/cobweb 应进门");
+        assert!(
+            !has_correct_tool_for_drops(bid(id), &claimed_correct),
+            "id {id} Never：任何工具均非正确"
+        );
+        assert!(!has_correct_tool_for_drops(bid(id), &HeldTool::BARE_HAND));
+    }
 }

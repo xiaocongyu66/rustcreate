@@ -97,20 +97,25 @@ pub fn hardness(id: BlockId) -> f32 {
 
 /// 该方块是否"需要正确工具才可掉落"（MC `requiresCorrectToolForDrops`）。
 ///
-/// 走 `mcv_core::tool` 的 26.1 数据表（Blocks.java 的
-/// requiresCorrectToolForDrops 属性 ∩ 注册表 + needs_stone/iron/diamond_tool
-/// tag 分层，含 ofLegacyCopy 继承与旧表别名 cobble）：矿石/深板岩矿石族
-/// 全量按层级判定，石头/深板岩/混凝土/陶瓦等族按任意镐判定；泥土/沙/
-/// 砂砾/木/叶/玻璃等不需工具。旧实现的"id ≥ 14 一律不需工具（30 档偏快
-/// 偏掉）"漏洞由此闭合；全表进 ci/gen-blocks.py 生成器留给后续。
+/// 走 `mcv_core::tool` 的三真源数据表（#178 刀2b：GEN_BLOCKS
+/// requires_tool 生成列（Blocks.java 属性 + ofLegacyCopy/ofFullCopy :1054
+/// 继承闭包）+ `mineable/*` tag 种类 + `needs_*_tool` tag 层级）：
+/// 411 门全量按数据判定，含 Never 族（命令块族/cobweb：需正确工具但
+/// 任何工具都不满足，[`has_correct_tool_for_drops`] 恒假）。
 pub fn requires_correct_tool(id: BlockId) -> bool {
     mcv_core::tool::requirement_by_id(id).is_some()
 }
 
-/// MC `Player#hasCorrectToolForDrops(state)`：方块不需工具 → 恒真；
-/// 需工具 → 取手持侧判定（空手为假 → 走 [`MODIFIER_INCORRECT`] 档）。
+/// MC `Player#hasCorrectToolForDrops(state)`（Player.java:619）：方块不
+/// 需工具 → 恒真；Never 族 → 恒假（`Tool.isCorrectForDrops` 对一切工具
+/// false，Tool.java:50-57）；需工具 → 取手持侧判定（空手为假 → 走
+/// [`MODIFIER_INCORRECT`] 档）。
 pub fn has_correct_tool_for_drops(id: BlockId, tool: &HeldTool) -> bool {
-    !requires_correct_tool(id) || tool.correct_for_drops
+    match mcv_core::tool::requirement_by_id(id) {
+        None => true,
+        Some(mcv_core::tool::Requirement::Never) => false,
+        Some(mcv_core::tool::Requirement::Tool { .. }) => tool.correct_for_drops,
+    }
 }
 
 /// 单个 MC tick（1/20 s）的挖掘进度增量，对应 MC getDestroyProgress 返回值。
