@@ -407,7 +407,7 @@ mod tests {
     fn synthetic_template_roundtrip_and_place() {
         // 不依赖资产的自构造模板:2x1x2,palette [stone, air]。
         let root = synth(
-            &[("minecraft:stone", "minecraft:air")],
+            &[&["minecraft:stone", "minecraft:air"]],
             &[
                 ([0, 0, 0], 0),
                 ([1, 0, 0], 0),
@@ -438,7 +438,7 @@ mod tests {
 
         // 90° 旋转:局部包围盒 x/z 互换律——用沿 x 轴的 3x1x1 直条。
         let root2 = synth(
-            &[("minecraft:stone",)],
+            &[&["minecraft:stone"]],
             &[([0, 0, 0], 0), ([1, 0, 0], 0), ([2, 0, 0], 0)],
         );
         let t2 = Template::from_compound(&root2).unwrap();
@@ -469,7 +469,7 @@ mod tests {
         // 两个不同 anchor 下命运一般不同(位置种子),而在相同世界坐标下
         // 命运相同。
         let root = synth(
-            &[("minecraft:stone",)],
+            &[&["minecraft:stone"]],
             &[([0, 0, 0], 0), ([1, 0, 0], 0), ([2, 0, 0], 0)],
         );
         let t = Template::from_compound(&root).unwrap();
@@ -553,7 +553,7 @@ mod tests {
         // = Blocks.AIR(**不是** palette 首元素;任务书「首元素」说法与
         // 26.1 实物不符,以实物为准)。
         let root = synth(
-            &[("minecraft:stone", "minecraft:dirt")],
+            &[&["minecraft:stone", "minecraft:dirt"]],
             &[([0, 0, 0], 5), ([1, 0, 0], -3), ([2, 0, 0], 1)],
         );
         let t = Template::from_compound(&root).unwrap();
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn entities_and_block_nbt_parsed() {
-        let mut root = synth(&[("minecraft:stone",)], &[([0, 0, 0], 0)]);
+        let mut root = synth(&[&["minecraft:stone"]], &[([0, 0, 0], 0)]);
         let mut ent = NbtCompound::new();
         let mut pos = mcv_nbt::NbtList::new();
         for v in [1.5f64, 2.0, 3.25] {
@@ -611,12 +611,16 @@ mod tests {
 
     fn synth_multi(palettes: &[&[&str]], blocks: &[([i32; 3], i32)]) -> NbtCompound {
         let mut root = NbtCompound::new();
+        // size 由 blocks 包围盒推导(原版是存档字段,自构造 fixture 保持
+        // 自洽:逐轴 max(pos)+1)。
+        let dim =
+            |axis: usize| -> i32 { blocks.iter().map(|(p, _)| p[axis] + 1).max().unwrap_or(0) };
         root.insert(
             "size",
             NbtValue::List(mcv_nbt::NbtList::from_vec(vec![
-                NbtValue::Int(4),
-                NbtValue::Int(1),
-                NbtValue::Int(4),
+                NbtValue::Int(dim(0)),
+                NbtValue::Int(dim(1)),
+                NbtValue::Int(dim(2)),
             ])),
         );
         if palettes.len() == 1 {
