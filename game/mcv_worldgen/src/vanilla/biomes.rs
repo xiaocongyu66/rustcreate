@@ -198,9 +198,11 @@ pub fn height_adjusted_temperature(b: Biome, x: i32, y: i32, z: i32, sea_level: 
     let adjusted = climate(b).temperature as f32;
     let snow_level = sea_level + 17;
     if y > snow_level {
-        let v = (crate::vanilla::simplex::temperature_noise()
-            .get_value((x as f32 / 8.0_f32) as f64, (z as f32 / 8.0_f32) as f64, false)
-            * 8.0) as f32;
+        let v = (crate::vanilla::simplex::temperature_noise().get_value(
+            (x as f32 / 8.0_f32) as f64,
+            (z as f32 / 8.0_f32) as f64,
+            false,
+        ) * 8.0) as f32;
         adjusted - (v + (y - snow_level) as f32) * 0.05_f32 / 40.0_f32
     } else {
         adjusted
@@ -607,7 +609,10 @@ mod tests {
                 height_adjusted_temperature(Biome::Taiga, x, sea + 17, z, sea),
                 0.25
             );
-            assert_eq!(height_adjusted_temperature(Biome::Desert, x, sea + 5, z, sea), 2.0);
+            assert_eq!(
+                height_adjusted_temperature(Biome::Desert, x, sea + 5, z, sea),
+                2.0
+            );
         }
     }
 }

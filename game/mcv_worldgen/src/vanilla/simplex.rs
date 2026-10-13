@@ -168,9 +168,10 @@ impl SimplexNoise {
             0.0
         } else {
             t *= t;
-            t * t * (GRADIENT[idx][0] as f64 * x
-                + GRADIENT[idx][1] as f64 * y
-                + GRADIENT[idx][2] as f64 * z)
+            t * t
+                * (GRADIENT[idx][0] as f64 * x
+                    + GRADIENT[idx][1] as f64 * y
+                    + GRADIENT[idx][2] as f64 * z)
         }
     }
 

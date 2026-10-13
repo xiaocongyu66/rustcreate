@@ -110,9 +110,8 @@ pub fn apply(
             // shouldFreeze（checkNeighbors=false 路）：**无降水标志门**、
             // 只看 belowPos 高度调整温度（Biome.java:145-146）；水 → 冰。
             if voxels[below] == WATER
-                && biomes::height_adjusted_temperature(
-                    biome, wx, top, wz, mcv_core::SEA_LEVEL,
-                ) < 0.15
+                && biomes::height_adjusted_temperature(biome, wx, top, wz, mcv_core::SEA_LEVEL)
+                    < 0.15
             {
                 voxels[below] = ICE;
             }
@@ -130,8 +129,7 @@ pub fn apply(
             // shouldSnow 降水判据在 topPos=(wx, snow_y, wz) 求值
             // （Biome.java:183-186 getPrecipitationAt(topPos)，含
             // has_precipitation 门）。
-            if voxels[at] == AIR && supports_snow_layer(ground) && snows_at(biome, wx, snow_y, wz)
-            {
+            if voxels[at] == AIR && supports_snow_layer(ground) && snows_at(biome, wx, snow_y, wz) {
                 voxels[at] = SNOW_LAYER;
                 if ground == GRASS {
                     voxels[below] = SNOW_GRASS;
@@ -146,17 +144,34 @@ mod tests {
     use super::*;
     use crate::vanilla::terrain::Orchestrator;
 
-    /// 积雪判据表驱动（10 群系 × 实物气候表：唯一 snowy = SnowyPlains；
-    /// 数值 = 26.1 biome JSON 抄录，biomes.rs 表锁同源）。
+    /// 积雪判据表驱动（10 群系 × 实物气候表，sea+17 以下无高度修正
+    /// 区段：唯一 snowy = SnowyPlains；数值 = 26.1 biome JSON 抄录，
+    /// biomes.rs 表锁同源）。
     #[test]
     fn snowy_predicates_match_climate_table() {
         for b in biomes::ALL_BIOMES {
             let c = biomes::climate(b);
             let want = c.has_precipitation && c.temperature < 0.15;
-            assert_eq!(biome_snows(b), want, "{b:?}");
+            assert_eq!(snows_at(b, 0, 63, 0), want, "{b:?}");
             let expect_snowy = matches!(b, Biome::SnowyPlains);
-            assert_eq!(biome_snows(b), expect_snowy, "{b:?} 判据对表");
+            assert_eq!(snows_at(b, 0, 63, 0), expect_snowy, "{b:?} 判据对表");
         }
+    }
+
+    /// 种子扫描集 × chunk(0,0) 全列，返回首个 taiga 列；找不到直接
+    /// panic（#191 尾款③：防真空通过——旧 leaves 测试暖 seed 静默 return）。
+    fn first_taiga_column() -> (u64, i32, i32) {
+        for seed in [1u64, 7, 13, 42, 99, 123, 777, 2026, 31337, 555] {
+            let orch = Orchestrator::new(seed);
+            for cz in 0..16_i32 {
+                for cx in 0..16_i32 {
+                    if orch.biome_at(cx, cz) == Biome::Taiga {
+                        return (seed, cx, cz);
+                    }
+                }
+            }
+        }
+        panic!("种子集合内未找到 taiga 列——请扩种子集而非放宽断言");
     }
 
     /// 手搭列：雪原群系柱（水湖列 + 草列 + 叶列）→ 冰/雪层/无雪正确
@@ -177,61 +192,91 @@ mod tests {
             }
         }
         apply(&orch, 0, 0, &mut vox);
-        // 断言逐列与判据一致：雪原列水→冰 + 雪层；暖列原样。
+        // 断言逐列与实物两判据一致（y=63/64 ≤ sea+17=80，无高度修正段）：
+        // 冻水门 = 调整温度 < 0.15（belowPos 处，无降水门）；
+        // 积雪门 = has_precipitation && 调整温度 < 0.15（topPos 处）。
         for cz in 0..16_i32 {
             for cx in 0..16_i32 {
-                let cold = biome_snows(orch.biome_at(cx, cz));
+                let b = orch.biome_at(cx, cz);
+                let freeze =
+                    biomes::height_adjusted_temperature(b, cx, 63, cz, mcv_core::SEA_LEVEL) < 0.15;
+                let snow = snows_at(b, cx, 64, cz);
                 let ground = vox[mcv_core::vidx(cx as usize, 63, cz as usize)];
                 let above = vox[mcv_core::vidx(cx as usize, 64, cz as usize)];
-                if cold {
-                    if cx == 0 && cz == 0 {
-                        assert_eq!(ground, ICE, "雪原水列应冻冰");
-                    } else {
-                        assert_eq!(ground, SNOW_GRASS, "雪原草列应补 snowy（本仓单方块表示）");
-                    }
-                    assert_eq!(above, SNOW_LAYER, "雪原列顶应有雪层");
+                if cx == 0 && cz == 0 {
+                    assert_eq!(ground, if freeze { ICE } else { WATER }, "水列冻冰门");
                 } else {
                     assert_eq!(
                         ground,
-                        if cx == 0 && cz == 0 { WATER } else { GRASS },
-                        "暖列不得改动"
+                        if snow { SNOW_GRASS } else { GRASS },
+                        "积雪草列 snowy 改写"
                     );
-                    assert_eq!(above, AIR, "暖列不得降雪");
                 }
+                assert_eq!(above, if snow { SNOW_LAYER } else { AIR }, "雪层门");
             }
         }
     }
 
-    /// 叶不承托（canSupportRigidBlock）：叶顶列无雪片。
+    /** 高度调整温度回归锁（#191 尾款②③）：taiga（基础 0.25，旧判据
+    「<0.15」恒假 → 高山带此前**不雪**）高山列 y=200/雪位 201 > 168
+    （任意噪声值 v 下 v+dy ≥ 113 > 80，biomes.rs 界带锁同源推演）实物化
+    积雪；低山对照 y=150（≤152 恒 ≥0.15 带）前后一致不雪——锁死「错雪」
+    方向，只放开「少雪」方向。 */
     #[test]
-    fn leaves_do_not_support_snow() {
-        let seed = 2026;
+    fn taiga_high_alpine_column_snows_regression() {
+        let (seed, cx, cz) = first_taiga_column();
         let orch = Orchestrator::new(seed);
-        // 找一个雪原列（扫全块找 cold 列坐标，再单独构造）。
-        let mut cold_at = None;
-        for cz in 0..16_i32 {
-            for cx in 0..16_i32 {
-                if biome_snows(orch.biome_at(cx, cz)) {
-                    cold_at = Some((cx, cz));
-                    break;
-                }
-            }
-            if cold_at.is_some() {
-                break;
-            }
-        }
-        // 该 seed 下可能整块皆暖——构造性跳过（判据本身已有表测锁定）。
-        let Some((cx, cz)) = cold_at else { return };
+        // 环境自证：该列雪位确实越界。
+        assert!(
+            snows_at(orch.biome_at(cx, cz), cx, 201, cz),
+            "taiga y=201 判据应越界 (seed={seed},col=({cx},{cz}))"
+        );
         let mut vox = vec![0u16; mcv_core::CHUNK_VOL];
-        vox[mcv_core::vidx(cx as usize, 63, cz as usize)] = ids::SPRUCE_LEAVES;
+        vox[mcv_core::vidx(cx as usize, 200, cz as usize)] = GRASS;
         apply(&orch, 0, 0, &mut vox);
         assert_eq!(
-            vox[mcv_core::vidx(cx as usize, 64, cz as usize)],
+            vox[mcv_core::vidx(cx as usize, 201, cz as usize)],
+            SNOW_LAYER,
+            "taiga 高山列实物化积雪（本刀前为「不雪」——回归锁）"
+        );
+        assert_eq!(
+            vox[mcv_core::vidx(cx as usize, 200, cz as usize)],
+            SNOW_GRASS,
+            "高山草块补 snowy"
+        );
+        // 低山对照：y=150（雪位 151 ≤ sea+17+…界带内恒 ≥0.15）不得雪。
+        assert!(
+            !snows_at(orch.biome_at(cx, cz), cx, 151, cz),
+            "y=151 恒不雪"
+        );
+        let mut vox2 = vec![0u16; mcv_core::CHUNK_VOL];
+        vox2[mcv_core::vidx(cx as usize, 150, cz as usize)] = GRASS;
+        apply(&orch, 0, 0, &mut vox2);
+        assert_eq!(vox2[mcv_core::vidx(cx as usize, 151, cz as usize)], AIR);
+        assert_eq!(vox2[mcv_core::vidx(cx as usize, 150, cz as usize)], GRASS);
+    }
+
+    /// 叶不承托（canSupportRigidBlock）：叶顶列无雪片——**真雪环境**下
+    /// 触发（#191 尾款③：旧版在暖 seed 下 `cold_at=None → return` 真空
+    /// 通过；现锚定 taiga 高山列，先断言环境恒雪再验叶拒雪）。
+    #[test]
+    fn leaves_do_not_support_snow() {
+        let (seed, cx, cz) = first_taiga_column();
+        let orch = Orchestrator::new(seed);
+        assert!(
+            snows_at(orch.biome_at(cx, cz), cx, 201, cz),
+            "环境必须真雪，否则本测试退化为真空通过 (seed={seed})"
+        );
+        let mut vox = vec![0u16; mcv_core::CHUNK_VOL];
+        vox[mcv_core::vidx(cx as usize, 200, cz as usize)] = ids::SPRUCE_LEAVES;
+        apply(&orch, 0, 0, &mut vox);
+        assert_eq!(
+            vox[mcv_core::vidx(cx as usize, 201, cz as usize)],
             AIR,
             "叶上不得积雪（canSupportRigidBlock）"
         );
         assert_eq!(
-            vox[mcv_core::vidx(cx as usize, 63, cz as usize)],
+            vox[mcv_core::vidx(cx as usize, 200, cz as usize)],
             ids::SPRUCE_LEAVES,
             "叶不受 snowy 改写"
         );
