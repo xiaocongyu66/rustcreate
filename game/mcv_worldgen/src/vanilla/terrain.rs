@@ -892,8 +892,12 @@ impl Orchestrator {
     }
 
     /// Pillars 函数（`density_function/overworld/caves/pillars.json` 逐节点
-    /// 对位，cache_once 为纯缓存不改语义）：
-    /// `2·P(bx·25, y·0.3, bz·25) · (−1 − R) · cube(0.55 + 0.55·T)`
+    /// 对位，cache_once 为纯缓存不改语义）：实物外层是 **add**——
+    /// `mul{ add{ mul{2.0, P}, add{−1.0, mul{−1.0, R}} }, cube{…} }`，
+    /// 即 `(2·P − 1 − R) · cube(0.55 + 0.55·T)`。
+    /// 旧实现把该 add 误作 mul（`2P·(−1−R)·T³`）：场符号翻转、激活域镜像
+    /// ——P=0.9/R=0 实物门开（+0.8·c³），旧实现门关；P=−0.9/R=0 实物门关
+    /// （−2.8·c³），旧实现门开（python 对拍见本刀提交信息）。
     /// （P=pillar noise xz_scale 25.0/y_scale 0.3；R=pillar_rareness
     /// xz/y 1.0；T=pillar_thickness xz/y 1.0）。消费侧（final_density
     /// out_of_range 支外层 max）：值 < 0.03 → −10⁶（max 恒不生效）；
@@ -903,7 +907,8 @@ impl Orchestrator {
         let r = self.pillar_rareness.get_value(bx, y_mc, bz);
         let t = self.pillar_thickness.get_value(bx, y_mc, bz);
         let c = 0.55 + 0.55 * t;
-        (2.0 * p) * (-1.0 - r) * (c * c * c)
+        // 实物 add 结构（pillars.json :5-31）：add(mul(2.0,P), add(−1, mul(−1,R)))
+        ((2.0 * p) + (-1.0 - r)) * (c * c * c)
     }
 
     /// Noodle 函数（`density_function/overworld/caves/noodle.json` 逐节点

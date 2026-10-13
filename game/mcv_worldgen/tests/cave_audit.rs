@@ -165,7 +165,9 @@ fn cave_audit_stats() {
         XW, air_total
     );
     // 连通性下限只防「洞网全碎片化」系统病（carver 管层缺席导致的细洞
-    // 连通性偏弱是已知缺口 CAVE-2，量化数值以 K-CAVE-AUDIT 日志为准）。
+    // 连通性偏弱是既有缺口，登记于 KNOWN-DIVERGENCE CAVE-1 ③（与本文件
+    // 头注 :9-11 同口径；旧注释误写「CAVE-2」为悬空引用，条目从未存在，
+    // 缺口实体即 CAVE-1 ③，不另立空洞条目），量化数值以 K-CAVE-AUDIT 日志为准）。
     assert!(biggest > 50, "最大洞体仅 {biggest} 格——洞网全碎片化病");
 }
 

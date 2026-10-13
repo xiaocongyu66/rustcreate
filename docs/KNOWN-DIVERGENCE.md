@@ -378,11 +378,15 @@ int 域溢出乘细节保留）、`fromHashOf(name)→forkPositional→at().next
 spaghetti_roughness、underground 奶酪、slide/夹逼常数——数值对照
 tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
 
-1. **pillars**〔已销账 #192 洞穴改进波〕：`caves/pillars.json` 实物接线
-   （terrain.rs `Orchestrator::pillars`——`2·P(25, 0.3)·(−1−R)·
-   cube(0.55+0.55·T)` 逐节点对位 + final_density out_of_range 外层 max
-   `range_choice(<0.03 → −10⁶)`）。前后量化见本分支 CI K-CAVE-AUDIT 日志
-   （ci.yml --nocapture 步，跨提交对照）。
+1. **pillars**〔活跃——#192 首版接线有结构性错误，修复刀在途，CI 绿后凭
+   实物结构+python 对拍+run id 重新销账〕：`caves/pillars.json` 实物外层
+   为 **add** 结构 `mul{ add{ mul{2.0, P}, add{−1.0, mul{−1.0, R}} },
+   cube{ add{0.55, mul{0.55, T}} } }`（pillars.json:4-48），即
+   `(2P − 1 − R)·cube(0.55+0.55·T)`；首版误作 mul `2P·(−1−R)·T³`——场
+   符号翻转、激活域镜像（P=0.9/R=0：实物 +0.8·c³ 门开，旧 −1.8·c³ 门关；
+   P=−0.9/R=0：实物 −2.8·c³ 门关，旧 +1.8·c³ 门开）。修后接 final_density
+   out_of_range 外层 max `range_choice(<0.03 → −10⁶)` 口径不变。前后量化
+   见本分支 CI K-CAVE-AUDIT 日志（ci.yml --nocapture 步，跨提交对照）。
 2. **noodle**〔已销账 #192 洞穴改进波〕：`caves/noodle.json` 实物接线
    （terrain.rs `Orchestrator::noodle`——掩膜 range_choice y∈[−60,321) +
    `−0.075−0.025·thickness + 1.5·max(|ridgeA|,|ridgeB|)`，final_density
