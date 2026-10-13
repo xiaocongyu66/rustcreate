@@ -20,8 +20,20 @@ struct Tv {
     ao: u8,
     flags: u8,
     pad: [u8; 2],
-    // #191 顶点色（Unorm8x4）——测试顶点恒白（乘算单位元）。
+    // #191 顶点色（Unorm8x4）。真机由网格器按气候场填充；测试手搭顶点
+    // 用 [`tint_for`] 复刻旧「层号 LUT + plains 基线」的同值（草族
+    // #91BD59 = plains temp 0.8/rain 0.4 colormap 查色，乘序片元↔顶点
+    // 对平面等价，像素期望随旧基线不动）。
     tint: [u8; 4],
+}
+
+/// 层号 → 测试顶点 tint（草族 plains 基线；其余 = 白，乘算单位元）。
+fn tint_for(layer: u16) -> [u8; 4] {
+    match mcv_core::tint::tint_kind(layer) {
+        mcv_core::tint::TINT_GRASS => [0x91, 0xBD, 0x59, 0xFF],
+        mcv_core::tint::TINT_FOLIAGE => [0x77, 0xAB, 0x2F, 0xFF],
+        _ => [0xFF, 0xFF, 0xFF, 0xFF],
+    }
 }
 
 fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
@@ -36,7 +48,7 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::GRASS_TOP),
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -695,7 +707,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(layer),
     };
     let verts = [
         ground([0.0, 100.0, 8.0], [0, 0], mcv_core::tiles::GRASS_TOP),
@@ -725,7 +737,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         ao: 3,
         flags: 0x2 | 0x8,
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::WATER),
     };
     let wverts = [
         water_v([0.0, 99.6, 0.0], [0, 0]),
@@ -908,7 +920,7 @@ fn gles_fallback_world_frame_smoke() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::GRASS_TOP),
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -1873,7 +1885,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::GRASS_TOP),
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -1981,7 +1993,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(layer),
     };
     let verts_for = |layer: u16| {
         [
@@ -2093,7 +2105,7 @@ fn unload_removes_member_from_batch() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::GRASS_TOP),
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -2141,7 +2153,7 @@ fn staging_upload_flush_contract() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
-        tint: [0xFF, 0xFF, 0xFF, 0xFF],
+        tint: tint_for(mcv_core::tiles::GRASS_TOP),
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),

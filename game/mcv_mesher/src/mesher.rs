@@ -1199,17 +1199,17 @@ pub fn build_mesh(
     // 回落每面单采（M8 平采语义，回滚面）。
     let smooth = smooth_light_enabled();
     let mut out = MeshData::default();
-    if kind == 0 {
-        if let Some(TintInput {
+    // clippy::collapsible_if：kind 门与解包合并（let_chain，1.88+ 稳定）。
+    if kind == 0
+        && let Some(TintInput {
             block_x,
             block_z,
             tint,
         }) = tint_in
-        {
-            out.tint = Some(tint);
-            out.tint_bx0 = block_x;
-            out.tint_bz0 = block_z;
-        }
+    {
+        out.tint = Some(tint);
+        out.tint_bx0 = block_x;
+        out.tint_bz0 = block_z;
     }
     build_pass(&n, kind == 1, &mut out, tables(), smooth);
     if kind == 0 {

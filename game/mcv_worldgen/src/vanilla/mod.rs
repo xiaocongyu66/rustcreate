@@ -147,17 +147,18 @@ pub fn biome_point_list() -> Vec<(biomes::ParameterPoint, biomes::Biome)> {
 #[must_use]
 pub fn biome_climate_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[f64; 2]> {
     let sampler = climate::ClimateSampler::new(world_seed);
-    // 闭包按 &sampler 借用（ClimateSampler 非 Copy；`move` 捕获会在首次
-    // 调用即移出，flat_map 复用闭包 → E0507）。
-    (0..w as i32)
-        .flat_map(|dz| {
-            (0..w as i32).map(|dx| {
-                let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
-                let c = biomes::climate(b);
-                [c.temperature, c.downfall]
-            })
-        })
-        .collect()
+    // 行主序逐格步进（闭包式 flat_map 在 ClimateSampler 非 Copy 下两头
+    // 堵死：借用 `move` → 闭包 outlive dz E0373，捕获值 → 首次调用移出
+    // E0507——朴素循环无此类约束，且语义逐字 = 文档「逐格步进 1」）。
+    let mut out = Vec::with_capacity(w * w);
+    for dz in 0..w as i32 {
+        for dx in 0..w as i32 {
+            let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
+            let c = biomes::climate(b);
+            out.push([c.temperature, c.downfall]);
+        }
+    }
+    out
 }
 
 /// w×w 网格的逐列天空色（`attributes."minecraft:visual/sky_color"`），
@@ -166,12 +167,13 @@ pub fn biome_climate_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[f
 #[must_use]
 pub fn biome_sky_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[u8; 3]> {
     let sampler = climate::ClimateSampler::new(world_seed);
-    (0..w as i32)
-        .flat_map(|dz| {
-            (0..w as i32).map(|dx| {
-                let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
-                biomes::climate(b).sky_color
-            })
-        })
-        .collect()
+    // 同款朴素循环（biome_climate_grid 头注 E0373/E0507 两头堵说明）。
+    let mut out = Vec::with_capacity(w * w);
+    for dz in 0..w as i32 {
+        for dx in 0..w as i32 {
+            let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
+            out.push(biomes::climate(b).sky_color);
+        }
+    }
+    out
 }
