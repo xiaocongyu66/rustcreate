@@ -5,10 +5,19 @@
 //! `1b 2s 3L 4.5f 6.7d`(后缀 l/f/d 大小写均可)、无后缀 int/double(含
 //! `1e3` 指数)、NaN/Infinity、单/双引号字符串(转义 `\\ \' \" \n \r \t
 //! \uXXXX`)、裸串 `[0-9A-Za-z_\-.+]`、`:` 分隔、`,` 容忍尾逗号、`//` 行注释、
-//! 数组糖 `[B;1b,2b]` `[I;…]` `[L;…]`。
+//! 数组糖 `[B;1b,2b]` `[I;…]` `[L;…]`(空数组显式声明 `[B;]` `[I;]` `[L;]`)。
 //!
-//! 已知缺口(登记为债,见 KNOWN-DIVERGENCE.md NBT-SNBT):十六进制整数
-//! (`0x..`)、数字内下划线分隔符(`1_000`)、`[;]` 显式空数组类型声明。
+//! 数值面按 26.1 `SnbtGrammar`(packrat)实物:十六进制 `0x..`/二进制 `0b..`
+//! (默认无符号、贪心读位、可组合 b/s/l 后缀)、数字内下划线(首尾非法、
+//! 中间任意,NumberRunParseRule.java:36)、十进制整数禁前导零(cut 硬错)、
+//! 无后缀超 i32 报错(原版 NumberFormatException「too big」)。数组域内
+//! 元素只收整数字面量,小数/越域/非法后缀报错;后缀域矩阵按 ArrayPrefix
+//! (B:{b} I:{b,s} L:{b,s,l},无后缀=数组类型)。
+//!
+//! 26.1 新增扩展面不在本底座子集(按 #177 口径不登记):`i`/`ub`/`ss` 等
+//! 新后缀、`true`/`false` 布尔字面量、`bool()`/`uuid()` 内置调用;NaN/
+//! Infinity 保留为本仓浮点字面量(26.1 packrat 已改判裸串,本仓 writer
+//! 产 `NaN` 依赖其可读回,往返闭环自洽)。
 
 use crate::error::NbtError;
 use crate::tag::{NbtCompound, NbtList, NbtValue};
@@ -52,8 +61,10 @@ pub fn write_snbt(v: &NbtValue, out: &mut String) {
         NbtValue::Float(f) => out.push_str(&float_text(*f as f64, 'f')),
         NbtValue::Double(d) => out.push_str(&float_text(*d, 'd')),
         NbtValue::ByteArray(a) => {
+            // 空数组写显式类型声明(SnbtPrinterTagVisitor.visitByteArray:
+            // 89-102 实物:空也输出 `[B;]`,`[]` 会读回空 list 破坏往返)。
             if a.is_empty() {
-                out.push_str("[]");
+                out.push_str("[B;]");
             } else {
                 out.push_str("[B;");
                 for (i, b) in a.iter().enumerate() {
@@ -95,10 +106,7 @@ pub fn write_snbt(v: &NbtValue, out: &mut String) {
 
 fn write_num_array(out: &mut String, mark: &str, items: impl Iterator<Item = String>) {
     let parts: Vec<String> = items.collect();
-    if parts.is_empty() {
-        out.push_str("[]");
-        return;
-    }
+    // 空数组显式 `[I;]`/`[L;]`(同 visitByteArray 空数组实物)。
     out.push_str(&format!("[{mark};"));
     out.push_str(&parts.join(","));
     out.push(']');
@@ -233,7 +241,11 @@ impl<'a> Parser<'a> {
                     self.pos += 1;
                 }
                 let raw: String = self.s[start..self.pos].iter().collect();
-                Ok(parse_bare(&raw).unwrap_or(NbtValue::String(raw)))
+                match classify_bare(&raw, NumKind::Int) {
+                    Ok(Bare::Value(v)) => Ok(v),
+                    Ok(Bare::Str) => Ok(NbtValue::String(raw)),
+                    Err(msg) => Err(self.err_here(&msg)),
+                }
             }
             other => Err(self.err_here(&format!("expected a value, got {other:?}"))),
         }
@@ -287,12 +299,17 @@ impl<'a> Parser<'a> {
 
     fn parse_list_or_array(&mut self) -> Result<NbtValue, NbtError> {
         self.expect('[')?;
-        // 数组糖:[B; / [I; / [L;(标记与分号间容忍空白)。
-        if let Some(mark) = self.peek()
+        // 数组糖:[B; / [I; / [L;('[' 后、标记与分号间均容忍空白,原版
+        // StringReader 终端逐项 skipWhitespace)。
+        let mut probe = self.pos;
+        while self.s.get(probe).is_some_and(char::is_whitespace) {
+            probe += 1;
+        }
+        if let Some(mark) = self.s.get(probe).copied()
             && matches!(mark, 'B' | 'I' | 'L')
         {
-            let mut probe = self.pos + 1;
-            while self.s.get(probe) == Some(&' ') || self.s.get(probe) == Some(&'\t') {
+            probe += 1;
+            while self.s.get(probe).is_some_and(char::is_whitespace) {
                 probe += 1;
             }
             if self.s.get(probe) == Some(&';') {
@@ -332,6 +349,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_array_sugar(&mut self, mark: char) -> Result<NbtValue, NbtError> {
+        // 无后缀元素的默认目标类型=数组本身(SnbtGrammar ArrayPrefix
+        // .computeType:SnbtGrammar.java:781)。
+        let default = match mark {
+            'B' => NumKind::Byte,
+            'I' => NumKind::Int,
+            _ => NumKind::Long,
+        };
         // 三个候选槽,只填 mark 对应的那条(结构直白,免二次映射丢元素)。
         let mut bytes: Vec<i8> = Vec::new();
         let mut ints: Vec<i32> = Vec::new();
@@ -355,36 +379,42 @@ impl<'a> Parser<'a> {
                 return Err(self.err_here("expected a number in array"));
             }
             let raw: String = self.s[start..self.pos].iter().collect();
-            let v = parse_bare(&raw).ok_or_else(|| self.err_here("bad number in array"))?;
+            // 数组域=intArrayEntries(纯 integerLiteral,intArrayEntries 用
+            // integerLiteralRule:SnbtGrammar.java:639):小数/引号串/裸词
+            // 一律拒绝(原版截断宽容已撤销)。
+            let v = match classify_bare(&raw, default) {
+                Ok(Bare::Value(
+                    v @ (NbtValue::Byte(_)
+                    | NbtValue::Short(_)
+                    | NbtValue::Int(_)
+                    | NbtValue::Long(_)),
+                )) => v,
+                Ok(Bare::Value(_)) => {
+                    return Err(
+                        self.err_here(&format!("`{raw}` is not an integer literal in array"))
+                    );
+                }
+                Ok(Bare::Str) | Err(_) => {
+                    return Err(self.err_here(&format!("bad integer literal `{raw}` in array")));
+                }
+            };
+            // 后缀域矩阵(ArrayPrefix.isAllowed:SnbtGrammar.java:763):
+            // B:{b}; I:{b,s,(i),无}; L:{b,s,(i),l,无}。`i` 后缀不在本仓子集。
+            let kind = NumKind::of(&v);
+            let allowed = match mark {
+                'B' => kind == NumKind::Byte,
+                'I' => matches!(kind, NumKind::Byte | NumKind::Short | NumKind::Int),
+                _ => true,
+            };
+            if !allowed {
+                return Err(self.err_here(&format!(
+                    "invalid array element type for [{mark};] in `{raw}`"
+                )));
+            }
             match mark {
-                // 数组糖允许无后缀/异型后缀标量,但值必须在目标类型域内
-                // (原版越域直接报错,同语义)。
-                'B' => {
-                    let n = v
-                        .as_i32()
-                        .ok_or_else(|| self.err_here("non-numeric in [B;]"))?;
-                    if !(i8::MIN as i32..=i8::MAX as i32).contains(&n) {
-                        return Err(self.err_here("[B;] element out of byte range"));
-                    }
-                    bytes.push(n as i8);
-                }
-                'I' => {
-                    let n = v
-                        .as_i64()
-                        .ok_or_else(|| self.err_here("non-numeric in [I;]"))?;
-                    let Ok(n32) = i32::try_from(n) else {
-                        return Err(self.err_here("[I;] element out of int range"));
-                    };
-                    // 分数(如 1.5)经 as_i64 截断——原版也拒绝带小数元素,
-                    // 但域内整数化偏差登记为宽容(见 KNOWN-DIVERGENCE)。
-                    ints.push(n32);
-                }
-                _ => {
-                    let n = v
-                        .as_i64()
-                        .ok_or_else(|| self.err_here("non-numeric in [L;]"))?;
-                    longs.push(n);
-                }
+                'B' => bytes.push(v.as_i32().unwrap_or(0) as i8),
+                'I' => ints.push(v.as_i32().unwrap_or(0)),
+                _ => longs.push(v.as_i64().unwrap_or(0)),
             }
             self.skip_ws();
             match self.peek() {
@@ -452,106 +482,341 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// 裸 token → 标量值;不是合法数字则 None(调用侧按 String 处理)。
-fn parse_bare(raw: &str) -> Option<NbtValue> {
-    // 原版拼写的特殊常量(NaN/Infinity),可带 f/d 后缀。
-    let (body, suffix) = split_suffix(raw);
+/// 标量整数类型(SnbtGrammar TypeSuffix 的整数四元子集)。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NumKind {
+    Byte,
+    Short,
+    Int,
+    Long,
+}
+
+impl NumKind {
+    fn of(v: &NbtValue) -> Self {
+        match v {
+            NbtValue::Byte(_) => NumKind::Byte,
+            NbtValue::Short(_) => NumKind::Short,
+            NbtValue::Int(_) => NumKind::Int,
+            _ => NumKind::Long,
+        }
+    }
+}
+
+/// 裸 token 分类结果:数值 / 裸串 / 数值面非法(报错)。
+enum Bare {
+    Value(NbtValue),
+    Str,
+}
+
+/// 裸 token → 标量。原版语义(SnbtGrammar.createParser):首字符为符号/
+/// 数字/`.` 的 token 走数值分支,不合法即整体报错(cut 后回退 unquoted
+/// 分支又因 canStartNumber 报 invalid_unquoted_start——两路都是错);
+/// 字母/下划线开头只能是裸串(canStartNumber:SnbtGrammar.java:164)。
+fn classify_bare(raw: &str, default: NumKind) -> Result<Bare, String> {
+    if raw.is_empty() {
+        return Ok(Bare::Str);
+    }
+    // 原版拼写的特殊常量(NaN/Infinity),可带 f/d 后缀(本仓保留字面量,
+    // 见模块头注)。
+    if let Some(v) = special_const(raw) {
+        return Ok(Bare::Value(v));
+    }
+    let first = raw.as_bytes()[0];
+    if !(first == b'+' || first == b'-' || first == b'.' || first.is_ascii_digit()) {
+        return Ok(Bare::Str);
+    }
+    Ok(Bare::Value(parse_number(raw, default)?))
+}
+
+fn special_const(raw: &str) -> Option<NbtValue> {
+    let (body, suffix) = match raw.as_bytes().last() {
+        Some(c) if matches!(c, b'f' | b'F' | b'd' | b'D') => (&raw[..raw.len() - 1], Some(*c)),
+        _ => (raw, None),
+    };
     match body {
-        "NaN" | "nan" => {
-            return Some(match suffix {
-                Some('f') => NbtValue::Float(f32::NAN),
-                _ => NbtValue::Double(f64::NAN),
-            });
-        }
-        "Infinity" | "-Infinity" | "+Infinity" => {
-            let inf = if body.starts_with('-') {
-                f64::NEG_INFINITY
-            } else {
-                f64::INFINITY
-            };
-            return Some(match suffix {
-                Some('f') => NbtValue::Float(inf as f32),
-                _ => NbtValue::Double(inf),
-            });
-        }
-        _ => {}
-    }
-    if !looks_numeric(body) {
-        return None;
-    }
-    match suffix {
-        Some('b') => body.parse::<i8>().ok().map(NbtValue::Byte),
-        Some('s') => body.parse::<i16>().ok().map(NbtValue::Short),
-        Some('l') => body.parse::<i64>().ok().map(NbtValue::Long),
-        Some('f') => body.parse::<f32>().ok().map(NbtValue::Float),
-        Some('d') => body.parse::<f64>().ok().map(NbtValue::Double),
-        None => {
-            if let Ok(i) = body.parse::<i32>() {
-                return Some(NbtValue::Int(i));
-            }
-            // 无后缀:整数溢出 i32 时(如 9999999999)→ 按裸串处理(登记宽容)。
-            body.parse::<f64>().ok().map(NbtValue::Double)
-        }
-        // split_suffix 已把后缀规范化为小写。
+        "NaN" | "nan" => Some(match suffix {
+            Some(b'f') | Some(b'F') => NbtValue::Float(f32::NAN),
+            _ => NbtValue::Double(f64::NAN),
+        }),
+        "Infinity" | "+Infinity" => Some(match suffix {
+            Some(b'f') | Some(b'F') => NbtValue::Float(f32::INFINITY),
+            _ => NbtValue::Double(f64::INFINITY),
+        }),
+        "-Infinity" => Some(match suffix {
+            Some(b'f') | Some(b'F') => NbtValue::Float(f32::NEG_INFINITY),
+            _ => NbtValue::Double(f64::NEG_INFINITY),
+        }),
         _ => None,
     }
 }
 
-/// 拆尾部类型后缀;返回(主体, 规范化后缀)。后缀只在整体像数字时剥离,
-/// 避免把 "abc"(b 结尾)、"123abc" 误判。
-fn split_suffix(raw: &str) -> (&str, Option<char>) {
-    let bytes = raw.as_bytes();
-    if bytes.is_empty() {
-        return (raw, None);
+/// 数字主入口:sign? 后分 hex(`0x`)、binary(`0b`)、十进制(整数/浮点)。
+fn parse_number(raw: &str, default: NumKind) -> Result<NbtValue, String> {
+    let b = raw.as_bytes();
+    let mut i = 0;
+    let minus = b[0] == b'-';
+    if b[0] == b'+' || b[0] == b'-' {
+        i = 1;
     }
-    let last = raw[raw.len() - 1..].chars().next().unwrap();
-    if !matches!(last, 'b' | 's' | 'l' | 'L' | 'f' | 'd' | 'D') {
-        return (raw, None);
+    let body = &b[i..];
+    if body.is_empty() {
+        return Err("expected digits after sign".to_string());
     }
-    let body = &raw[..raw.len() - last.len_utf8()];
-    let body_like_number = looks_numeric(body)
-        || matches!(body, "NaN" | "nan" | "Infinity" | "-Infinity" | "+Infinity");
-    if body_like_number {
-        (body, Some(last.to_ascii_lowercase()))
-    } else {
-        (raw, None)
+    if body[0] == b'0' && body.len() >= 2 && (body[1] | 0x20) == b'x' {
+        return radix_int(body, minus, 16, 2, default, "hex");
+    }
+    if body[0] == b'0' && body.len() >= 2 && (body[1] | 0x20) == b'b' {
+        // 原版 `0b`+非二进位回退为 marker「0」+后缀 b(SnbtGrammar.java:357
+        // 二进位支无 cut,失败回退 :359 marker);整 token 恰为 `0b` 时
+        // 即 Byte(0),如 `0b5` 则残留 → 错。
+        let (digits, j, err) = scan_run(body, 2, |c| c == b'0' || c == b'1');
+        if let Some(e) = err {
+            return Err(e.to_string());
+        }
+        if digits.is_empty() {
+            return if body.len() == 2 {
+                Ok(NbtValue::Byte(0))
+            } else {
+                Err("expected binary digits after `0b`".to_string())
+            };
+        }
+        // 二进位默认无符号(SignedPrefix.UNSIGNED:SnbtGrammar.java:804),
+        // 负号即错。
+        return finish_radix(&digits, j, body, minus, 2, default, "binary");
+    }
+    decimal_or_float(body, minus, default)
+}
+
+/// 最长数字串:accepted 字符+`_` 贪婪;空串→(空,原位,None);首尾 `_`
+/// →错(NumberRunParseRule.java:36 实物——中间下划线任意,含连续)。
+/// 返回的下划线已剥离。
+fn scan_run(
+    b: &[u8],
+    start: usize,
+    accept: fn(u8) -> bool,
+) -> (String, usize, Option<&'static str>) {
+    let mut i = start;
+    while i < b.len() && (accept(b[i]) || b[i] == b'_') {
+        i += 1;
+    }
+    if i == start {
+        return (String::new(), start, None);
+    }
+    if b[start] == b'_' || b[i - 1] == b'_' {
+        return (
+            String::new(),
+            i,
+            Some("underscore not allowed at numeral edges"),
+        );
+    }
+    let digits: String = b[start..i]
+        .iter()
+        .map(|&c| c as char)
+        .filter(|&c| c != '_')
+        .collect();
+    (digits, i, None)
+}
+
+fn int_suffix_kind(c: u8) -> Result<NumKind, String> {
+    match c {
+        b'b' | b'B' => Ok(NumKind::Byte),
+        b's' | b'S' => Ok(NumKind::Short),
+        b'l' | b'L' => Ok(NumKind::Long),
+        _ => Err(format!("bad integer suffix `{}`", c as char)),
     }
 }
 
-/// 是否形如 `[+-]?digits(.digits)?([eE][+-]?digits)?`,且至少一位数字。
-fn looks_numeric(s: &str) -> bool {
-    let b = s.as_bytes();
-    let mut i = 0;
-    if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
-        i += 1;
+fn radix_int(
+    body: &[u8],
+    minus: bool,
+    radix: u32,
+    start: usize,
+    default: NumKind,
+    label: &str,
+) -> Result<NbtValue, String> {
+    let (digits, j, err) = scan_run(body, start, |c| c.is_ascii_hexdigit());
+    if let Some(e) = err {
+        return Err(e.to_string());
     }
-    let mut digits = false;
-    while i < b.len() && b[i].is_ascii_digit() {
-        i += 1;
-        digits = true;
+    if digits.is_empty() {
+        return Err(format!("expected {label} digits"));
     }
-    if i < b.len() && b[i] == b'.' {
-        i += 1;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-            digits = true;
+    finish_radix(&digits, j, body, minus, radix, default, label)
+}
+
+/// hex/二进位共用:后缀(可选、必须吃掉整个尾巴)、非负检查、无符号构建。
+/// `0b` 的空位支已在调用侧回退,这里 digits 恒非空。
+fn finish_radix(
+    digits: &str,
+    j: usize,
+    body: &[u8],
+    minus: bool,
+    radix: u32,
+    default: NumKind,
+    label: &str,
+) -> Result<NbtValue, String> {
+    let kind = match body.get(j) {
+        None => default,
+        Some(&c) => {
+            if j + 1 != body.len() {
+                return Err("trailing garbage after radix integer".to_string());
+            }
+            int_suffix_kind(c)?
         }
+    };
+    // BINARY/HEX 默认 SignedPrefix.UNSIGNED(SnbtGrammar.java:798-807):
+    // 带负号即 ERROR_EXPECTED_NON_NEGATIVE_NUMBER。
+    if minus {
+        return Err(format!("{label} literal must be non-negative"));
     }
-    if digits && i < b.len() && (b[i] == b'e' || b[i] == b'E') {
-        i += 1;
-        if i < b.len() && (b[i] == b'+' || b[i] == b'-') {
-            i += 1;
-        }
-        let mut exp_digits = false;
-        while i < b.len() && b[i].is_ascii_digit() {
-            i += 1;
-            exp_digits = true;
-        }
-        if !exp_digits {
-            return false;
-        }
+    let wrapped = |v: u64| match kind {
+        NumKind::Byte => NbtValue::Byte(v as u8 as i8),
+        NumKind::Short => NbtValue::Short(v as u16 as i16),
+        NumKind::Int => NbtValue::Int(v as u32 as i32),
+        NumKind::Long => NbtValue::Long(v as i64),
+    };
+    let width = match kind {
+        NumKind::Byte => 8,
+        NumKind::Short => 16,
+        NumKind::Int => 32,
+        NumKind::Long => 64,
+    };
+    // 无符号域检查:Integer.parseUnsignedInt 等要求值 < 2^width。
+    let v = u64::from_str_radix(digits, radix)
+        .map_err(|_| format!("{label} value out of range for {kind:?}"))?;
+    if width < 64 && v >= 1u64 << width {
+        return Err(format!("{label} value out of range for {kind:?}"));
     }
-    digits && i == b.len()
+    Ok(wrapped(v))
+}
+
+/// 十进制主体:整数字面量(sign? decnumeral suffix?)或浮点(floatLiteral
+/// 四支:SnbtGrammar.java:403-425)。
+fn decimal_or_float(body: &[u8], minus: bool, default: NumKind) -> Result<NbtValue, String> {
+    let (whole, j, err) = scan_run(body, 0, |c| c.is_ascii_digit());
+    if let Some(e) = err {
+        return Err(e.to_string());
+    }
+    if whole.is_empty() {
+        // 支 2:`.` 后小数位必需(floatLiteral SnbtGrammar.java:414-419,
+        // decimalNumeral 非 optional)。
+        if body[0] != b'.' {
+            return Err("expected digits".to_string());
+        }
+        let (frac, j, err) = scan_run(body, 1, |c| c.is_ascii_digit());
+        if let Some(e) = err {
+            return Err(e.to_string());
+        }
+        if frac.is_empty() {
+            return Err("expected digits after `.`".to_string());
+        }
+        return float_tail(body, minus, &format!("0.{frac}"), j);
+    }
+    match body.get(j) {
+        None => build_signed_decimal(&whole, minus, default),
+        Some(&c) if c == b'.' => {
+            // 支 1:小数位可空(`5.` 合法,Double.parseDouble 同义)。
+            let (frac, k, err) = scan_run(body, j + 1, |c| c.is_ascii_digit());
+            if let Some(e) = err {
+                return Err(e.to_string());
+            }
+            let frac = if frac.is_empty() {
+                "0".to_string()
+            } else {
+                frac
+            };
+            float_tail(body, minus, &format!("{whole}.{frac}"), k)
+        }
+        // 支 3/4:整数位直接进浮点尾巴(指数或 f/d 后缀至少其一)。
+        Some(&c) if (c | 0x20) == b'e' || matches!(c, b'f' | b'F' | b'd' | b'D') => {
+            float_tail(body, minus, &format!("{whole}.0"), j)
+        }
+        Some(&c) if matches!(c, b'b' | b'B' | b's' | b'S' | b'l' | b'L') => {
+            if j + 1 != body.len() {
+                return Err("trailing garbage after integer suffix".to_string());
+            }
+            build_signed_decimal(&whole, minus, int_suffix_kind(c)?)
+        }
+        Some(_) => Err("malformed numeric literal".to_string()),
+    }
+}
+
+/// 浮点尾巴:`(e sign? expdigits)? (f|d)?` 直到 token 末尾;mantissa 已
+/// 规范化为 `digits.digits`(floatLiteral 支 3 的 exponent 必需、支 4 的
+/// 后缀必需,由调用点保证进入本函数的 token 至少其一为真)。
+fn float_tail(body: &[u8], minus: bool, mantissa: &str, mut i: usize) -> Result<NbtValue, String> {
+    let mut exp_part = String::new();
+    if i < body.len() && (body[i] | 0x20) == b'e' {
+        let mut k = i + 1;
+        let eminus = body.get(k) == Some(&b'-');
+        if matches!(body.get(k), Some(&b'+') | Some(&b'-')) {
+            k += 1;
+        }
+        let (exp, j, err) = scan_run(body, k, |c| c.is_ascii_digit());
+        if let Some(e) = err {
+            return Err(e.to_string());
+        }
+        if exp.is_empty() {
+            return Err("expected exponent digits".to_string());
+        }
+        exp_part = format!("e{}{exp}", if eminus { "-" } else { "" });
+        i = j;
+    }
+    let suffix = if i >= body.len() {
+        None
+    } else {
+        let c = body[i];
+        if !matches!(c, b'f' | b'F' | b'd' | b'D') || i + 1 != body.len() {
+            return Err("trailing garbage after float literal".to_string());
+        }
+        Some(c)
+    };
+    build_float(
+        &format!("{}{mantissa}{exp_part}", if minus { "-" } else { "" }),
+        suffix,
+    )
+}
+
+fn build_float(text: &str, suffix: Option<u8>) -> Result<NbtValue, String> {
+    match suffix {
+        Some(b'f') | Some(b'F') => text
+            .parse::<f32>()
+            .map(NbtValue::Float)
+            .map_err(|_| format!("invalid float `{text}`")),
+        _ => text
+            .parse::<f64>()
+            .map(NbtValue::Double)
+            .map_err(|_| format!("invalid double `{text}`")),
+    }
+}
+
+/// 十进制整数:原版 grammar 层禁前导零(cut:SnbtGrammar.java:358),
+/// 有符号域检查(Byte.parseByte 等);无后缀超 i32 →「too big, use L」
+/// (NBT-NEGINT-LAX 撤销裸串宽容)。
+fn build_signed_decimal(digits: &str, minus: bool, kind: NumKind) -> Result<NbtValue, String> {
+    if digits.len() > 1 && digits.starts_with('0') {
+        return Err("leading zeros not allowed".to_string());
+    }
+    let sign = if minus { "-" } else { "" };
+    let text = format!("{sign}{digits}");
+    match kind {
+        NumKind::Byte => text
+            .parse::<i8>()
+            .map(NbtValue::Byte)
+            .map_err(|_| format!("value `{text}` out of byte range")),
+        NumKind::Short => text
+            .parse::<i16>()
+            .map(NbtValue::Short)
+            .map_err(|_| format!("value `{text}` out of short range")),
+        NumKind::Int => text
+            .parse::<i32>()
+            .map(NbtValue::Int)
+            .map_err(|_| format!("value `{text}` too big, use `L` suffix")),
+        NumKind::Long => text
+            .parse::<i64>()
+            .map(NbtValue::Long)
+            .map_err(|_| format!("value `{text}` out of long range")),
+    }
 }
 
 #[cfg(test)]
@@ -598,6 +863,111 @@ mod tests {
     fn bad_input_reports_offset() {
         let e = parse_snbt("{a:}").unwrap_err();
         assert!(matches!(e, NbtError::BadSnbt { .. }), "{e}");
+    }
+
+    fn num(src: &str) -> NbtValue {
+        parse_snbt(src).unwrap_or_else(|e| panic!("parse {src:?}: {e}"))
+    }
+
+    fn bad(src: &str) {
+        let e = parse_snbt(src).unwrap_or_else(|| panic!("{src:?} must be rejected"));
+        assert!(matches!(e, NbtError::BadSnbt { .. }), "{src:?} → {e}");
+    }
+
+    #[test]
+    fn hex_binary_literals_vanilla_semantics() {
+        // 无符号默认+宽度回绕(Integer.parseUnsignedInt:SnbtGrammar.java:856)。
+        assert_eq!(num("0xFF"), NbtValue::Int(255));
+        assert_eq!(num("0xFFFFFFFF"), NbtValue::Int(-1));
+        assert_eq!(num("0xF000s"), NbtValue::Short(-4096)); // 61440 → i16 回绕
+        assert_eq!(num("0xFFFFs"), NbtValue::Short(-1));
+        assert_eq!(num("0x1L"), NbtValue::Long(1));
+        // 贪心 HEX_NUMERAL:后缀 b 本身是十六进制位,被位流吸收(原版同)。
+        assert_eq!(num("0xffb"), NbtValue::Int(0xffb));
+        // 二进制:UNSIGNED 默认(SnbtGrammar.java:804);`0b` 空位回退
+        // marker「0」+后缀 b。
+        assert_eq!(num("0b101"), NbtValue::Int(5));
+        assert_eq!(num("0b11b"), NbtValue::Byte(3));
+        assert_eq!(num("0b"), NbtValue::Byte(0));
+        assert_eq!(num("0b1_0"), NbtValue::Int(2));
+        // 无符号面拒负号(ERROR_EXPECTED_NON_NEGATIVE_NUMBER)。
+        bad("-0x1");
+        bad("-0b1");
+        bad("0b2"); // 非二进位
+        bad("0xZZ");
+        bad("0x100000000"); // 超 u32 域
+        bad("0xF0000s"); // 超 u16 域
+    }
+
+    #[test]
+    fn underscore_separators_edge_rules() {
+        // NumberRunParseRule.java:36——串首尾 `_` 非法,中间任意(含连续)。
+        assert_eq!(num("1_000"), NbtValue::Int(1000));
+        assert_eq!(num("1__0"), NbtValue::Int(10)); // 剥离全部 `_` → "10"
+        assert_eq!(num("-1_0"), NbtValue::Int(-10));
+        assert_eq!(num("0x1_2"), NbtValue::Int(0x12));
+        assert_eq!(num("1_0.5_5e1_0"), NbtValue::Double(105_500_000_000.0));
+        assert_eq!(num(".5_5"), NbtValue::Double(0.55));
+        // 首字符非数字启动集 → 裸串(原版 canStartNumber:SnbtGrammar.java:164)。
+        assert_eq!(num("_1"), NbtValue::String("_1".into()));
+        bad("1_");
+        bad("0x_FF");
+        bad("1e_5");
+        bad("1._5");
+    }
+
+    #[test]
+    fn leading_zeros_and_int_overflow_rejected() {
+        // 前导零:grammar 层 cut(SnbtGrammar.java:358);浮点面不受限。
+        bad("07");
+        bad("00");
+        bad("07s");
+        assert_eq!(num("0"), NbtValue::Int(0));
+        assert_eq!(num("-0"), NbtValue::Int(0));
+        assert_eq!(num("0.5"), NbtValue::Double(0.5));
+        assert_eq!(num("07.5"), NbtValue::Double(7.5));
+        // NBT-NEGINT-LAX:无后缀超 i32 报错(原版 NumberFormatException,
+        // 撤销裸串/Double 宽容)。
+        bad("9999999999");
+        bad("2147483648");
+        bad("-2147483649");
+        assert_eq!(num("2147483647"), NbtValue::Int(i32::MAX));
+        assert_eq!(num("9223372036854775807L"), NbtValue::Long(i64::MAX));
+        // 数字开头的非数字 token:原版 invalid_unquoted_start,同为错。
+        bad("123abc");
+        bad("-");
+    }
+
+    #[test]
+    fn array_domain_matrix_and_empty_decls() {
+        // ArrayPrefix.isAllowed(SnbtGrammar.java:763):B:{b};I:{b,s};L:{b,s,l}。
+        assert_eq!(num("[B;]"), NbtValue::ByteArray(vec![]));
+        assert_eq!(num("[I;]"), NbtValue::IntArray(vec![]));
+        assert_eq!(num("[L;]"), NbtValue::LongArray(vec![]));
+        bad("[;]"); // 原版无裸 `[;]`,arrayPrefix 只有 B/L/I
+        assert_eq!(num("[I;0xff,2]"), NbtValue::IntArray(vec![255, 2]));
+        assert_eq!(num("[L;1,2b,3s,4l]"), NbtValue::LongArray(vec![1, 2, 3, 4]));
+        assert_eq!(num("[B;0xff]"), NbtValue::ByteArray(vec![-1]));
+        assert_eq!(num("[B;127]"), NbtValue::ByteArray(vec![127]));
+        // 撤销截断宽容:小数元素按原版拒绝(intArrayEntries=纯整数字面量)。
+        bad("[I;1.5]");
+        bad("[L;1.0]");
+        bad("[B;255]"); // Byte.parseByte 域检查
+        bad("[B;300]");
+        bad("[B;1s]"); // 后缀域
+        bad("[I;1l]"); // 后缀域
+        // '[' 后/标记与分号间容忍空白(StringReader 终端 skipWhitespace)。
+        assert_eq!(num("[ B; 1b ]"), NbtValue::ByteArray(vec![1]));
+    }
+
+    #[test]
+    fn empty_typed_arrays_roundtrip_vanilla_style() {
+        // 原版 printer 空数组写 `[B;]`(SnbtPrinterTagVisitor.java:89-102),
+        // 写 `[]` 会读回空 list 破坏往返。
+        roundtrip("{a:[B;],b:[I;],c:[L;]}");
+        let mut t = String::new();
+        write_snbt(&NbtValue::ByteArray(vec![]), &mut t);
+        assert_eq!(t, "[B;]");
     }
 
     #[test]
