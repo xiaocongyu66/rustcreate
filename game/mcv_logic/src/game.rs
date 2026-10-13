@@ -2138,6 +2138,7 @@ impl GameRuntime {
     ///   旧式 `r_safe == 0 → pad 1.0` 在对称位形下与本式逐边一致（r_safe
     ///   = 0 ⟺ 本块 Full 且 ring1 有洞 ⟹ 四侧紧邻块至少一侧缺席……
     ///   对称 fixture 即四侧全缺，一致）。
+    ///
     /// 被钳轴向速度清零（贴原版：移动在已加载区边缘自然停止——玩家区块
     /// 恒有 ticket、物理从不越界，而非撞假石头或穿进虚空）。
     fn clamp_to_sim_area(&mut self, pc: ChunkPos) {
