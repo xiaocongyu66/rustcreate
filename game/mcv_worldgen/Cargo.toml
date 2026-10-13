@@ -9,3 +9,4 @@ mcv_core.workspace = true
 # 结构模板 .nbt 解析（#177 NBT 底座的首个消费方）。
 mcv_nbt.workspace = true
 log = { workspace = true }
+mcv_registry.workspace = true

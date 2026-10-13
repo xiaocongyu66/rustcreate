@@ -19,6 +19,7 @@ pub mod blended;
 pub mod climate;
 pub mod lake_pass;
 pub mod noise;
+pub mod ores_data;
 pub mod perlin;
 pub mod spline;
 pub mod structure;
