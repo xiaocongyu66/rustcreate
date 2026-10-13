@@ -365,6 +365,22 @@ pub fn lake_passes_gate(
     gate_ok(spot, &grid, &mut rp)
 }
 
+/// 〔临时诊断 #192 湖锁红因定性后处置（删除或转正）〕该列
+/// WORLD_SURFACE_WG 实顶（Heightmap.java:147 NOT_AIR 判据：水计非空气
+/// ⇒ 海柱=水面、陆柱=实心顶；高度图值 = 本值 +1，
+/// HeightmapPlacement.java:24-29 origin 即读该值）。供测试按实物口径
+/// 判「立足干地（顶 ≥ SEA，无水覆盖）vs 水柱（顶 < SEA，水覆盖）」，
+/// 替代 `column_real_top`（扫描窗 `(SEA+1)..` 恰漏 y=SEA 干顶列）代理。
+#[must_use]
+pub fn world_surface_top_y(
+    x: i32,
+    z: i32,
+    orch: &Orchestrator,
+    field: &mut AquiferField<'_>,
+) -> i32 {
+    Replay::new(orch, field).top_solid(x, z)
+}
+
 fn gate_ok(spot: &LakeSpot, grid: &[bool; 16 * 16 * 8], rp: &mut Replay<'_, '_>) -> bool {
     // 盒原点世界坐标
     let ox = spot.ox - HX;
