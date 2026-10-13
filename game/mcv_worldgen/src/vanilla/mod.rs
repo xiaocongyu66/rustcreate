@@ -144,16 +144,13 @@ pub fn biome_point_list() -> Vec<(biomes::ParameterPoint, biomes::Biome)> {
 /// （逐列 `biome_at` 各自 new 采样器 = 每列重建噪声路由，不可用于网格
 /// 批量采样）。
 #[must_use]
-pub fn biome_climate_grid(
-    world_seed: u64,
-    x0: i32,
-    z0: i32,
-    w: usize,
-) -> Vec<[f64; 2]> {
+pub fn biome_climate_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[f64; 2]> {
     let sampler = climate::ClimateSampler::new(world_seed);
+    // 闭包按 &sampler 借用（ClimateSampler 非 Copy；`move` 捕获会在首次
+    // 调用即移出，flat_map 复用闭包 → E0507）。
     (0..w as i32)
         .flat_map(|dz| {
-            (0..w as i32).map(move |dx| {
+            (0..w as i32).map(|dx| {
                 let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
                 let c = biomes::climate(b);
                 [c.temperature, c.downfall]
@@ -170,7 +167,7 @@ pub fn biome_sky_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[u8; 3
     let sampler = climate::ClimateSampler::new(world_seed);
     (0..w as i32)
         .flat_map(|dz| {
-            (0..w as i32).map(move |dx| {
+            (0..w as i32).map(|dx| {
                 let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
                 biomes::climate(b).sky_color
             })
