@@ -15,9 +15,12 @@
 //!   LCG（MULTIPLIER=25214903917、INCREMENT=11、setSeed 预混 XOR）；
 //!   `WorldgenRandom.java:27-31` 对 LegacyRandomSource 包装时逐位透传
 //!   `next(bits)`，故随机序列 = 裸 LCG；
-//! - `levelgen/BitRandomSource.java:8,26-37,48-52`：`nextDouble()` 乘子
-//!   `DOUBLE_MULTIPLIER = 1.110223E-16F`（float 字面量 double 化经考证
-//!   恰为 2⁻⁵³，与 java.util.Random 位等价——tests 锁定）；
+//! - `levelgen/BitRandomSource.java:7,18-37,55-60`：`nextDouble()`
+//!   （:55-60）为 `combined * 1.110223E-16F`——Java 提升 long×float →
+//!   **float 域乘**再宽化，故与 java.util.Random.nextDouble 的 double 域
+//!   乘 2⁻⁵³ **不**逐位等价（本模块与实物 BitRandomSource 逐位，
+//!   与 j.u.R 仅共享 LCG 状态序列）；乘子 float 字面量 double 化经考证
+//!   恰为 2⁻⁵³（tests 锁定常数本身）；
 //!   `nextInt(bound)` 的 2 幂快路与拒绝采样同式。
 //!
 //! 世界种子接线：Biome.java:61 的 `TEMPERATURE_NOISE` 种子是常量
@@ -81,14 +84,16 @@ impl LegacyRandom {
         }
     }
 
-    /// `nextDouble()`（BitRandomSource.java:48-52）：
-    /// `((next(26) << 27) + next(27)) * DOUBLE_MULTIPLIER`，乘子为
-    /// float 字面量 `1.110223E-16F` 的 double 化值（恰为 2⁻⁵³，见模块头注）。
+    /// `nextDouble()`（BitRandomSource.java:55-60）：
+    /// `combined * 1.110223E-16F`（:59）—— Java 二元数值提升 long×float →
+    /// **float 域乘法**（combined 先量化为 float 再乘 float 字面量），
+    /// 结果再宽化回 double。与 java.util.Random 的 double 域乘 2⁻⁵³
+    /// **不**逐位等价（见模块头注）。
     fn next_double(&mut self) -> f64 {
         let upper = self.next(26) as i64;
         let lower = self.next(27) as i64;
         let combined = (upper << 27) + lower;
-        combined as f64 * (1.110223e-16_f32 as f64)
+        (combined as f32 * 1.110223e-16_f32) as f64
     }
 
     /// `consumeCount(count)`：`nextInt()` ×count（多倍频空洞占位；
@@ -133,7 +138,7 @@ const GRADIENT: [[i32; 3]; 16] = [
 /// `SQRT_3 = Math.sqrt(3.0)`、`F2 = 0.5*(SQRT_3-1)`、
 /// `G2 = (3-SQRT_3)/6`（SimplexNoise.java:26-28）。
 const F2: f64 = 0.3660254037844386;
-const G2: f64 = 0.21132486540518708;
+const G2: f64 = 0.21132486540518713;
 
 impl SimplexNoise {
     /// 构造：三偏移 + Fisher–Yates（`offset = nextInt(256 - ix)`，
@@ -352,8 +357,10 @@ mod tests {
 
     /// MC 乘子逐位考证：float 字面量 `1.110223E-16F` double 化后
     /// **恰为 2⁻⁵³**（float→double 往返落在精确 2 的幂上，CI 实证）
-    /// ——故 `next_double()` 与 java.util.Random 位等价；此测试锁住
-    /// 「不要误改乘子为其它近似十进制值」。
+    /// ——锁住乘子常数本身「不要误改为其它近似十进制值」。注意实物
+    /// `nextDouble()`（BitRandomSource.java:59）在 **float 域**完成
+    /// long×float 乘法，故本模块 `next_double()` 与 java.util.Random
+    /// 仅共享 LCG 状态序列，double 输出**不**逐位等价。
     #[test]
     fn mc_double_multiplier_is_pow2_53() {
         assert_eq!(1.110223e-16_f32 as f64, 2f64.powi(-53));

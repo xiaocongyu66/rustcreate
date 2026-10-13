@@ -192,7 +192,9 @@ pub const fn climate(b: Biome) -> BiomeClimate {
 ///   [`crate::vanilla::simplex::temperature_noise`]；
 /// - 坐标为**绝对世界坐标**（BlockPos）：x/z 以 block 计、公式内 ÷8；
 ///   y 为世界绝对 y（本仓 `MIN_Y..WORLD_MAX_Y` 即原生 y，无重映射）；
-/// - f32 域算式（`0.05F/40.0F`、float 中间量）保实物逐位语义。
+/// - f32 域算式（`0.05F/40.0F`、float 中间量）保实物逐位语义；
+///   `v + pos.getY() - snowLevel` 按 JLS 左结合 = `fl(fl(v+y)−s)` 双
+///   舍入（先加 y 再减 s，各自舍入一次），不得折叠为 `v+(y−s)` 单舍入。
 #[must_use]
 pub fn height_adjusted_temperature(b: Biome, x: i32, y: i32, z: i32, sea_level: i32) -> f32 {
     let adjusted = climate(b).temperature as f32;
@@ -203,7 +205,7 @@ pub fn height_adjusted_temperature(b: Biome, x: i32, y: i32, z: i32, sea_level: 
             (z as f32 / 8.0_f32) as f64,
             false,
         ) * 8.0) as f32;
-        adjusted - (v + (y - snow_level) as f32) * 0.05_f32 / 40.0_f32
+        adjusted - ((v + y as f32) - snow_level as f32) * 0.05_f32 / 40.0_f32
     } else {
         adjusted
     }
