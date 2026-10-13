@@ -572,6 +572,7 @@ impl Orchestrator {
     /// （vertical_gradient bedrock/deepslate 实物规则替换——表层草/土/沙位
     /// 不受影响）。
     #[must_use]
+    #[allow(clippy::too_many_arguments)] // 柱层上下文天然多参（位坐标+门深+计数+双材质对，blockshapes.rs:293 先例）
     pub fn solid_material(
         &self,
         wx: i32,
@@ -1095,6 +1096,7 @@ fn vertical_gradient_hit(
 /// - top[2] deepslate：vertical_gradient true_at_and_below=absolute(0)、
 ///   false_at_and_above=absolute(8)、random_name "minecraft:deepslate" →
 ///   y≤0 恒深板岩，1..7 概率 (8−y)/8，y≥8 留石。
+///
 /// 序列次序 bedrock→（above_preliminary 表层带）→deepslate 与原版 sequence
 /// 一致：bedrock 散点未中的位落到 deepslate 项（y≤0 恒真）——−63..−60
 /// 基岩散点带的缝隙出深板岩而非石头（实物语义）。
