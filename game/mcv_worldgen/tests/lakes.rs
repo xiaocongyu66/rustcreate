@@ -81,6 +81,8 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     // 〔临时诊断 #192 刀2〕0=通过 1=上半贴流体 2=下半未封底。
     let mut reason_hist = [0usize; 3];
     let mut samples: Vec<(i32, i32, i32, i32, u8, bool)> = Vec::new();
+    let mut box_cells = 0usize;
+    let mut box_neg = 0usize;
     for cz in -64..64 {
         for cx in -64..64 {
             let spots = lake_spots(SEED, cx, cz, &orch, &mut field);
@@ -98,6 +100,20 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
                 if samples.len() < 6 {
                     let top = debug_top_y(s, &orch, &mut field);
                     samples.push((s.ox, s.oz, s.oy, top, reason, on_land));
+                }
+                if on_land {
+                    let top = debug_top_y(s, &orch, &mut field);
+                    for dz in -8..8i32 {
+                        for dx in -8..8i32 {
+                            let cs = orch.column_state(s.ox + dx, s.oz + dz);
+                            for y in top - 3..=top {
+                                box_cells += 1;
+                                if orch.density(&cs, s.ox + dx, y, s.oz + dz) <= 0.0 {
+                                    box_neg += 1;
+                                }
+                            }
+                        }
+                    }
                 }
                 if lake_passes_gate(s, &orch, &mut field) {
                     assert!(on_land, "判据环存活却立足水柱（水非实心应弃）");
@@ -139,27 +155,11 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     );
     // 〔临时诊断 #192 刀2〕reason: 0=pass 1=upper-fluid 2=lower-seal。
     eprintln!("K-LAKES-GATE reason_hist={reason_hist:?}");
-    let mut box_cells = 0usize;
-    let mut box_neg = 0usize;
     for (ox, oz, _oy, top, _r, land) in &samples {
         eprintln!(
             "K-LAKES-SAMPLE origin=({ox},{oz}) oy={} top_solid={top} reason={_r} land={land}",
             _oy
         );
-        if !land {
-            continue;
-        }
-        for dz in -8..8i32 {
-            for dx in -8..8i32 {
-                let cs = orch.column_state(*ox + dx, *oz + dz);
-                for y in top - 3..=top {
-                    box_cells += 1;
-                    if orch.density(&cs, *ox + dx, y, *oz + dz) <= 0.0 {
-                        box_neg += 1;
-                    }
-                }
-            }
-        }
     }
     eprintln!("K-LAKES-CARVE lower_box cells={box_cells} neg={box_neg}");
     assert!(
