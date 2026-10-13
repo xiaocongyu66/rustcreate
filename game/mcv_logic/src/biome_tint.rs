@@ -83,6 +83,19 @@ const GAUSS_KERNEL: [f64; 7] = [0.0, 1.0, 4.0, 6.0, 4.0, 1.0, 0.0];
 #[must_use]
 pub fn blended_sky_color(world_seed: u64, cam_x: f32, cam_z: f32) -> [f32; 3] {
     let sampler = ClimateSampler::new(world_seed);
+    gauss_sky(
+        &|bx, bz| {
+            vanilla::biomes::climate(vanilla::biome_from_sample(&sampler.sample(bx, bz))).sky_color
+        },
+        cam_x,
+        cam_z,
+    )
+}
+
+/// [`blended_sky_color`] 的纯核（取色函数注入，手推数值用例不需要噪声
+/// 世界）：`sky_at` 收方块列坐标（quart 网格 ×4 落位）。
+#[must_use]
+fn gauss_sky(sky_at: &impl Fn(i32, i32) -> [u8; 3], cam_x: f32, cam_z: f32) -> [f32; 3] {
     // GaussianSampler.sample(position.scale(0.25).subtract(0.5,...))。
     let px = f64::from(cam_x) * 0.25 - 0.5;
     let pz = f64::from(cam_z) * 0.25 - 0.5;
@@ -90,8 +103,11 @@ pub fn blended_sky_color(world_seed: u64, cam_x: f32, cam_z: f32) -> [f32; 3] {
     let (rx, rz) = (px - ix, pz - iz);
     let mut sum = [0.0f64; 3];
     let mut total = 0.0f64;
+    // 权重口径 Mth.lerp(rel, K[i+1], K[i]) = K[i+1]·(1−rel) + K[i]·rel
+    // （GaussianSampler.java:21/26——rel=0 时峰值落 K[i+1]=6 即
+    // sampleX=integralX 本位，方向抄反会整体错一格）。
     for zz in 0..6 {
-        let wz = (GAUSS_KERNEL[zz] * (1.0 - rz) + GAUSS_KERNEL[zz + 1] * rz).max(0.0);
+        let wz = (GAUSS_KERNEL[zz + 1] * (1.0 - rz) + GAUSS_KERNEL[zz] * rz).max(0.0);
         if wz == 0.0 {
             continue;
         }
@@ -99,15 +115,15 @@ pub fn blended_sky_color(world_seed: u64, cam_x: f32, cam_z: f32) -> [f32; 3] {
         // 即 quart 单位求值，climate.rs XS 注）。
         let bz = ((iz - 2.0) + zz as f64) * 4.0;
         for xx in 0..6 {
-            let wx = (GAUSS_KERNEL[xx] * (1.0 - rx) + GAUSS_KERNEL[xx + 1] * rx).max(0.0);
+            let wx = (GAUSS_KERNEL[xx + 1] * (1.0 - rx) + GAUSS_KERNEL[xx] * rx).max(0.0);
             if wx == 0.0 {
                 continue;
             }
             let bx = ((ix - 2.0) + xx as f64) * 4.0;
-            let b = vanilla::biome_from_sample(&sampler.sample(bx as i32, bz as i32));
+            let sky = sky_at(bx as i32, bz as i32);
             let w = wx * wz;
             for ch in 0..3 {
-                sum[ch] += w * f64::from(vanilla::biomes::climate(b).sky_color[ch]);
+                sum[ch] += w * f64::from(sky[ch]);
             }
             total += w;
         }
@@ -122,4 +138,98 @@ pub fn blended_sky_color(world_seed: u64, cam_x: f32, cam_z: f32) -> [f32; 3] {
         (sum[1] / total) as f32 / 255.0,
         (sum[2] / total) as f32 / 255.0,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 核常量与实物逐值一致。
+    #[test]
+    fn kernel_matches_vanilla() {
+        assert_eq!(GAUSS_KERNEL, [0.0, 1.0, 4.0, 6.0, 4.0, 1.0, 0.0]);
+    }
+
+    /// 同质世界：任意相机 → 恒等该群系 sky_color（黄金断言取 26.1
+    /// plains JSON 抄录值）。
+    #[test]
+    fn gauss_sky_constant_field_is_identity() {
+        let plains_sky = vanilla::biomes::climate(vanilla::biomes::Biome::Plains).sky_color;
+        let f = |_: i32, _: i32| plains_sky;
+        for (cx, cz) in [(0.0, 0.0), (2.0, 17.0), (-100.5, 3.25)] {
+            let got = gauss_sky(&f, cx, cz);
+            for ch in 0..3 {
+                assert!(
+                    (f64::from(got[ch]) - f64::from(plains_sky[ch]) / 255.0).abs() < 1e-5,
+                    "ch{ch}: {got:?} vs {plains_sky:?}"
+                );
+            }
+        }
+    }
+
+    /// 手推数值：相机落 quart 本位（px 整点，rel=0 → 权重 [1,4,6,4,1,0]），
+    /// x<0 黑、x≥0 白。A 权重 = (1+4)×Σz=16 → 80；B = (6+4+1+0)×16 →
+    /// 176；总 256 → 期望 176/256×255 = 175.3125（/255 后 ≈0.687500）。
+    #[test]
+    fn gauss_sky_step_field_hand_computation() {
+        let f = |bx: i32, _: i32| {
+            if bx < 0 {
+                [0u8, 0, 0]
+            } else {
+                [255u8, 255, 255]
+            }
+        };
+        // cam=2 → px = 2×0.25 − 0.5 = 0（rel=0 本位）。
+        let got = gauss_sky(&f, 2.0, 2.0);
+        let expect = 176.0f64 / 256.0;
+        for ch in 0..3 {
+            assert!(
+                (f64::from(got[ch]) - expect).abs() < 1e-4,
+                "ch{ch}: {} vs {expect}",
+                got[ch]
+            );
+        }
+        // 镜像对称：同一世界相机 −2（px=−1 本位，A/B 权重互换）。
+        let mirrored = gauss_sky(&f, -2.0, 2.0);
+        for ch in 0..3 {
+            assert!((f64::from(mirrored[ch]) - (1.0 - expect)).abs() < 1e-4);
+        }
+    }
+
+    /// 真实噪声世界单群系窗：6×6 窗群系全同 → 天空色 = 该群系表值
+    /// （实物公式 + 抄录参数的交叉一致性）。
+    #[test]
+    fn blended_sky_matches_single_biome_window() {
+        let sampler = ClimateSampler::new(2026);
+        for &(cx, cz) in &[(8.0, 8.0), (60.0, -40.0), (-250.0, 111.0)] {
+            // 窗内群系一致性检查（与 gauss_sky 同坐标口径）。
+            let px = f64::from(cx) * 0.25 - 0.5;
+            let pz = f64::from(cz) * 0.25 - 0.5;
+            let (ix, iz) = (px.floor(), pz.floor());
+            let mut biome = None;
+            let mut uniform = true;
+            for zz in 0..6 {
+                for xx in 0..6 {
+                    let bx = (((ix - 2.0) + xx as f64) * 4.0) as i32;
+                    let bz = (((iz - 2.0) + zz as f64) * 4.0) as i32;
+                    let b = vanilla::biome_from_sample(&sampler.sample(bx, bz));
+                    match biome {
+                        None => biome = Some(b),
+                        Some(b0) if b0 == b => {}
+                        _ => uniform = false,
+                    }
+                }
+            }
+            if uniform {
+                let want = vanilla::biomes::climate(biome.unwrap()).sky_color;
+                let got = blended_sky_color(2026, cx, cz);
+                for ch in 0..3 {
+                    assert!(
+                        (f64::from(got[ch]) - f64::from(want[ch]) / 255.0).abs() < 1e-4,
+                        "单群系窗天空色 ch{ch}: {got:?} vs {want:?} @({cx},{cz})"
+                    );
+                }
+            }
+        }
+    }
 }

@@ -17,6 +17,7 @@ pub mod aquifer;
 pub mod biomes;
 pub mod blended;
 pub mod climate;
+pub mod freeze_pass;
 pub mod lake_pass;
 pub mod noise;
 pub mod ore_pass;

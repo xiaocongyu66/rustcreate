@@ -101,11 +101,11 @@ fn chunk_tint_resolves_climate_to_colormap() {
     assert!(tint::ChunkTint::from_climate(-2, -2, &cells, &[], &foliage).is_none());
 }
 
-/// 盒均值手推对拍（Blender/ClientLevel 语义）：网格左半 temp 0.8
-/// （plains 草 #91BD59）、右半 temp 0（雪原草 #80B497），沿 x 边界处
-/// 取 (bx=右半第 3 列) 使混合窗内 3 列左 + 2 列右（BLEND_RADIUS=2 →
-/// 每行 x∈[bx-2,bx+2]，前 3 列 plains 后 2 列 snow）→
-/// 期望逐通道 (3*plains + 2*snow)/5 整数除。
+/// 盒均值手推对拍（ClientLevel.calculateBlockTint 实物语义：先解色后
+/// 整数平均）：网格左半 x<5 temp 0.8（plains 草 #91BD59）、右半 temp 0
+/// （雪原草 #80B497），取 bx=5 使混合窗（BLEND_RADIUS=2 → 每行
+/// x∈[3,7]）内 2 列 plains（x=3,4）+ 3 列 snow（x=5,6,7）→
+/// 期望逐通道 (2*plains + 3*snow)/5 整数除（截断，同 ARGB 求和/count）。
 #[test]
 fn chunk_tint_box_average_matches_hand_computation() {
     let grass = colormap("grass");
@@ -123,9 +123,9 @@ fn chunk_tint_box_average_matches_hand_computation() {
     // bx=5：窗 x∈[3,7] → x=3,4 plains；x=5,6,7 snow（列同侧混合，
     // 各行一致，共 5 行）。
     let expect = [
-        ((3 * plains[0] + 2 * snow[0]) / 5) as u8,
-        ((3 * plains[1] + 2 * snow[1]) / 5) as u8,
-        ((3 * plains[2] + 2 * snow[2]) / 5) as u8,
+        ((2 * plains[0] + 3 * snow[0]) / 5) as u8,
+        ((2 * plains[1] + 3 * snow[1]) / 5) as u8,
+        ((2 * plains[2] + 3 * snow[2]) / 5) as u8,
     ];
     assert_eq!(
         ct.color_at(tint::TINT_GRASS, 5, 4),

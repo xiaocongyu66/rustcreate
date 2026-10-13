@@ -1212,6 +1212,11 @@ pub fn generate(
     // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
     // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
     crate::vanilla::tree_pass::project_trees(seed, chunk_x, chunk_z, &orch, out_voxels);
+    // Pass 2.5（#191 积雪）：freeze_top_layer 特征（原版特征阶 10
+    // 「freeze」在植被阶后——snowy_plains.json features[10]；
+    // SnowAndFreezeFeature 实物逐条见 freeze_pass 头注）。雪层计入
+    // 下方高度图重算（MOTION_BLOCKING 语义含雪层，同 vanilla）。
+    crate::vanilla::freeze_pass::apply(&orch, chunk_x, chunk_z, out_voxels);
     // 高度图与 cpp kernel pass 3 / 存档重算（crate::recompute_heightmap）
     // 同一谓词（damp!=0 且非流体）——直接复用，三方由构造保证逐块一致。
     // （此前 vanilla 路径漏写高度图，恒 0 提交：出生列搜索全部 reject。）
