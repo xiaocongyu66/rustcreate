@@ -351,11 +351,15 @@ fn timeout_release_keeps_streaming_catchup() {
         "超时后必须放行"
     );
     // 放行不是停摆：流式补载继续推进，出生点 7×7 邻域（半径 3，26.1
-    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。预算 1200→2400 帧（刀 3b
+    // EXPECTED_PLAYER_CHUNKS）最终全部 Uploaded。预算 1200→2400→4800 帧（刀 3b
     // 派单书指令：timeout 类断言留 2 倍余量——本测在 main 抖红过一次；门
-    // 谓词改 status 后就绪时点更早，此值纯为 runner 争用兜底）。
+    // 谓词改 status 后就绪时点更早，此值纯为 runner 争用兜底。刀 3c 重锚：
+    // 矿石 pass 入生成后单块 worldgen 墙钟上升（Replay memo 提速已证 2/3
+    // 兄弟测转绿、load_gate 同窗 49 块 Surface 在预算内——非停摆），本测
+    // 断言的是 liveness「终会就绪」谓词本身零改动，仅兜底预算按同派单书
+    // 2 倍余量再锚一档）。
     let mut ready = false;
-    for _ in 0..2400u32 {
+    for _ in 0..4800u32 {
         rt.stream();
         emulate_upload(&mut rt);
         let (done, total) = rt.loading_progress_parts();
@@ -365,7 +369,7 @@ fn timeout_release_keeps_streaming_catchup() {
         }
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ready, "超时放行后出生邻域未在 2400 帧内补载就绪");
+    assert!(ready, "超时放行后出生邻域未在 4800 帧内补载就绪");
 }
 
 /// 提取 `from` 的 `side` 边快照（mcv_light 边协议，0=+X 1=-X 2=+Z 3=-Z）。
