@@ -168,6 +168,11 @@ struct Col {
     skip: i32,
     /// 自 fill_top 向下首个 density>0 位（无则 MIN_Y 基岩）。
     first_solid: i32,
+    /// block_at 本列 memo（纯函数判据，缓存不改语义；邻块查询复用高）。
+    blocks: HashMap<i32, u16>,
+    /// [min_surface, fs] 深度梯：depths[fs − y] = depth_above(y)，
+    /// 每列一次 O(带) 自顶向下扫描摊销（原逐 query 各扫一遍 = O(带²)）。
+    depths: Option<Vec<i32>>,
 }
 
 impl<'a, 'f> Replay<'a, 'f> {
@@ -207,6 +212,8 @@ impl<'a, 'f> Replay<'a, 'f> {
                 subsoil_id,
                 skip,
                 first_solid: mcv_core::WORLD_MIN_Y,
+                blocks: HashMap::new(),
+                depths: None,
             };
             // fs 扫描（开放段有界：fill_top→fs 通常 <20 格）。
             let mut y = c.fill_top;
@@ -231,19 +238,29 @@ impl<'a, 'f> Replay<'a, 'f> {
     }
 
     /// 带内 depth_above（自 fs 向下连续实心计数、空气重置；y ∈
-    /// [min_surface, fs] 才调用——范围有界，见结构头注）。
+    /// [min_surface, fs] 才调用——范围有界，见结构头注）。梯构建的
+    /// 逐步 update 序（先记 `cur+1` 再处理 yy 本身）与原逐 query 循环
+    /// `while yy > y`（严格处理 y 之上格）逐位等价。
     fn depth_above(&mut self, x: i32, z: i32, fs: i32, y: i32, skip: i32) -> i32 {
-        let mut depth = 0;
+        if let Some(l) = &self.cols.get(&(x, z)).expect("列必建").depths {
+            return l[(fs - y) as usize];
+        }
+        let min_surface = self.col(x, z).min_surface;
+        let mut l = Vec::with_capacity((fs - min_surface + 1).max(0) as usize);
+        let mut cur = 0;
         let mut yy = fs;
-        while yy > y {
+        while yy >= min_surface {
+            l.push(cur + 1);
             if self.solid_below(x, yy, z, skip) {
-                depth += 1;
+                cur += 1;
             } else if !self.liquid_at(x, yy, z, skip) {
-                depth = 0;
+                cur = 0;
             }
             yy -= 1;
         }
-        depth + 1
+        let c = self.col(x, z);
+        c.depths = Some(l);
+        c.depths.as_ref().expect("刚写入")[(fs - y) as usize]
     }
 
     fn liquid_at(&mut self, x: i32, y: i32, z: i32, skip: i32) -> bool {
@@ -256,11 +273,25 @@ impl<'a, 'f> Replay<'a, 'f> {
         )
     }
 
-    /// 判据读点：pass-1 缓冲该格方块 id 的纯函数复刻。
+    /// 判据读点：pass-1 缓冲该格方块 id 的纯函数复刻（per-列 memo：
+    /// 纯函数缓存不改输出，is_adjacent_to_air/相邻扫描复用率高）。
     pub fn block_at(&mut self, x: i32, y: i32, z: i32) -> u16 {
         if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&y) {
             return AIR; // 越界 section 读 = AIR（BulkSectionAccess.java:43-47）
         }
+        if let Some(v) = self
+            .cols
+            .get(&(x, z))
+            .and_then(|c| c.blocks.get(&y).copied())
+        {
+            return v;
+        }
+        let v = self.block_at_calc(x, y, z);
+        self.col(x, z).blocks.insert(y, v);
+        v
+    }
+
+    fn block_at_calc(&mut self, x: i32, y: i32, z: i32) -> u16 {
         if y == mcv_core::WORLD_MIN_Y
             || (y <= mcv_core::WORLD_MIN_Y + 4 && bedrock_noise(self.seed, x, y, z))
         {
