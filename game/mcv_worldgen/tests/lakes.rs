@@ -16,7 +16,9 @@
 
 use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
-use mcv_worldgen::vanilla::lake_pass::{lake_passes_gate, lake_spots};
+use mcv_worldgen::vanilla::lake_pass::{
+    debug_top_y, gate_reject_reason, lake_passes_gate, lake_spots,
+};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
@@ -76,6 +78,9 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     let mut surf_cand = 0usize;
     let mut land_cand = 0usize;
     let mut survivors = Vec::new();
+    // 〔临时诊断 #192 刀2〕0=通过 1=上半贴流体 2=下半未封底。
+    let mut reason_hist = [0usize; 3];
+    let mut samples: Vec<(i32, i32, i32, i32, u8, bool)> = Vec::new();
     for cz in -64..64 {
         for cx in -64..64 {
             let spots = lake_spots(SEED, cx, cz, &orch, &mut field);
@@ -87,6 +92,13 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
                     .column_real_top(s.ox, s.oz, &mut field)
                     .is_some_and(|(y, _)| y > mcv_core::SEA_LEVEL);
                 land_cand += on_land as usize;
+                // 〔临时诊断 #192 刀2〕判据环弃单原因分类 + origin/实顶对照。
+                let reason = gate_reject_reason(s, &orch, &mut field);
+                reason_hist[reason as usize] += 1;
+                if samples.len() < 6 {
+                    let top = debug_top_y(s, &orch, &mut field);
+                    samples.push((s.ox, s.oz, s.oy, top, reason, on_land));
+                }
                 if lake_passes_gate(s, &orch, &mut field) {
                     assert!(on_land, "判据环存活却立足水柱（水非实心应弃）");
                     survivors.push(*s);
@@ -125,6 +137,13 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
         survivors.len(),
         chunks.len()
     );
+    // 〔临时诊断 #192 刀2〕reason: 0=pass 1=upper-fluid 2=lower-seal。
+    eprintln!("K-LAKES-GATE reason_hist={reason_hist:?}");
+    for (ox, oz, oy, top, reason, land) in &samples {
+        eprintln!(
+            "K-LAKES-SAMPLE origin=({ox},{oz}) oy={oy} top_solid={top} reason={reason} land={land}"
+        );
+    }
     assert!(
         !survivors.is_empty(),
         "surface 候选 {surf_cand}（陆柱 {land_cand}）判据环全弃——陆柱有而存活 0 = 判据环过严，陆柱 0 = 窗内地形无陆（换窗）"

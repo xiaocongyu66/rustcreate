@@ -24,8 +24,11 @@
 //! - **序列次序**：bedrock（top[0]）先于 deepslate（top[2]）→ 基岩散点带
 //!   未中位落 deepslate 项（y≤0 恒真）出深板岩，带内无石头。
 //!
-//! 随机链：本仓位置随机 = hash01 通道域（KNOWN-DIVERGENCE RNG-1，AQUI-1
-//! 先例），非 Xoroshiro fromHashOf(name) 种子链——统计带锁替代字节对拍。
+//! 随机链：#192 RNG-1 销账后 = 原版 Xoroshiro fromHashOf(name)
+//! .forkPositional() 种子链（vanilla/xoroshiro.rs 逐位实物）——同 seed
+//! 同坐标与原版同位型；本文件保留统计带锁（分布门），位型对拍的其余
+//! 前置（defaultBlock 位=原版洞形）受 density clean-room 种子链限制
+//! （AQUI-1），随该波统一收敛。
 
 use mcv_core::{CHUNK_VOL, ChunkPos, WORLD_MAX_Y, WORLD_MIN_Y};
 use mcv_worldgen::vanilla::terrain::{BEDROCK, DEEPSLATE, STONE};

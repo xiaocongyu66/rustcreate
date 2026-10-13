@@ -365,6 +365,49 @@ pub fn lake_passes_gate(
     gate_ok(spot, &grid, &mut rp)
 }
 
+/// 〔临时诊断 #192 刀2：定位 gate_survivors=0 根因后回滚〕判据环放弃
+/// 原因分类：0=通过、1=上半贴流体（liquid 门）、2=下半未封底。与
+/// [`gate_ok`] 同逻辑的只读旁路，生产路不调用。
+pub fn gate_reject_reason(
+    spot: &LakeSpot,
+    orch: &Orchestrator,
+    field: &mut AquiferField<'_>,
+) -> u8 {
+    let (grid, _rng) = build_grid(spot);
+    let mut rp = Replay::new(orch, field);
+    let ox = spot.ox - HX;
+    let oy = spot.oy - HY;
+    let oz = spot.oz - HX;
+    let mut reason = 0u8;
+    'outer: for xx in 0..16usize {
+        for zz in 0..16usize {
+            for yy in 0..8usize {
+                if !boundary_of(&grid, xx, yy, zz) {
+                    continue;
+                }
+                let (wx, wy, wz) = (ox + xx as i32, oy + yy as i32, oz + zz as i32);
+                if yy as i32 >= HY {
+                    if rp.fluid(wx, wy, wz) {
+                        reason = 1;
+                        break 'outer;
+                    }
+                } else if !rp.solid(wx, wy, wz) && !rp.lava(wx, wy, wz) {
+                    reason = 2;
+                    break 'outer;
+                }
+            }
+        }
+    }
+    reason
+}
+
+/// 〔临时诊断 #192〕实顶 y（顶石+1 语义与 terrain column_real_top 的
+/// 密度像同口径：top_solid+1）——供测试对比 origin 与地表高差。
+pub fn debug_top_y(spot: &LakeSpot, orch: &Orchestrator, field: &mut AquiferField<'_>) -> i32 {
+    let mut rp = Replay::new(orch, field);
+    rp.top_solid(spot.ox, spot.oz)
+}
+
 fn gate_ok(spot: &LakeSpot, grid: &[bool; 16 * 16 * 8], rp: &mut Replay<'_, '_>) -> bool {
     // 盒原点世界坐标
     let ox = spot.ox - HX;

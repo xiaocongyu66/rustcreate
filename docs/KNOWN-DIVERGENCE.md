@@ -351,18 +351,20 @@ width/height/length 格式经全树 grep 实物不存在（DataFixer 面，数�
    消费方从本仓 parser 拿到的树天然 ≤512 层安全,程序化手构超深树属调用方
    责任,未设防。
 
-## RNG-1 vertical_gradient 位置随机种子链（#192 深板岩/基岩波）
+## RNG-1 vertical_gradient 位置随机种子链（#192 深板岩/基岩波）〔已销账〕
 
 overworld.json surface_rule 的两条 `vertical_gradient`（bedrock_floor /
-deepslate，SurfaceRules.java:735-781）在原版用
-`RandomState.getOrCreateRandomFactory(random_name)` =
-`random.fromHashOf(name).forkPositional()`（RandomState.java:113-115 →
-Xoroshiro128++，Mth.getSeed(x,y,z) 逐位 nextFloat）。本仓以 hash01
-通道域（`channel_seed(seed, salt)`，AQUI-1 先例）替代该 Xoroshiro 种子链：
-阈值/线性概率映射（`Mth.map` 1−t）与逐位独立分布逐字实物，同位不同伪
-随机序列——同 seed 本仓内部确定（tests/deepslate_bedrock.rs 确定性锁），
-与原版同 seed 选点不逐格一致；散点占比带统计门（0.8/0.6/0.4/0.2 与
-(8−y)/8 ±0.08）替代字节对拍。
+deepslate，SurfaceRules.java:735-781）原版本仓以 hash01 通道域替代
+（登记时口径）。#192 RNG-1 销账刀改为**实物种子链逐位接线**：
+`vanilla/xoroshiro.rs` 移植 Xoroshiro128++（Xoroshiro128PlusPlus.java:24-36）、
+`upgradeSeedTo128bit`/`mixStafford13`/`seedFromHashOf`=MD5-128
+（RandomSupport.java:17-42）、`Mth.getSeed(x,y,z)`（Mth.java:314-318，
+int 域溢出乘细节保留）、`fromHashOf(name)→forkPositional→at().nextFloat`
+链（XoroshiroRandomSource.java:38-41,113-155）——同 seed 同坐标与原版
+**同位型**（金标准向量锁在 xoroshiro.rs tests，python hashlib 独立复算
+生成）。残余（非本条义务）：位级对拍的另一个前置——defaultBlock 位的
+洞形与原版逐格一致——依赖 density 通道种子链（AQUI-1 债务），随该波
+统一收敛；tests/deepslate_bedrock.rs 保留统计带门。
 
 ## CAVE-1 洞穴雕刻通道的未移植面（#192 对照审计登记）
 
