@@ -180,15 +180,19 @@ fn bedrock_never_and_flowers_instant() {
 
 #[test]
 fn tag_driven_speed_and_free_blocks() {
-    // #178 刀2b：速度族 = mineable/* tag 全量（手写表已删）。玻璃
-    // ∈ mineable/pickaxe（原版镐加速）但无掉落门 → 徒手掉落正确。
+    // #178 刀2b：速度族 = mineable/* tag 全量（手写表已删）。玻璃是
+    // 原版实物反例：∉ mineable/pickaxe（pickaxe.json 390 成员零 glass，
+    // 徒手 0.3 硬度即碎、镐无加速）且无掉落门 → 徒手掉落正确。
     assert!(!has_correct_tool(COBBLE, None), "圆石要镐");
     let bm = block_mining(BlockId(419)); // glass
     assert_eq!(bm.need, DropNeed::None);
     assert_eq!(
-        bm.speed_tool,
-        Some(ToolKind::Pickaxe),
-        "glass ∈ mineable/pickaxe"
+        bm.speed_tool, None,
+        "glass ∉ 任何 mineable tag（26.1 pickaxe.json 实物）"
+    );
+    assert_eq!(
+        destroy_speed(BlockId(419), tool(DIAMOND_PICKAXE_INDEX).as_ref()),
+        1.0
     );
     assert_eq!(block_mining(STONE).speed_tool, Some(ToolKind::Pickaxe));
     assert_eq!(mining::mining_tier(mcv_item::COPPER), 3);
