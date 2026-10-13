@@ -273,8 +273,15 @@ impl PerlinSimplexNoise {
         let contains = |o: i32| octave_set.contains(&o);
 
         let zero_octave = SimplexNoise::new(random);
+        // 实物高倍频种子派生 `(long)(zeroOctave.getValue(xo,yo,zo) *
+        // 9.223372E18F)`：double ×（float 字面量 double 化），(long) 向零
+        // 截断。纯函数求值提前于此（避免 Rust 移动语义缠绕，语义不变）。
+        let positive_octave_seed =
+            (zero_octave.get_value_3d(zero_octave.xo, zero_octave.yo, zero_octave.zo)
+                * (9.223372e18_f32 as f64)) as i64;
         let zero_index = high_freq_octaves;
-        let mut levels = vec![None; octaves];
+        // （SimplexNoise 非 Clone，不能用 vec![None; n]。）
+        let mut levels: Vec<Option<SimplexNoise>> = (0..octaves).map(|_| None).collect();
         if zero_index >= 0 && (zero_index as usize) < octaves && contains(0) {
             levels[zero_index as usize] = Some(zero_octave);
         }
@@ -286,11 +293,6 @@ impl PerlinSimplexNoise {
             }
         }
         if high_freq_octaves > 0 {
-            let z = levels[zero_index as usize].as_ref().expect("zero octave");
-            // `(long)(zeroOctave.getValue(xo,yo,zo) * 9.223372E18F)`：
-            // double × (float 字面量 double 化)，(long) 向零截断。
-            let positive_octave_seed =
-                (z.get_value_3d(z.xo, z.yo, z.zo) * (9.223372e18_f32 as f64)) as i64;
             let mut high_freq_random = LegacyRandom::new(positive_octave_seed);
             for i in (0..zero_index).rev() {
                 if (i as usize) < octaves && contains(zero_index - i) {
