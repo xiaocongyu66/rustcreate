@@ -844,10 +844,15 @@ fn player_ticket_throttle_caps_inflight_generation() {
     let mut rt = headless("throttle");
     rt.render_dist = 4;
     let mut max_inflight = 0usize;
-    // 300 帧：liveness 尾断言只要求 ≥1 块就绪；CI 争用下单块 worldgen 实测
-    // 可达数十帧（flap 测注释：49 块窗曾超 600 帧），40 帧余量不足，按
-    // timeout 类断言 2 倍余量原则放宽。
-    for _ in 0..300 {
+    // 300→600 帧：liveness 尾断言只要求 ≥1 块就绪；CI 争用下单块 worldgen
+    // 实测可达数十帧（flap 测注释 :183-185：49 块窗曾超 600 帧、8000 帧
+    // 预算），40 帧余量不足，按 timeout 类断言 2 倍余量原则放宽。刀 3c
+    // 再锚一档（run 38404332974）：矿石 pass 入生成后单块墙钟上升，且同
+    // 二进制 timeout 兜底窗 2400→4800 使并行 CPU 占用窗口翻倍——300 帧
+    // liveness 在超订 runner 下抖红（同 run 兄弟窗 49 块 Surface 测绿＝
+    // 非停摆；Replay memo 为纯函数缓存不改输出；红点 run 间漂移＝争用
+    // 特征）。谓词与 max_inflight≤名额不变量断言零改动，采样窗口反而加倍。
+    for _ in 0..600 {
         rt.stream();
         max_inflight = max_inflight.max(rt.inflight_generation_count());
         std::thread::sleep(Duration::from_millis(2));
@@ -861,7 +866,7 @@ fn player_ticket_throttle_caps_inflight_generation() {
         .values()
         .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
         .count();
-    assert!(terrain_ready > 0, "节流不得停摆加载（300 帧 0 块就绪）");
+    assert!(terrain_ready > 0, "节流不得停摆加载（600 帧 0 块就绪）");
 }
 
 /// 卸载队列积压门（原版 ChunkMap.java:489-495：unloadQueue ≥2000 忽略
