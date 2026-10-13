@@ -23,9 +23,10 @@
 //!   = hi）。
 //! - `XoroshiroRandomSource.java:22-24`（long 种子构造 = upgradeSeedTo128bit
 //!   直入）、:38-41（forkPositional = 消耗两次 nextLong）、:96-99
-//!   （nextFloat = nextBits(24)·(float)2⁻²⁴——**float 域乘法**）、
-//!   :101-104（nextDouble = nextBits(53)·(double)(float)2⁻⁵³——注意
-//!   DOUBLE_UNIT 是 float 字面量拓宽，≠ 精确 2⁻⁵³）、:48-56
+//!   （nextFloat = nextBits(24)·5.9604645E-8F——**float 域乘法**）、
+//!   :92-94（nextDouble = nextBits(53)·1.110223E-16F——常量池为 float
+//!   字面量，long×float 提升到 float，**乘积 f32 域舍入**后拓宽；常量
+//!   值恰 = 2⁻⁵³，f32 舍入 quirk 可返回恰 1.0）、:48-56
 //!   （nextInt(bound) = Lemire 无偏归约 + 拒绝循环）。
 //! - `XoroshiroPositionalRandomFactory.at = Xoroshiro128PlusPlus(
 //!   Mth.getSeed(x,y,z) ^ seedLo, seedHi)`（:124-128）；`fromHashOf =
@@ -125,7 +126,8 @@ impl Xoroshiro {
         s1 ^= s0;
         self.lo = s0.rotate_left(49) ^ s1 ^ (s1 << 21);
         self.hi = s1.rotate_left(28);
-        result
+        // Java long 域回绕 = u64 wrapping 位型恒等，出口位精确转译。
+        result as Long
     }
 
     /// nextBits(bits) = nextLong() 逻辑右移（XoroshiroRandomSource:159-161）。
@@ -141,11 +143,14 @@ impl Xoroshiro {
         (self.next_bits(24) as f32) * 5.960_464_5e-8_f32
     }
 
-    /// (double)nextBits(53) · DOUBLE_UNIT，DOUBLE_UNIT = (double) 1.110223E-16F
-    /// （**float 字面量拓宽**，XoroshiroRandomSource.java:12——非精确 2⁻⁵³）。
+    /// `nextBits(53) * 1.110223E-16F`（XoroshiroRandomSource.java:93）——
+    /// 常量池操作数是 **float** 字面量（反编译带 F 后缀；:12 的 double
+    /// 字段声明是 javac 内联假象）：Java 二元数值提升 long×float→float，
+    /// 乘积先在 **f32 域**舍入再拓宽返回。f32 quirk 照抄：bits(53) 上端
+    /// 舍入到 2⁵³ 时返回恰 1.0（原版同病）；常量值本身恰 = 2⁻⁵³。
     #[must_use]
     pub fn next_double(&mut self) -> f64 {
-        (self.next_bits(53) as f64) * (1.110_223e-16_f32 as f64)
+        ((self.next_bits(53) as f32) * 1.110_223e-16_f32) as f64
     }
 
     #[must_use]
@@ -208,6 +213,15 @@ impl PositionalRandomFactory {
         g.fork_positional()
     }
 
+    /// fromHashOf(name) 一步版（XoroshiroPositionalRandomFactory.java:130-134
+    /// = Noises.instantiate / PerlinNoise 的 octaves 取随机源用）：返回
+    /// 生成器本身（不 fork），Seed128bit 直入仅零态守卫。
+    #[must_use]
+    pub fn random_from_hash(&self, name: &str) -> Xoroshiro {
+        let (nlo, nhi) = seed_from_hash_of(name);
+        Xoroshiro::from_seed128(nlo ^ self.lo, nhi ^ self.hi)
+    }
+
     /// 直接以本工厂位置随机 nextDouble（SurfaceSystem.getSurfaceDepth 的
     /// jitter 用法：`noiseRandom.at(x, 0, z).nextDouble()`）。
     #[must_use]
@@ -252,7 +266,7 @@ fn md5(msg: &[u8]) -> [u8; 16] {
         0xf61e_2562,
         0xc040_b340,
         0x265e_5a51,
-        0xe9b6_c7ad,
+        0xe9b6_c7aa,
         0xd62f_105d,
         0x0244_1453,
         0xd8a1_e681,
@@ -271,7 +285,8 @@ fn md5(msg: &[u8]) -> [u8; 16] {
         0xfde5_380c,
         0xa4be_ea44,
         0x4bde_cfa9,
-        0xbe86_b3f7,
+        0xf6bb_4b60,
+        0xbebf_bc70,
         0x289b_7ec6,
         0xeaa1_27fa,
         0xd4ef_3085,
@@ -288,7 +303,7 @@ fn md5(msg: &[u8]) -> [u8; 16] {
         0x8f0c_cc92,
         0xffef_f47d,
         0x8584_5dd1,
-        0x6fa8_7e8f,
+        0x6fa8_7e4f,
         0xfe2c_e6e0,
         0xa301_4314,
         0x4e08_11a1,
@@ -391,8 +406,12 @@ mod tests {
         );
         // at 位值（bedrock_floor）
         let cases: [((i32, i32, i32), u32); 3] = [
-            ((3, -62, 7), 0x3ddf_6c68),
-            ((100, 4, -55), 0x3dd6_aed8),
+            // #192 二修：前两条旧期望值与实物公式（本文件头注链 =
+            // Mth.java:314-318 + Xoroshiro128PlusPlus.java:24-36 +
+            // XoroshiroRandomSource.java:87-89）的 python 独立复算不符
+            // （生成侧 bug，与工厂级 lo/hi 期望互不自洽）；按复算锁位。
+            ((3, -62, 7), 0x3f31_5a41),
+            ((100, 4, -55), 0x3f38_90f2),
             ((0, 7, 0), 0x3f1d_f1ec),
         ];
         for ((x, y, z), want_bits) in cases {
@@ -401,14 +420,16 @@ mod tests {
         }
     }
 
-    /// 输出域哨兵：float ∈ [0,1)、double ∈ [0,1)、bounded int < bound 且
+    /// 输出域哨兵：float ∈ [0,1)、double ∈ [0,1]（原版 f32 舍入 quirk 可
+    /// 返回恰 1.0，见 next_double 注）、bounded int < bound 且
     /// 小 bound（256−i 形态，ImprovedNoise 洗牌消费面）全覆盖。
     #[test]
     fn outputs_in_domain() {
         let mut g = Xoroshiro::from_world_seed(12345);
         for _ in 0..256 {
             assert!((0.0..1.0).contains(&g.next_float()));
-            assert!((0.0..1.0).contains(&g.next_double()));
+            let d = g.next_double();
+            assert!((0.0..=1.0).contains(&d), "next_double 出 [0,1] 域: {d}");
         }
         let mut g = Xoroshiro::from_world_seed(999);
         for bound in [1u32, 2, 7, 256, 1000] {
