@@ -91,7 +91,7 @@ impl Lcg {
     pub fn next_long(&mut self) -> i64 {
         let upper = self.next(32) as i64;
         let lower = self.next(32) as i64;
-        ((upper << 32) + lower) as u64 as i64
+        (upper << 32).wrapping_add(lower)
     }
 }
 
@@ -121,8 +121,7 @@ mod tests {
     /// 参考实现:按 Java 表达式逐字直译(u64 位型),与被测实现互相独立
     /// 地走 int 回绕路径。
     fn mth_get_seed_ref(x: i32, y: i32, z: i32) -> i64 {
-        let a = ((x as i64) as u32).wrapping_mul(3129871) as u32;
-        let a = a as i32 as i64;
+        let a = (x as u32).wrapping_mul(3_129_871) as i32 as i64;
         let b = (z as i64).wrapping_mul(116_129_781);
         let seed = (a ^ b ^ (y as i64)) as u64;
         let s1 = seed.wrapping_mul(seed);

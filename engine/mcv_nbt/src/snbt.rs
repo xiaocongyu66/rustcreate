@@ -302,14 +302,14 @@ impl<'a> Parser<'a> {
         // 数组糖:[B; / [I; / [L;('[' 后、标记与分号间均容忍空白,原版
         // StringReader 终端逐项 skipWhitespace)。
         let mut probe = self.pos;
-        while self.s.get(probe).is_some_and(char::is_whitespace) {
+        while self.s.get(probe).copied().is_some_and(char::is_whitespace) {
             probe += 1;
         }
         if let Some(mark) = self.s.get(probe).copied()
             && matches!(mark, 'B' | 'I' | 'L')
         {
             probe += 1;
-            while self.s.get(probe).is_some_and(char::is_whitespace) {
+            while self.s.get(probe).copied().is_some_and(char::is_whitespace) {
                 probe += 1;
             }
             if self.s.get(probe) == Some(&';') {
@@ -870,7 +870,10 @@ mod tests {
     }
 
     fn bad(src: &str) {
-        let e = parse_snbt(src).unwrap_or_else(|| panic!("{src:?} must be rejected"));
+        let e = match parse_snbt(src) {
+            Err(e) => e,
+            Ok(v) => panic!("{src:?} must be rejected, got {v:?}"),
+        };
         assert!(matches!(e, NbtError::BadSnbt { .. }), "{src:?} → {e}");
     }
 
