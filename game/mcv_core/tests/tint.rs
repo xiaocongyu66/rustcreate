@@ -132,9 +132,10 @@ fn chunk_tint_box_average_matches_hand_computation() {
         expect,
         "跨群系边界盒均值"
     );
-    // 深处不受另一群系影响（窗全 plains / 全 snow）。
-    assert_eq!(&ct.color_at(tint::TINT_GRASS, 0, 4)[..], &plains[..]);
-    assert_eq!(&ct.color_at(tint::TINT_GRASS, 8, 4)[..], &snow[..]);
+    // 深处不受另一群系影响（窗全 plains / 全 snow；plains/snow 为算式
+    // 声明的 u32 域，比对回 u8 语义域）。
+    assert_eq!(ct.color_at(tint::TINT_GRASS, 0, 4), plains.map(|v| v as u8));
+    assert_eq!(ct.color_at(tint::TINT_GRASS, 8, 4), snow.map(|v| v as u8));
 }
 
 /// 跨区块边界连续：两块用同一气候场（仅原点不同），边界世界列两侧取色

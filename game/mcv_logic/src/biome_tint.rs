@@ -182,17 +182,17 @@ mod tests {
         // cam=2 → px = 2×0.25 − 0.5 = 0（rel=0 本位）。
         let got = gauss_sky(&f, 2.0, 2.0);
         let expect = 176.0f64 / 256.0;
-        for ch in 0..3 {
+        for (ch, v) in got.iter().enumerate() {
             assert!(
-                (f64::from(got[ch]) - expect).abs() < 1e-4,
+                (f64::from(*v) - expect).abs() < 1e-4,
                 "ch{ch}: {} vs {expect}",
-                got[ch]
+                *v
             );
         }
         // 镜像对称：同一世界相机 −2（px=−1 本位，A/B 权重互换）。
         let mirrored = gauss_sky(&f, -2.0, 2.0);
-        for ch in 0..3 {
-            assert!((f64::from(mirrored[ch]) - (1.0 - expect)).abs() < 1e-4);
+        for v in mirrored {
+            assert!((f64::from(v) - (1.0 - expect)).abs() < 1e-4);
         }
     }
 
