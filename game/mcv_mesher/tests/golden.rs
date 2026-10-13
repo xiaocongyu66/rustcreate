@@ -326,9 +326,12 @@ fn rust_mesher_perf_single_chunk() {
     let per_ms = t0.elapsed().as_secs_f64() * 1000.0 / f64::from(N);
 
     println!("单区块 mesh（opaque+water 均值/{N}）：{per_ms:.3} ms");
-    // release 预算 10ms（任务要求）；CI test job 是 debug 构建，放宽到
-    // 200ms 只做劣化哨兵。
-    let budget_ms = if cfg!(debug_assertions) { 200.0 } else { 10.0 };
+    // release 预算 10ms（任务要求）；CI test job 是 debug 构建，只做
+    // 劣化哨兵（谓词零改动，数字随语义修重锚——同 3fbfb595 doctrine）。
+    // #190（ff6e770b）侧面禁沿世界 y 贪心合并 = 原版逐面 quad 语义的忠实
+    // 成本，CI 实测 223.910ms（run 38411667583）→ 哨兵 200→400（2 倍
+    // 余量兜底；release 10ms 门不动，perf 主锁仍在）。
+    let budget_ms = if cfg!(debug_assertions) { 400.0 } else { 10.0 };
     assert!(
         per_ms < budget_ms,
         "单区块 mesh {per_ms:.3} ms 超预算 {budget_ms} ms（debug 构建属预期慢，若 release 超标需修）"
