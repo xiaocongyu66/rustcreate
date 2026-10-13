@@ -11,6 +11,36 @@
 //!   （深板岩/基岩形态补齐），本测只锁「缺材质不缺实体」的边界行为。
 //! - 负 y 口径（#71 绕回面回归）：y=-64..8 段的实心必须反映在
 //!   heightmap 上可达的深度语义（i16 绝对域，无符号绕回哨兵歧义）。
+//!
+//! ## 问题 B 根因报告（证词②「向下挖到某层周围变透明」收口，#190）
+//!
+//! 本文件锁确证的排除面：
+//! - `deep_columns_are_never_hollow`：5 seed × 2×2 chunk，y ∈
+//!   [WORLD_MIN_Y, 8] 逐层实心+流体覆盖率 > 0.15，且 y = WORLD_MIN_Y
+//!   = −64（本仓实物常量 mcv_core/src/lib.rs:28；WORLD_MAX_Y = 320
+//!   :31）基岩恒实心 ⟹ main 生成面**无**「层带整段未生成 = 空区」。
+//! - `deepslate_absent_until_192`：生成输出 deepslate 系方块恒 0——
+//!   solid_material（vanilla/terrain.rs:965-981）min_surface 以下一律
+//!   STONE ⟹ main 基座确证**缺深板岩层**（缺的是材质层，不是实体：
+//!   该深度有实心石头，不是空气）。
+//!
+//! 残余假说（派单口径，非本波实证）：证词所属真机构建出自 surface 系
+//! （feat/surface-deepslate = aad8dbcd 未合入 main，即 #192），其深板岩
+//! vertical_gradient（overworld.json:446-463，true_at_and_below =
+//! absolute(0) / false_at_and_above = absolute(8)）+ bedrock_floor 段
+//! 替换 main 基座层带，挖穿表层若落入铺装未完成/层序接缝区 = 透明带。
+//! 与 surface 分支接缝：#192 合入后层序按原版 sequence bedrock→表层带→
+//! deepslate 铺装（其 terrain.rs 注释实物规则），下伏充实由本文件掏空锁
+//! 兜底 ⟹ B 随接缝闭合自然消解；届时 `deepslate_absent_until_192` 的
+//! 「不含 deepslate」断言转红 = 预登记的口径迁移提醒（见该测注）。
+//!
+//! B 另有根因时的复验探针（按序执行，不预先发明机制）：
+//! ① 同 seed 同柱 `generate_terrain_with` 体素 dump 对层——覆盖率崩
+//!    = 仍生成面（本测 eprintln 诊断 worst_level/max_air_run 是数据源）；
+//! ② 体素实心而画面透明 = 网格口径差——已实证路径「编辑格落区块列
+//!    边界时邻列 MESH 不置脏」已于本分支 fix/deep-holes 修复
+//!    （touch_mesh_neighbors，原版 setBlockDirty ±1 壳层），B 应随之
+//!    消失；①②在合并后构建复验仍绿而 B 复现 → 另立案取证。
 
 use mcv_core::{CHUNK_SX, CHUNK_SZ, WORLD_MIN_Y};
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
