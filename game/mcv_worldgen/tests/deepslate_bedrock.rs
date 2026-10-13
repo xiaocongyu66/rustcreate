@@ -70,7 +70,7 @@ fn touches_lava(vox: &[u16], x: usize, y: i32, z: usize) -> bool {
                 let wy = y + dy;
                 let wx = x as i32 + dx as i32;
                 let wz = z as i32 + dz as i32;
-                if wy < WORLD_MIN_Y || wy >= WORLD_MAX_Y {
+                if !(WORLD_MIN_Y..WORLD_MAX_Y).contains(&wy) {
                     continue;
                 }
                 if !(0..16).contains(&wx) || !(0..16).contains(&wz) {
