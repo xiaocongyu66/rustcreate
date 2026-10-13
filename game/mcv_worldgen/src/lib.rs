@@ -230,6 +230,19 @@ impl TerrainScheduler {
     pub fn results(&self) -> &Receiver<GenResult> {
         &self.res_rx
     }
+
+    /// 生成池是否已排空静默（running==0 ∧ queued==0）：此刻起任何未回执
+    /// 的在途请求都不可能再产出（任务 panic 被池隔离吞掉，池.rs 不变量
+    /// #9——panic 任务不回填结果）。Empty 驻留的孤儿回收以此为必要条件，
+    /// 近似原版「ticket 释放等 future」（DistanceManager.java:87-104）：
+    /// 只要池未静默，请求可能仍在排队/执行，回收即误逐活体（#178 刀 3c
+    /// 取证：矿石 pass 后队列+生成时延合法超 300 stream-frame，flap 测
+    /// fr99-101 逐帧复现——python 建模红窗 S0∈[202,212] 泵长）。
+    #[must_use]
+    pub fn pool_quiesced(&self) -> bool {
+        let s = self.pool.stats();
+        s.running == 0 && s.queued == 0
+    }
 }
 
 #[cfg(test)]
