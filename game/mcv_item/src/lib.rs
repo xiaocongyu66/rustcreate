@@ -73,6 +73,10 @@ pub enum ItemKind {
     Pickaxe(ToolMaterial),
     Axe(ToolMaterial),
     Shovel(ToolMaterial),
+    /// 锄（26.1 `HoeItem`，Items.java:1133-1170；Tool 组件
+    /// minesAndDrops(MINEABLE_WITH_HOE, material.speed)——
+    /// ToolMaterial.java:41-58，#178 刀2b 工具化）。
+    Hoe(ToolMaterial),
     Stick,
     Coal,
     IronIngot,
@@ -6571,7 +6575,10 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("copper_boots", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("copper_chestplate", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("copper_helmet", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("copper_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    // 锄 7 件：26.1 HoeItem(material, attack, speed)（Items.java:1133-1170，
+    // #178 刀2b 工具化；数值 = 原版实物：baseline/attack-speed 修正、
+    // 耐久 = ToolMaterial.durability、Weapon 攻击耗 2）。
+    def!("copper_hoe", ItemKind::Hoe(COPPER), -1.0, -2.0, 190, 2),
     def!("copper_ingot", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("copper_leggings", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("copper_nugget", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6587,7 +6594,7 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("diamond_boots", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("diamond_chestplate", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("diamond_helmet", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("diamond_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("diamond_hoe", ItemKind::Hoe(DIAMOND), -3.0, 0.0, 1561, 2),
     def!("diamond_leggings", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("diamond_spear", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("disc_fragment_5", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6653,7 +6660,7 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("golden_carrot", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("golden_chestplate", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("golden_helmet", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("golden_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("golden_hoe", ItemKind::Hoe(GOLD), 0.0, -3.0, 32, 2),
     def!("golden_horse_armor", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("golden_leggings", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("golden_nautilus_armor", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6691,7 +6698,7 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("iron_boots", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("iron_chestplate", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("iron_helmet", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("iron_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("iron_hoe", ItemKind::Hoe(IRON), -2.0, -1.0, 250, 2),
     def!("iron_leggings", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("iron_nugget", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("iron_spear", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6752,7 +6759,14 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("netherite_boots", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("netherite_chestplate", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("netherite_helmet", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("netherite_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!(
+        "netherite_hoe",
+        ItemKind::Hoe(NETHERITE),
+        -4.0,
+        0.0,
+        2031,
+        2
+    ),
     def!("netherite_leggings", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("netherite_scrap", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("netherite_shovel", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6872,7 +6886,7 @@ pub static ITEMS: [ItemDef; 1381] = [
     def!("spruce_boat", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("spruce_chest_boat", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("spyglass", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("stone_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("stone_hoe", ItemKind::Hoe(STONE_M), -1.0, -2.0, 131, 2),
     def!("stone_shovel", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("stone_spear", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("sugar", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -6937,7 +6951,7 @@ pub static ITEMS: [ItemDef; 1381] = [
     ),
     def!("wind_charge", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("wolf_armor", ItemKind::Material, 0.0, 0.0, 0, 0),
-    def!("wooden_hoe", ItemKind::Material, 0.0, 0.0, 0, 0),
+    def!("wooden_hoe", ItemKind::Hoe(WOOD), 0.0, -3.0, 59, 2),
     def!("wooden_spear", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("writable_book", ItemKind::Material, 0.0, 0.0, 0, 0),
     def!("written_book", ItemKind::Material, 0.0, 0.0, 0, 0),
@@ -7099,6 +7113,7 @@ pub const IRON_PICKAXE_INDEX: u16 = 15;
 pub const DIAMOND_PICKAXE_INDEX: u16 = 16;
 pub const WOODEN_AXE_INDEX: u16 = 19;
 pub const WOODEN_SHOVEL_INDEX: u16 = 25;
+pub const WOODEN_HOE_INDEX: u16 = 1374;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnchStack {
@@ -7143,9 +7158,11 @@ impl ItemStack {
 
     fn material_bonus(&self) -> u8 {
         match self.def().kind {
-            ItemKind::Sword(m) | ItemKind::Pickaxe(m) | ItemKind::Axe(m) | ItemKind::Shovel(m) => {
-                m.attack_bonus
-            }
+            ItemKind::Sword(m)
+            | ItemKind::Pickaxe(m)
+            | ItemKind::Axe(m)
+            | ItemKind::Shovel(m)
+            | ItemKind::Hoe(m) => m.attack_bonus,
             _ => 0,
         }
     }
@@ -7160,9 +7177,11 @@ impl ItemStack {
 
     pub fn enchant_value(&self) -> u8 {
         match self.def().kind {
-            ItemKind::Sword(m) | ItemKind::Pickaxe(m) | ItemKind::Axe(m) | ItemKind::Shovel(m) => {
-                m.enchant_value
-            }
+            ItemKind::Sword(m)
+            | ItemKind::Pickaxe(m)
+            | ItemKind::Axe(m)
+            | ItemKind::Shovel(m)
+            | ItemKind::Hoe(m) => m.enchant_value,
             _ => 0,
         }
     }

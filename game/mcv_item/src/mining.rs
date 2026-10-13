@@ -13,9 +13,10 @@
 //! - 掉落受同一门控约束（见 inventory::drops_for_block 的调用门）。
 //! - 硬度无限（基岩）→ 进度恒 0，永不可破。
 //!
-//! 已知未建模登记（#180 波）：① 锄物品在 ITEMS 是 `ItemKind::Material`
-//! （非工具），[`ToolKind::Hoe`] 暂由方块侧 tag 产生、无手持侧生产者，
-//! 锄具接线（ItemKind::Hoe + 原版数值）待物品波；② 剑/剪刀对 cobweb 等
+//! 已知未建模登记（#180 波）：① 锄的翻土 use-on 交互（26.1
+//! `HoeItem.TILLABLES`：草径/泥土→耕地等）——刀2b 已按原版数值把 7 件
+//! 锄工具化（`ItemKind::Hoe`，速度/耐久/攻击 = Items.java:1133-1170
+//! 实物），右键翻土交互未建模；② 剑/剪刀对 cobweb 等
 //! 的专用 Tool 组件规则（对应方块 = tool::Requirement::Never，任何工具
 //! 不正确，与「剪刀可掉」的原版差异登记于此）；③ crafter 原版怪癖
 //! （无掉落门但 incorrect_for_wooden/gold 含它 → 木/金镐挖不掉、徒手反
@@ -29,14 +30,15 @@ use mcv_core::BlockId;
 use mcv_registry::TagEntry;
 
 /// 可挖工具种类（原版 `mineable/*` 四 tag 全量，方块侧 tag 查询产出；
-/// 手持侧现只有镐/斧/铲三类物品，Hoe 见模块头登记①）。
+/// 手持侧镐/斧/铲/锄四类物品齐备，#178 刀2b）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ToolKind {
     Pickaxe,
     Axe,
     Shovel,
-    /// 原版 MINEABLE_WITH_HOE（29 成员，泥/草翻土族 + 瓜/叶等）。引擎
-    /// 锄物品尚未工具化（登记①），查询侧已按原版落地。
+    /// 原版 MINEABLE_WITH_HOE（29 成员，泥/草翻土族 + 瓜/叶等）；手持侧
+    /// = `ItemKind::Hoe` 七件（原版数值），速度 = 材料 speed
+    /// （`Tool.Rule.minesAndDrops`，ToolMaterial.java:41-58）。
     Hoe,
 }
 
@@ -119,13 +121,14 @@ pub fn block_mining(id: BlockId) -> BlockMining {
     }
 }
 
-/// 手持物品的工具规格（方块物品/杂物 = None；锄见登记①）。
+/// 手持物品的工具规格（方块物品/杂物 = None）。
 pub fn tool_of(stack: Option<&ItemStack>) -> Option<(ToolKind, ToolMaterial)> {
     let kind = stack?.def().kind;
     match kind {
         ItemKind::Pickaxe(m) => Some((ToolKind::Pickaxe, m)),
         ItemKind::Axe(m) => Some((ToolKind::Axe, m)),
         ItemKind::Shovel(m) => Some((ToolKind::Shovel, m)),
+        ItemKind::Hoe(m) => Some((ToolKind::Hoe, m)),
         _ => None,
     }
 }
@@ -156,7 +159,7 @@ pub fn destroy_speed(block: BlockId, stack: Option<&ItemStack>) -> f32 {
 }
 
 /// 带 Tool 组件物品挖掘一次的耐久消耗（26.1 `Item.mineBlock` 的
-/// `tool.damagePerBlock()`，`Item.java:257-268`）：镐/斧/锹 1
+/// `tool.damagePerBlock()`，`Item.java:257-268`）：镐/斧/锹/锄 1
 /// （ToolMaterial.applyToolProperties，ToolMaterial.java:37-63 末参 1）、
 /// 剑 2（applySwordProperties，ToolMaterial.java:79-94 末参 2）；其余物品
 /// 无 Tool 组件 → 0。**与掉落门解耦**：原版耐久不问 correct-for-drops，
@@ -164,7 +167,7 @@ pub fn destroy_speed(block: BlockId, stack: Option<&ItemStack>) -> f32 {
 /// `itemStack.mineBlock` 无条件于 canDestroy 之前执行）。
 pub fn mine_damage(kind: ItemKind) -> u16 {
     match kind {
-        ItemKind::Pickaxe(_) | ItemKind::Axe(_) | ItemKind::Shovel(_) => 1,
+        ItemKind::Pickaxe(_) | ItemKind::Axe(_) | ItemKind::Shovel(_) | ItemKind::Hoe(_) => 1,
         ItemKind::Sword(_) => 2,
         _ => 0,
     }

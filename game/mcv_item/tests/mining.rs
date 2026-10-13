@@ -7,13 +7,28 @@ use mcv_item::mining::{
     DropNeed, block_mining, destroy_speed, has_correct_tool, progress_per_tick,
 };
 use mcv_item::{
-    DIAMOND_PICKAXE_INDEX, IRON, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX, ItemKind, ItemStack,
-    STONE_PICKAXE_INDEX, ToolKind, WOODEN_AXE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX,
-    mining,
+    COPPER, DIAMOND, DIAMOND_PICKAXE_INDEX, GOLD, IRON, IRON_PICKAXE_INDEX, IRON_SWORD_INDEX,
+    ItemDef, ItemKind, ItemStack, NETHERITE, STONE_M, STONE_PICKAXE_INDEX, ToolKind, ToolMaterial,
+    WOOD, WOODEN_AXE_INDEX, WOODEN_HOE_INDEX, WOODEN_PICKAXE_INDEX, WOODEN_SHOVEL_INDEX, mining,
 };
 
 fn tool(id: u16) -> Option<ItemStack> {
     Some(ItemStack::new(id, 1))
+}
+
+/// 注册名 → ITEMS 行号（新增工具行号大，测试按名查不硬编码）。
+fn item_id(name: &str) -> u16 {
+    mcv_item::ITEMS
+        .iter()
+        .position(|i| i.name == name)
+        .unwrap_or_else(|| panic!("未注册物品 {name}")) as u16
+}
+
+fn item_def(name: &str) -> &'static ItemDef {
+    mcv_item::ITEMS
+        .iter()
+        .find(|i| i.name == name)
+        .unwrap_or_else(|| panic!("未注册物品 {name}"))
 }
 
 const STONE: BlockId = BlockId(1);
@@ -212,6 +227,81 @@ fn tag_driven_speed_and_free_blocks() {
         None,
         "命令块无 mineable tag = 恒 1.0 速"
     );
+}
+
+/// #178 刀2b 锄工具化（原版 `HoeItem`，Items.java:1133-1170）：
+/// `mineable/hoe` 族吃材料速度（`Tool.Rule.minesAndDrops`，
+/// ToolMaterial.java:41-58 speed=材料）；锄系方块零掉落门（gate ∧ hoe
+/// tag 交集 = 0，mcv_core tool.rs 文档锁），锄对镐系门也非正确工具。
+#[test]
+fn hoe_wired_to_vanilla_mineable_hoe() {
+    let hay = BlockId(462); // hay_block ∈ mineable/hoe（26.1 实物 tag）
+    let bm = block_mining(hay);
+    assert_eq!(bm.speed_tool, Some(ToolKind::Hoe));
+    assert_eq!(bm.need, DropNeed::None, "锄系方块无掉落门");
+    // wooden_hoe = WOOD speed 2；stone_hoe = STONE speed 4。
+    assert_eq!(destroy_speed(hay, tool(WOODEN_HOE_INDEX).as_ref()), 2.0);
+    assert_eq!(
+        destroy_speed(hay, tool(item_id("stone_hoe")).as_ref()),
+        4.0,
+        "stone_hoe 吃 STONE speed 4"
+    );
+    assert_eq!(destroy_speed(hay, None), 1.0, "徒手恒 1.0");
+    // 种类不匹配不吃速度：斧挖干草块无加速（原版干草块只属 hoe tag）。
+    assert_eq!(destroy_speed(hay, tool(WOODEN_AXE_INDEX).as_ref()), 1.0);
+    // 锄对镐系掉落门非正确工具（下界合金锄也不行——种类先于层级），
+    // 走 100 档 = 徒手档（圆石硬度 2 → 200 tick）。
+    assert!(!has_correct_tool(
+        STONE,
+        tool(item_id("diamond_hoe")).as_ref()
+    ));
+    assert!(
+        (1.0 / progress_per_tick(COBBLE, tool(item_id("diamond_hoe")).as_ref()) - 200.0).abs()
+            < 1e-3
+    );
+    // 耐久：锄带 Tool 组件 damagePerBlock = 1（ToolMaterial.java:57 末参）。
+    assert_eq!(mining::mine_damage(ItemKind::Hoe(WOOD)), 1);
+    assert_eq!(
+        mining::mine_durability_cost(hay, tool(WOODEN_HOE_INDEX).as_ref()),
+        1
+    );
+}
+
+/// 锄 7 件物品面板 = 26.1 Items.java:1133-1170 实物：
+/// `HoeItem(material, attackBaseline, attackSpeedBaseline)` +
+/// 耐久 = ToolMaterial.durability + Weapon 攻击耗 2。
+#[test]
+fn hoe_item_values_match_items_java() {
+    // (name, material, baseline_attack, attack_speed_modifier, durability)
+    let table: [(&str, ToolMaterial, f32, f32, u16); 7] = [
+        ("wooden_hoe", WOOD, 0.0, -3.0, 59),
+        ("stone_hoe", STONE_M, -1.0, -2.0, 131),
+        ("copper_hoe", COPPER, -1.0, -2.0, 190),
+        ("golden_hoe", GOLD, 0.0, -3.0, 32),
+        ("iron_hoe", IRON, -2.0, -1.0, 250),
+        ("diamond_hoe", DIAMOND, -3.0, 0.0, 1561),
+        ("netherite_hoe", NETHERITE, -4.0, 0.0, 2031),
+    ];
+    for (name, mat, base, speed, dur) in table {
+        let def = item_def(name);
+        assert!(
+            matches!(def.kind, ItemKind::Hoe(m) if m == mat),
+            "{name} 应为 Hoe({mat:?})"
+        );
+        assert_eq!(def.baseline_attack, base, "{name} 攻击基线");
+        assert_eq!(def.attack_speed_modifier, speed, "{name} 攻速修正");
+        assert_eq!(def.max_damage, dur, "{name} 耐久 = ToolMaterial");
+        assert_eq!(def.item_damage_per_attack, 2, "{name} Weapon 耗 2");
+        // 面板 = baseline + 材料加成 = 全锄净 0（原版实物：baseline 与
+        // material.attackDamageBonus 逐材料相消 → 全锄攻击 1.0 =
+        // 玩家基础 1.0 + 0，面板不含玩家基础，同 sword_attack_values 口径）。
+        let s = ItemStack::new(item_id(name), 1);
+        assert_eq!(
+            s.full_attack(),
+            0.0,
+            "{name} 面板攻击 = 0（+玩家 1.0 = 原版 1.0）"
+        );
+    }
 }
 
 /// 耐久消耗对齐 26.1 `Item.mineBlock`（Item.java:257-268，任务板 #90）：
