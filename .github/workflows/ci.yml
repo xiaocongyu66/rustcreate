@@ -96,6 +96,11 @@ jobs:
       # 供跨提交前后对照；包络断言随之照常执行）。
       - name: Cave quantitative audit (K-CAVE-AUDIT lines into log)
         run: cargo test -p mcv_worldgen --test cave_audit --locked -- --nocapture
+      # #192 湖锁证据面：K-LAKES-BUF / K-LAKES attempts 数值行常态入日志
+      # （同 cave_audit「数据两用」先例——绿跑也要能回帖 survivors/lava_in_band
+      # 原文，不能只在红跑回显时可见）。
+      - name: Lava lake audit (K-LAKES lines into log)
+        run: cargo test -p mcv_worldgen --test lakes --locked -- --nocapture
 
   render-headless:
     runs-on: ubuntu-24.04
