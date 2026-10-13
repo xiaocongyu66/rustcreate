@@ -333,7 +333,7 @@ SnbtGrammar/NumberRunParseRule 实物）。
 `SimplePalette.stateFor` 的 `DEFAULT_BLOCK_STATE`=AIR（StructureTemplate.
 java:852-870，非任务书所说「palette 首元素」）；integrity 掷骰位对齐
 实物——26.1 `RandomSource.create(long)`=`LegacyRandomSource`（java LCG，
-RandomSource.java:23-25；Xoroshiro128++ 在 26.1 代码树不存在），每块
+RandomSource.java:23-25；Xoroshiro128PlusPlusRandomSource/RandomSharedConstants 不存在，Xoroshiro128PlusPlus 仅余 levelgen 内部组件、不挂 create 路径），每块
 全新播种 `Mth.getSeed(世界坐标)`（Mth.java:314-318）掷一次 `nextFloat`
 （BlockRotProcessor.java:42-53），`mcv_core::rand::{Lcg, mth_get_seed}`
 向量锁死；Name→BlockId OnceLock 建表 O(1)。旧世代 BlockIndices/
