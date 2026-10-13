@@ -108,7 +108,7 @@ fn deterministic_same_seed_and_pure_replay() {
 fn cross_chunk_vein_stitching() {
     // 跨界 blob：origin (1,0) 伸入 x=15（chunk 0）的写，必须由 chunk 0
     // 自身的重放落进其缓冲（两侧各写自块、同源同几何）。
-    let seed = 0xC5EED_0001;
+    let seed = 0x000C_5EED_0001;
     let orch = Orchestrator::new(seed);
     let aq = Aquifer::new(seed);
     let mut f = AquiferField::new(&aq, &orch);
@@ -245,7 +245,7 @@ fn ore_type_ids() -> Vec<u16> {
         .filter(|r| {
             let nm = r.targets[0].state;
             let name = mcv_core::BLOCKS[nm as usize].name;
-            !skip.iter().any(|s| name == *s)
+            !skip.contains(&name)
         })
         .flat_map(|r| r.targets.iter().map(|t| t.state))
         .collect()
