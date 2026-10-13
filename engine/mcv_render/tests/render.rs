@@ -36,6 +36,32 @@ fn tint_for(layer: u16) -> [u8; 4] {
     }
 }
 
+/// #191 真实网格器通路的 plains tint 场：真 colormap 素材
+/// （`assets/minecraft/textures/colormap/{grass,foliage}.png`）× 气候表
+/// plains 值（temp 0.8 / downfall 0.4，data biome JSON 实物）。几何与生产
+/// `BiomeTintSource::field_for` 一致：21×21、原点 = 区块角 − BLEND_RADIUS。
+/// 无 tint 场顶点恒白 = 树叶按灰度原贴图，(b) 绿系断言正是「tint 断裂」
+/// 守护——所以本测试必须喂场，不放宽断言。
+fn plains_tint() -> mcv_mesher::TintInput {
+    let dir = workspace_assets();
+    let decode = |name: &str| -> Vec<u8> {
+        let png = std::fs::read(dir.join("textures/colormap").join(name))
+            .unwrap_or_else(|e| panic!("colormap/{name} 读取失败: {e}"));
+        mcv_core::tint::decode_colormap(&png).expect("colormap 256×256 RGBA")
+    };
+    let grass_px = decode("grass.png");
+    let foliage_px = decode("foliage.png");
+    let r = mcv_core::tint::BLEND_RADIUS;
+    let w = (16 + 2 * r + 1) as usize;
+    let cells = vec![[0.8_f64, 0.4]; w * w];
+    mcv_mesher::TintInput {
+        block_x: 0,
+        block_z: 0,
+        tint: mcv_core::tint::ChunkTint::from_climate(-r, -r, &cells, &grass_px, &foliage_px)
+            .expect("plains tint 场构建"),
+    }
+}
+
 fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
     // 16x16 grass plane at y=100 (top face, sky-lit).
     let y = 100.0f32;
@@ -2351,8 +2377,10 @@ fn wood_family_samples_render_thin_templates() {
                 light: &light[..],
             }),
         ];
+        // #191：走生产 tint 通路（逐顶点色），树叶/草才有绿系染色——
+        // 旧的「白顶点 + 贴图自带色」语义已随 binding-4 LUT 废除。
         mcv_mesher::Mesher::new()
-            .build(&slots, mcv_mesher::MESH_OPAQUE)
+            .build_with_tint(&slots, mcv_mesher::MESH_OPAQUE, Some(plains_tint()))
             .expect("wood scene mesh")
     };
 

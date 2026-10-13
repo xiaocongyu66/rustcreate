@@ -5405,7 +5405,9 @@ impl GameRuntime {
     /// 用」——任一缺失/尺寸不符保持禁用，不伪造颜色）。注入同时下发
     /// 同步路 mesher（worker 路由本类型派发点直接消费）。
     pub fn attach_biome_tint(&mut self, grass_px: Vec<u8>, foliage_px: Vec<u8>) {
-        let src = crate::biome_tint::BiomeTintSource::new(self.seed, grass_px, foliage_px);
+        // Arc 包装：mesher（worker 派发共享）与本类型各持一份引用。
+        let src =
+            crate::biome_tint::BiomeTintSource::new(self.seed, grass_px, foliage_px).map(Arc::new);
         if src.is_none() {
             log::error!(
                 "colormap 解码产物尺寸不符（256×256 RGBA）——生物群系染色禁用，\
