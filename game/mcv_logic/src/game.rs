@@ -8948,6 +8948,173 @@ mod tests {
         );
     }
 
+    // ---- #190 取证：隐形墙 = 钳制矩形「对称环」崩塌（真机证词 A 复现）----
+
+    /// fixture：以原点为中心、Chebyshev 半径 `r` 的全 Full 盘（先清表
+    /// 再铺盘）。stage=TerrainReady + status=Full 是物理门的最小证据
+    /// 对——钳制/冻结谓词只读 status（[`GameRuntime::sim_safe_radius`]
+    /// 的 ready 闭包），光照/渲染态与本题无关，不给 fixture 多余记账。
+    fn full_disk(rt: &mut GameRuntime, r: i32) {
+        rt.chunks_mut().clear();
+        for cx in -r..=r {
+            for cz in -r..=r {
+                let pos = ChunkPos::new(cx, cz);
+                let h = Arc::new(ChunkHandle::new(pos));
+                h.advance_to(Stage::TerrainReady);
+                h.advance_status(ChunkStatus::Full);
+                rt.chunks_mut().insert(pos, h);
+            }
+        }
+    }
+
+    /// #190 证词 A 复现（取证红）：「在已经加载出来的区块中空中飞行，
+    /// 突然撞到墙，面前什么方块都没有」。位形 = 盘 r=7 全 Full，仅身后
+    /// (-3,0) 缺席（回访区读盘回执在途，生产真实可达：票环保证终将
+    /// 补齐，钳制只是 IO 掉队期的兜底）。旧对称环语义 r_safe=2 →
+    /// m=r_safe−1=1：身后单块洞把**四向**余量一起压到洞环之里——前方
+    /// 全 Full 照常可见，玩家却被钉在 x=32−pad 的「面前什么都没有」
+    /// 的墙上（碰撞盒零方块、纯钳制钉；`block()` 对已就位列恒真体素，
+    /// physics_sweep_air.rs 已锁纯空气零阻挡）。原版无此钳制
+    /// （DistanceManager.java:110-117 PLAYER_SIMULATION 单锚点 +
+    /// ChunkMap.move:1071-1096 锚点随块迁移 ⟹ 实体物理恒有整盘就绪区），
+    /// 兜底钳制不得把单点未就绪放大成全向墙——只应钉住「未就绪方向」。
+    #[test]
+    fn invisible_wall_repro_hole_behind_must_not_wall_forward() {
+        let mut rt = headless_rt("invwall190");
+        rt.render_dist = 4; // sim=5，cap=7
+        rt.phase = GamePhase::Playing;
+        full_disk(&mut rt, 7);
+        rt.chunks_mut().remove(&ChunkPos::new(-3, 0));
+        let pc = ChunkPos::new(0, 0);
+        // 取证基线（旧对称环谓词读数）：洞在第 3 环 → r_safe=2。
+        assert_eq!(rt.sim_safe_radius(pc), 2, "洞在 ring3：对称环语义基线");
+        rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+        rt.player.vel = Vec3::ZERO;
+        rt.player.flying = true;
+        // camera.dir = (sin yaw, 0, −cos yaw)（camera.rs:24-31）→
+        // yaw=π/2 时 forward=+X。
+        rt.player.yaw = std::f32::consts::FRAC_PI_2;
+        rt.input.forward = true;
+        for i in 0..600 {
+            rt.fixed_step(1.0 / 60.0);
+            // 全程不得越出票 Full 授权域（东界上界 16*8=128）。
+            assert!(
+                rt.player.pos.x < 128.0,
+                "步 {i} 越出票 Full 域（soundness 破口）x={}",
+                rt.player.pos.x
+            );
+        }
+        // 10 s 平飞 ≈ 8.5 + 10.111×10 ≈ 109 格；新语义前向余量到票域
+        // （东界 16×7−pad ≈ 111.7），全程不触钳。旧语义钉死 31.48 → 红。
+        assert!(
+            rt.player.pos.x > 90.0,
+            "#190 隐形墙复现锁：洞在身后 (-3,0)、前方 (-3..7,*) 全 Full，\
+             向前平飞 10 s 必须穿过多个已就位区块（got x={}——被身后洞\
+             派生的对称钳制矩形钉在 x=32−pad≈31.5）",
+            rt.player.pos.x
+        );
+    }
+
+    /// #190 soundness 锁（旧新实现都要绿）：洞在飞行方向上时，钳制必须
+    /// 把玩家挡在洞块**之外**——任何钳制矩形实现都不允许玩家 AABB
+    /// 步进末端触达未 Full 区块（真体素查询前提，WorldView::block 注；
+    /// 触达未提交块 = 从「撞隐形墙」翻车成「穿进虚空」）。表驱动四向。
+    #[test]
+    fn clamp_soundness_flying_toward_hole_never_reaches_notready() {
+        // (标签, 洞位, yaw)——yaw 使 forward 指向洞：dir=(sin,0,−cos)。
+        for (tag, hole, yaw) in [
+            ("+X", (3i32, 0i32), std::f32::consts::FRAC_PI_2),
+            ("-X", (-3, 0), -std::f32::consts::FRAC_PI_2),
+            ("+Z", (0, 3), std::f32::consts::PI),
+            ("-Z", (0, -3), 0.0),
+        ] {
+            let mut rt = headless_rt("sound190");
+            rt.render_dist = 4;
+            rt.phase = GamePhase::Playing;
+            full_disk(&mut rt, 7);
+            rt.chunks_mut().remove(&ChunkPos::new(hole.0, hole.1));
+            rt.player.pos = Vec3::new(8.5, 70.0, 8.5);
+            rt.player.flying = true;
+            rt.player.yaw = yaw;
+            rt.input.forward = true;
+            let half = mcv_game::Player::HALF[0];
+            for i in 0..600 {
+                rt.fixed_step(1.0 / 60.0);
+                // 步末 AABB 足迹的每个区块列必须存在且 status ≥ Full。
+                let p = rt.player.pos;
+                let x0 = ((p.x - half) / 16.0).floor() as i32;
+                let x1 = ((p.x + half) / 16.0).floor() as i32;
+                let z0 = ((p.z - half) / 16.0).floor() as i32;
+                let z1 = ((p.z + half) / 16.0).floor() as i32;
+                for cx in x0..=x1 {
+                    for cz in z0..=z1 {
+                        assert!(
+                            rt.chunks
+                                .get(&ChunkPos::new(cx, cz))
+                                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8)),
+                            "{tag} 步 {i}：玩家 AABB 触达未 Full 列 ({cx},{cz})，\
+                             pos={}（真体素不变量破坏）",
+                            rt.player.pos
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// #190 取证（红）：挖 chunk 列边界方块必须联动邻列出网格。原版
+    /// 26.1 `LevelRenderer.setBlockDirty` :1344-1352 对编辑格 **±1 壳层
+    /// 9 格**所在 section 全部置脏（跨列部分 = 邻区块列）；本仓编辑路
+    /// （destroy_block/place_block）只置本块 MESH 脏：邻块边界面剔除
+    /// （mesher 3×3 邻域快照）仍按编辑前体素判定 = 邻列网格「体素已变、
+    /// 画面未变」——隐形实心（碰撞在场、网格空气）/隐形空洞双症状，
+    /// 正是「mesh 显示空气但碰撞盒仍 solid」嫌疑的实锤路径。光照边同步
+    /// 级联只在**光变化**时顺带置脏（relight_block_edit 的 mask 门），
+    /// 深层无光编辑 mask=0，不背这个锅。
+    #[test]
+    fn boundary_block_destroy_remeshes_neighbor_column() {
+        let mut rt = headless_rt("bnd190");
+        rt.render_dist = 4;
+        // (1,±1) 在场专作「过宽修复」哨兵：编辑格 (15,70,8) 的 ±1 壳层
+        // 只跨进 (1,0)，若修复无差别标 8 邻，(1,±1) 会被虚置脏并捕获。
+        for (cx, cz) in [(0i32, 0i32), (1, 0), (1, 1), (1, -1)] {
+            let pos = ChunkPos::new(cx, cz);
+            let h = Arc::new(ChunkHandle::new(pos));
+            h.advance_to(Stage::TerrainReady);
+            h.advance_status(ChunkStatus::Full);
+            rt.chunks_mut().insert(pos, h);
+        }
+        let stone = mcv_core::BLOCKS
+            .iter()
+            .position(|d| d.name == "stone")
+            .unwrap() as u16;
+        // (0,0) 东边界列 lx=15：挖掉它，(1,0) 西侧格 (0,70,8) 面对它
+        // 的面剔除判定从「邻格实心 → 剔除」变「邻格空气 → 出面」。
+        let target = BlockPos::new(15, 70, 8);
+        rt.chunks[&ChunkPos::new(0, 0)]
+            .voxels
+            .write()
+            .unwrap()
+            .set_flat(mcv_core::vidx(15, 70, 8), mcv_core::BlockId(stone));
+        rt.destroy_block(target);
+        assert_ne!(
+            rt.chunks[&ChunkPos::new(1, 0)].dirty() & mcv_core::dirty::MESH,
+            0,
+            "K-BND-REMESH：挖边界块 (15,70,8) 必须让邻列 (1,0) 重网格\
+             （原版 setBlockDirty ±1 壳层，LevelRenderer.java:1344-1352）"
+        );
+        // ±1 壳层未跨到的列不许误置脏（防「全表 remesh」式过宽修复）。
+        for cz in [-1i32, 1] {
+            assert_eq!(
+                rt.chunks
+                    .get(&ChunkPos::new(1, cz))
+                    .map_or(0, |h| h.dirty() & mcv_core::dirty::MESH),
+                0,
+                "(1,{cz}) 不在编辑格 ±1 壳层的跨列邻域，不得虚置脏"
+            );
+        }
+    }
+
     // ---- 模拟距离实体门（26.1 ServerLevel.java:418-419）----
     // 原版语义：实体仅当所在区块在 PLAYER_SIMULATION 票级别视图 ≤
     // ENTITY_TICKING（DistanceManager.java:136-138，环 = 距玩家锚点
