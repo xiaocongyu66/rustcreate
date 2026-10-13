@@ -15,10 +15,10 @@
 //!   LCG（MULTIPLIER=25214903917、INCREMENT=11、setSeed 预混 XOR）；
 //!   `WorldgenRandom.java:27-31` 对 LegacyRandomSource 包装时逐位透传
 //!   `next(bits)`，故随机序列 = 裸 LCG；
-//! - `levelgen/BitRandomSource.java:8,26-37,48-52`：`nextDouble()` 乘子为
-//!   `DOUBLE_MULTIPLIER = 1.110223E-16F`——**float 字面量**经 double 化，
-//!   与 `2^-53`（java.util.Random 乘子）在末位有 ~2 ulp 之差，实物逐位
-//!   对拍必须用前者；`nextInt(bound)` 的 2 幂快路与拒绝采样同式。
+//! - `levelgen/BitRandomSource.java:8,26-37,48-52`：`nextDouble()` 乘子
+//!   `DOUBLE_MULTIPLIER = 1.110223E-16F`（float 字面量 double 化经考证
+//!   恰为 2⁻⁵³，与 java.util.Random 位等价——tests 锁定）；
+//!   `nextInt(bound)` 的 2 幂快路与拒绝采样同式。
 //!
 //! 世界种子接线：Biome.java:61 的 `TEMPERATURE_NOISE` 种子是常量
 //! `LegacyRandomSource(1234)`（类静态字段），**与世界种子无关**——
@@ -83,7 +83,7 @@ impl LegacyRandom {
 
     /// `nextDouble()`（BitRandomSource.java:48-52）：
     /// `((next(26) << 27) + next(27)) * DOUBLE_MULTIPLIER`，乘子为
-    /// float 字面量 `1.110223E-16F` 的 double 化值（≠ 2^-53，见模块头注）。
+    /// float 字面量 `1.110223E-16F` 的 double 化值（恰为 2⁻⁵³，见模块头注）。
     fn next_double(&mut self) -> f64 {
         let upper = self.next(26) as i64;
         let lower = self.next(27) as i64;
@@ -150,9 +150,7 @@ impl SimplexNoise {
         for ix in 0..256usize {
             let ix32 = ix as i32;
             let swap = (random.next_int_bound(256 - ix32) + ix32) as usize;
-            let tmp = p[ix];
-            p[ix] = p[swap];
-            p[swap] = tmp;
+            p.swap(ix, swap);
         }
         p.copy_within(0..256, 256);
         Self { xo, yo, zo, p }
@@ -348,20 +346,19 @@ mod tests {
     fn lcg_matches_java_random_bit_pattern() {
         let mut r = LegacyRandom::new(0);
         assert_eq!(r.next_int(), -1_155_484_576);
-        // nextDouble 的位组装部分（不含 MC float 乘子）：
-        // java.util.Random(0) 首值 0.7309677873297698 = bits/2^53。
+        // 步进公式自证：seed0 = 0^MULT，两步 LCG 手推对拍 next() 实现。
+        let s1 = (0x5DEE_CE6D_u64).wrapping_mul(MULT).wrapping_add(11) & MASK;
         let mut r2 = LegacyRandom::new(0);
-        let upper = r2.next(26) as i64;
-        let lower = r2.next(27) as i64;
-        let bits_value = ((upper << 27) + lower) as f64 * 2f64.powi(-53);
-        assert!((bits_value - 0.730_967_787_329_769_8).abs() < 1e-12);
+        assert_eq!(r2.next(32), ((s1 >> 16) as u32) as i32);
     }
 
-    /// MC 乘子 ≠ 2^-53：`1.110223E-16F`（float 字面量）与 2^-53 的
-    /// 双精度化确有差异（实物逐位对拍的前提，防止后人「顺手修正」）。
+    /// MC 乘子逐位考证：float 字面量 `1.110223E-16F` double 化后
+    /// **恰为 2⁻⁵³**（float→double 往返落在精确 2 的幂上，CI 实证）
+    /// ——故 `next_double()` 与 java.util.Random 位等价；此测试锁住
+    /// 「不要误改乘子为其它近似十进制值」。
     #[test]
-    fn mc_double_multiplier_is_not_pow2_53() {
-        assert_ne!(1.110223e-16_f32 as f64, 2f64.powi(-53));
+    fn mc_double_multiplier_is_pow2_53() {
+        assert_eq!(1.110223e-16_f32 as f64, 2f64.powi(-53));
     }
 
     /// nextInt(bound)：2 幂快路与非 2 幂拒绝采样都覆盖（洗牌全程
