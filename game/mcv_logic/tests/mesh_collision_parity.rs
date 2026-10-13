@@ -98,6 +98,16 @@ fn every_collidable_block_emits_geometry() {
             continue; // air
         }
         let id = BlockId(i as u16);
+        // 隐形族排除（前提修正，实物 BarrierBlock.java:45-46
+        // `getRenderShape → RenderShape.INVISIBLE`，经 BlockBehaviour.java:
+        // 607-608 被渲染器消费=不出任何几何）：原版 barrier/light/空气族/
+        // structure_void/bubble_column 世界里不可见但碰撞/拾取盒在——
+        // 「碰撞实心 + 零几何」对它们恰是原版行为，不是隐形墙病灶。
+        // 对偶不变式对其余全部实心块保持锁强（名单唯一出处
+        // mcv_mesher::INVISIBLE_GEOM，与网格器生成表同源防漂移）。
+        if mcv_mesher::INVISIBLE_GEOM.contains(&def.name) {
+            continue;
+        }
         let n = collision_count(id, CELL);
         if n == 0 {
             continue; // 无碰撞（火把/花草/水/非固体）：反方向不锁

@@ -9,7 +9,7 @@
 mod mesher;
 mod sched;
 
-pub use mesher::{MeshData, TintInput, VERTEX_STRIDE, block_geom, build_mesh};
+pub use mesher::{INVISIBLE_GEOM, MeshData, TintInput, VERTEX_STRIDE, block_geom, build_mesh};
 pub use sched::{
     MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
     neighborhood_slots, worker_count_from,

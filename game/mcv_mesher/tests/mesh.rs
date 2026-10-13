@@ -928,3 +928,42 @@ fn pane_and_wall_post_with_connected_arms() {
         "墙臂 outline 高 14px（0.875）"
     );
 }
+
+/// #190 深层带行界连续锁（新）：整区块截面实心柱的侧面沿世界 y 每个
+/// 行界必须有顶点（原版逐面 quad 语义——纵向禁合并，mesher.rs build_pass
+/// #190 注）。负 y 域（y=-64..=-50，顶面 y=-49）与正 y 域（y=70..=84，
+/// 顶面 y=85）同款断言 [y0, y1+1] 全整数顶点：若「世界 y 向贪心合并」
+/// 回归，负 y 集先丢 -62..=-50（deep_section_below_zero_is_meshed 的
+/// #184 红签名 = 真机「挖到某层下方变透明」的网格面），golden bounds
+/// 场景同锁。正 y 对照此前无任何行界用例覆盖（golden 全正 y + bounds
+/// 单列），本测双域补钉。
+#[test]
+fn side_faces_keep_every_row_boundary_y() {
+    let stone = id_of("stone");
+    for (y0, y1) in [(-64i32, -50i32), (70, 84)] {
+        let side = chunk(0, 0xF0);
+        let mut c = chunk(0, 0xF0);
+        for y in y0..=y1 {
+            for z in 0..16usize {
+                for x in 0..16usize {
+                    c.0[mcv_core::vidx(x, y, z)] = stone;
+                }
+            }
+        }
+        let buf = Mesher::new().build(&full9(&c, &side), 0).unwrap();
+        let ys: Vec<i32> = decode(&buf).iter().map(|v| v.pos[1] as i32).collect();
+        for want in y0..=y1 + 1 {
+            assert!(
+                ys.contains(&want),
+                "y∈[{y0},{y1}] 实心柱缺行界顶点 y={want}（世界 y 向合并回归，\
+                 负 y 域=深层透明波签名）：ys 集 {:?}",
+                {
+                    let mut u: Vec<i32> = ys.clone();
+                    u.sort_unstable();
+                    u.dedup();
+                    u
+                }
+            );
+        }
+    }
+}

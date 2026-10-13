@@ -100,8 +100,12 @@ static UNKNOWN_INFO: Info = Info {
 };
 
 /// 原版不可见方块：几何上不渲染（ci/gen-blocks.py INVISIBLE_GEOM，
-/// mesher.cpp 生成表 geom=false 的来源注释）。
-const INVISIBLE_GEOM: [&str; 6] = [
+/// mesher.cpp 生成表 geom=false 的来源注释；实物=各块
+/// `getRenderShape → RenderShape.INVISIBLE`，如 BarrierBlock.java:45-46，
+/// 碰撞/拾取盒仍在——「碰撞实心 + 不渲染」是原版合法组合）。
+/// 唯一出处：mesh_collision_parity 的碰撞↔几何对偶不变式排除集亦引本表
+/// （防两处名单漂移）。
+pub const INVISIBLE_GEOM: [&str; 6] = [
     "barrier",
     "light",
     "cave_air",
@@ -1138,9 +1142,19 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: 
                             wq += 1;
                         }
 
+                        // #190 深层带病灶（deep_section_below_zero_is_meshed :184
+                        // 红）：贪心 v 向合并**禁止跨越世界 y 的行界**。原版烘焙
+                        // 是逐面 quad（BlockModelLighter 按方块面逐面发射，顶点=
+                        // 该面四角，无纵向合并通道），侧面（axis 0/2）的 v 轴即
+                        // 世界 y——纵向合并把深柱顶行侧脸顶点吞进一张大 quad（16
+                        // 行柱的顶点 y 集只剩 {-64,-63,-48}，-62..-49 整段行界无
+                        // 顶点），体素实心而顶点覆盖缺席 = 网格级深度盲区（真机
+                        // 「向下挖到某层下方变透明」的渲染面；#71 绕回面口径同
+                        // 族）。横向合并（u 轴）与顶/底面平面合并（axis 1，
+                        // v=z 水平）不涉行界语义，维持原贪心（greedy_merges_row_of_four 锁）。
                         let mut hq = 1i32;
                         let mut grew = true;
-                        while v + (hq as usize) < gv && grew && hq < MAX_MERGE {
+                        while axis == 1 && v + (hq as usize) < gv && grew && hq < MAX_MERGE {
                             for k in 0..(wq as usize) {
                                 let j = (v + (hq as usize)) * gu + u + k;
                                 if visited[j] != 0 || !same_key(&key, &cells[j]) {
