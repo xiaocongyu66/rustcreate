@@ -19,6 +19,7 @@ use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
 use mcv_worldgen::vanilla::lake_pass::{
     debug_top_y, gate_reject_reason, lake_passes_gate, lake_spots,
 };
+use mcv_worldgen::vanilla::noise::NormalNoise;
 use mcv_worldgen::vanilla::terrain::Orchestrator;
 use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
@@ -162,6 +163,38 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
         );
     }
     eprintln!("K-LAKES-CARVE lower_box cells={box_cells} neg={box_neg}");
+    // 〔临时诊断 #192 刀2〕noodle ridge/mask 分布（盐与 terrain.rs 构造对位）。
+    {
+        let rn = NormalNoise::new(SEED, 0x0000_0DE0_1E00 ^ 0x63, -7, &[1.0]);
+        let mn = NormalNoise::new(SEED, 0x0000_0DE0_1E00 ^ 0x61, -8, &[1.0]);
+        let (mut s, mut s2, mut near, mut mpos, mut cnt) = (0.0f64, 0.0f64, 0usize, 0usize, 0usize);
+        for k in 0..64i32 {
+            for j in 0..64i32 {
+                for i in 0..4 {
+                    let x = f64::from(k * 64) - 2000.0;
+                    let y = 70.0 + f64::from(i * 16);
+                    let z = f64::from(j * 64) - 2000.0;
+                    let v = rn.get_value(x, y, z);
+                    s += v;
+                    s2 += v * v;
+                    cnt += 1;
+                    if v.abs() < 0.05 {
+                        near += 1;
+                    }
+                    if mn.get_value(x, y, z) >= 0.0 {
+                        mpos += 1;
+                    }
+                }
+            }
+        }
+        let mean = s / cnt as f64;
+        let sigma = (s2 / cnt as f64 - mean * mean).sqrt();
+        eprintln!(
+            "K-NOODLE-SIGMA ridge sigma={sigma:.4} mean={mean:.4} P|.|<0.05={:.4} mask_pos={:.3}",
+            near as f64 / cnt as f64,
+            mpos as f64 / cnt as f64
+        );
+    }
     assert!(
         !survivors.is_empty(),
         "surface 候选 {surf_cand}（陆柱 {land_cand}）判据环全弃——陆柱有而存活 0 = 判据环过严，陆柱 0 = 窗内地形无陆（换窗）"

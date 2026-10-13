@@ -51,7 +51,7 @@ type Long = i64;
 /// 是 int 乘法（溢出回绕）后才升 long，`z * 116129781L` 是 long 乘法。
 #[must_use]
 pub fn mth_get_seed(x: i32, y: i32, z: i32) -> Long {
-    let a = (x as i32).wrapping_mul(3_129_871) as Long;
+    let a = x.wrapping_mul(3_129_871) as Long;
     let mut seed = a ^ (Long::from(z).wrapping_mul(116_129_781)) ^ Long::from(y);
     seed = seed
         .wrapping_mul(seed)

@@ -659,8 +659,8 @@ impl Orchestrator {
     /// - noiseRandom = RandomState 根位置随机工厂本身（SurfaceSystem.java:50
     ///   `new SurfaceSystem(this, …, this.random)` 直传，非 named fork）；
     /// - (int) 截断 = Java 向零取整，Rust `as i32` 同语义。
-    /// 消费侧 = UNDER_FLOOR 亚表带 `stoneDepth ≤ 1 + surfaceDepth`
-    /// （SurfaceRules.java:676-684 `addSurfaceDepth`），典型 0..5、均值 ≈3。
+    ///   消费侧 = UNDER_FLOOR 亚表带 `stoneDepth ≤ 1 + surfaceDepth`
+    ///   （SurfaceRules.java:676-684 `addSurfaceDepth`），典型 0..5、均值 ≈3。
     #[must_use]
     pub fn surface_depth(&self, block_x: i32, block_z: i32) -> i32 {
         let n = self

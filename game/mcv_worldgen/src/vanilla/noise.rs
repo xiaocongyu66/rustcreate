@@ -113,8 +113,8 @@ impl NormalNoise {
     ///   `ImprovedNoise(positional.fromHashOf("octave_" + octave))`，
     ///   零 amplitude 倍频**不消耗**随机数（无 else 分支）；
     /// - ImprovedNoise 构造流见 [`ImprovedNoise::from_xoroshiro`]。
-    /// 同 world_seed 下排列/原点平移与原版同位型（内核求值 = 既有
-    /// ImprovedNoise 机制转写，口径与其头注一致）。
+    ///   同 world_seed 下排列/原点平移与原版同位型（内核求值 = 既有
+    ///   ImprovedNoise 机制转写，口径与其头注一致）。
     #[must_use]
     pub fn from_vanilla_name(
         root: &crate::vanilla::xoroshiro::PositionalRandomFactory,
