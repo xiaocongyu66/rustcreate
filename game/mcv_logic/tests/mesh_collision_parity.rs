@@ -183,8 +183,8 @@ fn deep_section_below_zero_is_meshed() {
     assert!(
         ys.iter().all(|y| *y >= -64.0 - 1e-3 && *y <= -48.0 + 1e-3),
         "顶点越出实心段（y 绕回）：min={} max={}",
-        ys.iter().fold(f32::INFINITY, f32::min),
-        ys.iter().fold(f32::NEG_INFINITY, f32::max)
+        ys.iter().fold(f32::INFINITY, |a, &b| a.min(b)),
+        ys.iter().fold(f32::NEG_INFINITY, |a, &b| a.max(b))
     );
 }
 
