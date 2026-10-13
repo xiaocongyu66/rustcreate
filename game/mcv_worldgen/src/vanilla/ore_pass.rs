@@ -161,7 +161,6 @@ pub struct Replay<'a, 'f> {
 
 struct Col {
     cs: ColumnState,
-    crossing: i32,
     fill_top: i32,
     min_surface: i32,
     surface_id: u16,
@@ -202,7 +201,6 @@ impl<'a, 'f> Replay<'a, 'f> {
                 .chunk_skip(x.div_euclid(16) * 16, z.div_euclid(16) * 16);
             let mut c = Col {
                 cs,
-                crossing,
                 fill_top: scan_top.max(mcv_core::SEA_LEVEL),
                 min_surface: crossing - PRELIM_SURFACE_BAND,
                 surface_id,
@@ -260,7 +258,7 @@ impl<'a, 'f> Replay<'a, 'f> {
 
     /// 判据读点：pass-1 缓冲该格方块 id 的纯函数复刻。
     pub fn block_at(&mut self, x: i32, y: i32, z: i32) -> u16 {
-        if y < mcv_core::WORLD_MIN_Y || y >= mcv_core::WORLD_MAX_Y {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&y) {
             return AIR; // 越界 section 读 = AIR（BulkSectionAccess.java:43-47）
         }
         if y == mcv_core::WORLD_MIN_Y
@@ -426,7 +424,7 @@ fn place_blob(
                     if xd * xd + yd * yd + zd * zd >= 1.0 {
                         continue;
                     }
-                    if y < mcv_core::WORLD_MIN_Y || y >= mcv_core::WORLD_MAX_Y {
+                    if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&y) {
                         continue; // isOutsideBuildHeight（:132）
                     }
                     let bit = i64::from(x - x_start)
@@ -507,7 +505,10 @@ pub fn origin_ore_writes(seed: u64, ocx: i32, ocz: i32, rp: &mut Replay<'_, '_>)
             cs ^ (idx as u64 + 1).wrapping_mul(0x36B1_C4A2_77B1_23A3),
         ));
         // rarity_filter（RarityFilter.java:24；placed 实物链首，整链门）。
-        if row.rarity > 0 && !(rng.next_float() < 1.0f32 / row.rarity as f32) {
+        if row.rarity > 0
+            && rng.next_float().partial_cmp(&(1.0f32 / row.rarity as f32))
+                != Some(std::cmp::Ordering::Less)
+        {
             continue;
         }
         // count IntProvider（一次抽取）。
