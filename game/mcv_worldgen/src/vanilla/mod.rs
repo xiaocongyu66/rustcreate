@@ -23,6 +23,7 @@ pub mod noise;
 pub mod ore_pass;
 pub mod ores_data;
 pub mod perlin;
+pub mod simplex;
 pub mod spline;
 pub mod structure;
 pub mod terrain;

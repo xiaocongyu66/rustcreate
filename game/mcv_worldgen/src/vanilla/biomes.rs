@@ -72,18 +72,20 @@ pub const ALL_BIOMES: [Biome; 10] = [
 ///   Biome.java:212-226，clamp 到 0..1 后 `ColorMapColorUtil.get`）；
 /// - `temperature + has_precipitation` → 降水/积雪判据
 ///   （Biome.getPrecipitationAt/warmEnoughToRain：高度调整温度 < 0.15 =
-///   SNOW，Biome.java:104-110,171-177；高度调整见 snow.rs）；
+///   SNOW，Biome.java:104-110,171-177；高度调整见
+///   [`height_adjusted_temperature`]，噪声源 [`crate::vanilla::simplex`]）；
 /// - `sky_color` → 天空色（ClientLevel 经 biome 属性取色）。
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct BiomeClimate {
-    /// JSON 顶层 `"temperature"`（26.1 无 per-position 温度噪声场——
-    /// 高度/噪声修正只存在于运行时 getHeightAdjustedTemperature，snow.rs）。
+    /// JSON 顶层 `"temperature"`（基础温度；per-position 修正见
+    /// [`height_adjusted_temperature`]，实物 Biome.getHeightAdjustedTemperature）。
     pub temperature: f64,
     /// JSON 顶层 `"downfall"`。
     pub downfall: f64,
-    /// JSON `"has_precipitation"`；本 10 群系均未写该键 → builder 默认
-    /// `true`（Biome.java:255）。desert 的「无雪」由温度 ≥ 0.15 走 RAIN
-    /// 分支实现，非此标志。
+    /// JSON 顶层 `"has_precipitation"`，按 10 群系 JSON 实物逐群系抄录：
+    /// desert.json/savanna.json 明写 `false`，其余 8 群系 `true`
+    /// （26.1 data/minecraft/worldgen/biome/ 实证）。false →
+    /// getPrecipitationAt 恒 NONE（Biome.java:104-108）：无雪也无雨。
     pub has_precipitation: bool,
     /// `attributes."minecraft:visual/sky_color"` RGB。
     pub sky_color: [u8; 3],
@@ -94,79 +96,114 @@ pub struct BiomeClimate {
 /// #181 群系生成化波若把本表改为脚本产出，数值与引注随表迁移。
 #[must_use]
 pub const fn climate(b: Biome) -> BiomeClimate {
-    // has_precipitation 全 true：见结构体字段注。
-    let precip = true;
     match b {
         // data/minecraft/worldgen/biome/plains.json:200/10/3
         Biome::Plains => BiomeClimate {
             temperature: 0.8,
             downfall: 0.4,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x78, 0xA7, 0xFF],
         },
         // forest.json:195/17/10
         Biome::Forest => BiomeClimate {
             temperature: 0.7,
             downfall: 0.8,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x79, 0xA6, 0xFF],
         },
         // birch_forest.json:190/17/10
         Biome::BirchForest => BiomeClimate {
             temperature: 0.6,
             downfall: 0.6,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x7A, 0xA5, 0xFF],
         },
-        // desert.json:193/18/11
+        // desert.json:193/18/11，"has_precipitation": false
         Biome::Desert => BiomeClimate {
             temperature: 2.0,
             downfall: 0.0,
-            has_precipitation: precip,
+            has_precipitation: false,
             sky_color: [0x6E, 0xB1, 0xFF],
         },
-        // savanna.json:206/11/4
+        // savanna.json:206/11/4，"has_precipitation": false
         Biome::Savanna => BiomeClimate {
             temperature: 2.0,
             downfall: 0.0,
-            has_precipitation: precip,
+            has_precipitation: false,
             sky_color: [0x6E, 0xB1, 0xFF],
         },
         // taiga.json:200/10/3
         Biome::Taiga => BiomeClimate {
             temperature: 0.25,
             downfall: 0.8,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x7D, 0xA3, 0xFF],
         },
         // snowy_plains.json:181/11/3
         Biome::SnowyPlains => BiomeClimate {
             temperature: 0.0,
             downfall: 0.5,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x7F, 0xA1, 0xFF],
         },
         // ocean.json:206/27/20
         Biome::Ocean => BiomeClimate {
             temperature: 0.5,
             downfall: 0.5,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x7B, 0xA4, 0xFF],
         },
         // beach.json:161/10/3
         Biome::Beach => BiomeClimate {
             temperature: 0.8,
             downfall: 0.4,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x78, 0xA7, 0xFF],
         },
         // river.json:194/27/20
         Biome::River => BiomeClimate {
             temperature: 0.5,
             downfall: 0.5,
-            has_precipitation: precip,
+            has_precipitation: true,
             sky_color: [0x7B, 0xA4, 0xFF],
         },
+    }
+}
+
+/// 实物 `Biome.getHeightAdjustedTemperature`（Biome.java:112-121）逐句转写：
+///
+/// ```text
+/// float adjustedTemperature = climateSettings.temperatureModifier
+///                                 .modifyTemperature(pos, getBaseTemperature());
+/// int snowLevel = seaLevel + 17;
+/// if (pos.getY() > snowLevel) {
+///     float v = (float)(TEMPERATURE_NOISE.getValue(pos.getX() / 8.0F,
+///                                                  pos.getZ() / 8.0F, false) * 8.0);
+///     return adjustedTemperature - (v + pos.getY() - snowLevel) * 0.05F / 40.0F;
+/// }
+/// return adjustedTemperature;
+/// ```
+///
+/// 逐参数对位：
+/// - `temperatureModifier`：本 10 群系 JSON 均无 `"temperature_modifier"`
+///   键 → `TemperatureModifier.NONE`（Biome.java:388-392 恒等返回），
+///   `adjustedTemperature = climate(b).temperature`；
+/// - `TEMPERATURE_NOISE`：Biome.java:61 常量种子 1234（非世界种子），
+///   [`crate::vanilla::simplex::temperature_noise`]；
+/// - 坐标为**绝对世界坐标**（BlockPos）：x/z 以 block 计、公式内 ÷8；
+///   y 为世界绝对 y（本仓 `MIN_Y..WORLD_MAX_Y` 即原生 y，无重映射）；
+/// - f32 域算式（`0.05F/40.0F`、float 中间量）保实物逐位语义。
+#[must_use]
+pub fn height_adjusted_temperature(b: Biome, x: i32, y: i32, z: i32, sea_level: i32) -> f32 {
+    let adjusted = climate(b).temperature as f32;
+    let snow_level = sea_level + 17;
+    if y > snow_level {
+        let v = (crate::vanilla::simplex::temperature_noise()
+            .get_value((x as f32 / 8.0_f32) as f64, (z as f32 / 8.0_f32) as f64, false)
+            * 8.0) as f32;
+        adjusted - (v + (y - snow_level) as f32) * 0.05_f32 / 40.0_f32
+    } else {
+        adjusted
     }
 }
 
@@ -508,23 +545,26 @@ mod tests {
     /// 同步改 file:line 引注）。
     #[test]
     fn climate_table_matches_vanilla_json() {
-        let cases: [(Biome, f64, f64, [u8; 3]); 10] = [
-            (Biome::Plains, 0.8, 0.4, [0x78, 0xA7, 0xFF]),
-            (Biome::Forest, 0.7, 0.8, [0x79, 0xA6, 0xFF]),
-            (Biome::BirchForest, 0.6, 0.6, [0x7A, 0xA5, 0xFF]),
-            (Biome::Desert, 2.0, 0.0, [0x6E, 0xB1, 0xFF]),
-            (Biome::Savanna, 2.0, 0.0, [0x6E, 0xB1, 0xFF]),
-            (Biome::Taiga, 0.25, 0.8, [0x7D, 0xA3, 0xFF]),
-            (Biome::SnowyPlains, 0.0, 0.5, [0x7F, 0xA1, 0xFF]),
-            (Biome::Ocean, 0.5, 0.5, [0x7B, 0xA4, 0xFF]),
-            (Biome::Beach, 0.8, 0.4, [0x78, 0xA7, 0xFF]),
-            (Biome::River, 0.5, 0.5, [0x7B, 0xA4, 0xFF]),
+        // (群系, temperature, downfall, sky_color, has_precipitation)——
+        // precip 列 = 各 JSON 顶层 "has_precipitation" 实物值（desert/
+        // savanna 明写 false，余 true）。
+        let cases: [(Biome, f64, f64, [u8; 3], bool); 10] = [
+            (Biome::Plains, 0.8, 0.4, [0x78, 0xA7, 0xFF], true),
+            (Biome::Forest, 0.7, 0.8, [0x79, 0xA6, 0xFF], true),
+            (Biome::BirchForest, 0.6, 0.6, [0x7A, 0xA5, 0xFF], true),
+            (Biome::Desert, 2.0, 0.0, [0x6E, 0xB1, 0xFF], false),
+            (Biome::Savanna, 2.0, 0.0, [0x6E, 0xB1, 0xFF], false),
+            (Biome::Taiga, 0.25, 0.8, [0x7D, 0xA3, 0xFF], true),
+            (Biome::SnowyPlains, 0.0, 0.5, [0x7F, 0xA1, 0xFF], true),
+            (Biome::Ocean, 0.5, 0.5, [0x7B, 0xA4, 0xFF], true),
+            (Biome::Beach, 0.8, 0.4, [0x78, 0xA7, 0xFF], true),
+            (Biome::River, 0.5, 0.5, [0x7B, 0xA4, 0xFF], true),
         ];
-        for (b, t, d, sky) in cases {
+        for (b, t, d, sky, precip) in cases {
             let c = climate(b);
             assert_eq!((c.temperature, c.downfall), (t, d), "{b:?}");
             assert_eq!(c.sky_color, sky, "{b:?} sky_color");
-            assert!(c.has_precipitation, "{b:?} has_precipitation");
+            assert_eq!(c.has_precipitation, precip, "{b:?} has_precipitation");
         }
     }
 
@@ -533,6 +573,41 @@ mod tests {
     fn climate_covers_all_biomes() {
         for b in ALL_BIOMES {
             let _ = climate(b);
+        }
+    }
+
+    /** 高度调整温度的界带锁（Biome.java:112-121 公式的确定性推论；
+    修正项 = (v + y−(sea+17))·0.05/40，v = noise·8 ∈ [−8, 8]，sea = 63）：
+    - taiga(0.25)：y > 168 时 v+dy > 80 对任意 v 成立 → 恒 < 0.15（雪）；
+      y ≤ 152 时 v+dy ≤ 80 → 恒 ≥ 0.15（不雪）；(152,168] 为噪声模糊带。
+    - snowy_plains(0.0)：修正上界 +0.00875 → 全高域恒雪。
+    - ocean(0.5)：y=319 最冷仍 0.19125 ≥ 0.15 → 恒不雪。 */
+    #[test]
+    fn height_adjusted_temperature_bands() {
+        let sea = mcv_core::SEA_LEVEL;
+        for k in 0..32_i32 {
+            let (x, z) = (k * 37 - 500, k * 91 + 13);
+            // taiga 高山恒雪带 / 低山恒不雪带。
+            assert!(
+                height_adjusted_temperature(Biome::Taiga, x, 170, z, sea) < 0.15,
+                "taiga y=170 应恒越界成雪 (x={x},z={z})"
+            );
+            assert!(
+                height_adjusted_temperature(Biome::Taiga, x, 150, z, sea) >= 0.15,
+                "taiga y=150 应恒不雪 (x={x},z={z})"
+            );
+            // 噪声只改模糊带，不改两端界（抽查 152/168 边界内值在界带间）。
+            let mid = height_adjusted_temperature(Biome::Taiga, x, 160, z, sea);
+            assert!((0.11..=0.19).contains(&mid), "taiga y=160 值 {mid} 越界带");
+            // snowy_plains 全高域恒雪；ocean 全高域恒不雪。
+            assert!(height_adjusted_temperature(Biome::SnowyPlains, x, 319, z, sea) < 0.15);
+            assert!(height_adjusted_temperature(Biome::Ocean, x, 319, z, sea) >= 0.15);
+            // y ≤ sea+17 = 基础温度原样返回（无修正）。
+            assert_eq!(
+                height_adjusted_temperature(Biome::Taiga, x, sea + 17, z, sea),
+                0.25
+            );
+            assert_eq!(height_adjusted_temperature(Biome::Desert, x, sea + 5, z, sea), 2.0);
         }
     }
 }
