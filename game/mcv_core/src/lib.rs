@@ -248,7 +248,7 @@ const fn name_ends_with(name: &str, suf: &str) -> bool {
 
 /// 单块 lightDampening 判定（三段规则 + 例外覆盖，Java 依据见 [`OPACITY`]）。
 const fn gen_opacity(t: &GenBlock) -> u8 {
-    let (name, _solid, opaque, liquid, _emit, _tiles, _hard, model_kind) = t;
+    let (name, _solid, opaque, liquid, _emit, _tiles, _hard, model_kind, _requires) = t;
     // ① solidRender（整方块不透明渲染）→ 15。表内 opaque=true 即"全不透明
     //    整方块"，对应原版 solidRender=满块 occlusionShape
     //    （BlockBehaviour.java:512-513, 305-310）。
