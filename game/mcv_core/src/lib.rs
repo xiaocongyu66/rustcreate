@@ -4,6 +4,7 @@
 pub mod atlas;
 pub mod chunk;
 pub mod pool;
+pub mod rand;
 pub mod shape;
 pub mod tint;
 pub mod tool;
