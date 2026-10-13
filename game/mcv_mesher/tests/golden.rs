@@ -249,7 +249,7 @@ fn bounds_semantics_rust_invariants() {
     let ymin = mcv_core::WORLD_MIN_Y as f32;
     let ymax = mcv_core::WORLD_MAX_Y as f32;
     let mut ny_at_y0 = 0;
-    for b in buf.vertex_data().chunks(24) {
+    for b in buf.vertex_data().chunks(mcv_mesher::VERTEX_STRIDE) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
         if y == ymin && (flags & 7) == 3 {
@@ -259,7 +259,7 @@ fn bounds_semantics_rust_invariants() {
     assert_eq!(ny_at_y0, 0, "y=WORLD_MIN_Y 层不应有 -Y 面（界下 = 实心）");
     // 柱顶 +Y 面存在且 sky=15（y>=WORLD_MAX_Y = 空气、sky 15）。
     let mut py_top_sky = None;
-    for b in buf.vertex_data().chunks(24) {
+    for b in buf.vertex_data().chunks(mcv_mesher::VERTEX_STRIDE) {
         let y = f32::from_le_bytes([b[4], b[5], b[6], b[7]]);
         let flags = b[21];
         if y == ymax && (flags & 7) == 2 {

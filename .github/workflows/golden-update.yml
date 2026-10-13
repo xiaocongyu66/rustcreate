@@ -1,0 +1,37 @@
+name: golden-update
+
+# 黄金件重锚专用通道（README 约定「GOLDEN_UPDATE=1 必须走 CI，本机禁
+# cargo」的可执行入口）：手动触发，在 CI runner 上以 GOLDEN_UPDATE=1
+# 跑对拍测试（该模式下测试把当前输出写回 tests/golden/ 文件），产物
+# 打包为 artifact；本地 `gh run download <run> -n golden` 覆盖黄金件后
+# 随功能提交落盘。只 workflow_dispatch，不随 push 触发。
+
+on:
+  workflow_dispatch:
+    inputs:
+      crates:
+        description: "重锚目标（空格分隔）：mesher worldgen"
+        required: false
+        default: "mesher"
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ALSA dev headers (workspace meta deps configure 需要)
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Re-anchor mcv_mesher golden
+        if: contains(inputs.crates, 'mesher')
+        run: GOLDEN_UPDATE=1 cargo test --locked -p mcv_mesher --test golden
+      - name: Re-anchor mcv_worldgen golden
+        if: contains(inputs.crates, 'worldgen')
+        run: GOLDEN_UPDATE=1 cargo test --locked -p mcv_worldgen --test golden
+      - uses: actions/upload-artifact@v4
+        with:
+          name: golden
+          path: |
+            game/mcv_mesher/tests/golden/
+            game/mcv_worldgen/tests/golden/

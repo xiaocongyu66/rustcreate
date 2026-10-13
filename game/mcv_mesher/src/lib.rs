@@ -9,7 +9,7 @@
 mod mesher;
 mod sched;
 
-pub use mesher::{MeshData, block_geom, build_mesh};
+pub use mesher::{MeshData, TintInput, VERTEX_STRIDE, block_geom, build_mesh};
 pub use sched::{
     MeshBytes, MeshDone, MeshJob, MeshResults, MeshScheduler, mesh_worker_count,
     neighborhood_slots, worker_count_from,
@@ -47,8 +47,20 @@ impl Mesher {
     /// neighbourhood is row-major dz-outer/dx-inner, index
     /// `(dz+1)*3 + (dx+1)`; `None` = not loaded，按不透明边界处理
     /// （mesher.rs BARRIER 哨兵）。`kind`: [`MESH_OPAQUE`] = 0,
-    /// [`MESH_WATER`] = 1；其余值 `Err(BAD_ARG)`。
+    /// [`MESH_WATER`] = 1；其余值 `Err(BAD_ARG)`。无群系染色（顶点色白，
+    /// 贴图原样）——黄金件/无 colormap 装配路径用；带色走 [`Self::build_with_tint`]。
     pub fn build(&self, neighborhood: &[Option<Slot<'_>>; 9], kind: u32) -> Result<MeshData, i32> {
+        self.build_with_tint(neighborhood, kind, None)
+    }
+
+    /// [`Self::build`] + 可选群系 tint 场（`tint` 含中心区块世界方块原点；
+    /// 仅 opaque pass 消费，water pass 忽略 tint，见 [`build_mesh`]）。
+    pub fn build_with_tint(
+        &self,
+        neighborhood: &[Option<Slot<'_>>; 9],
+        kind: u32,
+        tint: Option<TintInput>,
+    ) -> Result<MeshData, i32> {
         if kind > 1 {
             return Err(BAD_ARG);
         }
@@ -62,6 +74,6 @@ impl Mesher {
                 lights[i] = Some(s.light);
             }
         }
-        Ok(mesher::build_mesh(&voxels, &lights, kind))
+        Ok(mesher::build_mesh(&voxels, &lights, kind, tint))
     }
 }

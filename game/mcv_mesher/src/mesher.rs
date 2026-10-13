@@ -3,8 +3,10 @@
 //!
 //! 各函数注释以 `mesher.cpp:行号` 标注机制出处（引用出处≠复制表达，
 //! docs/porting-conventions.md §1/§3：控制流与命名是本仓库自有表达）。
-//! 输出是渲染 ABI（24 B 交错顶点 + u32 索引，mesher.cpp:11-13,105-115），
-//! 与黄金数据逐字节回归锁定（tests/golden.rs）。
+//! 输出是渲染 ABI（28 B 交错顶点 + u32 索引，基线 mesher.cpp:11-13,
+//! 105-115；#191 顶点色属性 24→28 重锚），与黄金数据逐字节回归锁定
+//! （tests/golden.rs；tint 输入为 None 时除 22..27 字节带外与旧 24B 基线
+//! 语义同构，黄金件经 GOLDEN_UPDATE 通道重锚）。
 //!
 //! **病灶#2 平滑光照层（#153 审计 M9 重建波，LightCoordsUtil.java:61-89）**：
 //! 顶点光 = 暴露层四格（两侧 + 对角 + 面中心）均值 + 借中心规则（26.1
@@ -16,16 +18,19 @@
 //! `doNonCubicWeight` 分支）——盒面走与立方面同一 smoothBlend；cross 恒
 //! 平采（无暴露层语义）。
 //!
-//! 顶点布局（24 B）：pos f32x3 | uv u16x2 | tex_layer u16 | block_light u8 |
-//! sky_light u8 | ao u8 | flags u8（bit0-2 面档，bit3 水顶波动）| pad 2B；
+//! 顶点布局（28 B，#191 tint 波）：pos f32x3 | uv u16x2 | tex_layer u16 |
+//! block_light u8 | sky_light u8 | ao u8 | flags u8（bit0-2 面档，bit3
+//! 水顶波动）| pad 2B | tint_rgb u8x3（群系染色，None 场 = 白）| pad 1B；
 //! 索引 u32，外视 CCW，每 quad (0,1,2)(0,2,3)。
 
 use std::sync::OnceLock;
 
-use mcv_core::{BlockDef, shape::Shape};
+use mcv_core::{BlockDef, shape::Shape, tint};
 
-/// 顶点步长（渲染 ABI；mesher.cpp:115 static_assert 24）。
-pub const VERTEX_STRIDE: usize = 24;
+/// 顶点步长（渲染 ABI；#191 tint 波 24→28：偏移 22/23/27 pad=0，
+/// 24..27 = tint RGB8。旧基线 mesher.cpp:115 static_assert 24 随顶点色
+/// 属性落地作废，黄金件经 CI GOLDEN_UPDATE 通道重锚）。
+pub const VERTEX_STRIDE: usize = 28;
 
 /// 未加载邻区块/世界底哨兵，视为不透明（mesher.cpp:24-28：置于 u16 顶端
 /// 避免与注册 id 冲突）。
@@ -406,10 +411,17 @@ fn same_key(a: &Cell, b: &Cell) -> bool {
 pub struct MeshData {
     pub vertices: Vec<u8>,
     pub indices: Vec<u32>,
+    /// #191 群系 tint 场（None = 未装配 colormap/关闭染色 → 顶点色恒白，
+    /// 乘算单位元，贴图原样显示）。世界原点方块列由 [`Self::tint_bx0/bz0`]
+    /// 给出（= 中心区块世界方块坐标；场覆盖 [原点−R, 原点+16+R]，与
+    /// [`mcv_core::tint::ChunkTint`] 的 ox/oz = 原点−R 契约同源）。
+    tint: Option<tint::ChunkTint>,
+    tint_bx0: i32,
+    tint_bz0: i32,
 }
 
 impl MeshData {
-    /// 顶点字节（24 B 步长交错）。
+    /// 顶点字节（28 B 步长交错）。
     pub fn vertex_data(&self) -> &[u8] {
         &self.vertices
     }
@@ -425,6 +437,34 @@ impl MeshData {
             (self.vertices.len() / VERTEX_STRIDE) as u32,
             self.indices.len() as u32,
         )
+    }
+
+    /// 顶点群系 tint RGB8：按贴图层的 kind + 顶点世界方块列取色。
+    /// - 无 tint 场（未加载 colormap / 关闭染色）→ [`TINT_WHITE`]（乘算
+    ///   单位元，贴图原样，等价旧「素材缺失禁用」路径）；
+    /// - colormap 族（草/叶）→ [`ChunkTint::color_at`] 盒均值（世界坐标，
+    ///   顶点本地 x/z + 中心区块世界原点 bx0/bz0）；
+    /// - 常量族（云杉/白桦）→ 烤色常数（与网格坐标无关）；
+    /// - 不染色层 → [`TINT_WHITE`]。
+    fn vertex_tint(&self, tex: u16, x: f32, z: f32) -> [u8; 3] {
+        let Some(ct) = self.tint.as_ref() else {
+            return tint::TINT_WHITE;
+        };
+        let kind = tint::tint_kind(tex);
+        match kind {
+            tint::TINT_GRASS | tint::TINT_FOLIAGE => {
+                // 顶点本地 x/z ∈ [0,16]（含右/远边界 16.0——该角同时属于
+                // 邻块的 0.0 角，两侧必须取**同一世界列**为混合窗中心，
+                // 故 floor 不钳位：16.0 → 世界列 bx0+16，与邻块 0.0 →
+                // 同列逐位同色，跨区块零接缝由构造保证）。
+                let lx = x.floor() as i32;
+                let lz = z.floor() as i32;
+                ct.color_at(kind, self.tint_bx0 + lx, self.tint_bz0 + lz)
+            }
+            tint::TINT_SPRUCE => tint::SPRUCE_LEAF_RGB,
+            tint::TINT_BIRCH => tint::BIRCH_LEAF_RGB,
+            _ => tint::TINT_WHITE,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -445,6 +485,9 @@ impl MeshData {
         // 与 C++ 结构体逐字节一致（偏移 0/12/16/18/19/20/21，pad=0）。
         // 病灶#2 起 blk/sky 逐顶点取值（平滑层），由调用方按角解包传入；
         // 参数列与 oracle 同构（一条顶点的全部字段），不可再拆。
+        // #191：24..27 写群系 tint RGB8（原版 BlockColors 顶点色同位属性，
+        // 世界坐标采样跨块连续）；22/23/27 pad 恒 0。
+        let tint_rgb = self.vertex_tint(tex, x, z);
         self.vertices.extend_from_slice(&x.to_le_bytes());
         self.vertices.extend_from_slice(&y.to_le_bytes());
         self.vertices.extend_from_slice(&z.to_le_bytes());
@@ -456,6 +499,8 @@ impl MeshData {
         self.vertices.push(ao);
         self.vertices.push(flags);
         self.vertices.extend_from_slice(&[0, 0]);
+        self.vertices.extend_from_slice(&tint_rgb);
+        self.vertices.push(0);
     }
 
     fn vertex_base(&self) -> u32 {
@@ -1123,13 +1168,28 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: 
     }
 }
 
+/// #191 tint 装配入参：中心区块世界方块原点 + 群系色场（场覆盖
+/// `[block_x − R, block_x + 16 + R]`，R = [`tint::BLEND_RADIUS`]；构建方
+/// 契约，见 [`tint::ChunkTint`]）。
+#[derive(Debug)]
+pub struct TintInput {
+    /// 中心区块世界方块 x（= chunk_x × 16）。
+    pub block_x: i32,
+    /// 中心区块世界方块 z（= chunk_z × 16）。
+    pub block_z: i32,
+    pub tint: tint::ChunkTint,
+}
+
 /// 入口（mesher.cpp:814-861 mcv_mesh_build 的纯 Rust 等价，去池化）：先
 /// 贪心 pass，不透明 pass 追加非立方形状模板（mesher.cpp:829-833）。
 /// 邻域缺格/越界语义与 C++ 一致（block_at/light_at，见各函数出处）。
+/// `tint`：群系染色场（仅不透明 pass 消费；水 pass 恒按原版流体常数色
+/// 语义在着色器侧乘 WATER_TINT，顶点色写白）。
 pub fn build_mesh(
     voxels: &[Option<&[u16]>; 9],
     lights: &[Option<&[u8]>; 9],
     kind: u32,
+    tint_in: Option<TintInput>,
 ) -> MeshData {
     let n = Nb {
         voxels: *voxels,
@@ -1139,6 +1199,18 @@ pub fn build_mesh(
     // 回落每面单采（M8 平采语义，回滚面）。
     let smooth = smooth_light_enabled();
     let mut out = MeshData::default();
+    if kind == 0 {
+        if let Some(TintInput {
+            block_x,
+            block_z,
+            tint,
+        }) = tint_in
+        {
+            out.tint = Some(tint);
+            out.tint_bx0 = block_x;
+            out.tint_bz0 = block_z;
+        }
+    }
     build_pass(&n, kind == 1, &mut out, tables(), smooth);
     if kind == 0 {
         emit_shapes(&n, &mut out, smooth);

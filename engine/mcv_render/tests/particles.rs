@@ -24,6 +24,8 @@ struct Tv {
     ao: u8,
     flags: u8,
     pad: [u8; 2],
+    // #191 顶点色（Unorm8x4）——测试顶点恒白（乘算单位元）。
+    tint: [u8; 4],
 }
 
 fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
@@ -38,6 +40,7 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -143,6 +146,7 @@ fn render(
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -297,7 +301,7 @@ fn particles_respect_depth() {
 #[test]
 fn terrain_stride_layout_unchanged() {
     // 防呆：粒子顶点独立布局（56B，R2 light 彩轨 f32→[f32;3]），
-    // 不与 terrain 顶点（24B）混淆。
-    assert_eq!(TERRAIN_STRIDE, 24);
+    // 不与 terrain 顶点（28B，#191 顶点色）混淆。
+    assert_eq!(TERRAIN_STRIDE, 28);
     assert_eq!(size_of::<mcv_render::particles::ParticleVertex>(), 56);
 }

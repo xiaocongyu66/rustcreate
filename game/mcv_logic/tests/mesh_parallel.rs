@@ -78,6 +78,9 @@ fn job_of(pos: ChunkPos, scene: &(Vec<u16>, Vec<u8>)) -> MeshJob {
         origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
         voxels: scene.0.clone(),
         lights: scene.1.clone(),
+        // 并行等价锁测试跑无 tint 基线（顶点色白 = 乘算单位元，两路
+        // 产物逐字节同；带色路径一致性由 mcv_core tint 测试锁定）。
+        tint: None,
     }
 }
 

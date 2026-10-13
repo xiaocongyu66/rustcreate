@@ -42,8 +42,8 @@ pub use player_mesh::{
 
 use glam::Vec3;
 
-// terrain.wgsl 的 tint LUT 定长（TINT_LAYERS）与图集层数互锁：uniform 地址
-// 空间不允许 runtime-sized 数组，层数变更必须同步 shader 常量。
+// 图集层数锚点：manifest/贴图数组按 838 层组织（#191 起 tint LUT 已废，
+// 本断言继续锁图集规模，防 atlas 变更静默漏改数组拆分逻辑）。
 const _: () = assert!(mcv_core::atlas::LAYERS == 838);
 
 pub const EYE_HEIGHT: f32 = 1.62;

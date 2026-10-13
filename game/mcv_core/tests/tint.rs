@@ -1,4 +1,5 @@
-//! 生物群系染色表（mcv_core::tint）测试：查表公式、注册表、LUT 结构。
+//! 生物群系染色（mcv_core::tint）测试：查表公式、注册表、ChunkTint
+//! 场解色 / 盒均值手推 / 跨区块连续性。
 
 use mcv_core::tint;
 
@@ -18,9 +19,10 @@ fn colormap(name: &str) -> Vec<u8> {
 fn colormap_formula_matches_vanilla_values() {
     let grass = colormap("grass");
     let foliage = colormap("foliage");
-    let g = tint::colormap_get(&grass, tint::WORLD_TEMP, tint::WORLD_DOWNFALL).unwrap();
+    // plains 气候 = biomes::climate(Plains)（temp 0.8 / downfall 0.4）。
+    let g = tint::colormap_get(&grass, 0.8, 0.4).unwrap();
     assert_eq!(&g[..3], &[0x91, 0xBD, 0x59], "plains 草色应为 #91BD59");
-    let f = tint::colormap_get(&foliage, tint::WORLD_TEMP, tint::WORLD_DOWNFALL).unwrap();
+    let f = tint::colormap_get(&foliage, 0.8, 0.4).unwrap();
     assert_eq!(&f[..3], &[0x77, 0xAB, 0x2F], "plains 叶色应为 #77AB2F");
     let d = tint::colormap_get(&grass, 0.5, 1.0).unwrap();
     assert_eq!(&d[..3], &[0x7C, 0xBD, 0x6B], "getDefaultColor 应为 #7CBD6B");
@@ -73,61 +75,102 @@ fn tint_kinds_match_blockcolors_registry() {
     assert_eq!(tint::tint_kind(u16::MAX), tint::TINT_NONE);
 }
 
-/// LUT 结构：每层 16B = vec4<u32>(kind, r, g, b)；常量叶色烤入 LUT，
-/// 草/叶 colormap 族 kind 正确；裂纹层与哨兵层为 0。
+/// ChunkTint：plains 全域时草/叶色来自真实 colormap（#91BD59/#77AB2F），
+/// 混合窗内同质 → 恒等；box 均值语义（calculateBlockTint 实物：先解色
+/// 后整数平均）。
 #[test]
-fn tint_lut_layout() {
-    let lut = tint::tint_lut_bytes();
-    let layers = mcv_core::atlas::LAYERS;
-    assert_eq!(lut.len(), layers * 16);
-    let entry = |l: usize| -> [u32; 4] {
-        (0..4)
-            .map(|c| {
-                u32::from_le_bytes(lut[l * 16 + c * 4..l * 16 + c * 4 + 4].try_into().unwrap())
-            })
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap()
-    };
-    let names = mcv_core::atlas::tile_file_names();
-    let grass_l = names.iter().position(|n| *n == "grass_block_top").unwrap();
-    assert_eq!(entry(grass_l)[0], tint::TINT_GRASS);
-    let spruce_l = names.iter().position(|n| *n == "spruce_leaves").unwrap();
-    let e = entry(spruce_l);
+fn chunk_tint_resolves_climate_to_colormap() {
+    let grass = colormap("grass");
+    let foliage = colormap("foliage");
+    // 5×5 全域 plains（temp 0.8 / rain 0.4）。
+    let cells = [[0.8, 0.4]; 25];
+    let ct = tint::ChunkTint::from_climate(-2, -2, &cells, &grass, &foliage).unwrap();
     assert_eq!(
-        (e[0], e[1], e[2], e[3]),
-        (tint::TINT_SPRUCE, 0x61, 0x99, 0x61)
+        &ct.color_at(tint::TINT_GRASS, 0, 0)[..],
+        &[0x91, 0xBD, 0x59],
+        "plains 草"
     );
-    let birch_l = names.iter().position(|n| *n == "birch_leaves").unwrap();
-    let e = entry(birch_l);
     assert_eq!(
-        (e[0], e[1], e[2], e[3]),
-        (tint::TINT_BIRCH, 0x80, 0xA7, 0x55)
+        &ct.color_at(tint::TINT_FOLIAGE, 0, 0)[..],
+        &[0x77, 0xAB, 0x2F],
+        "plains 叶"
     );
-    // 裂纹层（CRACK_BASE..）恒 0。
-    let crack0 = entry(mcv_core::atlas::CRACK_BASE);
-    assert_eq!(crack0, [0; 4]);
+    // 非 colormap 族（常量/不染色）不查网格。
+    assert_eq!(ct.color_at(tint::TINT_NONE, 0, 0), tint::TINT_WHITE);
+    // 缺 colormap → None（调用方禁用染色，不伪造颜色）。
+    assert!(tint::ChunkTint::from_climate(-2, -2, &cells, &[], &foliage).is_none());
 }
 
-/// plains 基线封装：世界草/叶色来自真实 colormap 查表（0..1 f32）。
+/// 盒均值手推对拍（Blender/ClientLevel 语义）：网格左半 temp 0.8
+/// （plains 草 #91BD59）、右半 temp 0（雪原草 #80B497），沿 x 边界处
+/// 取 (bx=右半第 3 列) 使混合窗内 3 列左 + 2 列右（BLEND_RADIUS=2 →
+/// 每行 x∈[bx-2,bx+2]，前 3 列 plains 后 2 列 snow）→
+/// 期望逐通道 (3*plains + 2*snow)/5 整数除。
 #[test]
-fn world_colors_are_plains_baseline() {
-    let (g, f) = tint::world_grass_foliage_color(&colormap("grass"), &colormap("foliage"))
-        .expect("仓内 colormap 应产出基线色");
+fn chunk_tint_box_average_matches_hand_computation() {
+    let grass = colormap("grass");
+    let foliage = colormap("foliage");
+    let w = 9usize;
+    let mut cells = [[0.0; 2]; 81];
+    for (i, c) in cells.iter_mut().enumerate() {
+        let x = (i % w) as i32;
+        // x<5 → plains(0.8,0.4)；x>=5 → snow(0.0,0.5)。
+        *c = if x < 5 { [0.8, 0.4] } else { [0.0, 0.5] };
+    }
+    let ct = tint::ChunkTint::from_climate(0, 0, &cells, &grass, &foliage).unwrap();
+    let plains = [0x91u32, 0xBD, 0x59];
+    let snow = [0x80u32, 0xB4, 0x97];
+    // bx=5：窗 x∈[3,7] → x=3,4 plains；x=5,6,7 snow（列同侧混合，
+    // 各行一致，共 5 行）。
+    let expect = [
+        ((3 * plains[0] + 2 * snow[0]) / 5) as u8,
+        ((3 * plains[1] + 2 * snow[1]) / 5) as u8,
+        ((3 * plains[2] + 2 * snow[2]) / 5) as u8,
+    ];
     assert_eq!(
-        g,
-        [
-            0x91 as f32 / 255.0,
-            0xBD as f32 / 255.0,
-            0x59 as f32 / 255.0
-        ]
+        ct.color_at(tint::TINT_GRASS, 5, 4),
+        expect,
+        "跨群系边界盒均值"
     );
+    // 深处不受另一群系影响（窗全 plains / 全 snow）。
+    assert_eq!(&ct.color_at(tint::TINT_GRASS, 0, 4)[..], &plains[..]);
+    assert_eq!(&ct.color_at(tint::TINT_GRASS, 8, 4)[..], &snow[..]);
+}
+
+/// 跨区块边界连续：两块用同一气候场（仅原点不同），边界世界列两侧取色
+/// 差 = 0（同一批采样列、同式整数平均 → 逐位相等，无硬切）。
+#[test]
+fn chunk_tint_continuous_across_block_boundary() {
+    let grass = colormap("grass");
+    let foliage = colormap("foliage");
+    // 世界场：x<16 → plains，x>=16 → snow（边界落世界 x=16）。
+    let climate_at = |wx: i32| -> [f64; 2] { if wx < 16 { [0.8, 0.4] } else { [0.0, 0.5] } };
+    // 左侧块（原点 0，覆盖 [0,16)）：tint 窗 [-2,18] 共 w=21。
+    let w = 21usize;
+    let left: Vec<[f64; 2]> = (0..w * w)
+        .map(|i| climate_at(-2 + (i % w) as i32))
+        .collect();
+    let left = tint::ChunkTint::from_climate(-2, -2, &left, &grass, &foliage).unwrap();
+    // 右侧块（原点 16，覆盖 [16,32)）：窗 [14,34]。
+    let right: Vec<[f64; 2]> = (0..w * w)
+        .map(|i| climate_at(14 + (i % w) as i32))
+        .collect();
+    let right = tint::ChunkTint::from_climate(14, -2, &right, &grass, &foliage).unwrap();
+    // 边界世界列 x=16（左块右缘 bx=16，右块左缘 bx=16）同色。
     assert_eq!(
-        f,
-        [
-            0x77 as f32 / 255.0,
-            0xAB as f32 / 255.0,
-            0x2F as f32 / 255.0
-        ]
+        left.color_at(tint::TINT_GRASS, 16, 10),
+        right.color_at(tint::TINT_GRASS, 16, 10),
+        "世界 x=16 两侧取色必须逐位相等"
     );
+    // 边界两侧各 1 列（x=15/17）也应连续（窗重叠大半，差值 < 阈值）。
+    let a = left.color_at(tint::TINT_GRASS, 15, 10);
+    let b = left.color_at(tint::TINT_GRASS, 16, 10);
+    for ch in 0..3 {
+        assert!(
+            (i16::from(a[ch]) - i16::from(b[ch])).abs() <= 60,
+            "相邻列跳变过陡 ch{ch}: {}→{}",
+            a[ch],
+            b[ch]
+        );
+    }
 }

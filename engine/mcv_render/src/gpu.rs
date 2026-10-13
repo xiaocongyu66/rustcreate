@@ -17,7 +17,10 @@ use crate::particles::ParticleEngine;
 use crate::player_mesh::{self, PART_COUNT, PLAYER_STRIDE, PlayerVertex, SKIN_LAYERS};
 use mcv_core::atlas;
 
-pub const TERRAIN_STRIDE: usize = 24;
+/// 地形顶点步长（#191 tint 波 24→28：偏移 22/23/27 pad，24..27 = tint
+/// RGB8 群系顶点色；与 mcv_mesher::VERTEX_STRIDE 由 terrain pipeline 对拍
+/// 互锁，见 lib.rs const assert）。
+pub const TERRAIN_STRIDE: usize = 28;
 pub const HUD_STRIDE: usize = 28;
 
 // 手持快照经 gpu 模块命名空间再暴露（game 层 `mcv_render::gpu::HandItem` 约定）。
@@ -1070,6 +1073,9 @@ struct CrackVertex {
     ao: u8,
     flags: u8,
     pad: [u8; 2],
+    /// #191 群系顶点色 RGBA（overlay 不染色 → 恒白，乘算单位元；与
+    /// vs_terrain VtxIn location 5 对齐，缺失会打断管线校验）。
+    tint: [u8; 4],
 }
 
 const _: () = assert!(size_of::<CrackVertex>() == TERRAIN_STRIDE);
@@ -1158,6 +1164,7 @@ fn build_crack_overlay(ov: &MiningOverlay) -> (Vec<CrackVertex>, Vec<u32>) {
                 ao: 3,
                 flags: f as u8,
                 pad: [0; 2],
+                tint: [0xFF; 4],
             });
         }
         idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -1185,6 +1192,13 @@ pub struct Scene<'a> {
     /// 天气雾色 RGB 乘子（AtmosphericFogEnvironment.applyWeatherDarken:50-62；
     /// 晴 = [1,1,1]）乘到地平线色上（天空 + 地形雾同源）。
     pub fog_tint: [f32; 3],
+    /// #191 群系天空底色（sRGB 0..1）：相机位置按原版盒均值混合的
+    /// biome `visual/sky_color` 属性（ClientLevel.getSkyColor →
+    /// BiomeManager obtainBiomeColor 语义；属性值 = 26.1 biome JSON
+    /// 实测，表在 mcv_worldgen::vanilla::biomes::climate）。None =
+    /// 回退 overworld 全局 SKY_COLOR（#78a7ff）——菜单/无世界场景。
+    /// 天穹、雾的 SKY 分量、sky.wgsl 地平带全部吃这一色。
+    pub biome_sky: Option<[f32; 3]>,
     /// 环境雾层端点 [start, end]（方块）。原版 = FOG_START/END_DISTANCE 属性
     /// （EnvironmentAttributes.java:18-24 默认 0/1024）+ 雨偏移
     /// （AtmosphericFogEnvironment.java:70-72，weather 层下发）。水下分支
@@ -1318,10 +1332,6 @@ pub struct Renderer {
     /// 设备纹理数组层数是否容得下 CRACK_BASE..（GLES 256 层钳制时为 false，
     /// 只画描边不画裂纹）。
     crack_layers_ok: bool,
-    /// 生物群系染色基色（FrameUniforms 的 tint_grass/tint_foliage 初值，
-    /// 创建期由 plains 基线算出；colormap 缺失时 w=0 禁用染色）。
-    tint_grass: [f32; 4],
-    tint_foliage: [f32; 4],
     /// 粒子渲染（独立小 draw；纹理/管线在 ParticleRenderer 内）。
     particles: ParticleRenderer,
     particle_bind: wgpu::BindGroup,
@@ -1399,6 +1409,13 @@ fn terrain_vertex_layout() -> wgpu::VertexBufferLayout<'static> {
                 format: wgpu::VertexFormat::Uint8x2,
                 offset: 20,
                 shader_location: 4,
+            },
+            // #191 群系顶点染色：偏移 24 处 4 字节 RGBA（rgb = tint，a =
+            // pad），Unorm8x4 → 片元 [0,1]。原版 BlockColors 逐顶点色同位。
+            wgpu::VertexAttribute {
+                format: wgpu::VertexFormat::Unorm8x4,
+                offset: 24,
+                shader_location: 5,
             },
         ],
     }
@@ -1665,40 +1682,15 @@ impl Renderer {
             ..Default::default()
         });
 
-        // ---- 生物群系染色（26.1 BlockColors / GrassColor 等价）-----------
-        // ① LUT：tile 层号 → tint 类别（vec4<u32>(kind, r, g, b)，std140
-        //   stride 16）。草/叶族乘 FrameUniforms 基色，云杉/白桦常量色烤进
-        //   LUT；裂纹/哨兵层 kind=0 不染色。
-        let tint_lut_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("tint-lut"),
-            size: (atlas::LAYERS * 16) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&tint_lut_buf, 0, &mcv_core::tint::tint_lut_bytes());
-        // ② plains 基线草/叶色：colormap PNG（原版 GrassColorReloadListener
-        //   同款 256x256 查表图）。缺失 → log::error + 关闭染色（草地按
-        //   原版灰度贴图原样显示，不伪造颜色）。
-        let load_colormap = |file: &str| -> Option<Vec<u8>> {
-            let am = assets_mgr.as_ref()?;
-            let bytes = am.colormap(file).ok()?;
-            mcv_core::tint::decode_colormap(&bytes)
-        };
-        let (tint_grass, tint_foliage) =
-            match (load_colormap("grass.png"), load_colormap("foliage.png")) {
-                (Some(g), Some(f)) => {
-                    let (g, f) = mcv_core::tint::world_grass_foliage_color(&g, &f)
-                        .expect("colormap 已按 256x256 校验");
-                    ([g[0], g[1], g[2], 1.0], [f[0], f[1], f[2], 1.0])
-                }
-                _ => {
-                    log::error!(
-                        "colormap 素材缺失（textures/colormap/{{grass,foliage}}.png）\
-——生物群系染色禁用，草/树叶按灰度贴图原样显示（不伪造颜色）"
-                    );
-                    ([1.0, 1.0, 1.0, 0.0], [1.0, 1.0, 1.0, 0.0])
-                }
-            };
+        // ---- 生物群系染色（#191 顶点色通路）------------------------------
+        // 旧「层号 LUT（binding 4）+ FrameUniforms plains 单色」整体废除：
+        // 全世界单色 tint 正是真机「草块恒默认色、不随群系变」的根因。
+        // 新通路：网格器（mcv_mesher）按世界坐标对 ChunkTint 色场采样，
+        // 把 26.1 BlockColors 语义的顶点色写进顶点 offset 24（Unorm8x4），
+        // terrain.wgsl 片元直接乘——渲染侧不再持有任何 tint 素材/常数。
+        // colormap PNG 的消费方移到 mcv_logic（游戏层装载，见 app.rs）。
+        // FrameUniforms 的 tint_grass/tint_foliage 槽保留占位（粒子/掉落物
+        // 与本 pass 共享同一 frame_buf，布局 176 B 不漂移），恒写 0。
 
         // ---- celestial texture array（太阳 + 8 月相）--------------------
         // 原版 26.1 日月为贴图 quad（SkyRenderer.java:125-127/:149-157），
@@ -1920,17 +1912,9 @@ impl Renderer {
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
-            // 生物群系染色 LUT（层号 → tint 类别，mcv_core::tint）。
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
+            // #191：旧生物群系染色 LUT（binding 4 uniform）废除——tint 改
+            // 顶点色属性（offset 24 Unorm8x4），binding 4 空位，追加图集
+            // 数组仍从 binding 5 起（不漂移，旧设备配置不重排）。
         ];
         for i in 1..terrain_views.len() {
             frame_layout_entries.push(atlas_d2_array(4 + i as u32));
@@ -2169,8 +2153,8 @@ impl Renderer {
 
         // ---- bind groups ----------------------------------------------
         // terrain 图集数组槽：binding 2 = terrain_views[0]，追加数组 5/6/7
-        // （binding 4 固定给生物群系染色 LUT——tint_lut 在 terrain.wgsl 是
-        // 静态声明，不能随数组数漂移）。
+        // （#191 起 binding 4 空位——旧 tint LUT 已废，追加数组编号不重排，
+        // 保证 GLES 拆分设备上布局与旧配置一致）。
         let mut frame_bind_entries = vec![
             wgpu::BindGroupEntry {
                 binding: 0,
@@ -2192,10 +2176,7 @@ impl Renderer {
                 binding: 3,
                 resource: wgpu::BindingResource::Sampler(&sampler),
             },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: tint_lut_buf.as_entire_binding(),
-            },
+            // #191：binding 4（旧 tint LUT）空位——见 frame_layout_entries 注。
         ];
         for (i, view) in terrain_views.iter().enumerate().skip(1) {
             frame_bind_entries.push(wgpu::BindGroupEntry {
@@ -3011,8 +2992,6 @@ impl Renderer {
             outline_vbuf,
             crack_layers_ok: n_layers > atlas::CRACK_BASE,
             underwater_state: (false, 0),
-            tint_grass,
-            tint_foliage,
             particles,
             particle_bind,
             items,
@@ -3242,8 +3221,13 @@ impl Renderer {
         // tick = scene.time × 20（app 层 time = ticks%24000 / 20，整 tick
         // 精确回转）；菜单/测试场景 time 直接给 tick/20。
         let tick = (scene.time * 20.0).round().max(0.0) as u64;
-        let sky_col =
-            env_color::SKY_COLOR * env_color::sky_multiplier(tick) * Vec3::from(scene.fog_tint);
+        // #191 群系天空底色：原版 26.1 天穹/雾的 SKY 分量 = 相机处
+        // EnvironmentAttributes.SKY_COLOR（GaussianSampler 高斯窗群系插值，
+        // EnvironmentAttributeProbe.java:30-34；默认值 0x78a7ff =
+        // env_color::SKY_COLOR）。scene.biome_sky = 游戏层按实物高斯窗
+        // 预混好的 sRGB 底色（None = 菜单/无世界 → 全局默认，旧行为）。
+        let sky_base = scene.biome_sky.map_or(env_color::SKY_COLOR, Vec3::from);
+        let sky_col = sky_base * env_color::sky_multiplier(tick) * Vec3::from(scene.fog_tint);
         // 朝向太阳的晨昏橙染（雾侧，AtmosphericFogEnvironment.java:29-39）：
         // looking = forward·(sunX,0,0) > 0 时 srgbLerp(looking×alpha, 雾,
         // opaque(sunrise))。sunX = sin(SUN_ANGLE)>0 ? −1 : 1（:30）——本仓
@@ -3318,8 +3302,9 @@ impl Renderer {
                 let lc = env_color::sky_light_color(tick);
                 [lc.x, lc.y, lc.z, 0.0]
             },
-            tint_grass: self.tint_grass,
-            tint_foliage: self.tint_foliage,
+            // #191：恒 0 占位——群系染色走顶点色通路，本槽仅保 frame 布局。
+            tint_grass: [0.0; 4],
+            tint_foliage: [0.0; 4],
         };
         self.queue
             .write_buffer(&self.frame_buf, 0, bytemuck::bytes_of(&uniforms));
@@ -3701,6 +3686,7 @@ impl Renderer {
                         ao: 3,
                         flags: f as u8,
                         pad: [0; 2],
+                        tint: [0xFF; 4],
                     });
                 }
                 idx.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);

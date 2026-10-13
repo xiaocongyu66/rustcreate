@@ -326,7 +326,7 @@ fn render_bbox(id: u16, state: u16) -> Option<[f32; 6]> {
     });
     let buf = Mesher::new().build(&slots, MESH_OPAQUE).expect("mesh");
     let mut bb: Option<[f32; 6]> = None;
-    for v in buf.vertex_data().chunks(24) {
+    for v in buf.vertex_data().chunks(mcv_mesher::VERTEX_STRIDE) {
         let f = |o: usize| f32::from_le_bytes([v[o], v[o + 1], v[o + 2], v[o + 3]]);
         let (x, y, z) = (f(0), f(4), f(8));
         bb = Some(match bb {

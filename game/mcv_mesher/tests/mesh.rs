@@ -61,7 +61,7 @@ struct Vtx {
 #[allow(unknown_lints, clippy::manual_chunks)]
 fn decode(buf: &MeshData) -> Vec<Vtx> {
     buf.vertex_data()
-        .chunks(24)
+        .chunks(mcv_mesher::VERTEX_STRIDE)
         .map(|b| {
             let f = |i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
             Vtx {

@@ -100,7 +100,7 @@ fn field_at(field: &[Vec<u16>], side: usize, cx: i32, cz: i32) -> &Vec<u16> {
 }
 
 /// 阶段 2 续传样本 = 阶段 1 真产物字节（opaque 顶点/索引 + water
-/// 顶点/索引，顶点 24B 步长交错 = 真 TERRAIN_STRIDE 形态）。
+/// 顶点/索引，顶点 28B 步长交错 = 真 TERRAIN_STRIDE 形态（#191 顶点色））。
 struct Sample {
     v: Vec<u8>,
     idx: Vec<u32>,

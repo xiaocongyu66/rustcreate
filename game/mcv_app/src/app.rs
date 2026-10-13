@@ -1425,6 +1425,25 @@ impl AppState {
     fn enter_game(&mut self, mut runtime: GameRuntime) {
         runtime.render_dist = self.set_dist;
         runtime.sens = self.set_sens;
+        // #191 群系染色素材：colormap PNG（原版 GrassColorReloadListener
+        // 运行时加载同一张图）壳层经 mcv_assets 装载 → 解码 → 注入
+        // runtime。任一缺失 = 染色禁用红线（草/树叶按灰度贴图原样，
+        // 不伪造颜色）。天空底色不吃素材，仅群系表，runtime 内自带。
+        if let Some(root) = self.assets_dir() {
+            let am = mcv_assets::AssetManager::new(root);
+            let dec = |f: &str| -> Option<Vec<u8>> {
+                am.colormap(f)
+                    .ok()
+                    .and_then(|b| mcv_core::tint::decode_colormap(&b))
+            };
+            match (dec("grass.png"), dec("foliage.png")) {
+                (Some(g), Some(fl)) => runtime.attach_biome_tint(g, fl),
+                _ => log::error!(
+                    "colormap 素材缺失（textures/colormap/{{grass,foliage}}.png）\
+——生物群系染色禁用，草/树叶按灰度贴图原样显示（不伪造颜色）"
+                ),
+            }
+        }
         // 音频后端：无声卡/无素材时保持 silent 降级，不阻塞进游戏。
         // 设备所有权链（本波 #143）：菜单期 App 级 menu_audio 若已开，
         // 直接转手给 runtime（避免双输出设备）；否则此处新开，失败置
@@ -2757,6 +2776,8 @@ impl AppState {
             // 加载画面无天气（晴基线）：env 雾端点 = 属性默认 0/1024；
             // rd 雾层按默认视距 8 chunks（空场景无几何，仅天空）。
             fog_tint: [1.0, 1.0, 1.0],
+            // #191 无世界（菜单/加载）→ overworld 默认天底色回退。
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 128.0,
             water_vision: 0.0,
@@ -3155,6 +3176,9 @@ impl AppState {
             day_factor: day,
             sun_dir: sun,
             fog_tint: weather_tint,
+            // #191 相机处群系天空底色（26.1 GaussianSampler 环境属性
+            // 混合，EnvironmentAttributeProbe.java:30-34 实物口径）。
+            biome_sky: Some(runtime.biome_sky_srgb(camera.pos.x, camera.pos.z)),
             fog_env: [env_start, env_end],
             fog_rd_end: (runtime.render_dist * 16) as f32,
             water_vision: runtime.water_vision(),

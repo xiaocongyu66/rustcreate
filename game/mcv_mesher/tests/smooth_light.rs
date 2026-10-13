@@ -39,7 +39,7 @@ struct V {
 
 fn decode(buf: &mcv_mesher::MeshData) -> Vec<V> {
     buf.vertex_data()
-        .chunks(24)
+        .chunks(mcv_mesher::VERTEX_STRIDE)
         .map(|b| V {
             pos: [
                 f32::from_le_bytes([b[0], b[1], b[2], b[3]]),

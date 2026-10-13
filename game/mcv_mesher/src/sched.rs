@@ -40,6 +40,9 @@ pub struct MeshJob {
     pub origin: [f32; 3],
     pub voxels: Vec<u16>,
     pub lights: Vec<u8>,
+    /// #191 群系 tint 场（主线程按世界坐标采样构建；worker 纯计算，
+    /// None = 关闭染色 → 顶点色白）。区块世界方块原点 = pos × 16。
+    pub tint: Option<mcv_core::tint::ChunkTint>,
 }
 
 /// worker → 主线程的网格产物。
@@ -111,7 +114,14 @@ impl MeshScheduler {
             // Mesher 零尺寸 Copy，worker 本地实例；同输入同产物（等价锁
             // tests/mesh_parallel.rs::worker_output_bit_identical 锁定）。
             let mesher = Mesher::new();
-            let opaque = mesher.build(&slots, MESH_OPAQUE).ok();
+            // #191：opaque pass 带群系 tint 场（原点 = 区块世界方块坐标），
+            // water pass 无 tint（流体常数色在着色器侧）。
+            let tint = job.tint.clone().map(|t| crate::TintInput {
+                block_x: job.pos.x * 16,
+                block_z: job.pos.z * 16,
+                tint: t,
+            });
+            let opaque = mesher.build_with_tint(&slots, MESH_OPAQUE, tint).ok();
             let water = mesher.build(&slots, MESH_WATER).ok();
             let done = MeshDone {
                 pos: job.pos,

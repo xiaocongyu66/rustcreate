@@ -97,6 +97,11 @@ pub trait ChunkMesher: Send {
     /// 参与相邻区块合批，绘制条目表由实现自持（[`Self::entries`]）。
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk>;
 
+    /// #191 群系顶点色源注入（同步路实现方持有；worker 路不经此道——
+    /// 派发点在 [`GameRuntime::build_chunk_mesh`] 直接进 MeshJob）。
+    /// None = colormap 缺失，染色禁用（顶点色恒白，贴图原样）。
+    fn attach_tint(&mut self, _src: Option<Arc<crate::biome_tint::BiomeTintSource>>) {}
+
     /// 区块卸载：释放该块网格与批次成员资格（#80 合批记账，默认 no-op）。
     fn unload(&mut self, _pos: ChunkPos) {}
 
@@ -156,6 +161,9 @@ pub struct RustMesher {
     uploader: mcv_render::gpu::MeshUploader,
     /// E3 回传端（None = 同步路径，不建池）。
     results: Option<mcv_mesher::MeshResults>,
+    /// #191 群系顶点色源（同步路径经 [`ChunkMesher::attach_tint`] 注入；
+    /// None = 染色禁用，顶点色恒白）。
+    biome_tint: Option<Arc<crate::biome_tint::BiomeTintSource>>,
 }
 
 impl RustMesher {
@@ -172,6 +180,7 @@ impl RustMesher {
                     mesher: mcv_mesher::Mesher::new(),
                     uploader,
                     results: None,
+                    biome_tint: None,
                 },
                 None,
             );
@@ -182,6 +191,7 @@ impl RustMesher {
                 mesher: mcv_mesher::Mesher::new(),
                 uploader,
                 results: Some(results),
+                biome_tint: None,
             },
             Some(sched),
         )
@@ -189,11 +199,28 @@ impl RustMesher {
 }
 
 impl ChunkMesher for RustMesher {
+    fn attach_tint(&mut self, src: Option<Arc<crate::biome_tint::BiomeTintSource>>) {
+        self.biome_tint = src;
+    }
+
     fn build(&mut self, pos: ChunkPos, handles: &[Arc<ChunkHandle>; 9]) -> Option<RenderChunk> {
         // 同步路径（回滚开关）：快照核 + 直呼 mesher（E3 前同款时序）。
         let (voxels, lights) = snapshot_neighborhood(handles);
         let slots = mcv_mesher::neighborhood_slots(&voxels, &lights);
-        let opaque = self.mesher.build(&slots, mcv_mesher::MESH_OPAQUE).ok()?;
+        // #191：世界坐标 tint 场（与 worker 路 build_chunk_mesh 同源构造）。
+        let tint = self
+            .biome_tint
+            .as_ref()
+            .and_then(|bt| bt.field_for(pos.x, pos.z))
+            .map(|t| mcv_mesher::TintInput {
+                block_x: pos.x * 16,
+                block_z: pos.z * 16,
+                tint: t,
+            });
+        let opaque = self
+            .mesher
+            .build_with_tint(&slots, mcv_mesher::MESH_OPAQUE, tint)
+            .ok()?;
         let water = self.mesher.build(&slots, mcv_mesher::MESH_WATER).ok();
         // 裸字节交给引擎上传；水顶点+索引都传（build_chunk 拼接共用 vb 并
         // 偏移索引——只传索引会让水索引绑到 opaque 顶点上，GLES 静默跳 draw）。
@@ -784,6 +811,11 @@ pub struct GameRuntime {
     /// 回滚开关）。回传端在 RustMesher 内（flush 消化）；派发端在此供
     /// remesh 预算流投递快照字节（hi/lo 通道选择在 [`Self::build_chunk_mesh`]）。
     mesh_sched: Option<mcv_mesher::MeshScheduler>,
+    /// #191 群系顶点色源（colormap 解码字节由 app 层装载后经
+    /// [`Self::attach_biome_tint`] 注入；None = 染色禁用，顶点色恒白，
+    /// 等价旧「素材缺失禁用」红线）。worker 路在派发点逐块解色进
+    /// MeshJob，同步路经 [`ChunkMesher::attach_tint`] 同 Arc 注入。
+    biome_tint: Option<Arc<crate::biome_tint::BiomeTintSource>>,
     /// E4 独立 IO 通道（None = 同步路，`MCV_IO_ASYNC=0` 回滚开关/无头）。
     /// 提交与回执消化都在主线程；region open/read/write 全部移出主线程。
     io: Option<IoChannel>,
@@ -1576,6 +1608,7 @@ impl GameRuntime {
             on_tick: false,
             mesher,
             mesh_sched,
+            biome_tint: None,
             io: if io_async {
                 Some(IoChannel::new(save_dir.clone()))
             } else {
@@ -3530,12 +3563,20 @@ impl GameRuntime {
                 return false;
             }
             let (voxels, lights) = snapshot_neighborhood(&handles);
+            // #191：主线程逐块解群系色场（世界坐标 21×21 网格 = 中心块
+            // 全宽混合窗覆盖；ClimateSampler 单次构造批量采样，见
+            // biome_climate_grid 头注），worker 纯计算不再触噪声。
+            let tint = self
+                .biome_tint
+                .as_ref()
+                .and_then(|bt| bt.field_for(pos.x, pos.z));
             sched.submit(
                 mcv_mesher::MeshJob {
                     pos,
                     origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
                     voxels,
                     lights,
+                    tint,
                 },
                 hi,
             );
@@ -5357,6 +5398,30 @@ impl GameRuntime {
         self.eye_in_water(&WorldView {
             chunks: &self.chunks,
         })
+    }
+
+    /// #191 群系染色装配：`*_px` = colormap PNG 解码后的 256×256 RGBA
+    /// 字节（装载方 = mcv_app，经 mcv_assets；语义红线同旧「素材缺失禁
+    /// 用」——任一缺失/尺寸不符保持禁用，不伪造颜色）。注入同时下发
+    /// 同步路 mesher（worker 路由本类型派发点直接消费）。
+    pub fn attach_biome_tint(&mut self, grass_px: Vec<u8>, foliage_px: Vec<u8>) {
+        let src = crate::biome_tint::BiomeTintSource::new(self.seed, grass_px, foliage_px);
+        if src.is_none() {
+            log::error!(
+                "colormap 解码产物尺寸不符（256×256 RGBA）——生物群系染色禁用，\
+草/树叶按灰度贴图原样显示（不伪造颜色）"
+            );
+        }
+        self.mesher.attach_tint(src.clone());
+        self.biome_tint = src;
+    }
+
+    /// 相机位置群系天空底色（sRGB 0..1，#191）：26.1 环境属性实物口径
+    /// （GaussianSampler quart 窗加权，见 [`crate::biome_tint`] 模块头
+    /// 注）。天穹/雾 SKY 分量在渲染侧吃这一色（Scene::biome_sky）。
+    #[must_use]
+    pub fn biome_sky_srgb(&self, cam_x: f32, cam_z: f32) -> [f32; 3] {
+        crate::biome_tint::blended_sky_color(self.seed, cam_x, cam_z)
     }
 
     /// 水下视野系数 waterVision 0..1（LocalPlayer.getWaterVision，:1150-1163

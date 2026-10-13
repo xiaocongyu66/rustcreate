@@ -20,6 +20,8 @@ struct Tv {
     ao: u8,
     flags: u8,
     pad: [u8; 2],
+    // #191 顶点色（Unorm8x4）——测试顶点恒白（乘算单位元）。
+    tint: [u8; 4],
 }
 
 fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
@@ -34,6 +36,7 @@ fn ground_chunk(device: &wgpu::Device) -> RenderChunk {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -108,6 +111,7 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -186,6 +190,7 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -359,6 +364,7 @@ fn terrain_sky_and_hud_render() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -464,6 +470,7 @@ fn terrain_multi_array_grass_render() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -534,6 +541,7 @@ fn mining_crack_and_outline_darken_target() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -687,6 +695,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         ground([0.0, 100.0, 8.0], [0, 0], mcv_core::tiles::GRASS_TOP),
@@ -716,6 +725,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         ao: 3,
         flags: 0x2 | 0x8,
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let wverts = [
         water_v([0.0, 99.6, 0.0], [0, 0]),
@@ -751,6 +761,7 @@ fn water_pass_renders_uploaded_water_vertices() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -897,6 +908,7 @@ fn gles_fallback_world_frame_smoke() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -932,6 +944,7 @@ fn gles_fallback_world_frame_smoke() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1007,6 +1020,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             time: 0.0,
             day_factor: 1.0,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -1102,6 +1116,7 @@ fn cjk_text_stays_within_line_box() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1188,6 +1203,7 @@ fn celestial_sun_texture_paints_core() {
         time: 0.0,
         day_factor: 1.0,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1262,6 +1278,7 @@ fn missing_assets_never_paint_fake_pixels() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1350,6 +1367,7 @@ fn missing_assets_never_paint_fake_pixels() {
         time: 0.0,
         day_factor: 1.0,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1469,6 +1487,7 @@ fn four_mobs_paint_with_vanilla_textures() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -1640,6 +1659,7 @@ fn first_person_hand_paints_bottom_right() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -1853,6 +1873,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -1908,6 +1929,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -1959,6 +1981,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         ao: 3,
         flags: 2, // face_id +Y
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts_for = |layer: u16| {
         [
@@ -1994,6 +2017,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,
@@ -2069,6 +2093,7 @@ fn unload_removes_member_from_batch() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -2116,6 +2141,7 @@ fn staging_upload_flush_contract() {
         ao: 3,
         flags: 2,
         pad: [0; 2],
+        tint: [0xFF, 0xFF, 0xFF, 0xFF],
     };
     let verts = [
         mk([0.0, y, 0.0], [0, 0]),
@@ -2168,6 +2194,7 @@ fn staging_upload_flush_contract() {
         time: 0.0,
         day_factor: day,
         fog_tint: [1.0, 1.0, 1.0],
+        biome_sky: None,
         fog_env: [0.0, 1024.0],
         fog_rd_end: 1024.0,
         water_vision: 0.0,
@@ -2363,6 +2390,7 @@ fn wood_family_samples_render_thin_templates() {
             time: 0.0,
             day_factor: day,
             fog_tint: [1.0, 1.0, 1.0],
+            biome_sky: None,
             fog_env: [0.0, 1024.0],
             fog_rd_end: 1024.0,
             water_vision: 0.0,

@@ -107,45 +107,28 @@ fn fog_color() -> vec3<f32> {
 // 蓝色来自逐顶点乘生物群系水色：FluidStateModelSet.java:13-18 给水流体模型
 // 挂 BlockTintSources.water()（:129-139 → BiomeColors.getAverageWaterColor），
 // overworld 默认色 OverworldBiomes.java:28 NORMAL_WATER_COLOR=4159204=0x3F76E4；
-// FluidRenderer.java:88,169,205,307 把该色乘进每顶点。本仓无生物群系系统，
-// 按 overworld 默认常数在片元乘（顶点/片元乘序对平面水等价）。
-// 登记债：生物群系级水色变体 → mcv_core tint.rs 注册 water 层后改走
-// biome_tint(tint_lut[layer])（该文件不在本波红线内）。
+// FluidRenderer.java:88,169,205,307 把该色乘进每顶点。水的群系级色变体
+// 登记债：顶点 tint 通道已就位（#191），water pass 接生物群系水色 =
+// mesher 侧填 ChunkTint 的 water 族即可（本波水仍按 overworld 常数）。
 const WATER_TINT: vec3<f32> = vec3<f32>(63.0, 118.0, 228.0) / 255.0;
 
-// 生物群系染色（26.1 BlockColors / BlockTintSources 等价）：灰度遮罩贴图
-// × 生物群系颜色。colormap 族取 FrameUniforms 的 plains 基线色（素材缺失
-// 时 w=0 → 不染色）；常量族直接用 LUT 烤色。无染色时返回 1（不改变贴图）。
-fn biome_tint(entry: vec4<u32>) -> vec3<f32> {
-    let kind = entry.x;
-    if (kind == 1u) {
-        return select(vec3<f32>(1.0), frame.tint_grass.rgb, frame.tint_grass.w > 0.5);
-    }
-    if (kind == 2u) {
-        return select(vec3<f32>(1.0), frame.tint_foliage.rgb, frame.tint_foliage.w > 0.5);
-    }
-    if (kind == 3u || kind == 4u) {
-        return vec3<f32>(f32(entry.y), f32(entry.z), f32(entry.w)) / 255.0;
-    }
-    return vec3<f32>(1.0);
-}
+// 生物群系染色（#191，26.1 BlockColors 等价）：灰度遮罩贴图 × 顶点色。
+// 顶点色由网格器 CPU 侧产出（mcv_core::tint::ChunkTint 世界坐标采样 +
+// ClientLevel.calculateBlockTint 盒均值，等价原版「tintSource →
+// BlockColors → 顶点色」逐顶点链路），未装配/不染色层恒白（乘算单位元）。
+// 旧的「帧级单色 + 层号 LUT」通道已废除——全世界单色正是真机
+// 「旱地不黄、雪原不白」缺陷的根因。
 
 @group(0) @binding(0) var<uniform> frame: FrameUniforms;
 @group(0) @binding(1) var<uniform> chunk: ChunkOrigin;
 // gpu.rs 按设备 max_texture_array_layers 在下面占位行处展开：1..=4 个
 // texture_2d_array 绑定声明 + sample_terrain 采样函数（上限 ≥ LAYERS 时
 // 为单数组 binding 2，语义与拆分前一致；GLES 保底 256 时按 layer 区间
-// if 链选数组，追加数组在 binding 5/6/7——4 固定给下方 tint_lut）。
+// if 链选数组，追加数组在 binding 5/6/7——#191 起 binding 4 空位，
+// 旧 tint_lut 已废）。
 // 占位标记必须独占整行——replace 会整行换生成代码，行尾不能带说明文字。
 // @@TERRAIN_ARRAYS@@
 @group(0) @binding(3) var terrain_samp: sampler;
-// 生物群系染色 LUT（引擎侧 mcv_core::tint 构建）：每层
-// vec4<u32>(kind, r, g, b)。kind: 0=无 1=草 colormap 2=叶 colormap
-// 3=云杉常量 4=白桦常量；常量色烤在 LUT 的 yzw（0..255）。
-// 定长 838（uniform 地址空间不允许 runtime-sized 数组）——
-// 与 mcv_core::atlas::LAYERS 由 mcv_render/src/lib.rs 的 const 断言互锁。
-const TINT_LAYERS: u32 = 838u;
-@group(0) @binding(4) var<uniform> tint_lut: array<vec4<u32>, TINT_LAYERS>;
 
 struct VtxIn {
     @location(0) pos: vec3<f32>,
@@ -153,6 +136,7 @@ struct VtxIn {
     @location(2) layer: u32,
     @location(3) lights: vec2<u32>,  // x = block light, y = sky light
     @location(4) aoflags: vec2<u32>, // x = ao, y = flags (bit0-2 face, bit3 水面顶面标识)
+    @location(5) tint: vec4<f32>,    // rgb = 群系顶点色（Unorm8x4），a = pad
 };
 
 struct VtxOut {
@@ -162,6 +146,7 @@ struct VtxOut {
     @location(2) shade: vec3<f32>,
     @location(3) dist: f32,      // 球距（env 雾层，fog.glsl:32-34）
     @location(4) dist_cyl: f32,  // 柱距（renderDist 雾层，fog.glsl:36-40）
+    @location(5) tint: vec3<f32>, // 群系顶点色插值（合并大面内平滑过渡）
 };
 
 @vertex
@@ -184,6 +169,7 @@ fn vs_terrain(v: VtxIn) -> VtxOut {
     let rel = world - frame.cam_pos_time.xyz;
     out.dist = length(rel);
     out.dist_cyl = max(length(rel.xz), abs(rel.y));
+    out.tint = v.tint.rgb;
     return out;
 }
 
@@ -193,10 +179,11 @@ fn fs_terrain(v: VtxOut) -> @location(0) vec4<f32> {
     if (tex.a < 0.5) {
         discard;
     }
-    // 按贴图层查 tint 类别并乘生物群系颜色（草顶/羊齿/树叶三族）。
-    let tint = biome_tint(tint_lut[v.layer]);
+    // 乘群系顶点色（草顶/羊齿/树叶三族，网格器按世界坐标采样 +
+    // ClientLevel.calculateBlockTint 盒均值预计算；#191，取代旧层号 LUT
+    // + 帧级单色）。
     let fog = fog_factor(v.dist, v.dist_cyl, frame.fog_params);
-    let lit = tex.rgb * v.shade * tint;
+    let lit = tex.rgb * v.shade * v.tint;
     return vec4<f32>(mix(fog_color(), lit, fog), 1.0);
 }
 
