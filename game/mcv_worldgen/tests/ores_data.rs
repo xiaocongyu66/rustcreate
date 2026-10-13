@@ -8,8 +8,9 @@
 use mcv_worldgen::vanilla::ores_data::{HeightDist, ORE_ROWS, OreCount, OreRow};
 
 fn row(name: &str) -> &'static OreRow {
-    *ORE_ROWS
+    ORE_ROWS
         .iter()
+        .copied()
         .find(|r| r.name == name)
         .unwrap_or_else(|| panic!("缺行 {name}（placed feature 实物存在）"))
 }
