@@ -9110,10 +9110,10 @@ mod tests {
 
     /// #190 回归锁（派单口径「钳制矩形 ⊇ 可见已上传环」）：生产不变量
     /// 「可见网格半径 ≤ sim_dist」（remesh 环过滤，杜绝「看得见却穿透」）
-    /// + 稳态就位盘 = 票 Full 授权域（半径 sim_dist + 2）⟹ 每侧余量上界
+    /// 且稳态就位盘 = 票 Full 授权域（半径 sim_dist + 2）⟹ 每侧余量上界
     /// = sim_dist + 1 ≥ sim_dist = 可见半径——玩家能站到任何已上传网格
-    /// 区块不被钳。此处按可见环整盘就位（stage Uploaded + status Full）
-    /// + 外圈补 sim_dist+1 环票域就位，验证四向余量 ≥ 可见半径。
+    /// 区块不被钳。此处按可见环整盘就位（stage Uploaded + status Full），
+    /// 外圈再补 sim_dist+1 环票域就位，验证四向余量 ≥ 可见半径。
     #[test]
     fn clamp_rect_contains_uploaded_ring() {
         for &rd in &[2i32, 4, 8] {
