@@ -60,6 +60,116 @@ pub const ALL_BIOMES: [Biome; 10] = [
     Biome::River,
 ];
 
+/// 群系气候参数（tint/积雪判据数据源，26.1 实物数值）。
+///
+/// 字段对位 [`net/minecraft/world/level/biome/Biome.ClimateSettings`]
+/// （Biome.java:255-258：`hasPrecipitation/temperature/downfall`，JSON 顶层
+/// 同名字段直载）与 26.1 新增的视觉属性
+/// `minecraft:visual/sky_color`（biome JSON `attributes` 节，替代旧
+/// BiomeSpecialEffects.skyColor）。用途：
+/// - `temperature/downfall` → 草/叶 colormap 查色
+///   （Biome.getGrassColorFromTexture/getFoliageColorFromTexture，
+///   Biome.java:212-226，clamp 到 0..1 后 `ColorMapColorUtil.get`）；
+/// - `temperature + has_precipitation` → 降水/积雪判据
+///   （Biome.getPrecipitationAt/warmEnoughToRain：高度调整温度 < 0.15 =
+///   SNOW，Biome.java:104-110,171-177；高度调整见 snow.rs）；
+/// - `sky_color` → 天空色（ClientLevel 经 biome 属性取色）。
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct BiomeClimate {
+    /// JSON 顶层 `"temperature"`（26.1 无 per-position 温度噪声场——
+    /// 高度/噪声修正只存在于运行时 getHeightAdjustedTemperature，snow.rs）。
+    pub temperature: f64,
+    /// JSON 顶层 `"downfall"`。
+    pub downfall: f64,
+    /// JSON `"has_precipitation"`；本 10 群系均未写该键 → builder 默认
+    /// `true`（Biome.java:255）。desert 的「无雪」由温度 ≥ 0.15 走 RAIN
+    /// 分支实现，非此标志。
+    pub has_precipitation: bool,
+    /// `attributes."minecraft:visual/sky_color"` RGB。
+    pub sky_color: [u8; 3],
+}
+
+/// 10 群系气候表。数值逐条抄自 26.1 数据文件（file:line 注于各分支），
+/// 数据事实非代码表达，可入库（版权红线：不搬原版代码）。
+/// #181 群系生成化波若把本表改为脚本产出，数值与引注随表迁移。
+#[must_use]
+pub const fn climate(b: Biome) -> BiomeClimate {
+    // has_precipitation 全 true：见结构体字段注。
+    let precip = true;
+    match b {
+        // data/minecraft/worldgen/biome/plains.json:200/10/3
+        Biome::Plains => BiomeClimate {
+            temperature: 0.8,
+            downfall: 0.4,
+            has_precipitation: precip,
+            sky_color: [0x78, 0xA7, 0xFF],
+        },
+        // forest.json:195/17/10
+        Biome::Forest => BiomeClimate {
+            temperature: 0.7,
+            downfall: 0.8,
+            has_precipitation: precip,
+            sky_color: [0x79, 0xA6, 0xFF],
+        },
+        // birch_forest.json:190/17/10
+        Biome::BirchForest => BiomeClimate {
+            temperature: 0.6,
+            downfall: 0.6,
+            has_precipitation: precip,
+            sky_color: [0x7A, 0xA5, 0xFF],
+        },
+        // desert.json:193/18/11
+        Biome::Desert => BiomeClimate {
+            temperature: 2.0,
+            downfall: 0.0,
+            has_precipitation: precip,
+            sky_color: [0x6E, 0xB1, 0xFF],
+        },
+        // savanna.json:206/11/4
+        Biome::Savanna => BiomeClimate {
+            temperature: 2.0,
+            downfall: 0.0,
+            has_precipitation: precip,
+            sky_color: [0x6E, 0xB1, 0xFF],
+        },
+        // taiga.json:200/10/3
+        Biome::Taiga => BiomeClimate {
+            temperature: 0.25,
+            downfall: 0.8,
+            has_precipitation: precip,
+            sky_color: [0x7D, 0xA3, 0xFF],
+        },
+        // snowy_plains.json:181/11/3
+        Biome::SnowyPlains => BiomeClimate {
+            temperature: 0.0,
+            downfall: 0.5,
+            has_precipitation: precip,
+            sky_color: [0x7F, 0xA1, 0xFF],
+        },
+        // ocean.json:206/27/20
+        Biome::Ocean => BiomeClimate {
+            temperature: 0.5,
+            downfall: 0.5,
+            has_precipitation: precip,
+            sky_color: [0x7B, 0xA4, 0xFF],
+        },
+        // beach.json:161/10/3
+        Biome::Beach => BiomeClimate {
+            temperature: 0.8,
+            downfall: 0.4,
+            has_precipitation: precip,
+            sky_color: [0x78, 0xA7, 0xFF],
+        },
+        // river.json:194/27/20
+        Biome::River => BiomeClimate {
+            temperature: 0.5,
+            downfall: 0.5,
+            has_precipitation: precip,
+            sky_color: [0x7B, 0xA4, 0xFF],
+        },
+    }
+}
+
 /// 量化基数（Climate.QUANTIZATION_FACTOR = 10000）。
 pub const Q: i64 = 10_000;
 
@@ -392,5 +502,37 @@ mod tests {
     /// f64 → 量化坐标（测试探针用；与 Param::point 同式）。
     const fn q_probe(v: f64) -> i64 {
         (v * Q as f64) as i64
+    }
+
+    /// 气候表逐值对拍原版 JSON（tint/积雪数据源回归锁：任何改值必须
+    /// 同步改 file:line 引注）。
+    #[test]
+    fn climate_table_matches_vanilla_json() {
+        let cases: [(Biome, f64, f64, [u8; 3]); 10] = [
+            (Biome::Plains, 0.8, 0.4, [0x78, 0xA7, 0xFF]),
+            (Biome::Forest, 0.7, 0.8, [0x79, 0xA6, 0xFF]),
+            (Biome::BirchForest, 0.6, 0.6, [0x7A, 0xA5, 0xFF]),
+            (Biome::Desert, 2.0, 0.0, [0x6E, 0xB1, 0xFF]),
+            (Biome::Savanna, 2.0, 0.0, [0x6E, 0xB1, 0xFF]),
+            (Biome::Taiga, 0.25, 0.8, [0x7D, 0xA3, 0xFF]),
+            (Biome::SnowyPlains, 0.0, 0.5, [0x7F, 0xA1, 0xFF]),
+            (Biome::Ocean, 0.5, 0.5, [0x7B, 0xA4, 0xFF]),
+            (Biome::Beach, 0.8, 0.4, [0x78, 0xA7, 0xFF]),
+            (Biome::River, 0.5, 0.5, [0x7B, 0xA4, 0xFF]),
+        ];
+        for (b, t, d, sky) in cases {
+            let c = climate(b);
+            assert_eq!((c.temperature, c.downfall), (t, d), "{b:?}");
+            assert_eq!(c.sky_color, sky, "{b:?} sky_color");
+            assert!(c.has_precipitation, "{b:?} has_precipitation");
+        }
+    }
+
+    /// 表覆盖 10 群系（新增群系时逼气候分支）。
+    #[test]
+    fn climate_covers_all_biomes() {
+        for b in ALL_BIOMES {
+            let _ = climate(b);
+        }
     }
 }

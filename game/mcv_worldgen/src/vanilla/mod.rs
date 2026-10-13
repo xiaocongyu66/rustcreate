@@ -136,3 +136,44 @@ pub fn biome_from_sample(sample: &climate::ClimateSample) -> biomes::Biome {
 pub fn biome_point_list() -> Vec<(biomes::ParameterPoint, biomes::Biome)> {
     biomes::biome_point_table()
 }
+
+/// w×w 网格的逐列气候参数（`(temperature, downfall)`），自 `(x0, z0)`
+/// 起逐格步进 1。#191 tint 场构建入口：网格器逐顶点颜色 = 本网格上的
+/// colormap 查色 + 原版盒均值混合（ClientLevel.calculateBlockTint，见
+/// `mcv_core::tint` 头注）。单一 [`climate::ClimateSampler`] 实例复用
+/// （逐列 `biome_at` 各自 new 采样器 = 每列重建噪声路由，不可用于网格
+/// 批量采样）。
+#[must_use]
+pub fn biome_climate_grid(
+    world_seed: u64,
+    x0: i32,
+    z0: i32,
+    w: usize,
+) -> Vec<[f64; 2]> {
+    let sampler = climate::ClimateSampler::new(world_seed);
+    (0..w as i32)
+        .flat_map(|dz| {
+            (0..w as i32).map(move |dx| {
+                let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
+                let c = biomes::climate(b);
+                [c.temperature, c.downfall]
+            })
+        })
+        .collect()
+}
+
+/// w×w 网格的逐列天空色（`attributes."minecraft:visual/sky_color"`），
+/// 与 [`biome_climate_grid`] 同款采样复用；消费方 = 天候 tint 场
+/// （相机位置盒均值混合后接 gpu.rs sky pass，#191）。
+#[must_use]
+pub fn biome_sky_grid(world_seed: u64, x0: i32, z0: i32, w: usize) -> Vec<[u8; 3]> {
+    let sampler = climate::ClimateSampler::new(world_seed);
+    (0..w as i32)
+        .flat_map(|dz| {
+            (0..w as i32).map(move |dx| {
+                let b = biome_from_sample(&sampler.sample(x0 + dx, z0 + dz));
+                biomes::climate(b).sky_color
+            })
+        })
+        .collect()
+}
