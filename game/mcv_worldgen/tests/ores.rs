@@ -62,7 +62,19 @@ fn ore_v7_byte_golden() {
         (0x5EED_0000_0000_0007, 7, 2),
     ];
     // v7：+矿石（gen-ores 25 行 + ore_pass 执行器）锚定哈希。
-    const WANT: [u64; 6] = [0; 6];
+    // 锚定证据：首锚通道（表值 0 打印→填回）闭环——run 38439382386
+    // （20fd55a0）与 38458062994（1618d1fc）六例逐位一致；case0/1/2
+    // 另跨 38422516959(bb785e14)/38433188961(4a5ac2f2) 三 sha 稳定。
+    // 实现定稿于 4a5ac2f2（Replay 深度梯真实密度修复，唯一生产代码
+    // 改动），其后仅测试口径提交，哈希零漂移自洽。
+    const WANT: [u64; 6] = [
+        0x0CF9_39E6_FDF2_5AE7,
+        0xC894_BB97_27BA_13D4,
+        0xC1A5_073B_BC0C_3F60,
+        0x215E_4EFF_D6D1_D537,
+        0xA311_F675_2635_5CEC,
+        0xBED1_CC59_2171_2D05,
+    ];
     let mut report = String::new();
     let mut fails = 0;
     for (i, &(seed, cx, cz)) in CASES.iter().enumerate() {
