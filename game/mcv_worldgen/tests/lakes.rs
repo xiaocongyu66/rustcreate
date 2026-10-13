@@ -139,11 +139,29 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     );
     // 〔临时诊断 #192 刀2〕reason: 0=pass 1=upper-fluid 2=lower-seal。
     eprintln!("K-LAKES-GATE reason_hist={reason_hist:?}");
-    for (ox, oz, oy, top, reason, land) in &samples {
+    let mut box_cells = 0usize;
+    let mut box_neg = 0usize;
+    for (ox, oz, _oy, top, _r, land) in &samples {
         eprintln!(
-            "K-LAKES-SAMPLE origin=({ox},{oz}) oy={oy} top_solid={top} reason={reason} land={land}"
+            "K-LAKES-SAMPLE origin=({ox},{oz}) oy={} top_solid={top} reason={_r} land={land}",
+            _oy
         );
+        if !land {
+            continue;
+        }
+        for dz in -8..8i32 {
+            for dx in -8..8i32 {
+                let cs = orch.column_state(*ox + dx, *oz + dz);
+                for y in top - 3..=top {
+                    box_cells += 1;
+                    if orch.density(&cs, *ox + dx, y, *oz + dz) <= 0.0 {
+                        box_neg += 1;
+                    }
+                }
+            }
+        }
     }
+    eprintln!("K-LAKES-CARVE lower_box cells={box_cells} neg={box_neg}");
     assert!(
         !survivors.is_empty(),
         "surface 候选 {surf_cand}（陆柱 {land_cand}）判据环全弃——陆柱有而存活 0 = 判据环过严，陆柱 0 = 窗内地形无陆（换窗）"
