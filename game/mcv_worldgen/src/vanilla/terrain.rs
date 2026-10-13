@@ -108,11 +108,12 @@ pub const SNOW_GRASS: u16 = 11;
 /// mcv_item/src/lib.rs:2149 `Block(BlockId(342))` 交叉印证）。
 pub const DEEPSLATE: u16 = 342;
 
-/// vertical_gradient 条件位置随机的通道域盐（本仓 hash01 派生，非原版
-/// Xoroshiro fromHashOf(name) 种子链——差异登记 KNOWN-DIVERGENCE RNG-1；
-/// random_name 实物 "minecraft:bedrock_floor" / "minecraft:deepslate"）。
-const BEDROCK_FLOOR_SALT: u64 = 0x0D00_D00D; // 沿用 #175 前旧基岩通道盐
-const DEEPSLATE_SALT: u64 = 0x0DEE_051A;
+/// vertical_gradient 条件位置随机的实物 random_name（overworld.json
+/// surface_rule 树原文；#192 RNG-1 销账：种子链 = vanilla/xoroshiro.rs
+/// 的 fromHashOf(name).forkPositional() 实物链，同 seed 同坐标与原版
+/// 同位型）。
+const BEDROCK_FLOOR_RANDOM: &str = "minecraft:bedrock_floor";
+const DEEPSLATE_RANDOM: &str = "minecraft:deepslate";
 
 pub fn lerp1(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
@@ -484,9 +485,12 @@ pub struct ColumnState {
 /// fBm（26.1 noise 参数表；域盐沿用 channel_seed 同款派生：NormalNoise::new
 /// 内部 noise_seed(world, salt) = splitmix64(world ^ salt)）。
 pub struct Orchestrator {
-    /// 世界种子（#192：vertical_gradient 位置随机需要，与 generate/lake
-    /// pass 的种子同源）。
-    seed: u64,
+    /// vertical_gradient 条件位置随机工厂（#192 RNG-1 销账）：
+    /// `root_positional_factory(worldSeed).named_factory(random_name)` =
+    /// RandomState.java:37+113-115 实物链（xoroshiro.rs 头注），同 seed
+    /// 同坐标与原版同位型。
+    bedrock_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
+    deepslate_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
     climate: ClimateSampler,
     offset_spline: Spline,
     factor_spline: Spline,
@@ -530,8 +534,10 @@ impl Orchestrator {
         let n = |salt: u64, first_octave: i32, amps: &'static [f64]| {
             NormalNoise::new(world_seed, salt, first_octave, amps)
         };
+        let root = crate::vanilla::xoroshiro::root_positional_factory(world_seed as i64);
         Self {
-            seed: world_seed,
+            bedrock_random: root.named_factory(BEDROCK_FLOOR_RANDOM),
+            deepslate_random: root.named_factory(DEEPSLATE_RANDOM),
             climate: ClimateSampler::new(world_seed),
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
@@ -551,13 +557,13 @@ impl Orchestrator {
             cave_layer: n(0x0000_CAFE_0003 ^ 0x41, -8, &AMPS_1),
             cave_cheese: n(0x0000_CAFE_0003 ^ 0x42, -8, &AMPS_CAVE_CHEESE),
             jagged: n(0x7A66ED, -16, &AMPS_JAGGED),
-            pillar: n(0x0000_CA11_5E ^ 0x51, -7, &AMPS_PILLAR),
-            pillar_rareness: n(0x0000_CA11_5E ^ 0x52, -8, &AMPS_1),
-            pillar_thickness: n(0x0000_CA11_5E ^ 0x53, -8, &AMPS_1),
-            noodle_noise: n(0x0000_0DE0_1E ^ 0x61, -8, &AMPS_1),
-            noodle_thickness: n(0x0000_0DE0_1E ^ 0x62, -8, &AMPS_1),
-            noodle_ridge_a: n(0x0000_0DE0_1E ^ 0x63, -7, &AMPS_1),
-            noodle_ridge_b: n(0x0000_0DE0_1E ^ 0x64, -7, &AMPS_1),
+            pillar: n(0x0000_CA11_5E00 ^ 0x51, -7, &AMPS_PILLAR),
+            pillar_rareness: n(0x0000_CA11_5E00 ^ 0x52, -8, &AMPS_1),
+            pillar_thickness: n(0x0000_CA11_5E00 ^ 0x53, -8, &AMPS_1),
+            noodle_noise: n(0x0000_0DE0_1E00 ^ 0x61, -8, &AMPS_1),
+            noodle_thickness: n(0x0000_0DE0_1E00 ^ 0x62, -8, &AMPS_1),
+            noodle_ridge_a: n(0x0000_0DE0_1E00 ^ 0x63, -7, &AMPS_1),
+            noodle_ridge_b: n(0x0000_0DE0_1E00 ^ 0x64, -7, &AMPS_1),
         }
     }
 
@@ -615,13 +621,13 @@ impl Orchestrator {
         subsoil_id: u16,
     ) -> u16 {
         if y < min_surface {
-            stone_replacement(self.seed, wx, y, wz)
+            self.stone_replacement(wx, y, wz)
         } else if depth_above == 1 {
             surface_id
         } else if depth_above <= 1 + SUBSOIL_DEPTH {
             subsoil_id
         } else {
-            stone_replacement(self.seed, wx, y, wz)
+            self.stone_replacement(wx, y, wz)
         }
     }
 
@@ -943,6 +949,68 @@ impl Orchestrator {
     #[must_use]
     pub fn biome_at(&self, block_x: i32, block_z: i32) -> crate::vanilla::Biome {
         crate::vanilla::biome_from_sample(&self.climate.sample(block_x, block_z))
+    }
+
+    /// 26.1 vertical_gradient 条件（SurfaceRules.java:735-781
+    /// `VerticalGradientConditionSource.apply` → `VerticalGradientCondition
+    /// .compute`）：`blockY <= trueAtAndBelow` 恒真、`blockY >= falseAtAndAbove`
+    /// 恒假，之间线性概率 `Mth.map(y, true, false, 1.0, 0.0)` 与逐位随机
+    /// `random.nextFloat() < probability` 比较（SurfaceRules.java:764-775，
+    /// 每次 compute 新建 `randomFactory.at(x,y,z)`——本方法同构，无共享
+    /// 游标）。随机链 = RandomState.java:113-115
+    /// `getOrCreateRandomFactory(name) = random.fromHashOf(name)
+    /// .forkPositional()` 实物（[`crate::vanilla::xoroshiro`]，#192 RNG-1
+    /// 销账：同 seed 同坐标与原版同位型，不再是 hash01 通道域替身）。
+    #[must_use]
+    fn vertical_gradient_hit(
+        &self,
+        factory: &crate::vanilla::xoroshiro::PositionalRandomFactory,
+        wx: i32,
+        y: i32,
+        wz: i32,
+        true_at_and_below: i32,
+        false_at_and_above: i32,
+    ) -> bool {
+        if y <= true_at_and_below {
+            return true;
+        }
+        if y >= false_at_and_above {
+            return false;
+        }
+        // Mth.map(double, inMin, inMax, 1.0, 0.0)
+        //   = (v−inMin)·(0−1)/(inMax−inMin) + 1 = 1 − t（取负/除法均为
+        // IEEE 精确步，与「先除后减」同位型）。
+        let t =
+            f64::from(y - true_at_and_below) / f64::from(false_at_and_above - true_at_and_below);
+        // 原版比较 = float→double 拓宽后 `<` double 概率（Java 二元数值提升）。
+        f64::from(factory.at(wx, y, wz).next_float()) < 1.0 - t
+    }
+
+    /// defaultBlock（石头）位的 surface_rule 终判——overworld.json surface_rule
+    /// 树实物 top[0]+top[2]（data/minecraft/worldgen/noise_settings/
+    /// overworld.json:446-463 bedrock_floor 段 + 树尾 deepslate 段），只对「本位
+    /// 将出 STONE」的格生效（原版 SurfaceSystem.java:147 `old ==
+    /// this.defaultBlock` 是规则应用门：草/土/沙等表层材质不参与替换）：
+    /// - top[0] bedrock_floor：vertical_gradient true_at_and_below=
+    ///   above_bottom(0)、false_at_and_above=above_bottom(5)、random_name
+    ///   "minecraft:bedrock_floor" → y≤−64 恒基岩，−63..−60 概率
+    ///   0.8/0.6/0.4/0.2，≥−59 恒假；
+    /// - top[2] deepslate：vertical_gradient true_at_and_below=absolute(0)、
+    ///   false_at_and_above=absolute(8)、random_name "minecraft:deepslate" →
+    ///   y≤0 恒深板岩，1..7 概率 (8−y)/8，y≥8 留石。
+    ///
+    /// 序列次序 bedrock→（above_preliminary 表层带）→deepslate 与原版 sequence
+    /// 一致：bedrock 散点未中的位落到 deepslate 项（y≤0 恒真）——−63..−60
+    /// 基岩散点带的缝隙出深板岩而非石头（实物语义）。
+    #[must_use]
+    fn stone_replacement(&self, wx: i32, y: i32, wz: i32) -> u16 {
+        if self.vertical_gradient_hit(&self.bedrock_random, wx, y, wz, MIN_Y, MIN_Y + 5) {
+            BEDROCK
+        } else if self.vertical_gradient_hit(&self.deepslate_random, wx, y, wz, 0, 8) {
+            DEEPSLATE
+        } else {
+            STONE
+        }
     }
 }
 
