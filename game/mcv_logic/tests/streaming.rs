@@ -184,7 +184,11 @@ fn small_step_movement_no_flap_and_converges() {
     // 等待走 pump_until（驱动与断言分离）；预算 3000→8000：#91 vanilla
     // 后端 NormalNoise 成本 ×2 后 CI 争用尖峰实测 600+ 帧量级，8000 ≈
     // 尖峰观测 ×5~8（timeout 类断言 2 倍余量原则的等待段放大版；就绪即
-    // break，放宽不增加常态耗时）。
+    // break，放宽不增加常态耗时）。刀 3c 全文件统一折算 8000→17600：
+    // 矿石 pass 入生成后单块 worldgen 墙钟 ≈2×（CI 实测 streaming 二进制
+    // pre-ore 056465c7 47.53s 全绿 → post-ore e20a2596 66.76s 且 timeout
+    // 满 4800 帧未终态，补载吞吐 ≤41%），等待段 ×2.2（2 倍余量 doctrine
+    // 取实测上界）。
     let mut n_ready = 0usize;
     let spawned = pump_until(
         &mut rt,
@@ -196,7 +200,7 @@ fn small_step_movement_no_flap_and_converges() {
                 .count();
             rt.player.pos != Vec3::ZERO
         },
-        8000,
+        17600,
     );
     assert!(
         spawned,
@@ -286,7 +290,11 @@ fn small_step_movement_no_flap_and_converges() {
     let mut window: Vec<Vec<(i32, i32, u32, u32)>> = Vec::new();
     let mut light_at_window_start: Option<Vec<(i32, i32, Vec<u8>)>> = None;
     let mut converged = false;
-    for _ in 0..6000u32 {
+    // 刀 3c 统一折算 6000→13200：收敛条件（ring_ready ∧ all_lit）依赖
+    // worker 在途生成 drain，等待段与墙钟耦合；矿石 pass 吞吐 ≤41% 实测
+    // （文件头折算注释），×2.2。就绪即 break，不增加常态耗时；强度断言
+    // 位置零改动。
+    for _ in 0..13200u32 {
         rt.stream();
         let all_lit = rt
             .chunks
@@ -314,7 +322,7 @@ fn small_step_movement_no_flap_and_converges() {
     }
     assert!(
         converged,
-        "停止移动后未收敛（liveness 预算 6000 帧内未凑齐 60 帧零变更窗）"
+        "停止移动后未收敛（liveness 预算 13200 帧内未凑齐 60 帧零变更窗）"
     );
     let first = window[0].clone();
     assert!(
@@ -773,8 +781,10 @@ fn inflight_request_survives_walkaway() {
     }
 
     // 吞掉 worker 结果：结果不再可能被 stream 提交，Empty 状态恒定。
+    // 刀 3c 统一折算 5000→11000：单块 worker 产出 liveness（try_recv
+    // 轮询与墙钟耦合），矿石 pass 后单块 ≈2×，×2.2。
     let mut absorbed = false;
-    for _ in 0..5000 {
+    for _ in 0..11000 {
         if let Ok(r) = rt.scheduler.results().try_recv() {
             match r {
                 mcv_worldgen::GenResult::Terrain(Ok(out)) => {
@@ -876,7 +886,10 @@ fn player_ticket_throttle_caps_inflight_generation() {
     // liveness 在超订 runner 下抖红（同 run 兄弟窗 49 块 Surface 测绿＝
     // 非停摆；Replay memo 为纯函数缓存不改输出；红点 run 间漂移＝争用
     // 特征）。谓词与 max_inflight≤名额不变量断言零改动，采样窗口反而加倍。
-    for _ in 0..600 {
+    // 刀 3c 全文件统一折算 600→1320（×2.2，实测吞吐 ≤41% 见 timeout 测
+    // 证据链注；本环须跑满全程采样在飞峰值，非 liveness 早退形，纯超时
+    // 预算口径）。
+    for _ in 0..1320 {
         rt.stream();
         max_inflight = max_inflight.max(rt.inflight_generation_count());
         std::thread::sleep(Duration::from_millis(2));
@@ -890,7 +903,7 @@ fn player_ticket_throttle_caps_inflight_generation() {
         .values()
         .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
         .count();
-    assert!(terrain_ready > 0, "节流不得停摆加载（600 帧 0 块就绪）");
+    assert!(terrain_ready > 0, "节流不得停摆加载（1320 帧 0 块就绪）");
 }
 
 /// 卸载队列积压门（原版 ChunkMap.java:489-495：unloadQueue ≥2000 忽略
@@ -938,24 +951,48 @@ fn load_gate_opens_on_worldgen_status_without_upload() {
     // 投放窗半径 = load_radius = min(rd,3) = 3（门统计窗口同源）。
     let r = 3i32;
     // 等投放窗（±3）全部到 status ≥ Surface（与投放同源的票级别授权推进；
-    // TerrainReady 证据由 worldgen commit 落下）。
+    // TerrainReady 证据由 worldgen commit 落下）。口径=进展耦合（确定性，
+    // 刀 3c 收口同 timeout 测 f2dea014 形制——旧 3000 帧纯帧数预算与
+    // worker 墙钟耦合，矿石 pass 吞吐 ≤41% 实测下漂移红 run 38411474583，
+    // 红点 run 间在兄弟测漂移=超订吞吐竞态特征，先验证无停摆再归因）：
+    // a) 窗内 Surface 化块数峰值每 ≤1200 帧必增，否则即刻停摆红（1200 =
+    //   2× throttle 实证单块下限，flap 测 :183-186 实物先例）；b) 12000
+    //   帧兜底仅防真死循环（flap 8000 同哲学放大，post-ore ×2.2 折算
+    //   3000→6600 再取停摆制的兜底档位）。门开/无 Uploaded 断言零改动。
+    let total_w = (2 * r + 1) * (2 * r + 1);
     let mut ok = false;
-    for _ in 0..3000u32 {
+    let mut surf_max = 0usize;
+    let mut since_progress = 0u32;
+    for frame in 0..12000u32 {
         rt.stream();
-        let ready = (-r..=r).all(|dx| {
-            (-r..=r).all(|dz| {
+        let surf = (-r..=r)
+            .flat_map(|dx| (-r..=r).map(move |dz| (dx, dz)))
+            .filter(|(dx, dz)| {
                 rt.chunks
-                    .get(&ChunkPos::new(dx, dz))
+                    .get(&ChunkPos::new(*dx, *dz))
                     .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Surface as u8))
             })
-        });
-        if ready {
+            .count();
+        if surf >= total_w as usize {
             ok = true;
             break;
         }
+        if surf > surf_max {
+            surf_max = surf;
+            since_progress = 0;
+        } else {
+            since_progress += 1;
+        }
+        assert!(
+            since_progress < 1200,
+            "投放窗补载停摆：窗内 Surface 化峰值 {surf_max}/{total_w} 连续 1200 帧未增（帧 {frame}，throttle 实证单块下限 600 帧的 2 倍）"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
-    assert!(ok, "投放窗未在预算内到 status ≥ Surface（status 记账断裂）");
+    assert!(
+        ok,
+        "投放窗未在 12000 帧兜底内全体到 status ≥ Surface（全程无 ≥1200 帧停摆，属吞吐下限击穿而非 status 记账断裂）"
+    );
     // 门开判定：40 固定步内转 Playing，且全程无任何块 Uploaded（证明
     // 放行不依赖网格上传——解耦生效）。
     for _ in 0..40 {
