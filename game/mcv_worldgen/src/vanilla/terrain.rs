@@ -92,6 +92,15 @@ pub const WATER: u16 = 5;
 pub const LAVA: u16 = 516;
 pub const BEDROCK: u16 = 10;
 pub const SNOW_GRASS: u16 = 11;
+/// 深板岩（#192 深板岩层）：blocks_gen.inc.rs:363（id 342，
+/// mcv_item/src/lib.rs:2149 `Block(BlockId(342))` 交叉印证）。
+pub const DEEPSLATE: u16 = 342;
+
+/// vertical_gradient 条件位置随机的通道域盐（本仓 hash01 派生，非原版
+/// Xoroshiro fromHashOf(name) 种子链——差异登记 KNOWN-DIVERGENCE RNG-1；
+/// random_name 实物 "minecraft:bedrock_floor" / "minecraft:deepslate"）。
+const BEDROCK_FLOOR_SALT: u64 = 0x0D00_D00D; // 沿用 #175 前旧基岩通道盐
+const DEEPSLATE_SALT: u64 = 0x0DEE_051A;
 
 pub fn lerp1(a: f64, b: f64, t: f64) -> f64 {
     a + (b - a) * t
@@ -461,6 +470,9 @@ pub struct ColumnState {
 /// fBm（26.1 noise 参数表；域盐沿用 channel_seed 同款派生：NormalNoise::new
 /// 内部 noise_seed(world, salt) = splitmix64(world ^ salt)）。
 pub struct Orchestrator {
+    /// 世界种子（#192：vertical_gradient 位置随机需要，与 generate/lake
+    /// pass 的种子同源）。
+    seed: u64,
     climate: ClimateSampler,
     offset_spline: Spline,
     factor_spline: Spline,
@@ -495,6 +507,7 @@ impl Orchestrator {
             NormalNoise::new(world_seed, salt, first_octave, amps)
         };
         Self {
+            seed: world_seed,
             climate: ClimateSampler::new(world_seed),
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
@@ -549,6 +562,34 @@ impl Orchestrator {
                 | Biome::Savanna
                 | Biome::Taiga => (GRASS, DIRT),
             }
+        }
+    }
+
+    /// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
+    /// `column_real_top` 三处共用，杜绝规则漂移）。语义原样：带下 STONE 兜底
+    /// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
+    /// 亚表带；#192：两个 STONE 出口统一过 [`stone_replacement`]
+    /// （vertical_gradient bedrock/deepslate 实物规则替换——表层草/土/沙位
+    /// 不受影响）。
+    #[must_use]
+    pub fn solid_material(
+        &self,
+        wx: i32,
+        y: i32,
+        wz: i32,
+        min_surface: i32,
+        depth_above: i32,
+        surface_id: u16,
+        subsoil_id: u16,
+    ) -> u16 {
+        if y < min_surface {
+            stone_replacement(self.seed, wx, y, wz)
+        } else if depth_above == 1 {
+            surface_id
+        } else if depth_above <= 1 + SUBSOIL_DEPTH {
+            subsoil_id
+        } else {
+            stone_replacement(self.seed, wx, y, wz)
         }
     }
 
@@ -614,7 +655,15 @@ impl Orchestrator {
                 hit_solid = true;
                 depth_above += 1; // SurfaceSystem.java:146（同款计数）
                 if y < crate::vanilla::tree_pass::TREE_MAX_Y {
-                    let id = solid_material(y, min_surface, depth_above, surface_id, subsoil_id);
+                    let id = self.solid_material(
+                        block_x,
+                        y,
+                        block_z,
+                        min_surface,
+                        depth_above,
+                        surface_id,
+                        subsoil_id,
+                    );
                     return Some((y + 1, id));
                 }
             } else if subst == Some(Sub::Air) {
@@ -891,15 +940,13 @@ pub fn generate(
             let mut hit_solid = false;
             for y in (MIN_Y..=fill_top).rev() {
                 let dval = orch.density(&cs, wx, y, wz);
-                let id = if y == MIN_Y || (y <= MIN_Y + 4 && bedrock_noise(seed, wx, y, wz)) {
-                    // 基岩层 −64..−60：底层恒实心，其上 4 格 50% 噪声
-                    // （26.1 BedrockBlock 5 层规则；旧 256 基准为 0..2 三层）。
-                    // 基岩是实心非 defaultBlock（SurfaceSystem.java:149 只换
-                    // 石头）——同 vanilla 计入 stoneDepth 上下文但不换材质；
-                    // 该深度恒在 abovePreliminarySurface 带下（STONE 兜底）。
-                    hit_solid = true;
-                    BEDROCK
-                } else if dval <= 0.0 && hit_solid {
+                // #192：旧「y==MIN_Y 恒基岩 + 其上 4 格 50% 噪声」前置分支
+                // 删除——实物里基岩是 surface_rule 的 vertical_gradient
+                // （overworld.json top[0]），只对 defaultBlock=石头位生效
+                // （洞腔/流体不换）；y=−64 底部 slide 恒实心
+                // （final_density bottom 常数 0.1171875 → squeeze ≈ +0.037）
+                // 故该行照旧 100% 基岩，只是改经 stone_replacement。
+                let id = if dval <= 0.0 && hit_solid {
                     // #175：含水层终判取代旧「y≤SEA 一律灌水」平铺模型
                     //（1.18 前旧语义；原版地下默认干、注水由胞格噪声门控
                     //——aquifer.rs 头注 file:line 摘要）。流体两态不重置
@@ -912,7 +959,15 @@ pub fn generate(
                     match subst {
                         Sub::Rock => {
                             depth_above += 1;
-                            solid_material(y, min_surface, depth_above, surface_id, subsoil_id)
+                            orch.solid_material(
+                                wx,
+                                y,
+                                wz,
+                                min_surface,
+                                depth_above,
+                                surface_id,
+                                subsoil_id,
+                            )
                         }
                         Sub::Air => {
                             depth_above = 0; // SurfaceSystem.java:126-128
@@ -933,7 +988,7 @@ pub fn generate(
                 } else {
                     hit_solid = true;
                     depth_above += 1; // SurfaceSystem.java:146
-                    solid_material(y, min_surface, depth_above, surface_id, subsoil_id)
+                    orch.solid_material(wx, y, wz, min_surface, depth_above, surface_id, subsoil_id)
                 };
                 out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }
@@ -992,4 +1047,64 @@ pub(crate) fn bedrock_noise(seed: u64, wx: i32, y: i32, wz: i32) -> bool {
         i64::from(wz),
     );
     h < 0.5
+}
+
+/// 26.1 vertical_gradient 条件（SurfaceRules.java:735-781
+/// `VerticalGradientConditionSource.apply` → `VerticalGradientCondition
+/// .compute`）：`blockY <= trueAtAndBelow` 恒真、`blockY >= falseAtAndAbove`
+/// 恒假，之间线性概率 `Mth.map(y, true, false, 1.0, 0.0)` 与逐位随机
+/// `random.nextFloat() < probability` 比较（SurfaceRules.java:764-775；随机
+/// 链原版 = RandomState.java:113-115 `getOrCreateRandomFactory(name)` =
+/// `random.fromHashOf(name).forkPositional()` → Xoroshiro，本仓以 hash01
+/// 通道域替代该种子链，登记 KNOWN-DIVERGENCE RNG-1）。
+#[must_use]
+fn vertical_gradient_hit(
+    salt: u64,
+    seed: u64,
+    wx: i32,
+    y: i32,
+    wz: i32,
+    true_at_and_below: i32,
+    false_at_and_above: i32,
+) -> bool {
+    if y <= true_at_and_below {
+        return true;
+    }
+    if y >= false_at_and_above {
+        return false;
+    }
+    // Mth.map(v, inMin, inMax, 1.0, 0.0) = 1 − t，t 线性归一。
+    let t = f64::from(y - true_at_and_below) / f64::from(false_at_and_above - true_at_and_below);
+    f64::from(crate::vanilla::hash01(
+        crate::vanilla::channel_seed(seed, salt),
+        i64::from(wx),
+        i64::from(y),
+        i64::from(wz),
+    )) < 1.0 - t
+}
+
+/// defaultBlock（石头）位的 surface_rule 终判——overworld.json surface_rule
+/// 树实物 top[0]+top[2]（data/minecraft/worldgen/noise_settings/
+/// overworld.json:446-463 bedrock_floor 段 + 树尾 deepslate 段），只对「本位
+/// 将出 STONE」的格生效（原版 SurfaceSystem.java:147 `old ==
+/// this.defaultBlock` 是规则应用门：草/土/沙等表层材质不参与替换）：
+/// - top[0] bedrock_floor：vertical_gradient true_at_and_below=
+///   above_bottom(0)、false_at_and_above=above_bottom(5)、random_name
+///   "minecraft:bedrock_floor" → y≤−64 恒基岩，−63..−60 概率
+///   0.8/0.6/0.4/0.2，≥−59 恒假；
+/// - top[2] deepslate：vertical_gradient true_at_and_below=absolute(0)、
+///   false_at_and_above=absolute(8)、random_name "minecraft:deepslate" →
+///   y≤0 恒深板岩，1..7 概率 (8−y)/8，y≥8 留石。
+/// 序列次序 bedrock→（above_preliminary 表层带）→deepslate 与原版 sequence
+/// 一致：bedrock 散点未中的位落到 deepslate 项（y≤0 恒真）——−63..−60
+/// 基岩散点带的缝隙出深板岩而非石头（实物语义）。
+#[must_use]
+fn stone_replacement(seed: u64, wx: i32, y: i32, wz: i32) -> u16 {
+    if vertical_gradient_hit(BEDROCK_FLOOR_SALT, seed, wx, y, wz, MIN_Y, MIN_Y + 5) {
+        BEDROCK
+    } else if vertical_gradient_hit(DEEPSLATE_SALT, seed, wx, y, wz, 0, 8) {
+        DEEPSLATE
+    } else {
+        STONE
+    }
 }
