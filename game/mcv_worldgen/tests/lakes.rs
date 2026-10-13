@@ -96,23 +96,23 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
                 s.variant == 1 && s.ox.div_euclid(16) == cx && s.oz.div_euclid(16) == cz
             }) {
                 surf_cand += 1;
-                let on_land = orch
-                    .column_real_top(s.ox, s.oz, &mut field)
-                    .is_some_and(|(y, _)| y > mcv_core::SEA_LEVEL);
+                // 立足判据（实物口径，#192 湖锁红因收口）：origin 柱立足
+                // 水柱 ⇔ WORLD_SURFACE_WG 实顶 < SEA（水体填 (实顶, SEA]，
+                // 水面块=63；Heightmap.java:147 NOT_AIR、lake_pass
+                // top_floor「海柱=水面 y=SEA」同口径）。实顶=63 的滩柱
+                // 顶块即水面块位、其上无水 = 干地——原版照样放置
+                // （LakeFeature 对 origin 柱无独立流体判据，仅 yy≥4 边界
+                // liquid 门 + yy<4 封底门；HeightmapPlacement hm=实顶+1）。
+                // 旧代理 `column_real_top > SEA` 误弃此类干顶：其扫描窗
+                // `(SEA+1)..` 从构造上不含 y=SEA（None=「顶未达 64」≠
+                // 「有水」），非水柱证据。断言语义不变：存活者不得立水。
+                let on_land =
+                    world_surface_top_y(s.ox, s.oz, &orch, &mut field) >= mcv_core::SEA_LEVEL;
                 land_cand += on_land as usize;
                 if lake_passes_gate(s, &orch, &mut field) {
-                    // 〔临时诊断 #192：定性后删〕实物口径立足面 =
-                    // WORLD_SURFACE_WG 实顶（干地 ⇔ ≥ SEA）。
-                    let top = world_surface_top_y(s.ox, s.oz, &orch, &mut field);
-                    if survivors.is_empty() {
-                        eprintln!(
-                            "K-LAKES-TOP origin=({},{}) oy={} surf_top={} on_land={on_land}",
-                            s.ox, s.oz, s.oy, top
-                        );
-                    }
                     assert!(
                         on_land,
-                        "判据环存活却立足水柱（水非实心应弃）surf_top={top} oy={}",
+                        "判据环存活却立足水柱（实顶 < 海面=水覆盖，边界环水格应弃）oy={}",
                         s.oy
                     );
                     survivors.push(*s);
@@ -200,44 +200,4 @@ fn lakes_determinism_bytes() {
     let b = generate_terrain_with(TerrainBackend::Vanilla, SEED, ChunkPos::new(1, 1)).expect("gen");
     assert_eq!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
     assert_eq!(a.heightmap, b.heightmap);
-}
-
-/// 〔临时诊断 #192 湖锁红因定性后整删〕seed 轴 gate 存活扫描：若判据环
-/// 恒假（水柱/基底门错位），任何 seed 全 0；若有存活且含 dry 顶
-/// （surf_top ≥ SEA，干地立足），恒假论即伪，红因收敛到
-/// 「`column_real_top` 扫描窗 `(SEA+1)..` 漏 y=SEA 干顶列」的测试代理
-/// 错位。6 seed × 64² 窗（μ_att ≈ 20/窗），只跑纯函数 gate。
-#[test]
-fn seed_sweep_gate_survivors() {
-    let mut any_dry = 0usize;
-    let mut wet = 0usize;
-    for k in 0..6u64 {
-        let seed = 0x5EED_5AFE_u64 ^ k.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        let orch = Orchestrator::new(seed);
-        let aq = Aquifer::new(seed);
-        let mut field = AquiferField::new(&aq, &orch);
-        let (mut cand, mut surv, mut dry) = (0usize, 0usize, 0usize);
-        for cz in -32..32 {
-            for cx in -32..32 {
-                let spots = lake_spots(seed, cx, cz, &orch, &mut field);
-                for s in spots.iter().filter(|s| {
-                    s.variant == 1 && s.ox.div_euclid(16) == cx && s.oz.div_euclid(16) == cz
-                }) {
-                    cand += 1;
-                    if lake_passes_gate(s, &orch, &mut field) {
-                        surv += 1;
-                        let top = world_surface_top_y(s.ox, s.oz, &orch, &mut field);
-                        if top >= mcv_core::SEA_LEVEL {
-                            dry += 1;
-                        } else {
-                            wet += 1;
-                        }
-                    }
-                }
-            }
-        }
-        any_dry += dry;
-        eprintln!("K-LAKES-SEED seed={seed:#x} cand={cand} surv={surv} dry={dry} wet={wet}");
-    }
-    eprintln!("K-LAKES-SEED-TOTAL dry={any_dry} wet={wet}");
 }

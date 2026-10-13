@@ -365,7 +365,7 @@ pub fn lake_passes_gate(
     gate_ok(spot, &grid, &mut rp)
 }
 
-/// 〔临时诊断 #192 湖锁红因定性后处置（删除或转正）〕该列
+/// 该列
 /// WORLD_SURFACE_WG 实顶（Heightmap.java:147 NOT_AIR 判据：水计非空气
 /// ⇒ 海柱=水面、陆柱=实心顶；高度图值 = 本值 +1，
 /// HeightmapPlacement.java:24-29 origin 即读该值）。供测试按实物口径
