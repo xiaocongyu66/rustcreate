@@ -2,8 +2,9 @@
 //! 根 = 类型字节 + 空名(u16 0) + compound payload;compound 以 End 终止;
 //! list 声明元素类型字节 + i32 长度后逐元素写 payload。
 //!
-//! 与原版差异:原版 StringFallbackDataOutput 在字符串超 65535 mutf8 字节时
-//! 静默写空串,我们直接报 [`NbtError::TooLarge`](更响,便于定位)。
+//! 字符串超 65535 mutf8 字节:与原版 `NbtIo.StringFallbackDataOutput` 实物
+//! 一致静默写空串(`writeUTF` 抛 UTFDataFormatException 前未落任何字节,
+//! 回退写 `0x0000` 长度前缀——整串消失但流不中断)。
 
 use flate2::Compression;
 use flate2::write::{GzEncoder, ZlibEncoder};
@@ -36,18 +37,17 @@ pub fn write_zlib(root: &NbtCompound) -> Result<Vec<u8>, NbtError> {
     Ok(enc.finish()?)
 }
 
-pub(crate) fn write_string(s: &str, out: &mut Vec<u8>) -> Result<(), NbtError> {
+pub(crate) fn write_string(s: &str, out: &mut Vec<u8>) {
+    // 原版 NbtIo.StringFallbackDataOutput.writeUTF:NbtIo.java:197-205——
+    // DataOutputStream.writeUTF 先整体编码再写,>65535 字节抛
+    // UTFDataFormatException 时**尚未落任何字节**,回退只写空串(长度前缀 0)。
     let len = utf8::encoded_len(s);
     if len > u16::MAX as usize {
-        return Err(NbtError::TooLarge {
-            what: "string utf8 bytes",
-            got: len as i64,
-            max: u16::MAX as i64,
-        });
+        out.extend([0u8, 0u8]);
+        return;
     }
     out.extend((len as u16).to_be_bytes());
     utf8::encode_into(s, out);
-    Ok(())
 }
 
 fn write_payload(v: &NbtValue, out: &mut Vec<u8>) -> Result<(), NbtError> {
@@ -75,7 +75,7 @@ fn write_payload(v: &NbtValue, out: &mut Vec<u8>) -> Result<(), NbtError> {
                 out.extend(l.to_be_bytes());
             }
         }
-        NbtValue::String(s) => write_string(s, out)?,
+        NbtValue::String(s) => write_string(s, out),
         NbtValue::List(l) => write_list(l, out)?,
         NbtValue::Compound(c) => write_compound(c, out)?,
     }
@@ -103,7 +103,7 @@ fn write_list(l: &NbtList, out: &mut Vec<u8>) -> Result<(), NbtError> {
 fn write_compound(c: &NbtCompound, out: &mut Vec<u8>) -> Result<(), NbtError> {
     for (k, v) in c.iter() {
         out.push(v.tag_type().id());
-        write_string(k, out)?;
+        write_string(k, out);
         write_payload(v, out)?;
     }
     out.push(0); // TAG_End
@@ -126,7 +126,28 @@ mod tests {
     #[test]
     fn nul_char_uses_modified_utf8() {
         let mut out = Vec::new();
-        write_string("a\0b", &mut out).unwrap();
+        write_string("a\0b", &mut out);
         assert_eq!(out, vec![0, 4, b'a', 0xc0, 0x80, b'b']);
+    }
+
+    #[test]
+    fn oversize_string_silently_writes_empty() {
+        // StringFallbackDataOutput(NbtIo.java:197-205)口径:>65535 mutf8
+        // 字节静默写空串(键与值同一入口,不报错过不断流)。
+        let big = "a".repeat(65536);
+        let mut out = Vec::new();
+        write_string(&big, &mut out);
+        assert_eq!(out, vec![0, 0]);
+        // 恰 65535(边界内)照常写出。
+        let edge = "a".repeat(65535);
+        let mut out = Vec::new();
+        write_string(&edge, &mut out);
+        assert_eq!(out.len(), 2 + 65535);
+        // 值路径:整 compound 写出不报错,回退后 round-trip 得空串。
+        let mut c = NbtCompound::new();
+        c.insert("k", NbtValue::String(big.clone()));
+        let b = write_raw(&c).unwrap();
+        let back = crate::read::read_raw(&b).unwrap();
+        assert_eq!(back.get_string("k"), Some(""));
     }
 }
