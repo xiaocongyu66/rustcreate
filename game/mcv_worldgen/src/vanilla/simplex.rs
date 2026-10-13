@@ -345,11 +345,9 @@ mod tests {
     #[test]
     fn lcg_matches_java_random_bit_pattern() {
         let mut r = LegacyRandom::new(0);
+        // java.util.Random(0) 公开文档值 `nextInt() == -1155484576`
+        // ——单锚已逐位锁定 seed 预混 + LCG 步进 + 高位截取全链。
         assert_eq!(r.next_int(), -1_155_484_576);
-        // 步进公式自证：seed0 = 0^MULT，两步 LCG 手推对拍 next() 实现。
-        let s1 = (0x5DEE_CE6D_u64).wrapping_mul(MULT).wrapping_add(11) & MASK;
-        let mut r2 = LegacyRandom::new(0);
-        assert_eq!(r2.next(32), ((s1 >> 16) as u32) as i32);
     }
 
     /// MC 乘子逐位考证：float 字面量 `1.110223E-16F` double 化后
