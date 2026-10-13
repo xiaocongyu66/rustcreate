@@ -3,8 +3,8 @@
 //! 覆盖：v7 全 chunk 字节哈希黄金（防后续漂移）、频度带（μ 推导见
 //! `freq_band` 注）、钻石 trapezoid 峰形、目标岩门（只替换 pass-1 石头，
 //! 不打水/空气）、确定性 + 3×3 重放双侧一致（矿脉缝合）。
-//! v7 说明：字节口径自「+矿石」维度重锚（feat/surface-deepslate 分支未
-//! 合，本分支重锚只含矿石维度，不含深板岩）。
+//! v7 说明：surface 波（#192 深板岩层+基岩五层+surfaceDepth）合入后的
+//! 完整基线，含深板岩/基岩维度（重锚证据见 WANT 行注）。
 
 use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
@@ -62,20 +62,19 @@ fn ore_v7_byte_golden() {
         (0x5EED_0000_0000_0007, 7, 2),
     ];
     // v7：+矿石（gen-ores 25 行 + ore_pass 执行器）锚定哈希。
-    // 锚定证据：首锚通道（表值 0 打印→填回）闭环——run 38439382386
-    // （20fd55a0，六例出自其 attempt 2：attempt1=mesher perf flake、
-    // attempt3=flap 红先停批，--no-fail-fast 入 ci.yml 后 attempt2 才
-    // 跑到 ore 包）与 38458062994（1618d1fc）六例逐位一致；case0/1/2
-    // 另跨 38422516959(bb785e14)/38433188961(4a5ac2f2) 三 sha 稳定。
-    // 实现定稿于 4a5ac2f2（Replay 深度梯真实密度修复，唯一生产代码
-    // 改动），其后仅测试口径提交，哈希零漂移自洽。
+    // surface 波（#192）重锚证据：同 sha 双 run——run 38472795386
+    // （9987f069）原执行与 rerun-failed 第二次执行六例逐位一致；同 run
+    // cross_chunk/ores_only/diamond/freq_band 与 streaming 湖锁全绿
+    // = 矿石输出零漂移，仅地形基线变更（深板岩/基岩维度入面）。
+    // registry 期首锚（0cf9…六值，run 38439382386/38458062994）见
+    // docs 历史；实现定稿于 4a5ac2f2。
     const WANT: [u64; 6] = [
-        0x0CF9_39E6_FDF2_5AE7,
-        0xC894_BB97_27BA_13D4,
-        0xC1A5_073B_BC0C_3F60,
-        0x215E_4EFF_D6D1_D537,
-        0xA311_F675_2635_5CEC,
-        0xBED1_CC59_2171_2D05,
+        0x36B6_86F4_5A7C_7A4D,
+        0x024E_2997_0850_4E8B,
+        0xD4FE_9BAC_5CC4_BA8E,
+        0xF4BC_2400_5638_487E,
+        0x199C_6B16_8BF4_6A1A,
+        0x9E5C_1009_0DE0_39B6,
     ];
     let mut report = String::new();
     let mut fails = 0;
