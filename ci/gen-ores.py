@@ -268,8 +268,12 @@ def main():
 
     import subprocess
 
+    # 刀1 教训（99e32808）：产物必须 rustfmt 稳定——写完立即 rustfmt，
+    # 并二次 --check 复核（幂等），不稳即红 exit。
     if subprocess.run(["rustfmt", "--edition", "2024", str(OUT_RS)]).returncode != 0:
         print("WARN: rustfmt 失败/缺失，提交前手动 rustfmt", file=sys.stderr)
+    elif subprocess.run(["rustfmt", "--edition", "2024", "--check", str(OUT_RS)]).returncode != 0:
+        sys.exit("rustfmt 输出不稳定（二次 check 漂移）")
 
     counts = {
         "rows": len(rows),

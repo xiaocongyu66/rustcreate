@@ -72,13 +72,13 @@ const SUBSOIL_DEPTH: i32 = 3;
 /// （|v| ≤ ~0.6，BlendedNoise 混合界），20 格 ≥ 0.6·128/3.95（最低
 /// factor = overworldFactor 3.95）保证扫描窗罩住一切实心——窗过矮会把
 /// 峰顶齐窗削平（旧实现锚估计面即此病）。
-const REAL_TOP_SCAN_MARGIN: i32 = 20;
+pub const REAL_TOP_SCAN_MARGIN: i32 = 20;
 
 /// abovePreliminarySurface 门深（SurfaceRules.java:264
 /// HOW_FAR_BELOW_PRELIMINARY_SURFACE_LEVEL_TO_BUILD_SURFACE = 8；
 /// SurfaceRuleData.java:278 全部表层规则包在该门内——带下（深洞底）
 /// 回落 STONE，洞口带内照常表层化）。
-const PRELIM_SURFACE_BAND: i32 = 8;
+pub const PRELIM_SURFACE_BAND: i32 = 8;
 
 // ---- 体素 id（镜像 mcv_core legacy 段顺序）----
 pub const AIR: u16 = 0;
@@ -121,7 +121,7 @@ fn quarter_negative(x: f64) -> f64 {
     if x > 0.0 { x } else { x * 0.25 }
 }
 
-fn half_negative(x: f64) -> f64 {
+pub(crate) fn half_negative(x: f64) -> f64 {
     if x > 0.0 { x } else { x * 0.5 }
 }
 
@@ -944,6 +944,10 @@ pub fn generate(
     // 石，见 lake_pass 模块头注实证摘要）。特征阶早于植被——置于树
     // pass 前，与原版 lakes < vegetation 阶序一致。
     crate::vanilla::lake_pass::place_lakes(seed, chunk_x, chunk_z, &orch, &mut field, out_voxels);
+    // Pass 1.7（#178 刀3b）：矿石投影（26.1 UNDERGROUND_ORES 阶，
+    // GenerationStep.java:8-18 枚举序 LAKES<UNDERGROUND_ORES<
+    // VEGETAL_DECORATION → 湖后树前；执行器与重放模型见 ore_pass 头注）。
+    crate::vanilla::ore_pass::project_ores(seed, chunk_x, chunk_z, &orch, &mut field, out_voxels);
     // Pass 2（#139 树接线）：5×5 树池邻域扫描——树落点世界坐标纯函数；
     // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
     // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
@@ -962,7 +966,7 @@ pub fn generate(
 /// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
 /// 亚表带、其余 STONE。
 #[must_use]
-const fn solid_material(
+pub(crate) const fn solid_material(
     y: i32,
     min_surface: i32,
     depth_above: i32,
@@ -980,7 +984,7 @@ const fn solid_material(
     }
 }
 
-fn bedrock_noise(seed: u64, wx: i32, y: i32, wz: i32) -> bool {
+pub(crate) fn bedrock_noise(seed: u64, wx: i32, y: i32, wz: i32) -> bool {
     let h = crate::vanilla::hash01(
         crate::vanilla::channel_seed(seed, 0x0D00_D00D),
         i64::from(wx),
