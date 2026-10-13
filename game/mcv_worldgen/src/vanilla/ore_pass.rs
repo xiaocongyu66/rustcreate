@@ -231,16 +231,15 @@ impl<'a, 'f> Replay<'a, 'f> {
         self.orch.density(&cs, x, y, z)
     }
 
-    /// 实心判据（y ≤ fs 侧）。
-    fn solid_below(&mut self, x: i32, y: i32, z: i32, skip: i32) -> bool {
-        let d = self.density(x, y, z);
-        d > 0.0 || matches!(self.field.substance(x, y, z, d, skip), Substance::Rock)
-    }
-
     /// 带内 depth_above（自 fs 向下连续实心计数、空气重置；y ∈
     /// [min_surface, fs] 才调用——范围有界，见结构头注）。梯构建的
     /// 逐步 update 序（先记 `cur+1` 再处理 yy 本身）与原逐 query 循环
-    /// `while yy > y`（严格处理 y 之上格）逐位等价。
+    /// `while yy > y`（严格处理 y 之上格）逐位等价。每格含水层终判用
+    /// **真实 density** 评估一次（generate 柱层 terrain.rs:902-923 同
+    /// 式）：Rock 封口袋在 aquifer::substance 的 `density + b > 0` 比较
+    /// 中直接消费 dval 实值，伪密度捷径（旧梯内 -1.0）会翻转 Rock/流体
+    /// 判定、使带内深度计数与缓冲漂移（红案 run 38422516959
+    /// ores_only_replace_pass1_stone 病根：表层 ore 判据拿到假 STONE）。
     fn depth_above(&mut self, x: i32, z: i32, fs: i32, y: i32, skip: i32) -> i32 {
         if let Some(l) = &self.cols.get(&(x, z)).expect("列必建").depths {
             return l[(fs - y) as usize];
@@ -251,26 +250,21 @@ impl<'a, 'f> Replay<'a, 'f> {
         let mut yy = fs;
         while yy >= min_surface {
             l.push(cur + 1);
-            if self.solid_below(x, yy, z, skip) {
+            let d = self.density(x, yy, z);
+            if d > 0.0 {
                 cur += 1;
-            } else if !self.liquid_at(x, yy, z, skip) {
-                cur = 0;
+            } else {
+                match self.field.substance(x, yy, z, d, skip) {
+                    Substance::Rock => cur += 1,             // 封口袋实心计 +1
+                    Substance::Water | Substance::Lava => {} // 流体不重置
+                    Substance::Air => cur = 0,               // 空气重置
+                }
             }
             yy -= 1;
         }
         let c = self.col(x, z);
         c.depths = Some(l);
         c.depths.as_ref().expect("刚写入")[(fs - y) as usize]
-    }
-
-    fn liquid_at(&mut self, x: i32, y: i32, z: i32, skip: i32) -> bool {
-        if self.density(x, y, z) > 0.0 {
-            return false;
-        }
-        matches!(
-            self.field.substance(x, y, z, -1.0, skip),
-            Substance::Water | Substance::Lava
-        )
     }
 
     /// 判据读点：pass-1 缓冲该格方块 id 的纯函数复刻（per-列 memo：

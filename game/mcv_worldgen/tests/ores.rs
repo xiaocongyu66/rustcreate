@@ -121,8 +121,13 @@ fn cross_chunk_vein_stitching() {
         left.len(),
         right.len()
     );
+    // vidx 契约（mcv_core/src/lib.rs:36-43）：x/z 为**区块内局部**坐标
+    // 0..16。贴 x 界的写还可能同时贴 z 界（blob z 向伸出本区块列域），
+    // z 出 [0,16) 的格属 z 邻列区块——与 project_ores 盒裁剪同口径
+    // （ore_pass.rs:584-587 `!(0..16).contains(&lz)` → 由该邻块重放落
+    // 其自块）。本循环只验属本块 (0,0)/(1,0) 者；存在性断言仍看全量。
     let v0 = gen_vox(seed, 0, 0);
-    for w in &left {
+    for w in left.iter().copied().filter(|w| (0..16).contains(&w.z)) {
         let got = v0[mcv_core::vidx(15, w.y, w.z as usize)];
         assert!(
             is_ore(got),
@@ -133,7 +138,7 @@ fn cross_chunk_vein_stitching() {
         );
     }
     let v1 = gen_vox(seed, 1, 0);
-    for w in &right {
+    for w in right.iter().copied().filter(|w| (0..16).contains(&w.z)) {
         let got = v1[mcv_core::vidx(0, w.y, w.z as usize)];
         assert!(is_ore(got), "本体缺位 (16,{},{}): got {got}", w.y, w.z);
     }
@@ -152,20 +157,28 @@ fn cross_chunk_vein_stitching() {
 
 #[test]
 fn ores_only_replace_pass1_stone() {
-    // 最终缓冲每个 ore 格的 pass-1 重放态必为 STONE（本分支实物面：
-    // tag 成员中只有石头会出现在地形——deepslate 维度随
-    // feat/surface-deepslate 分支入面后此断言自然放宽为 tag 成员）。
+    // 最终缓冲每个 ore 格的 pass-1 重放态必为 STONE。普查面只取 18 个
+    // 真矿态（ore_type_ids，freq_band 同源）：替代岩行（ore_dirt/
+    // ore_gravel/ore_granite 等，data placed_feature 同名 json）写的
+    // state 与表层系统自然材质**同 id**（如 ore_dirt state=dirt=2 =
+    // subsoil 带），id 普查无法区分「矿写」与「表层天然格」，对其断言
+    // STONE 是口径错误；替代岩行的目标岩门由写级判据锁
+    // （place_blob canPlaceOre 对位 + cross_chunk/deterministic/freq
+    // 三锁的 writes 面）。真矿 18 态在本分支地形中不可能由 pass-1 产
+    // 生，普查 = 精确的 ore 写集合。deepslate 维度随
+    // feat/surface-deepslate 入面后放宽为 tag 成员。
     let seed = 0x7051_0002;
     let orch = Orchestrator::new(seed);
     let aq = Aquifer::new(seed);
     let mut f = AquiferField::new(&aq, &orch);
     let vox = gen_vox(seed, 0, 0);
+    let ore_ids = ore_type_ids();
     let mut checked = 0;
     for z in 0..16u32 {
         for x in 0..16u32 {
             for y in (mcv_core::WORLD_MIN_Y + 1..mcv_core::WORLD_MAX_Y).rev() {
                 let id = vox[mcv_core::vidx(x as usize, y, z as usize)];
-                if !is_ore(id) {
+                if !ore_ids.contains(&id) {
                     continue;
                 }
                 checked += 1;
@@ -262,21 +275,28 @@ fn block_id(name: &str) -> u16 {
 
 #[test]
 fn diamond_trapezoid_peak_shape() {
-    // trapezoid(above_bottom −80..80 → 世界 −144..16) 三角峰：min=−144
-    // max=16 峰在 (min+max)/2=−64（恰 world floor）→ 自底向上单调衰减、
-    // 顶界趋零。断言 [−64,−48) > [−48,−16) > [−16,0) ≥ [0,17) 且顶带 <
-    // 底带 1/3（边界趋零）。
+    // trapezoid(above_bottom −80..80 → 世界 −144..16)：峰=区间中点
+    // y=−64（TrapezoidHeight.java:55-57 plateauStart/End 对称），叠加
+    // ore_diamond_medium 的 uniform −64..−4 平峰分量（data
+    // placed_feature/ore_diamond_medium.json）→「逐层密度自峰向顶单调
+    // 衰减」只在**等宽分桶**下成立；旧 16/32 混宽桶把 32 格桶的平峰分
+    // 量按 2 倍宽度吸入，正确实现也必违 bins[0]>bins[1]（python 实物
+    // 模型 2.5 万格 MC：正确实现宽桶比 b1/b0≈1.4）。格自抽样高度向
+    // 下伸 [−3,0]（OreFeature.java:36-37 y0/y1=origin+U(0,2)−2），世
+    // 界底板 −64 截断（:132 isOutsideBuildHeight）→ 峰下无带。断言 5
+    // 个 16 格等宽带严格单调 + 顶带 < 底带 1/3。
     let seed = 0xD1A0_0004;
-    let mut bins = [0usize; 4];
+    let mut bins = [0usize; 5];
     for cz in -2..2i32 {
         for cx in -2..2i32 {
             let vox = gen_vox(seed, cx, cz);
             for id in diamond_ids() {
                 for z in 0..16usize {
                     for x in 0..16usize {
-                        for (bi, (lo, hi)) in [(-64, -48), (-48, -16), (-16, 0), (0, 17)]
-                            .into_iter()
-                            .enumerate()
+                        for (bi, (lo, hi)) in
+                            [(-64, -48), (-48, -32), (-32, -16), (-16, 0), (0, 16)]
+                                .into_iter()
+                                .enumerate()
                         {
                             let mut c = 0;
                             for y in lo..hi {
@@ -293,10 +313,10 @@ fn diamond_trapezoid_peak_shape() {
     }
     assert!(bins[0] > 200, "样本过小 {bins:?}");
     assert!(
-        bins[0] > bins[1] && bins[1] > bins[2] && bins[2] >= bins[3],
+        bins[0] > bins[1] && bins[1] > bins[2] && bins[2] > bins[3] && bins[3] >= bins[4],
         "钻石峰形非单调衰减 {bins:?}"
     );
-    assert!(bins[3] * 3 < bins[0], "顶带未趋零 {bins:?}");
+    assert!(bins[4] * 3 < bins[0], "顶带未趋零 {bins:?}");
 }
 
 fn diamond_ids() -> Vec<u16> {
