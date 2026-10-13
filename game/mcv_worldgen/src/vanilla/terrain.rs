@@ -1220,3 +1220,42 @@ pub fn generate(
     out_heightmap[..256].copy_from_slice(&hm[..]);
     Ok(())
 }
+
+/// 表层亚表带深（depth_above ∈ [2, 4] 层 = 26.1 UNDER_FLOOR 带
+/// `stoneDepthCheck(0, true, FLOOR)` = stoneDepthAbove ≤ 1 + surfaceDepth
+/// （SurfaceRules.java:676-680；surfaceDepth = surface 噪声 0..4 取块级常数 3，
+/// SurfaceSystem.java:165-168）。
+const SUBSOIL_DEPTH: i32 = 3;
+
+/// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
+/// `column_real_top` 三处共用，杜绝规则漂移）。语义原样：带下 STONE 兜底
+/// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
+/// 亚表带、其余 STONE。
+#[must_use]
+pub(crate) const fn solid_material(
+    y: i32,
+    min_surface: i32,
+    depth_above: i32,
+    surface_id: u16,
+    subsoil_id: u16,
+) -> u16 {
+    if y < min_surface {
+        STONE
+    } else if depth_above == 1 {
+        surface_id
+    } else if depth_above <= 1 + SUBSOIL_DEPTH {
+        subsoil_id
+    } else {
+        STONE
+    }
+}
+
+pub(crate) fn bedrock_noise(seed: u64, wx: i32, y: i32, wz: i32) -> bool {
+    let h = crate::vanilla::hash01(
+        crate::vanilla::channel_seed(seed, 0x0D00_D00D),
+        i64::from(wx),
+        i64::from(y),
+        i64::from(wz),
+    );
+    h < 0.5
+}
