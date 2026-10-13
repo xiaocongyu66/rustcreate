@@ -2868,22 +2868,25 @@ impl GameRuntime {
                 // 在途请求驻留：worker 未回且发出 <5s（300 帧）不卸载，
                 // 杜绝「请求→出环撤回→回环重请求→再生成」乒乓（症状 5）。
                 // E4：在途记账区分生成（req_frames）/读盘（io_frames）两类，
-                // 任一未超时都驻留。#178 刀 3c：过期还须生成池已静默
-                // （[`mcv_worldgen::TerrainScheduler::pool_quiesced`]）——
+                // 任一未超时都驻留。#178 刀 3c：生成侧过期还须生成池已静
+                // 默（[`mcv_worldgen::TerrainScheduler::pool_quiesced`]）——
                 // 300 stream-frame 窗早于「队列积压+矿石 pass 后单块时延」
-                // 的合法在途期，旧口径逐出活体请求 → fr101 回环重请求
-                // 再生成（正是本驻留机制要防的乒乓；flap 测 trace 逐帧
-                // python 建模：泵长 S0∈[202,212] 复现 fr99 remove×4 →
-                // fr100 remove×3 → fr101 add×7）。原版对照：ticket 释放
-                // 等 future（DistanceManager.java:87-104）；时间窗在本仓
-                // 仅是 panic 孤儿兜底（池.rs 不变量 #9：panic 任务不回填
-                // 结果），孤儿判定 = 超龄 ∧ 池静默（静默后回执不可能再
-                // 产出，泄漏界保留）。
-                let expired = self.scheduler.pool_quiesced()
-                    && self
-                        .req_frames
-                        .get(&c)
-                        .is_none_or(|f| self.stream_frame - f >= 300)
+                // 的合法在途期，旧口径逐出活体请求 → fr101 回环重请求再
+                // 生成（正是本驻留机制要防的乒乓；flap 测 trace 逐帧 python
+                // 建模：泵长 S0∈[202,212] 复现 fr99 remove×4 → fr100
+                // remove×3 → fr101 add×7）。原版对照：ticket 释放等 future
+                // （DistanceManager.java:87-104）；时间窗对生成仅是 panic
+                // 孤儿兜底（池.rs 不变量 #9：panic 任务不回填结果），孤儿
+                // 判定 = 超龄 ∧ 池静默（静默后回执不可能再产出，泄漏界
+                // 保留）。门只套**有生成在途记账**的条目（run 38420775765
+                // 教训：is_none_or 形状把「无生成在途」也拖进池门，孤儿读
+                // 夹具在远端请求环忙时永不过期——读记账维持原 300 帧窗
+                // 契约，IO 线程子系统独立，本波债不动）。
+                let gen_expired = match self.req_frames.get(&c) {
+                    Some(f) => self.stream_frame - f >= 300 && self.scheduler.pool_quiesced(),
+                    None => true,
+                };
+                let expired = gen_expired
                     && self
                         .io_frames
                         .get(&c)
