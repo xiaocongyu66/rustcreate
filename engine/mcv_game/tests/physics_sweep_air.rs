@@ -38,6 +38,16 @@ fn fly(dir: Vec3) -> StepInput {
 }
 
 /// 稳态冲刺飞的每步位移下限（预热后按 90% 计）。
+///
+/// 预热窗口的物理口径：飞行水平是一阶滞后（physics.rs travel 飞行分支，
+/// 收敛率 FLY_DRAG_H = AIR_CONVERGE_K = 1.886 s⁻¹ → 每步 α ≈ 0.031），
+/// 从 0 到 90%（18.2 m/s）需 ln0.1/ln(1−α) ≈ 73 步 ≈ 1.2 s。电池初版在
+/// i≥30 / i≥60 就要求 90% 下限、grazing 甚至要求 i=0 起 vel>18——渐近
+/// 模型下恒不可满足（CI run 38392508746 红因），非引擎阻挡：观测位移
+/// d ≡ v_pre·dt 逐速精确（失败读数 0.2058 = 12.35/60 正是无碰撞路）。
+/// 本版把绝对下限挪到渐近充分热身后（各测 i≥120/200，均 ≥ 2×τ90），并
+/// 对每一步加更强的一致性锁「位移 ≥ 步初速度×dt×98% 且速度不减」——
+/// 任何假钳制（无论何时发生）都破坏其一，比旧窗口断言更严。
 fn step_floor() -> f32 {
     mcv_game::consts::FLY_SPEED * mcv_game::consts::SPRINT_FLY_MULTIPLIER * (1.0 / 60.0) * 0.9
 }
@@ -56,12 +66,25 @@ fn high_speed_flight_in_pure_air_never_collides() {
     let mut min_vx = f32::INFINITY;
     for i in 0..240 {
         let before = p.pos.x;
+        let v_pre = p.vel.x;
         step(&w, &mut p, &inp);
-        if i >= 30 {
-            let d = p.pos.x - before;
+        let d = p.pos.x - before;
+        // 每步一致性锁（窗口无关）：纯空气位移必须 ≡ 步初速度×dt，
+        // 速度不得回退——任何隐形钳制都破坏其一。
+        assert!(
+            d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+            "步 {i} 纯空气位移与速度脱节 d={d} v_pre={v_pre}（隐形阻挡假说）vel={:?}",
+            p.vel
+        );
+        assert!(
+            p.vel.x >= v_pre - 1e-6,
+            "步 {i} 纯空气速度回退 vel={:?}",
+            p.vel
+        );
+        if i >= 200 {
             assert!(
                 d > step_floor(),
-                "步 {i} 纯空气位移骤降 d={d}（隐形阻挡假说）vel={:?}",
+                "步 {i} 渐近后位移仍低于 90% 下限 d={d} vel={:?}",
                 p.vel
             );
             min_vx = min_vx.min(p.vel.x);
@@ -98,17 +121,35 @@ fn cavity_shell_1m4_clearance_is_collision_free() {
     let inp = fly(Vec3::Z);
     for i in 0..150 {
         let before = p.pos.z;
+        let v_pre = p.vel.z;
         step(&w, &mut p, &inp);
-        if i >= 60 {
-            let d = p.pos.z - before;
+        let d = p.pos.z - before;
+        assert!(
+            d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+            "步 {i}：贴腔壁 1.4 m 位移与速度脱节 = 假碰撞 d={d} v_pre={v_pre} vel={:?} pos={}",
+            p.vel,
+            p.pos
+        );
+        assert!(
+            p.vel.z >= v_pre - 1e-6,
+            "步 {i}：贴腔壁速度回退 = 假钳制 vel={:?} pos={}",
+            p.vel,
+            p.pos
+        );
+        if i >= 120 {
             assert!(
                 d > step_floor(),
-                "步 {i}：贴腔壁 1.4 m 冲刺出现假碰撞 d={d} vel={:?} pos={}",
+                "步 {i}：渐近后仍低于 90% 下限 d={d} vel={:?} pos={}",
                 p.vel,
                 p.pos
             );
         }
     }
+    assert!(
+        p.vel.z > 18.0,
+        "收尾速度 <90% 渐近 = 全程有隐性阻挡 vel={:?}",
+        p.vel.z
+    );
     // 收尾自查：全程未触壳（AABB 与石壳严格不相交）。
     let b = Aabb::from_player(p.pos);
     for k in w.0.keys() {
@@ -126,7 +167,9 @@ fn cavity_shell_1m4_clearance_is_collision_free() {
 #[test]
 fn grazing_flight_over_floor() {
     let mut m = HashMap::new();
-    for x in -8..40 {
+    // 地坪长 168 格：420 步冲刺渐近程 ≈ 130 m（前 73 步爬坡耗程），
+    // 与 tunnel 测同窗（其 420 步 >44 m 口径自洽）。
+    for x in -8..160 {
         for z in -8..8 {
             for y in 60..=63 {
                 m.insert((x, y, z), STONE); // 地坪顶面 y=64.0
@@ -141,13 +184,27 @@ fn grazing_flight_over_floor() {
             ..Player::default()
         };
         let inp = fly(Vec3::X);
-        for i in 0..120 {
+        let mut v_pre = p.vel.x;
+        for i in 0..420 {
+            let before = p.pos.x;
             step(&w, &mut p, &inp);
+            let d = p.pos.x - before;
+            // 贴面每一步都不得啃掉速度（旧断言 i=0 就要 vel>18，
+            // 渐近爬坡期恒假 = 电池窗口 bug，见 step_floor 注）。
             assert!(
-                p.vel.x > 18.0,
+                d > v_pre * mcv_game::consts::FIXED_DT * 0.98,
+                "{tag}：贴面位移与速度脱节 = 地坪误钳 i={i} d={d} v_pre={v_pre} vel={:?}",
+                p.vel
+            );
+            assert!(
+                p.vel.x >= v_pre - 1e-6,
                 "{tag}：水平被地坪误清零 i={i} vel={:?}",
                 p.vel
             );
+            if i >= 120 {
+                assert!(p.vel.x > 18.0, "{tag}：渐近不足 i={i} vel={:?}", p.vel);
+            }
+            v_pre = p.vel.x;
         }
         assert!(p.pos.x > 70.0, "{tag}：推进不足 pos.x={}", p.pos.x);
         assert!(
