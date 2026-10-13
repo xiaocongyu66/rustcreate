@@ -4,8 +4,8 @@
 //! 对照基准（26.1 实物，/root/mc-ref/src-26.1）：
 //! - 密度雕刻：`noise_settings/overworld.json` noise_router.final_density
 //!   + `density_function/overworld/{sloped_cheese,caves/*}.json`
-//!   （entrances/spaghetti_2d/spaghetti_roughness/underground 已移植，
-//!   terrain.rs 逐常数引注；pillars/noodle 未移植=缺口 CAVE-1）。
+//!     （entrances/spaghetti_2d/spaghetti_roughness/underground 已移植，
+//!     terrain.rs 逐常数引注；pillars/noodle 未移植=缺口 CAVE-1）。
 //! - 管状 carver：`configured_carver/{cave,cave_extra_underground,canyon}
 //!   .json`（probability 0.15/0.07/0.01，y 窗 -56..180 / -56..47 / 10..67）
 //!   ——本仓整体未移植=缺口 CAVE-2（KNOWN-DIVERGENCE）。
@@ -141,8 +141,7 @@ fn cave_audit_stats() {
                                     || nz < 0
                                     || nx as usize >= XW
                                     || nz as usize >= ZW
-                                    || ny < -56
-                                    || ny >= 64
+                                    || !(-56..64).contains(&ny)
                                 {
                                     continue;
                                 }

@@ -91,6 +91,11 @@ jobs:
       # attempt2=streaming flap flake 停批，ore 测试两次整包未跑）。与
       # feat/surface-deepslate 494a7b43 同修，合并时同文无冲突。
       - run: cargo test --workspace --locked --no-fail-fast
+      # #192 矿洞量化审计：K-CAVE-AUDIT 数值行常态入日志（默认模式 stdout
+      # 被 cargo test 捕获、仅红时回显——「数据两用」需要基线随绿跑可见，
+      # 供跨提交前后对照；包络断言随之照常执行）。
+      - name: Cave quantitative audit (K-CAVE-AUDIT lines into log)
+        run: cargo test -p mcv_worldgen --test cave_audit --locked -- --nocapture
 
   render-headless:
     runs-on: ubuntu-24.04
