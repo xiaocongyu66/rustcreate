@@ -14,7 +14,12 @@ use std::io::Read;
 
 use flate2::read::{GzDecoder, ZlibDecoder};
 
-use crate::accounter::{NbtAccounter, STRING_SELF_SIZE};
+use crate::accounter::NbtAccounter;
+use crate::accounter::{
+    ARRAY_SELF, COMPOUND_ENTRY, COMPOUND_SELF, KEY_SELF, LIST_SELF, LIST_SLOT, SELF_BYTE,
+    SELF_DOUBLE, SELF_FLOAT, SELF_INT, SELF_LONG, SELF_SHORT, STRING_CHAR_SIZE, STRING_SELF_SIZE,
+    utf16_len,
+};
 use crate::error::NbtError;
 use crate::tag::{NbtCompound, NbtList, NbtValue, TagType};
 use crate::utf8;
@@ -78,25 +83,47 @@ fn skip_name<R: PayloadRead + ?Sized>(r: &mut R) -> Result<(), NbtError> {
     r.read_exact(&mut buf)
 }
 
+/// 读一个字符串**值**(StringTag.java:11-23 的 `readAccounted` 口径:
+/// 先记 self 36,读 UTF,再按 UTF-16 char 数记 2×len)。
 fn read_string<R: PayloadRead + ?Sized>(
     r: &mut R,
     acc: &mut NbtAccounter,
 ) -> Result<String, NbtError> {
     acc.account(STRING_SELF_SIZE, 1, "string tag count")?;
+    let s = read_utf_raw(r)?;
+    acc.account(STRING_CHAR_SIZE, utf16_len(&s), "string chars")?;
+    Ok(s)
+}
+
+/// 读一个 compound **键名**(CompoundTag.java:130-133 口径:readUTF 后
+/// 记 28,再按 UTF-16 char 数记 2×len)。
+fn read_key<R: PayloadRead + ?Sized>(
+    r: &mut R,
+    acc: &mut NbtAccounter,
+) -> Result<String, NbtError> {
+    let s = read_utf_raw(r)?;
+    acc.account(KEY_SELF, 1, "compound key self")?;
+    acc.account(STRING_CHAR_SIZE, utf16_len(&s), "key chars")?;
+    Ok(s)
+}
+
+/// u16 长度 + modified UTF-8 原文(不含记账)。
+fn read_utf_raw<R: PayloadRead + ?Sized>(r: &mut R) -> Result<String, NbtError> {
     let len = read_u16(r)?;
-    acc.account(2, len as u64, "string chars")?;
     let mut buf = vec![0u8; len as usize];
     r.read_exact(&mut buf)?;
     utf8::decode(&buf)
 }
 
-/// 数组长度的统一防御:负数/超配额直接报错,绝不先分配。
+/// 定长数组头:先记 self 24(ByteArrayTag.java:23),再读长度(负数/超配额
+/// 直接报错,绝不先分配),再按元素宽度全计(:25)。
 fn read_array_len<R: PayloadRead + ?Sized>(
     r: &mut R,
     acc: &mut NbtAccounter,
     per: u64,
     what: &'static str,
 ) -> Result<usize, NbtError> {
+    acc.account(ARRAY_SELF, 1, what)?;
     let n = read_i32(r)?;
     if n < 0 {
         return Err(NbtError::TooLarge {
@@ -115,26 +142,43 @@ fn read_scalar<R: PayloadRead + ?Sized>(
     ty: TagType,
     acc: &mut NbtAccounter,
 ) -> Result<NbtValue, NbtError> {
-    Ok(match ty {
-        TagType::Byte => NbtValue::Byte(r.read_u8()? as i8),
-        TagType::Short => NbtValue::Short(read_i16(r)?),
-        TagType::Int => NbtValue::Int(read_i32(r)?),
-        TagType::Long => NbtValue::Long(read_i64(r)?),
+    // 标量 self-size 先于 payload(各 *Tag.java load 口径,常数见 accounter)。
+    match ty {
+        TagType::Byte => {
+            acc.account(SELF_BYTE, 1, "byte tag")?;
+            Ok(NbtValue::Byte(r.read_u8()? as i8))
+        }
+        TagType::Short => {
+            acc.account(SELF_SHORT, 1, "short tag")?;
+            Ok(NbtValue::Short(read_i16(r)?))
+        }
+        TagType::Int => {
+            acc.account(SELF_INT, 1, "int tag")?;
+            Ok(NbtValue::Int(read_i32(r)?))
+        }
+        TagType::Long => {
+            acc.account(SELF_LONG, 1, "long tag")?;
+            Ok(NbtValue::Long(read_i64(r)?))
+        }
         TagType::Float => {
+            acc.account(SELF_FLOAT, 1, "float tag")?;
             let mut b = [0u8; 4];
             r.read_exact(&mut b)?;
-            NbtValue::Float(f32::from_be_bytes(b))
+            Ok(NbtValue::Float(f32::from_be_bytes(b)))
         }
         TagType::Double => {
+            acc.account(SELF_DOUBLE, 1, "double tag")?;
             let mut b = [0u8; 8];
             r.read_exact(&mut b)?;
-            NbtValue::Double(f64::from_be_bytes(b))
+            Ok(NbtValue::Double(f64::from_be_bytes(b)))
         }
         TagType::ByteArray => {
             let n = read_array_len(r, acc, 1, "byte array")?;
             let mut buf = vec![0u8; n];
             r.read_exact(&mut buf)?;
-            NbtValue::ByteArray(buf.into_iter().map(|b| b as i8).collect())
+            Ok(NbtValue::ByteArray(
+                buf.into_iter().map(|b| b as i8).collect(),
+            ))
         }
         TagType::IntArray => {
             let n = read_array_len(r, acc, 4, "int array")?;
@@ -142,7 +186,7 @@ fn read_scalar<R: PayloadRead + ?Sized>(
             for _ in 0..n {
                 v.push(read_i32(r)?);
             }
-            NbtValue::IntArray(v)
+            Ok(NbtValue::IntArray(v))
         }
         TagType::LongArray => {
             let n = read_array_len(r, acc, 8, "long array")?;
@@ -150,11 +194,11 @@ fn read_scalar<R: PayloadRead + ?Sized>(
             for _ in 0..n {
                 v.push(read_i64(r)?);
             }
-            NbtValue::LongArray(v)
+            Ok(NbtValue::LongArray(v))
         }
-        TagType::String => NbtValue::String(read_string(r, acc)?),
+        TagType::String => Ok(NbtValue::String(read_string(r, acc)?)),
         other => unreachable!("read_scalar 只收标量/数组类型,收到 {other:?}"),
-    })
+    }
 }
 
 /// 显式栈容器帧。
@@ -190,7 +234,11 @@ fn read_value_iter<R: PayloadRead + ?Sized>(
             match stack.last_mut() {
                 None => return Ok(v),
                 Some(Frame::Compound { map, key }) => {
-                    map.insert(key.take().unwrap_or_default(), v);
+                    // 原版 loadCompound(CompoundTag.java:60-62):put 返回
+                    // null(新键)才补记 36;覆盖同名键不再计。
+                    if map.insert(key.take().unwrap_or_default(), v).is_none() {
+                        acc.account(COMPOUND_ENTRY, 1, "compound entry")?;
+                    }
                 }
                 Some(Frame::List { items, .. }) => {
                     // left 只在 ③Elem 发出读取请求时扣减;此处仅收集。
@@ -204,24 +252,30 @@ fn read_value_iter<R: PayloadRead + ?Sized>(
                 TagType::End => return Err(NbtError::BadTagType(0)),
                 TagType::List => {
                     acc.push_depth()?;
+                    // ListTag.loadList(ListTag.java:30-38):self 36 → 元素
+                    // 类型字节 → 长度(负数拒)→ 类型 0 且长度>0 拒 → 4×count。
+                    acc.account(LIST_SELF, 1, "list self")?;
                     let raw_ty = r.read_u8()?;
                     let elem = TagType::from_id(raw_ty).ok_or(NbtError::BadTagType(raw_ty))?;
-                    let n = if elem == TagType::End {
-                        // 原版空 list:类型 0 + 长度(通常 0)。长度仍要读掉。
-                        let n = read_i32(r)?;
-                        if n > 0 {
-                            // 类型 End 却给正长度:legacy 文件不会这样,保守拒绝。
-                            return Err(NbtError::TooLarge {
-                                what: "end-typed list length",
-                                got: n as i64,
-                                max: 0,
-                            });
-                        }
-                        0usize
-                    } else {
-                        // 每元素至少 2 字节(payload 前的最小尺寸),记账防超长声明。
-                        read_array_len(r, acc, 2, "list length")?
-                    };
+                    let n = read_i32(r)?;
+                    if n < 0 {
+                        return Err(NbtError::TooLarge {
+                            what: "list length",
+                            got: n as i64,
+                            max: i32::MAX as i64,
+                        });
+                    }
+                    if elem == TagType::End && n > 0 {
+                        // 原版 NbtFormatException("Missing type on ListTag")
+                        // (ListTag.java:34-36)。
+                        return Err(NbtError::TooLarge {
+                            what: "end-typed list length",
+                            got: n as i64,
+                            max: 0,
+                        });
+                    }
+                    acc.account(LIST_SLOT, n as u64, "list slots")?;
+                    let n = n as usize;
                     stack.push(Frame::List {
                         elem,
                         items: Vec::with_capacity(n.min(1 << 16)),
@@ -230,6 +284,8 @@ fn read_value_iter<R: PayloadRead + ?Sized>(
                 }
                 TagType::Compound => {
                     acc.push_depth()?;
+                    // CompoundTag.loadCompound(CompoundTag.java:53):self 48。
+                    acc.account(COMPOUND_SELF, 1, "compound self")?;
                     stack.push(Frame::Compound {
                         map: NbtCompound::new(),
                         key: None,
@@ -269,7 +325,7 @@ fn read_value_iter<R: PayloadRead + ?Sized>(
                     value = Some(NbtValue::Compound(map));
                 } else {
                     let t = TagType::from_id(tb).ok_or(NbtError::BadTagType(tb))?;
-                    let name = read_string(r, acc)?;
+                    let name = read_key(r, acc)?;
                     if let Some(Frame::Compound { key, .. }) = stack.last_mut() {
                         *key = Some(name);
                     }
@@ -469,6 +525,61 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn accounting_exact_boundary_locks_vanilla_arithmetic() {
+        // compound { "": Int(7) } 的原版口径总账:
+        //   48(compound self)+28(空键 self)+0(键 char×2)+12(Int self)
+        //   +36(新键 entry) = 124。恰等于配额放行(NbtAccounter.java:45
+        //   的判定是 usage+size > quota 才炸),超 1 字节必拒。
+        let b: Vec<u8> = vec![10, 0, 0, 3, 0, 0, 0, 0, 0, 7];
+        let mut ok = NbtAccounter::new(124, 8);
+        assert!(read_raw_with(&b, &mut ok).is_ok(), "恰等于配额必须放行");
+        assert_eq!(ok.usage(), 124);
+        let mut tight = NbtAccounter::new(123, 8);
+        assert!(
+            matches!(
+                read_raw_with(&b, &mut tight),
+                Err(NbtError::TooLarge { .. })
+            ),
+            "恰超配额 1 字节必须拒"
+        );
+    }
+
+    #[test]
+    fn accounting_duplicate_key_skips_entry_charge() {
+        // 同名键两次:第二次的 put 返回旧值,原版不再记 36
+        // (CompoundTag.java:61 `values.put(..) == null`)。
+        // 总账 = 48 + (28+12+36) + (28+12) = 164。
+        let b: Vec<u8> = vec![
+            10, 0, 0, // 根 compound
+            3, 0, 1, b'k', 0, 0, 0, 1, // k = Int(1)
+            3, 0, 1, b'k', 0, 0, 0, 2, // k 覆盖 = Int(2)
+            0,
+        ];
+        let mut acc = NbtAccounter::new(164, 8);
+        assert!(read_raw_with(&b, &mut acc).is_ok());
+        assert_eq!(acc.usage(), 164);
+        let mut tight = NbtAccounter::new(163, 8);
+        assert!(read_raw_with(&b, &mut tight).is_err());
+    }
+
+    #[test]
+    fn accounting_string_uses_utf16_units_not_utf8_bytes() {
+        // 原版 StringTag.java:23 记 2×UTF-16 char 数:「😀」= 2 单元 → 4;
+        // 若按 UTF-8 字节(CESU-8 为 6)或字节数记账会偏离。
+        // 总账:48 + 28(空键) + 36(string self) + 4(2 char×2) + 36(entry) = 152。
+        let mut body: Vec<u8> = Vec::new();
+        body.extend([10u8, 0, 0, 8, 0, 0]); // 根 + 键 "" + String
+        body.extend(6u16.to_be_bytes()); // CESU-8 6 字节
+        body.extend([0xED, 0xA0, 0xBD, 0xED, 0xB8, 0x80]); // 😀
+        body.push(0);
+        let mut acc = NbtAccounter::new(152, 8);
+        let c = read_raw_with(&body, &mut acc).expect("恰配额放行");
+        assert_eq!(c.get_string("").unwrap(), "😀");
+        assert_eq!(acc.usage(), 152);
+        assert!(read_raw_with(&body, &mut NbtAccounter::new(151, 8)).is_err());
     }
 
     #[test]

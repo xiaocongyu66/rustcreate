@@ -1,6 +1,20 @@
-//! 配额防 OOM。常数与算法照原版 26.1 NbtAccounter 实物:
-//! 默认 quota 2Mi(按字符串字符数口径,字符串记账 36 + 2×len)、
-//! 解压/无压缩口径 quota 100Mi、最大嵌套深度 512。
+//! 配额防 OOM。常数与算法照原版 26.1 实物两件套:
+//!
+//! 1. [`NbtAccounter`] 本体(NbtAccounter.java):默认 quota 2Mi
+//!    (`DEFAULT_NBT_QUOTA`)、非网络 100Mi(`UNCOMPRESSED_NBT_QUOTA`)、
+//!    深度 512;`usage + size > quota` 即失败(NbtAccounter.java:38-51)。
+//! 2. 各 TagType.load 的逐 tag 记账表(常数=实物 file:line):
+//!    - 标量 self:byte 9(ByteTag.java:20)/ short 10(ShortTag.java:20)/
+//!      int 12(IntTag.java:20)/ long 16(LongTag.java:20)/
+//!      float 12(FloatTag.java:22)/ double 16(DoubleTag.java:22)
+//!    - 定长数组:self 24 + 元素宽度×长度(ByteArrayTag.java:23-25 /
+//!      IntArrayTag.java:23-25 / LongArrayTag.java:23-25)
+//!    - String:self 36 + 2×UTF-16 char 数(StringTag.java:21-23)
+//!    - List:self 36 + 4×count(ListTag.java:31-38)
+//!    - Compound:self 48,每新增键 +36,键名单独记 28 + 2×char 数
+//!      (CompoundTag.java:53/61/131-132;重复键不再计 36——
+//!      `values.put(..)==null` 才加,同处)
+//!
 //! 与原版差异:原版超限抛异常,我们返回 [`NbtError`]。
 
 use crate::error::NbtError;
@@ -11,8 +25,34 @@ pub const DEFAULT_NBT_QUOTA: u64 = 2_097_152;
 pub const UNCOMPRESSED_NBT_QUOTA: u64 = 104_857_600;
 /// 原版 `NbtAccounter.MAX_STACK_DEPTH`。
 pub const MAX_STACK_DEPTH: u32 = 512;
-/// 原版 StringTag 记账:每个字符串 tag 固定 36 + 2×len(Java char 2 字节口径)。
+/// StringTag.load self(36) + 2×char(StringTag.java:21-23)。
 pub(crate) const STRING_SELF_SIZE: u64 = 36;
+pub(crate) const STRING_CHAR_SIZE: u64 = 2;
+/// CompoundTag.loadCompound self(CompoundTag.java:53)。
+pub(crate) const COMPOUND_SELF: u64 = 48;
+/// 每个新键的 map entry(CompoundTag.java:61,重复键不计)。
+pub(crate) const COMPOUND_ENTRY: u64 = 36;
+/// 键名 self(CompoundTag.java:131)+ 2×char(:132)。
+pub(crate) const KEY_SELF: u64 = 28;
+/// ListTag.loadList self(ListTag.java:31)。
+pub(crate) const LIST_SELF: u64 = 36;
+/// 每槽位(ListTag.java:38)。
+pub(crate) const LIST_SLOT: u64 = 4;
+/// 定长数组 self(ByteArrayTag/IntArrayTag/LongArrayTag.java:23)。
+pub(crate) const ARRAY_SELF: u64 = 24;
+/// 各标量 self(ByteTag.java:20 … DoubleTag.java:22)。
+pub(crate) const SELF_BYTE: u64 = 9;
+pub(crate) const SELF_SHORT: u64 = 10;
+pub(crate) const SELF_INT: u64 = 12;
+pub(crate) const SELF_LONG: u64 = 16;
+pub(crate) const SELF_FLOAT: u64 = 12;
+pub(crate) const SELF_DOUBLE: u64 = 16;
+
+/// Java `String.length()` 口径:UTF-16 code unit 数(补充平面 2 单元)。
+#[must_use]
+pub(crate) fn utf16_len(s: &str) -> u64 {
+    s.chars().map(char::len_utf16).sum::<usize>() as u64
+}
 
 /// 读取期的字节配额 + 深度栈。用法见 [`crate::read`]。
 #[derive(Debug, Clone)]
