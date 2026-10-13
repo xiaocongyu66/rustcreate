@@ -13,8 +13,12 @@
 //! - base_3d_noise 自 T4 起为真移植 BlendedNoise（vanilla/blended.rs：
 //!   NoiseRouterData.java:86 `createUnseeded(0.25,0.125,80,160,8)`，上下限
 //!   夹逼混合；此前「双层 fBm 近其破面」取舍作废）；
-//! - noodle / pillars 不在本 v1 管线（任务只点名双洞穴：意面 + 奶酪），
-//!   Noodle 通道以常数 64 代入（min 不生效）。
+//! - noodle / pillars 自 #192 洞穴改进波起为实物移植
+//!   （`density_function/overworld/caves/{noodle,pillars}.json` 逐节点对位，
+//!   见 [`Orchestrator::noodle`] / [`Orchestrator::pillars`] 注）；
+//!   noodle 各通道的 `minecraft:interpolated` 外壳按本模块既定口径跳过
+//!   （与 final_density 外层 interpolated/blend_density 同一取舍——只影响
+//!   8×8×4 单元级管壁平滑度，不改变掩膜/雕刻判定语义）。
 //!
 //! 洞穴/山脊噪声通道（2026-10-11 质量门修订）：全部改走 `NormalNoise`
 //! fBm + 26.1 noise 参数表（data/minecraft/worldgen/noise/*.json），不再
@@ -58,8 +62,16 @@ pub const MIN_Y: i32 = crate::vanilla::MIN_Y;
 const GLOBAL_OFFSET: f64 = -0.50375;
 /// 顶部开口渐隐带（对应 slide 顶封的简化）。
 pub const ENTRANCE_FADE: i32 = 14;
-/// noodle 关闭哨兵（rangeChoice 的「未雕刻」常量）。
+/// noodle 关闭哨兵（noodle.json 外层 range_choice
+/// `when_in_range[-10⁶,0) → 64`：掩膜噪声 < 0 处不参与 min）。
 const NOODLE_OFF: f64 = 64.0;
+/// pillars 门（final_density out_of_range 支
+/// `range_choice(pillars, [-10⁶, 0.03) → −10⁶, 否则 pillars)`）。
+const PILLARS_GATE_MIN: f64 = 0.03;
+/// pillars/noodle 门哨兵（range_choice 越界常量，语义=「不抬升」）。
+const CARVE_OFF: f64 = -1.0e6;
+/// noodle_ridge_a/b 求值缩放（noodle.json `2.6666666666666665`）。
+const NOODLE_RIDGE_SCALE: f64 = 2.666_666_666_666_666_5_f64;
 
 /// 表层亚表带深（depth_above ∈ [2, 4] 层 = 26.1 UNDER_FLOOR 带
 /// `stoneDepthCheck(0, true, FLOOR)` = stoneDepthAbove ≤ 1 + surfaceDepth
@@ -411,6 +423,8 @@ const AMPS_1: [f64; 1] = [1.0];
 const AMPS_CAVE_ENTRANCE: [f64; 3] = [0.4, 0.5, 1.0];
 /// cave_cheese.json:1-15。
 const AMPS_CAVE_CHEESE: [f64; 9] = [0.5, 1.0, 2.0, 1.0, 2.0, 1.0, 0.0, 2.0, 0.0];
+/// pillar.json:1-7（firstOctave -7, [1,1]）。
+const AMPS_PILLAR: [f64; 2] = [1.0, 1.0];
 /// jagged.json:1-21（16 × 1.0）。
 const AMPS_JAGGED: [f64; 16] = [1.0; 16];
 
@@ -496,6 +510,16 @@ pub struct Orchestrator {
     cave_layer: NormalNoise,
     cave_cheese: NormalNoise,
     jagged: NormalNoise,
+    // #192 洞穴改进波：pillars / noodle 通道（同名 26.1 noise json 表，
+    // pillar.json -7 [1,1]；pillar_rareness/pillar_thickness/noodle/
+    // noodle_thickness 均 -8 [1]；noodle_ridge_a/b 均 -7 [1]）。
+    pillar: NormalNoise,
+    pillar_rareness: NormalNoise,
+    pillar_thickness: NormalNoise,
+    noodle_noise: NormalNoise,
+    noodle_thickness: NormalNoise,
+    noodle_ridge_a: NormalNoise,
+    noodle_ridge_b: NormalNoise,
 }
 
 impl Orchestrator {
@@ -527,6 +551,13 @@ impl Orchestrator {
             cave_layer: n(0x0000_CAFE_0003 ^ 0x41, -8, &AMPS_1),
             cave_cheese: n(0x0000_CAFE_0003 ^ 0x42, -8, &AMPS_CAVE_CHEESE),
             jagged: n(0x7A66ED, -16, &AMPS_JAGGED),
+            pillar: n(0x0000_CA11_5E ^ 0x51, -7, &AMPS_PILLAR),
+            pillar_rareness: n(0x0000_CA11_5E ^ 0x52, -8, &AMPS_1),
+            pillar_thickness: n(0x0000_CA11_5E ^ 0x53, -8, &AMPS_1),
+            noodle_noise: n(0x0000_0DE0_1E ^ 0x61, -8, &AMPS_1),
+            noodle_thickness: n(0x0000_0DE0_1E ^ 0x62, -8, &AMPS_1),
+            noodle_ridge_a: n(0x0000_0DE0_1E ^ 0x63, -7, &AMPS_1),
+            noodle_ridge_b: n(0x0000_0DE0_1E ^ 0x64, -7, &AMPS_1),
         }
     }
 
@@ -812,6 +843,44 @@ impl Orchestrator {
         layerized + solidified
     }
 
+    /// Pillars 函数（`density_function/overworld/caves/pillars.json` 逐节点
+    /// 对位，cache_once 为纯缓存不改语义）：
+    /// `2·P(bx·25, y·0.3, bz·25) · (−1 − R) · cube(0.55 + 0.55·T)`
+    /// （P=pillar noise xz_scale 25.0/y_scale 0.3；R=pillar_rareness
+    /// xz/y 1.0；T=pillar_thickness xz/y 1.0）。消费侧（final_density
+    /// out_of_range 支外层 max）：值 < 0.03 → −10⁶（max 恒不生效）；
+    /// 值 ≥ 0.03 → 把奶酪洞内的 −密度抬正 = 洞中独立石柱。
+    fn pillars(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        let p = self.pillar.get_value(bx * 25.0, y_mc * 0.3, bz * 25.0);
+        let r = self.pillar_rareness.get_value(bx, y_mc, bz);
+        let t = self.pillar_thickness.get_value(bx, y_mc, bz);
+        let c = 0.55 + 0.55 * t;
+        (2.0 * p) * (-1.0 - r) * (c * c * c)
+    }
+
+    /// Noodle 函数（`density_function/overworld/caves/noodle.json` 逐节点
+    /// 对位）：掩膜 = noise(noodle, 1, 1)，range_choice
+    /// `y ∈ [-60, 321)` 越界 → −1（本域 y ≥ −64：仅 y ∈ [−64, −61) 越界，
+    /// 该带 slide 底封恒实心，无观感差）；掩膜 ∈ [−10⁶, 0) → 64（min 不
+    /// 生效）；掩膜 ≥ 0 → 管状雕刻
+    /// `−0.075… − 0.025·thickness + 1.5·max(|ridgeA|, |ridgeB|)`
+    /// （ridge 族 xz/y 缩放 2.6666…，thickness 1.0）。
+    /// interpolated 外壳按模块头注既定口径跳过（判定语义不变）。
+    fn noodle(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        if y_mc < -60.0 {
+            return NOODLE_OFF; // range_choice when_out_of_range = -1 → <0 → 64
+        }
+        let mask = self.noodle_noise.get_value(bx, y_mc, bz);
+        if mask < 0.0 {
+            return NOODLE_OFF;
+        }
+        let t = self.noodle_thickness.get_value(bx, y_mc, bz);
+        let s = NOODLE_RIDGE_SCALE;
+        let a = self.noodle_ridge_a.get_value(bx * s, y_mc * s, bz * s);
+        let b = self.noodle_ridge_b.get_value(bx * s, y_mc * s, bz * s);
+        -0.075_000_000_000_000_01_f64 - 0.025 * t + 1.5 * a.abs().max(b.abs())
+    }
+
     /// 最终 density 场值（> 0 实心）。
     #[must_use]
     pub fn density(&self, cs: &ColumnState, block_x: i32, block_y: i32, block_z: i32) -> f64 {
@@ -837,15 +906,22 @@ impl Orchestrator {
         } else {
             let sp2d = self.spaghetti_2d(cs, bx, y_mc, bz);
             let u = self.underground(bx, y_mc, bz, sloped);
-            (u.min(e)).min(sp2d + self.spaghetti_roughness(bx, y_mc, bz))
+            let base = (u.min(e)).min(sp2d + self.spaghetti_roughness(bx, y_mc, bz));
+            // pillars 门（final_density out_of_range 外层 max，#192 补全）：
+            // 值 < 0.03 → −10⁶（max 恒不生效），否则以 pillars 值抬升——
+            // 把已雕负的洞位抬正 = 奶酪洞内的独立石柱。
+            let p = self.pillars(bx, y_mc, bz);
+            base.max(if p < PILLARS_GATE_MIN { CARVE_OFF } else { p })
         };
         // slide（slideOverworld: -64, 384, 80, 64, -0.078125, 0, 24, 0.1171875）
         let top_factor = y_grad(y_mc, 240.0, 256.0, 1.0, 0.0);
         let v = lerp1(-0.078125, caves, top_factor);
         let bottom_factor = y_grad(y_mc, -64.0, -40.0, 0.0, 1.0);
         let v = lerp1(0.1171875, v, bottom_factor);
-        // postProcess = squeeze(0.64·slide)，与 noodle(关闭=64) 取 min
-        squeeze(0.64 * v).min(NOODLE_OFF)
+        // postProcess = squeeze(0.64·slide)，与 noodle 取 min（final_density
+        // 最外层 min，noodle.json——掩膜外=64 不生效，掩膜内雕细长管洞）。
+        let noodle_v = self.noodle(bx, y_mc, bz);
+        squeeze(0.64 * v).min(noodle_v)
     }
 
     /// 测试出口：base_3d 通道在 density() 同坐标约定下的原始值（破面输入）。

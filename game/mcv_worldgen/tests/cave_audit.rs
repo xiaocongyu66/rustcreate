@@ -4,11 +4,11 @@
 //! 对照基准（26.1 实物，/root/mc-ref/src-26.1）：
 //! - 密度雕刻：`noise_settings/overworld.json` noise_router.final_density
 //!   + `density_function/overworld/{sloped_cheese,caves/*}.json`
-//!     （entrances/spaghetti_2d/spaghetti_roughness/underground 已移植，
-//!     terrain.rs 逐常数引注；pillars/noodle 未移植=缺口 CAVE-1）。
+//!     （entrances/spaghetti_2d/spaghetti_roughness/underground/pillars/
+//!     noodle 已移植，terrain.rs 逐常数引注；carver 管层仍缺=CAVE-1 ③）。
 //! - 管状 carver：`configured_carver/{cave,cave_extra_underground,canyon}
 //!   .json`（probability 0.15/0.07/0.01，y 窗 -56..180 / -56..47 / 10..67）
-//!   ——本仓整体未移植=缺口 CAVE-2（KNOWN-DIVERGENCE）。
+//!   ——本仓整体未移植=缺口 CAVE-1 ③（KNOWN-DIVERGENCE）。
 //!
 //! 本探针量化「本仓现状」的空洞率随深度分布 + 最大连通体，供跨任务对照；
 //! 断言只放宽松包络（防空洞塌方/全实心两类系统病），数值本身入日志。

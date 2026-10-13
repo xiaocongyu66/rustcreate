@@ -372,12 +372,18 @@ Xoroshiro128++，Mth.getSeed(x,y,z) 逐位 nextFloat）。本仓以 hash01
 spaghetti_roughness、underground 奶酪、slide/夹逼常数——数值对照
 tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
 
-1. **pillars**（`caves/pillars.json`，final_density 出范围支
-   `range_choice(pillars, <0.03 → −10⁶)`）：奶酪洞内石柱雕刻——未移植，
-   density() 出范围支缺该 max 第二项；缺口=奶酪洞缺细石柱。
-2. **noodle**（`caves/noodle.json` + noodle_thickness/rice 特征配对）：
-   细长管洞，final_density 外层 min——未移植，terrain.rs 以常数 64 代入
-   （min 不生效，模块头注原注）。
+1. **pillars**〔已销账 #192 洞穴改进波〕：`caves/pillars.json` 实物接线
+   （terrain.rs `Orchestrator::pillars`——`2·P(25, 0.3)·(−1−R)·
+   cube(0.55+0.55·T)` 逐节点对位 + final_density out_of_range 外层 max
+   `range_choice(<0.03 → −10⁶)`）。前后量化见本分支 CI K-CAVE-AUDIT 日志
+   （ci.yml --nocapture 步，跨提交对照）。
+2. **noodle**〔已销账 #192 洞穴改进波〕：`caves/noodle.json` 实物接线
+   （terrain.rs `Orchestrator::noodle`——掩膜 range_choice y∈[−60,321) +
+   `−0.075−0.025·thickness + 1.5·max(|ridgeA|,|ridgeB|)`，final_density
+   最外层 min）。残余口径：各通道 `minecraft:interpolated` 外壳按模块既定
+   取舍跳过（与 final_density 外层 interpolated/blend_density 同一口径，
+   只影响 8×8×4 单元管壁平滑度）；noodle rice/thickness 特征接线随特征
+   波另立项（非 density 面）。
 3. **管状 carver**（`configured_carver/{cave,cave_extra_underground,
    canyon}.json`：probability 0.15/0.07/0.01、y 窗 above_bottom 8..180 /
    8..47 / absolute 10..67、floor_level uniform(−1,−0.4)、
