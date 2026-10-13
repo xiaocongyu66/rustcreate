@@ -350,3 +350,42 @@ width/height/length 格式经全树 grep 实物不存在（DataFixer 面，数�
 3. **写侧仍递归(NBT-WRITE-DEPTH)**：write_raw/write_snbt 递归深度=树深;
    消费方从本仓 parser 拿到的树天然 ≤512 层安全,程序化手构超深树属调用方
    责任,未设防。
+
+## RNG-1 vertical_gradient 位置随机种子链（#192 深板岩/基岩波）
+
+overworld.json surface_rule 的两条 `vertical_gradient`（bedrock_floor /
+deepslate，SurfaceRules.java:735-781）在原版用
+`RandomState.getOrCreateRandomFactory(random_name)` =
+`random.fromHashOf(name).forkPositional()`（RandomState.java:113-115 →
+Xoroshiro128++，Mth.getSeed(x,y,z) 逐位 nextFloat）。本仓以 hash01
+通道域（`channel_seed(seed, salt)`，AQUI-1 先例）替代该 Xoroshiro 种子链：
+阈值/线性概率映射（`Mth.map` 1−t）与逐位独立分布逐字实物，同位不同伪
+随机序列——同 seed 本仓内部确定（tests/deepslate_bedrock.rs 确定性锁），
+与原版同 seed 选点不逐格一致；散点占比带统计门（0.8/0.6/0.4/0.2 与
+(8−y)/8 ±0.08）替代字节对拍。
+
+## CAVE-1 洞穴雕刻通道的未移植面（#192 对照审计登记）
+
+对照 `noise_settings/overworld.json` noise_router.final_density +
+`density_function/overworld/*` 实物逐项清点（terrain.rs density() 引注为
+已移植面：sloped_cheese 全链、entrances、spaghetti_2d、
+spaghetti_roughness、underground 奶酪、slide/夹逼常数——数值对照
+tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
+
+1. **pillars**（`caves/pillars.json`，final_density 出范围支
+   `range_choice(pillars, <0.03 → −10⁶)`）：奶酪洞内石柱雕刻——未移植，
+   density() 出范围支缺该 max 第二项；缺口=奶酪洞缺细石柱。
+2. **noodle**（`caves/noodle.json` + noodle_thickness/rice 特征配对）：
+   细长管洞，final_density 外层 min——未移植，terrain.rs 以常数 64 代入
+   （min 不生效，模块头注原注）。
+3. **管状 carver**（`configured_carver/{cave,cave_extra_underground,
+   canyon}.json`：probability 0.15/0.07/0.01、y 窗 above_bottom 8..180 /
+   8..47 / absolute 10..67、floor_level uniform(−1,−0.4)、
+   radius/vertical 乘子表）：**整体未移植**——1.18+ 密度雕刻已有
+   （意面/奶酪/entrances），carver 是叠加的样条路径管状洞与峡谷层；
+   缺口=缺直管状穿行洞与 canyon 裂谷。子系统规模（CubicSpline 路径 +
+   TagKey replaceable + 流体面 + 跨块确定性重放）独立成波，非本任务
+   参数级修补；tests/cave_audit.rs 量化现状基线（空洞率随深度分布、
+   最大连通体）。
+4. **vein_toggle/vein_ridged/vein_gap**（OreVeinifier，noise_router 三
+   通道）：矿脉编织——未移植（本仓无矿石生成面，整体随矿脉波立项）。
