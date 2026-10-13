@@ -80,11 +80,11 @@ pub const ORE_DOMAIN: u64 = 0x0DE0_2611_0000_0001;
 fn sin_lut() -> &'static [f32; 65536] {
     static LUT: OnceLock<Box<[f32; 65536]>> = OnceLock::new();
     LUT.get_or_init(|| {
-        let mut t: Box<[f32; 65536]> = vec![0.0f32; 65536].into_boxed_slice();
+        let mut t = [0.0f32; 65536];
         for (i, v) in t.iter_mut().enumerate() {
             *v = ((i as f64) / 10430.378350470453).sin() as f32;
         }
-        t
+        Box::new(t)
     })
 }
 
@@ -103,7 +103,7 @@ pub struct OreRng {
 impl OreRng {
     #[must_use]
     const fn new(seed: u64) -> Self {
-        Self { s }
+        Self { s: seed }
     }
 
     fn next_u64(&mut self) -> u64 {
