@@ -77,9 +77,12 @@ fn empty_list_writes_type_byte_zero() {
     let mut c = NbtCompound::new();
     c.insert("e", NbtValue::List(NbtList::new()));
     let b = write_raw(&c).unwrap();
-    // …9(类型) 0(元素类型 End) 00000000(长度)…
-    let pos = b.windows(2).position(|w| w == [9, 0]).unwrap();
-    assert_eq!(&b[pos + 2..pos + 6], &[0, 0, 0, 0]);
+    // 定位到键「e」的 List 条目(9 类型 + 0x0001 键长 + 'e')之后:
+    // 0(元素类型 End) 00000000(长度)。直接搜 [9,0] 会先撞上
+    // 「条目类型 9 + 键长高位 0」,不是 list payload。
+    let pat = [9u8, 0, 1, b'e'];
+    let pos = b.windows(4).position(|w| w == pat).unwrap();
+    assert_eq!(&b[pos + 4..pos + 10], &[0, 0, 0, 0, 0, 0]);
     assert_eq!(read_raw(&b).unwrap(), c);
 }
 
