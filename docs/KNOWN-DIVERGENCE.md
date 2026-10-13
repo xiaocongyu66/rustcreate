@@ -301,38 +301,44 @@ clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐
 
 ## NBT-* mcv_nbt 底座（#177，feat/nbt-foundation）的登记偏差
 
-1. **NBT-UTF8-CESU**：modified UTF-8 的补充平面字符原版 `writeUTF` 产出
-   CESU-8 surrogate 对（2×3 字节）；本仓读写走标准 UTF-8 4 字节。字符级
-   语义一致，字节级与 Java 端互读非常规文本（原版合法数据从不含非 BMP
-   字符串——注册表名/SNBT/模板实测全 ASCII）。孤立 surrogate（Java 可
-   持、Rust String 不可）解码直接 BadUtf8。
-2. **NBT-ACCOUNT-SIMPL**：配额记账口径简化——字符串照抄 36+2×len 与
-   quota 2Mi/100Mi/depth 512 常数，但 compound/list 容器不记 self-size
-   （原版每 tag 记 36）；同输入本仓配额余量略宽。
-3. **NBT-WRITE-STRICT**：字符串 >65535 mutf8 字节时报 TooLarge，原版
-   StringFallbackDataOutput 静默写空串（选更响的行为）。
-4. **NBT-SNBT**：SNBT 子集缺口——hex 整数（0x..）、数字下划线分隔符
-   （1_000）、`[;]` 显式空数组类型声明未实装；`[I;]` 域内小数元素按
-   截断接受（原版拒绝）。数组糖外的解析面（注释/尾逗号/引号转义/
-   NaN/Infinity/指数）与原版一致。
-5. **NBT-NEGINT-LAX**：无后缀超 i32 整数字面量（9999999999）按裸串接受
-   （原版报「too big, use L suffix」）。
+1. **NBT-UTF8-CESU（残余，需用户裁决）**：CESU-8 读写主体已对齐原版
+   `writeUTF`/`DataInput.readUTF`——补充平面写 surrogate 对 2×3 字节、
+   读侧合法对合成单码位、4 字节标准 UTF-8 同拒（utf8.rs）。唯一残余：
+   **孤立 surrogate**（Java `String` 可持、Rust `String` 类型不可表示）
+   解码报 BadUtf8——平台类型系统限制，非取舍；若要 byte 级互读恶意/
+   损坏样本需改用 WTF-8/`Vec<u16>` 字符串表示，属产品决策，**需用户
+   裁决**。（原登记的标准 UTF-8 4 字节读写偏差已销账：ec2f1d8f 前波
+   662478d9。）
+
+已销账（原 2–5 条）：配额逐 tag self-size 对齐（8614361f：标量
+9/10/12/16/12/16、数组 24+宽×n、String 36+2×UTF-16 char、compound
+48+新键 36+键 28+2×char、list 36+4×count，边界用例锁死）；写侧超长串
+回退原版 StringFallbackDataOutput 静默空串（c9e61924，NbtIo.java:197-
+205）；SNBT hex/二进制整数、数字下划线（首尾非法）、`[B;]`/`[I;]`/
+`[L;]` 空数组声明、数组域内非法元素拒绝、无后缀超 i32 报错（ec2f1d8f，
+SnbtGrammar/NumberRunParseRule 实物）。
 
 ## STRU-* 结构模板运行时（#177）的接线近似
 
-1. **STRU-1**：`palettes` 多调色板变体只取第 0 个；blocks `state` 越界
-   索引回落空气（原版 palette 回落 first-entry 语义）。26.1 data 树实物
-   全为单 `palette` 现代格式（blocks/pos/state），旧 BlockIndices/
-   width/height/length 世代格式不复刻（资产实物无此形态）。
-2. **STRU-RNG**：integrity 掷骰流为单流 SplitMix64(seed)（lake_pass
-   LakeRng 同族先例）；原版 `StructurePlaceSettings.getRandom(pos)` 无
-   random 时按 Mth.getSeed(pos) 逐位播种 Xoroshiro128++。同 seed 两次
-   放置逐字节一致（测试锁死），但与原版不位同。
-3. **STRU-STATE**：mirror/rotation 只变换 block pos；palette Name 的
+1. **STRU-STATE**：mirror/rotation 只变换 block pos；palette Name 的
    facing 等 blockstate 属性旋转（BlockRotationUtil 全表）未实装。
-4. **STRU-BE**：block `nbt`（方块实体）与 `entities` 读取后忽略。
-5. **STRU-LOOKUP**：Name→BlockId 线性查 mcv_core::BLOCKS，O(n)；刀 7
-   统一换名称→索引表。
+2. **STRU-BE**：block `nbt`（方块实体）与 `entities` 解析并保留在
+   Template（STRU-BE 收窄为「放置面」：本仓暂无方块实体/实体运行时，
+   保真解析数据在 `Template::entities`/`has_nbt` 待消费）。
+
+已销账（原 STRU-1/STRU-RNG/STRU-LOOKUP，4eed60da+2432de80）：
+`palettes` 多调色板逐变体展开 + `getRandomPalette` 按
+`Mth.getSeed(anchor)` 播种 `nextInt(n)` 选取（StructureTemplate.java:
+708-721、StructurePlaceSettings.java:138-143）；state 越界回落实物
+`SimplePalette.stateFor` 的 `DEFAULT_BLOCK_STATE`=AIR（StructureTemplate.
+java:852-870，非任务书所说「palette 首元素」）；integrity 掷骰位对齐
+实物——26.1 `RandomSource.create(long)`=`LegacyRandomSource`（java LCG，
+RandomSource.java:23-25；Xoroshiro128++ 在 26.1 代码树不存在），每块
+全新播种 `Mth.getSeed(世界坐标)`（Mth.java:314-318）掷一次 `nextFloat`
+（BlockRotProcessor.java:42-53），`mcv_core::rand::{Lcg, mth_get_seed}`
+向量锁死；Name→BlockId OnceLock 建表 O(1)。旧世代 BlockIndices/
+width/height/length 格式经全树 grep 实物不存在（DataFixer 面，数据
+资产无此形态），按实物不复刻。
 
 ## NBT-STACK mcv_nbt 栈安全口径（#177 追加,CI run 38324618498 实测驱动）
 
