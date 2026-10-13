@@ -531,9 +531,10 @@ mod tests {
     fn accounting_exact_boundary_locks_vanilla_arithmetic() {
         // compound { "": Int(7) } 的原版口径总账:
         //   48(compound self)+28(空键 self)+0(键 char×2)+12(Int self)
-        //   +36(新键 entry) = 124。恰等于配额放行(NbtAccounter.java:45
-        //   的判定是 usage+size > quota 才炸),超 1 字节必拒。
-        let b: Vec<u8> = vec![10, 0, 0, 3, 0, 0, 0, 0, 0, 7];
+        //   +36(新键 entry) = 124(根名 skipString 不记账,NbtIo.java:176)。
+        //   恰等于配额放行(NbtAccounter.java:45 的判定是 usage+size > quota
+        //   才炸),超 1 字节必拒。
+        let b: Vec<u8> = vec![10, 0, 0, 3, 0, 0, 0, 0, 0, 7, 0];
         let mut ok = NbtAccounter::new(124, 8);
         assert!(read_raw_with(&b, &mut ok).is_ok(), "恰等于配额必须放行");
         assert_eq!(ok.usage(), 124);
@@ -551,17 +552,18 @@ mod tests {
     fn accounting_duplicate_key_skips_entry_charge() {
         // 同名键两次:第二次的 put 返回旧值,原版不再记 36
         // (CompoundTag.java:61 `values.put(..) == null`)。
-        // 总账 = 48 + (28+12+36) + (28+12) = 164。
+        // 键名「k」每次 readString 记 28+2×1=30(CompoundTag.java:131-132)。
+        // 总账 = 48 + (30+12+36) + (30+12) = 168。
         let b: Vec<u8> = vec![
             10, 0, 0, // 根 compound
             3, 0, 1, b'k', 0, 0, 0, 1, // k = Int(1)
             3, 0, 1, b'k', 0, 0, 0, 2, // k 覆盖 = Int(2)
             0,
         ];
-        let mut acc = NbtAccounter::new(164, 8);
+        let mut acc = NbtAccounter::new(168, 8);
         assert!(read_raw_with(&b, &mut acc).is_ok());
-        assert_eq!(acc.usage(), 164);
-        let mut tight = NbtAccounter::new(163, 8);
+        assert_eq!(acc.usage(), 168);
+        let mut tight = NbtAccounter::new(167, 8);
         assert!(read_raw_with(&b, &mut tight).is_err());
     }
 
@@ -590,8 +592,10 @@ mod tests {
             9, 0, 1, b'l', // 键 l: List
             9,    // 元素类型 List
             0, 0, 0, 2, // 2 个内层 list
-            9, 3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, // [1,2]
-            9, 3, 0, 0, 0, 1, 0, 0, 0, 3, // [3]
+            // 内层 list 元素自带自己的元素类型字节(ListTag.write 语义),
+            // 这里都是 Int → 3:
+            3, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0, 2, // [1,2]
+            3, 0, 0, 0, 1, 0, 0, 0, 3, // [3]
             0, // 根 End
         ];
         let c = read_raw(&b).expect("嵌套 list 解析");
