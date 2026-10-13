@@ -340,9 +340,7 @@ mod tests {
             bytes.extend([10u8, 0, 0]);
         }
         // 每层 compound 需要一个 End;倒序补齐 End 与外层无关,读侧按 End 逐层弹栈。
-        for _ in 0..600 {
-            bytes.push(0);
-        }
+        bytes.extend(std::iter::repeat_n(0u8, 600));
         let r = read_raw(&bytes);
         assert!(
             matches!(r, Err(NbtError::TooDeep { max_depth: 512 })),
