@@ -141,6 +141,12 @@ pub struct BlockDef {
     pub hardness: f32,
     /// 形状编号（[`shape::Shape`] 判别值），按注册名派生，见 `shape.rs`。
     pub shape: u8,
+    /// 掉落门属性（GEN_BLOCKS 第 9 列）：26.1
+    /// `Properties.requiresCorrectToolForDrops()`（BlockBehaviour.java:1213
+    /// 置位；ofFullCopy/ofLegacyCopy 经 :1054 逐字段复制继承）。原版消费：
+    /// `Player.java:619` `!requiresCorrectToolForDrops() || 手持工具
+    /// Tool.isCorrectForDrops(state)`。提取与继承闭包见 ci/gen-blocks.py。
+    pub requires_tool: bool,
 }
 
 impl BlockDef {
@@ -163,7 +169,7 @@ impl BlockDef {
 }
 
 /// `blocks_gen.inc.rs` 中 GEN_BLOCKS 的元组类型（生成文件不导出别名，补一个）。
-type GenBlock = (&'static str, bool, bool, bool, u8, [u16; 6], f32, u8);
+type GenBlock = (&'static str, bool, bool, bool, u8, [u16; 6], f32, u8, bool);
 
 // 千块表：1171 方块，id 0..13 与旧 14 方块表逐字段一致（回归锁见 tests），
 // 14+ 按官方名字典序。格式/来源/限制见 blocks_gen.inc.rs 头部注释。
@@ -177,6 +183,7 @@ pub mod tags {
 }
 
 /// 生成表元组 → BlockDef。model_kind（第 8 字段）是网格器未来字段，此处丢弃；
+/// 第 9 字段 requires_tool = 掉落门（#178 刀2a）。
 /// `f32::from_bits` 保证 const 路径与旧表字面量逐位一致（含 INFINITY）。
 const fn gen_def(t: &GenBlock) -> BlockDef {
     BlockDef {
@@ -188,6 +195,7 @@ const fn gen_def(t: &GenBlock) -> BlockDef {
         tiles: t.5,
         hardness: f32::from_bits(t.6.to_bits()),
         shape: shape::shape_of_name(t.0),
+        requires_tool: t.8,
     }
 }
 
@@ -201,6 +209,7 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
         light_emit: 0,
         tiles: [0; 6],
         hardness: 0.0,
+        requires_tool: false,
         shape: 0,
     }; GEN_BLOCKS.len()];
     let mut i = 0;
@@ -605,6 +614,7 @@ mod tests {
             tiles: [0; 6],
             hardness: 0.0,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "stone",
@@ -615,6 +625,7 @@ mod tests {
             tiles: [4; 6],
             hardness: 1.5,
             shape: 0,
+            requires_tool: true,
         },
         BlockDef {
             name: "dirt",
@@ -625,6 +636,7 @@ mod tests {
             tiles: [3; 6],
             hardness: 0.5,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "grass",
@@ -635,6 +647,7 @@ mod tests {
             tiles: [2, 2, 1, 3, 2, 2],
             hardness: 0.6,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "sand",
@@ -645,6 +658,7 @@ mod tests {
             tiles: [5; 6],
             hardness: 0.5,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "water",
@@ -655,6 +669,7 @@ mod tests {
             tiles: [6; 6],
             hardness: 100.0,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "log",
@@ -665,6 +680,7 @@ mod tests {
             tiles: [7, 7, 8, 8, 7, 7],
             hardness: 2.0,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "leaves",
@@ -675,6 +691,7 @@ mod tests {
             tiles: [9; 6],
             hardness: 0.2,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "planks",
@@ -685,6 +702,7 @@ mod tests {
             tiles: [10; 6],
             hardness: 2.0,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "cobble",
@@ -695,6 +713,7 @@ mod tests {
             tiles: [11; 6],
             hardness: 2.0,
             shape: 0,
+            requires_tool: true,
         },
         BlockDef {
             name: "bedrock",
@@ -705,6 +724,7 @@ mod tests {
             tiles: [12; 6],
             hardness: f32::INFINITY,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "snow_grass",
@@ -715,6 +735,7 @@ mod tests {
             tiles: [14, 14, 13, 3, 14, 14],
             hardness: 0.6,
             shape: 0,
+            requires_tool: false,
         },
         BlockDef {
             name: "flower_red",
@@ -725,6 +746,7 @@ mod tests {
             tiles: [15; 6],
             hardness: 0.0,
             shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
+            requires_tool: false,
         },
         BlockDef {
             name: "flower_yellow",
@@ -735,6 +757,7 @@ mod tests {
             tiles: [16; 6],
             hardness: 0.0,
             shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
+            requires_tool: false,
         },
     ];
 
@@ -753,6 +776,11 @@ mod tests {
                 "id {i} 标志"
             );
             assert_eq!(n.light_emit, o.light_emit, "id {i} 发光");
+            assert_eq!(
+                n.requires_tool, o.requires_tool,
+                "id {i} {} 掉落门（#178 刀2a 新列，旧 14 按原版 Blocks.java 实物锁定）",
+                n.name
+            );
             assert_eq!(
                 n.hardness.to_bits(),
                 o.hardness.to_bits(),
