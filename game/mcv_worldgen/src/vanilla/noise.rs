@@ -313,7 +313,8 @@ mod tests {
     #[test]
     fn fork_chain_matches_official_jar_probe_bits() {
         // (通道名, 世界种子, firstOctave, 振幅表, 探针点 (x,y,z), 期望位型)
-        let cases: [(&str, i64, i32, &[f64], (f64, f64, f64), u64); 3] = [
+        type ProbeCase<'a> = (&'a str, i64, i32, &'a [f64], (f64, f64, f64), u64);
+        let cases: [ProbeCase; 3] = [
             (
                 "minecraft:temperature",
                 1,
