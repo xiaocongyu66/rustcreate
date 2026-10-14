@@ -27,10 +27,17 @@
 //! value_factor 归一（NormalNoise.java:63，以 ImprovedNoise 单倍频统计为
 //! 基准）恢复设计语义，σ 校准常数随内核一并退役（引用失效即删，避免死码）。
 //!
-//! 与 26.1 的差异（v1 子集，验收报告说明）：倍频种子以自有 splitmix 域盐
-//! 派生（root + i·2^28，与 legacy noise.h 同式）；第二层独立种子以一层种子
-//! 的 splitmix 终混派生（等价 26.1 的第二次 fork：种子材料不同即统计独立，
-//! 确定性不依赖具体派生式）。
+//! ## 种子链换代史（v1 splitmix 域盐 → 原版 fork 链）
+//! v1：倍频种子以自有 splitmix 域盐派生（root + i·2^28，与 legacy noise.h
+//! 同式），第二层独立种子以一层种子的 splitmix 终混派生——AQUI-1 登记
+//! 偏差（首证报告 §3 实测对官方 jar 0/12 同点同值、|d|≈0.23~0.94）。
+//! 切链刀（noise-vanilla-fork）后 router 全通道（climate/aquifer/terrain
+//! density）改走 [`Self::from_vanilla_name`] 原版 fork 链：python 镜像 ×
+//! 官方 26.1 jar `--probe-noise` 探针 **3 seed × 10 通道 × 12 点
+//! 360/360 位型同、max|d|=0**（tools/fork-chain-mirror-run.txt）。
+//! v1 构造随引用失效删除；唯一残余 = [`crate::vanilla::blended`] 的
+//! clean-room 种子（`noise_seed`，BlendedNoise 走 legacy 初始化路径
+//! PerlinNoise.createLegacyForBlendedNoise，实物化随地形保真后续刀）。
 
 use crate::vanilla::perlin::ImprovedNoise;
 
@@ -43,20 +50,23 @@ pub const fn splitmix64(x: u64) -> u64 {
     x ^ (x >> 31)
 }
 
-/// density 通道种子：世界种子 ^ 域盐 → 终混合（逐通道互不相同）。
+/// clean-room 种子派生：世界种子 ^ 域盐 → 终混合。现仅 [`crate::vanilla::
+/// blended`]（BlendedNoise v1 种子，头注「种子链换代史」残余项）使用；
+/// router NormalNoise 通道已切原版 fork 链（[`Self::from_vanilla_name`]），
+/// 不再经过本函数。
 #[must_use]
 pub const fn noise_seed(world_seed: u64, salt: u64) -> u64 {
     splitmix64(world_seed ^ salt)
 }
 
-/// 倍频种子步进（与 legacy noise.h 同款：每倍频 +i·2^28）。
-const OCTAVE_SEED_STEP: u64 = 0x1000_0000;
-
 /// NormalNoise：六参数 density/气候通道用的双层独立 fBm 噪声。
 ///
-/// `salt` 为本通道域盐；`first_octave` 为 26.1 noise json 的 firstOctave
-/// （最低倍频波长 = 2^(-firstOctave) 格）；`amplitudes` 为 amplitude 表。
-/// `x/y/z` 为已乘通道 xz/y 缩放的 density 坐标（f64）。
+/// 构造走原版 fork 链 [`Self::from_vanilla_name`]：`name` 为原版注册名
+/// （Noises.java createKey 实名，含 `minecraft:` 前缀）；`first_octave` 为
+/// 26.1 noise json 的 firstOctave（最低倍频波长 = 2^(-firstOctave) 格）；
+/// `amplitudes` 为 amplitude 表（**逐字抄 json 含尾部零填充**——表长进
+/// PerlinNoise.lowestFreqValueFactor = 2^(n−1)/(2^n−1) 归一）。`x/y/z` 为
+/// 已乘通道 xz/y 缩放的 density 坐标（f64）。
 ///
 /// 2D 通道（气候）：vanilla `DensityFunctions.shiftedNoise2d` 的 yScale=0
 /// 使求值坐标恒为 y=0（DensityFunctions.java:159-163 + ShiftedNoise.compute）——
@@ -64,7 +74,7 @@ const OCTAVE_SEED_STEP: u64 = 0x1000_0000;
 #[derive(Clone, Debug)]
 pub struct NormalNoise {
     /// 第一层/第二层的逐倍频实例（PerlinNoise 每倍频持有一个 ImprovedNoise；
-    /// 种子 = 层根种子 + i·2^28）。
+    /// 零振幅倍频为不参与求值的占位实例，PerlinNoise.java:90-95 同跳过）。
     first: Vec<ImprovedNoise>,
     second: Vec<ImprovedNoise>,
     first_octave: i32,
@@ -74,38 +84,13 @@ pub struct NormalNoise {
 }
 
 impl NormalNoise {
-    #[must_use]
-    pub fn new(world_seed: u64, salt: u64, first_octave: i32, amplitudes: &'static [f64]) -> Self {
-        let seed = noise_seed(world_seed, salt);
-        let seed2 = splitmix64(seed);
-        let octaves = amplitudes.len();
-        // 逐倍频实例（NormalNoise.java:51-53 两次独立 create 的 clean-room
-        // 种子派生；PerlinNoise 每倍频一个 ImprovedNoise）。
-        let mut first = Vec::with_capacity(octaves);
-        let mut second = Vec::with_capacity(octaves);
-        for i in 0..octaves {
-            first.push(ImprovedNoise::new(
-                seed.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)),
-            ));
-            second.push(ImprovedNoise::new(
-                seed2.wrapping_add((i as u64).wrapping_mul(OCTAVE_SEED_STEP)),
-            ));
-        }
-        let (value_factor, max_value) = factors(amplitudes);
-        Self {
-            first,
-            second,
-            first_octave,
-            amplitudes,
-            value_factor,
-            max_value,
-        }
-    }
-
-    /// **原版种子链**构造（#192 RNG-1 家族，SurfaceSystem 表层噪声用）：
+    /// **原版种子链**构造——本仓 router 全通道（climate/aquifer/terrain
+    /// density）的构造路径（切链刀，原 v1 `NormalNoise::new` splitmix 域盐
+    /// 构造已删，见头注「种子链换代史」）：
     /// `RandomState.getOrCreateNoise(key)` = `Noises.instantiate` =
     /// `NormalNoise.create(root.fromHashOf("minecraft:{name}"), params)`
-    /// （Noises.java:78-83）。逐 fork 对位：
+    /// （Noises.java:78-83；`root` = `root_positional_factory(worldSeed)`
+    /// = RandomState.java:36）。逐 fork 对位：
     /// - NormalNoise.java:51-53：`first`/`second` = 同一随机源先后两次
     ///   `PerlinNoise.create`（每次开首 `random.forkPositional()` 消耗 2
     ///   个 nextLong——PerlinNoise.java:87）；
@@ -189,7 +174,7 @@ impl NormalNoise {
     }
 }
 
-/// value_factor / edgeValue 归一（NormalNoise.new 与 from_vanilla_name 共用）：
+/// value_factor / edgeValue 归一（from_vanilla_name 用）：
 /// expectedDeviation 按「非零倍频的下标跨度」计（NormalNoise.java:59-70 扫
 /// 非零 amplitude 求 min/maxOctave，:97-103 expectedDeviation(span)），不是
 /// amplitudes.len()——temperature [1.5,0,1] 这类含零表的通道若按 len 计会
@@ -233,18 +218,25 @@ fn wrap(x: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::vanilla::xoroshiro::root_positional_factory;
 
-    /// 值域哨兵：fBm 输出在 ±max_value 内，且不同盐的通道互不相关
+    /// 通道构造助手（root 工厂对位 RandomState.java:36；fromHashOf 无状态，
+    /// 每测试各建一份根工厂与原版每 RandomState 一份同值）。
+    fn chan(world_seed: i64, name: &str, fo: i32, amps: &'static [f64]) -> NormalNoise {
+        NormalNoise::from_vanilla_name(&root_positional_factory(world_seed), name, fo, amps)
+    }
+
+    /// 值域哨兵：fBm 输出在 ±max_value 内，且不同名的通道互不相关
     ///（同坐标抽查均值不为 1）。
     #[test]
     fn normal_noise_stays_in_domain() {
-        let a = NormalNoise::new(
+        let a = chan(
             7,
-            0x1111,
+            "minecraft:probe_a",
             -9,
             &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
         );
-        let b = NormalNoise::new(7, 0x2222, -10, &[1.5, 0.0, 1.0]);
+        let b = chan(7, "minecraft:probe_b", -10, &[1.5, 0.0, 1.0, 0.0, 0.0, 0.0]);
         let mut same = 0;
         for k in 0..64_i64 {
             let (x, y, z) = (k as f64 * 1.7, k as f64 * 0.3, k as f64 * 2.1);
@@ -256,21 +248,28 @@ mod tests {
                 same += 1;
             }
         }
-        assert!(same < 8, "不同域盐通道疑似同种子：{same}/64 全同");
+        assert!(same < 8, "不同名通道疑似同种子：{same}/64 全同");
     }
 
-    /// 确定性：同 seed 同坐标两次求值位型一致。
+    /// 确定性：同 seed 同坐标两次求值位型一致（含重建一遍）。
     #[test]
     fn normal_noise_deterministic() {
-        let n = NormalNoise::new(
+        let n = chan(
             42,
-            0xABCD,
+            "minecraft:probe_det",
+            -9,
+            &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
+        );
+        let m = chan(
+            42,
+            "minecraft:probe_det",
             -9,
             &[1.0, 1.0, 2.0, 2.0, 2.0, 1.0, 1.0, 1.0, 1.0],
         );
         let a = n.get_value(1.23, 4.56, 7.89);
         let b = n.get_value(1.23, 4.56, 7.89);
         assert_eq!(a.to_bits(), b.to_bits());
+        assert_eq!(a.to_bits(), m.get_value(1.23, 4.56, 7.89).to_bits());
     }
 
     /// 第二层必须是独立实例（NormalNoise.java:51-53 两次 create 各自
@@ -280,8 +279,8 @@ mod tests {
     /// ρ≈0.95），通道 σ 系统性抬高约 1.4×（曾把 River 群系占比压到带外）。
     #[test]
     fn second_layer_uses_independent_root_seed() {
-        let n = NormalNoise::new(2024, 0x1234, -7, &[1.0, 1.0, 1.0]);
-        // 两层实例由不同层根种子派生（第二次 fork 的 clean-room 等价）：
+        let n = chan(2024, "minecraft:probe_layers", -7, &[1.0, 1.0, 1.0]);
+        // 两层实例由不同 fork 工厂派生（NormalNoise.java:43-44 两次 create）：
         // 逐倍频求值位型必须两两不同（同种子会逐位重合）。
         for i in 0..n.amplitudes.len() {
             let a = n.first[i].noise(1.0, 2.0, 3.0);
@@ -296,12 +295,58 @@ mod tests {
     /// （value_factor ≈ 1.111；若误用 len=3 → 0.125 → 1.333，必被此断言识破）。
     #[test]
     fn expected_deviation_uses_nonzero_octave_span() {
-        let n = NormalNoise::new(7, 0xAB, -8, &[1.0, 1.0, 0.0]);
+        let n = chan(7, "minecraft:probe_span", -8, &[1.0, 1.0, 0.0]);
         let want = 0.166_666_666_666_666_66_f64 / 0.15_f64;
         let got = n.value_factor;
         assert!(
             (got - want).abs() < 1e-12,
             "value_factor 偏离 span 语义期望 {want}（实得 {got}）"
         );
+    }
+
+    /// 原版 fork 链位型金标准——python 镜像（tools/fork-chain-mirror.py，
+    /// 复刻本文件 from_vanilla_name 派生链）× java-harness 官方 26.1 jar
+    /// `--probe-noise` 探针（Main.java:117-131 getOrCreateNoise 实物链）：
+    /// 3 seed × 10 通道 × 12 点 **360/360 位型同、max|d|=0**
+    /// （tools/fork-chain-mirror-run.txt）。此处锁 3 个代表点位，防种子链
+    /// 回归（向量生成口径同 xoroshiro.rs 金标准：python 独立复算）。
+    #[test]
+    fn fork_chain_matches_official_jar_probe_bits() {
+        // (通道名, 世界种子, firstOctave, 振幅表, 探针点 (x,y,z), 期望位型)
+        let cases: [(&str, i64, i32, &[f64], (f64, f64, f64), u64); 3] = [
+            (
+                "minecraft:temperature",
+                1,
+                -10,
+                &[1.5, 0.0, 1.0, 0.0, 0.0, 0.0],
+                (17.0, -32.0, 25.0),
+                0x3f4c_d93c_5322_c100,
+            ),
+            (
+                "minecraft:ridge",
+                123,
+                -7,
+                &[1.0, 2.0, 1.0, 0.0, 0.0, 0.0],
+                (32.0, 3.0, 50.0),
+                0x3fa0_e705_8a46_51ec,
+            ),
+            (
+                "minecraft:aquifer_barrier",
+                2026_0114,
+                -3,
+                &[1.0],
+                (50.0, 45.0, 80.0),
+                0xbfd6_5a5a_e129_4f1b,
+            ),
+        ];
+        for (name, seed, fo, amps, (x, y, z), want) in cases {
+            let v = chan(seed, name, fo, amps).get_value(x, y, z);
+            assert_eq!(
+                v.to_bits(),
+                want,
+                "{name} seed={seed} 位型漂移（got 0x{:016x} decimal={v}）",
+                v.to_bits()
+            );
+        }
     }
 }

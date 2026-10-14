@@ -56,17 +56,19 @@
 //!   :173-175）：barrier (x, 0.5y, z)、floodedness (x, 0.67y, z)、
 //!   spread (x, 0.7142857y, z)、lava (x, y, z)。
 //!
-//! ## 结构复刻裁决（非字节级同原版，登记 docs/KNOWN-DIVERGENCE.md AQUI-1）
-//! 逐行复刻原版噪声数学在**端到端字节对拍**上不成立：传入本判据的
-//! density 本身即 clean-room 管线（vanilla/noise.rs 头注：域盐 splitmix
-//! 自有派生，非原版 Xoroshiro fork 序），`density + barrier > 0` 的
-//! 字节级复刻需要 density、preliminary surface、Xoroshiro 位置随机
-//! （RandomState.java:38 fromHashOf("aquifer") 内部序）、Java
-//! StringHashing 种子链全部同真，任一不合即输出不等——单复刻含水层
-//! 噪声内核得不到任何端到端一致性，只锁死演进。故本波 = **结构复刻**：
-//! 同胞格几何/阈值/相似度/压力数学、同噪声参数（firstOctave/振幅表/
-//! 路由缩放逐一照抄），域盐自有（TREE_DOMAIN 先例），胞心随机用
-//! splitmix+Lemire 无偏整除（替代 Xoroshiro 三连 nextInt，同分布）。
+//! ## 结构复刻裁决（登记 docs/KNOWN-DIVERGENCE.md AQUI-1）
+//! 逐行复刻原版噪声数学在**端到端字节对拍**上曾不成立：传入本判据的
+//! density 与四通道种子彼时均为 clean-room 派生。切链刀
+//! （noise-vanilla-fork）后四通道噪声种子已切**原版 fork 链**
+//! （RandomState.java:36 根工厂 → Noises.instantiate =
+//! `NormalNoise.create(root.fromHashOf("minecraft:aquifer_*"), params)`，
+//! Noises.java:23-26/78-83；同 seed 与官方 jar 逐位同位型，
+//! tools/fork-chain-mirror-run.txt 360/360——AQUI-1 #1 随之销账），
+//! density 组装的逐位同真依赖 base_3d（BlendedNoise，仍 clean-room 种子）
+//! 与样条面全展开，端到端对拍随地形保真闭环刀推进。故本波口径 =
+//! **结构复刻**：同胞格几何/阈值/相似度/压力数学、同噪声参数
+//!（firstOctave/振幅表/路由缩放逐一照抄），胞心随机用 splitmix+Lemire
+//! 无偏整除（替代 Xoroshiro 三连 nextInt，同分布，AQUI-1 #2）。
 //! 统计形态由 tests/aquifer.rs 对拍门锁定（干洞穴占比/囊袋并存/三态）。
 //!
 //! 其余裁剪（同登记）：
@@ -181,12 +183,8 @@ pub struct ColumnProbe {
 
 static AMPS_ONE: [f64; 1] = [1.0];
 
-/// 域盐（TREE_DOMAIN 先例：同世界种子下各通道派生互不相同）。
-/// 非原版 Xoroshiro 种子链（RandomState.java:38），登记 AQUI-1。
-const SALT_BARRIER: u64 = 0x0000_A01F_0001;
-const SALT_FLOODED: u64 = 0x0000_A01F_0002;
-const SALT_SPREAD: u64 = 0x0000_A01F_0003;
-const SALT_LAVA: u64 = 0x0000_A01F_0004;
+/// 胞心随机域盐（splitmix 链，AQUI-1 #2——非原版 Xoroshiro
+/// aquiferRandom 位置随机，同分布替代，保留登记）。
 const SALT_CENTER: u64 = 0x0000_A01F_00FF;
 
 /// 四条含水层密度通道（NoiseRouterData.java:319-322 + noise json 参数）。
@@ -201,12 +199,19 @@ pub struct Aquifer {
 impl Aquifer {
     #[must_use]
     pub fn new(world_seed: u64) -> Self {
+        // 四通道种子链 = 原版 fork 链（AQUI-1 #1 销账刀）：根位置随机工厂
+        //（RandomState.java:36）→ Noises.instantiate =
+        // NormalNoise.create(root.fromHashOf("minecraft:{name}"), params)
+        //（Noises.java:23-26 createKey 实名 + :78-83）——与官方 jar 同位型
+        //（tools/fork-chain-mirror-run.txt）。
+        let root = crate::vanilla::xoroshiro::root_positional_factory(world_seed as i64);
+        let ch = |name: &str, fo: i32| NormalNoise::from_vanilla_name(&root, name, fo, &AMPS_ONE);
         Self {
             // firstOctave/振幅表逐字抄 data/minecraft/worldgen/noise/*.json
-            barrier: NormalNoise::new(world_seed, SALT_BARRIER, -3, &AMPS_ONE),
-            floodedness: NormalNoise::new(world_seed, SALT_FLOODED, -7, &AMPS_ONE),
-            spread: NormalNoise::new(world_seed, SALT_SPREAD, -5, &AMPS_ONE),
-            lavan: NormalNoise::new(world_seed, SALT_LAVA, -1, &AMPS_ONE),
+            barrier: ch("minecraft:aquifer_barrier", -3),
+            floodedness: ch("minecraft:aquifer_fluid_level_floodedness", -7),
+            spread: ch("minecraft:aquifer_fluid_level_spread", -5),
+            lavan: ch("minecraft:aquifer_lava", -1),
             center_seed: splitmix64(world_seed ^ SALT_CENTER),
         }
     }
@@ -240,7 +245,7 @@ impl Aquifer {
 
     /// 胞心（Aquifer.java:199-207：原点 + nextInt(10/9/10)）。胞格
     /// 16×12×16（X/Y/Z_SPACING，:67-69）；随机三元 = splitmix 链 +
-    /// Lemire 高位乘无偏归约（替代 Xoroshiro 三连 nextInt，登记 AQUI-1）。
+    /// Lemire 高位乘无偏归约（替代 Xoroshiro 三连 nextInt，AQUI-1 #2）。
     #[must_use]
     pub fn cell_center(&self, gx: i32, gy: i32, gz: i32) -> (i32, i32, i32) {
         let mix = {

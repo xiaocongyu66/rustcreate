@@ -483,8 +483,9 @@ pub struct ColumnState {
 
 /// density 编排器 — NoiseRouter 式编排（offset/factor/jaggedness 样条 +
 /// 各 3D 通道 → 最终 density 判实心）。洞穴/山脊通道全部为 NormalNoise
-/// fBm（26.1 noise 参数表；域盐沿用 channel_seed 同款派生：NormalNoise::new
-/// 内部 noise_seed(world, salt) = splitmix64(world ^ salt)）。
+/// fBm，种子链 = 原版 fork 链（`root_positional_factory` →
+/// `Noises.instantiate`，通道名 = Noises.java 实名；同 seed 与官方 jar
+/// 逐位同位型，tools/fork-chain-mirror-run.txt）。
 pub struct Orchestrator {
     /// vertical_gradient 条件位置随机工厂（#192 RNG-1 销账）：
     /// `root_positional_factory(worldSeed).named_factory(random_name)` =
@@ -537,12 +538,14 @@ pub struct Orchestrator {
 impl Orchestrator {
     #[must_use]
     pub fn new(world_seed: u64) -> Self {
-        // 域盐沿用旧通道派生（raw 时代 seed = channel_seed(world, DOMAIN) =
-        // splitmix64(world ^ DOMAIN)，与 NormalNoise::new 的 noise_seed 同式）。
-        let n = |salt: u64, first_octave: i32, amps: &'static [f64]| {
-            NormalNoise::new(world_seed, salt, first_octave, amps)
-        };
+        // 通道种子链 = 原版 fork 链：root 位置随机工厂（RandomState.java:36）
+        // → NormalNoise::from_vanilla_name（= Noises.instantiate，
+        // Noises.java:78-83；通道名 = Noises.java createKey 实名）。
+        // firstOctave/振幅表逐字抄 data/minecraft/worldgen/noise/*.json。
         let root = crate::vanilla::xoroshiro::root_positional_factory(world_seed as i64);
+        let n = |name: &str, first_octave: i32, amps: &'static [f64]| {
+            NormalNoise::from_vanilla_name(&root, name, first_octave, amps)
+        };
         Self {
             bedrock_random: root.named_factory(BEDROCK_FLOOR_RANDOM),
             deepslate_random: root.named_factory(DEEPSLATE_RANDOM),
@@ -557,28 +560,29 @@ impl Orchestrator {
             offset_spline: overworld_offset_spline(),
             factor_spline: overworld_factor_spline(),
             jag_spline: overworld_jaggedness_spline(),
+            // BlendedNoise 仍走 clean-room 种子（legacy 初始化路径，头注残余项）。
             base_3d: BlendedNoise::new(world_seed, 0x00B1_3D00),
-            cave_entrance: n(0x0000_CAFE_0001 ^ 0x26, -7, &AMPS_CAVE_ENTRANCE),
-            sp3d_rarity: n(0x0000_CAFE_0001 ^ 0x11, -11, &AMPS_1),
-            sp3d_1: n(0x0000_CAFE_0001 ^ 0x21, -7, &AMPS_1),
-            sp3d_2: n(0x0000_CAFE_0001 ^ 0x22, -7, &AMPS_1),
-            sp3d_thickness: n(0x0000_CAFE_0001 ^ 0x23, -8, &AMPS_1),
-            sp_roughness_mod: n(0x0B00_5E51, -8, &AMPS_1),
-            sp_roughness: n(0x0B00_5E52, -5, &AMPS_1),
-            sp2d_mod: n(0x0000_CAFE_0002 ^ 0x31, -11, &AMPS_1),
-            sp2d: n(0x0000_CAFE_0002 ^ 0x32, -7, &AMPS_1),
-            sp2d_elevation: n(0x0000_CAFE_0002 ^ 0x33, -8, &AMPS_1),
-            sp2d_thickness: n(0x0000_CAFE_0002 ^ 0x34, -11, &AMPS_1),
-            cave_layer: n(0x0000_CAFE_0003 ^ 0x41, -8, &AMPS_1),
-            cave_cheese: n(0x0000_CAFE_0003 ^ 0x42, -8, &AMPS_CAVE_CHEESE),
-            jagged: n(0x7A66ED, -16, &AMPS_JAGGED),
-            pillar: n(0x0000_CA11_5E00 ^ 0x51, -7, &AMPS_PILLAR),
-            pillar_rareness: n(0x0000_CA11_5E00 ^ 0x52, -8, &AMPS_1),
-            pillar_thickness: n(0x0000_CA11_5E00 ^ 0x53, -8, &AMPS_1),
-            noodle_noise: n(0x0000_0DE0_1E00 ^ 0x61, -8, &AMPS_1),
-            noodle_thickness: n(0x0000_0DE0_1E00 ^ 0x62, -8, &AMPS_1),
-            noodle_ridge_a: n(0x0000_0DE0_1E00 ^ 0x63, -7, &AMPS_1),
-            noodle_ridge_b: n(0x0000_0DE0_1E00 ^ 0x64, -7, &AMPS_1),
+            cave_entrance: n("minecraft:cave_entrance", -7, &AMPS_CAVE_ENTRANCE),
+            sp3d_rarity: n("minecraft:spaghetti_3d_rarity", -11, &AMPS_1),
+            sp3d_1: n("minecraft:spaghetti_3d_1", -7, &AMPS_1),
+            sp3d_2: n("minecraft:spaghetti_3d_2", -7, &AMPS_1),
+            sp3d_thickness: n("minecraft:spaghetti_3d_thickness", -8, &AMPS_1),
+            sp_roughness_mod: n("minecraft:spaghetti_roughness_modulator", -8, &AMPS_1),
+            sp_roughness: n("minecraft:spaghetti_roughness", -5, &AMPS_1),
+            sp2d_mod: n("minecraft:spaghetti_2d_modulator", -11, &AMPS_1),
+            sp2d: n("minecraft:spaghetti_2d", -7, &AMPS_1),
+            sp2d_elevation: n("minecraft:spaghetti_2d_elevation", -8, &AMPS_1),
+            sp2d_thickness: n("minecraft:spaghetti_2d_thickness", -11, &AMPS_1),
+            cave_layer: n("minecraft:cave_layer", -8, &AMPS_1),
+            cave_cheese: n("minecraft:cave_cheese", -8, &AMPS_CAVE_CHEESE),
+            jagged: n("minecraft:jagged", -16, &AMPS_JAGGED),
+            pillar: n("minecraft:pillar", -7, &AMPS_PILLAR),
+            pillar_rareness: n("minecraft:pillar_rareness", -8, &AMPS_1),
+            pillar_thickness: n("minecraft:pillar_thickness", -8, &AMPS_1),
+            noodle_noise: n("minecraft:noodle", -8, &AMPS_1),
+            noodle_thickness: n("minecraft:noodle_thickness", -8, &AMPS_1),
+            noodle_ridge_a: n("minecraft:noodle_ridge_a", -7, &AMPS_1),
+            noodle_ridge_b: n("minecraft:noodle_ridge_b", -7, &AMPS_1),
         }
     }
 
