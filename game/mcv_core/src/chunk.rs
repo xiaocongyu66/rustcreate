@@ -188,6 +188,27 @@ impl ChunkHandle {
         }
     }
 
+    /// 受控回退（mesh 看门狗专用，`advance_to` 的镜像方向）：worker 产物
+    /// 丢失回滚时把 stage 从 Uploaded 退回 LightLocalReady——撤回「网格已
+    /// 上传」的记账，与 meshed 删账/MESH 置脏同帧同源（三笔回滚账之一，
+    /// docs/worker-accounting.md）。只允许向后退（更低档 no-op）；契约上
+    /// 只由 game.rs 网格回滚路径调用——stage 唯一消费面是
+    /// `loading_progress_parts` 显示统计（不读 stage 的加载门谓词无感），
+    /// 回退窗口 ≤ 看门狗重派期（K+2 帧）。
+    pub fn regress_to(&self, target: Stage) {
+        let t = target as u8;
+        let mut cur = self.stage.load(Ordering::Acquire);
+        while cur > t {
+            match self
+                .stage
+                .compare_exchange_weak(cur, t, Ordering::AcqRel, Ordering::Acquire)
+            {
+                Ok(_) => break,
+                Err(actual) => cur = actual,
+            }
+        }
+    }
+
     /// 当前 worldgen 完成度阶梯位（[`ChunkStatus`]；与 [`Self::stage`]
     /// 正交——本方法只读 status，不触 stage）。
     pub fn status(&self) -> ChunkStatus {

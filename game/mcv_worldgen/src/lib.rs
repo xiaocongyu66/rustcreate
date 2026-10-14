@@ -18,6 +18,7 @@ mod rust_noise;
 mod rust_terrain;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender};
 
 use mcv_core::{ChunkHandle, ChunkPos, ChunkVoxels, Stage, TaskPool};
@@ -191,6 +192,10 @@ pub enum GenResult {
     Terrain(Result<TerrainOutput, (ChunkPos, i32)>),
 }
 
+/// worker 生成 panic 时失败回执携带的 rc（仅日志取证粒度；drain 端
+/// `Err` 分支释放名额的判据是 `Err` 本身，不读 rc 值）。
+pub const ERR_PANIC: i32 = -7;
+
 /// Background terrain generation over a shared worker pool. Results arrive
 /// on [`Self::results`]; the caller commits them on the main thread. 后端在
 /// 构造时按 [`TerrainBackend::from_env`] 固定（后台线程反复读环境变量无益）。
@@ -200,6 +205,17 @@ pub struct TerrainScheduler {
     pool: TaskPool,
     res_tx: Sender<GenResult>,
     res_rx: Receiver<GenResult>,
+    /// 自记在途计数（B 修静默门）：request +1 → **回执被主线程消化时 −1**
+    /// （[`Self::recv_result`]）。语义 = 「池内排队/执行 + 已产出未消化」
+    /// 全零，正是「静默后回执不可能再产出」的原意——只看池内状态会在
+    /// 「send 完成后、回执躺在通道等 drain」的窗口里误报静默（flap 两连
+    /// 红根因，run 38478972059：误静默 → 卸载段逐出 → 同帧 drain 落到已
+    /// 删键 → 白生成振荡）。主线程独占读写（request/recv_result/seam 全
+    /// 在主线程），Atomic 只为 Send/Sync 无谓。
+    gen_inflight: Arc<AtomicU64>,
+    /// 丢失注入钩子（`#[doc(hidden)]` 测试面；生产恒 None）。Arc 与请求
+    /// 闭包共享——回执通道两端同源（同 E3/E5 Gate 先例）。
+    loss_hook: Arc<std::sync::Mutex<Option<mcv_core::pool::LossHook>>>,
 }
 
 impl TerrainScheduler {
@@ -212,6 +228,8 @@ impl TerrainScheduler {
             pool,
             res_tx: tx,
             res_rx: rx,
+            gen_inflight: Arc::new(AtomicU64::new(0)),
+            loss_hook: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -220,28 +238,106 @@ impl TerrainScheduler {
         let tx = self.res_tx.clone();
         let seed = self.seed;
         let backend = self.backend;
+        let loss_hook = Arc::clone(&self.loss_hook);
+        let inflight = Arc::clone(&self.gen_inflight);
+        // 自记在途 +1（入池前——任何路径的回执消化都会配对 −1，见
+        // recv_result；Swallow 无回执，闭包内自行归零）。
+        self.gen_inflight.fetch_add(1, Ordering::AcqRel);
         self.pool.spawn_lo(Box::new(move || {
-            let _ = tx.send(GenResult::Terrain(
-                generate_terrain_with(backend, seed, pos).map_err(|rc| (pos, rc)),
-            ));
+            // 丢失注入钩子（测试面；生产恒 None）。
+            let mode = loss_hook
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(mcv_core::pool::LossMode::Deliver, |f| f(pos));
+            if mode == mcv_core::pool::LossMode::Swallow {
+                // 静默蒸发：无回执（此形态 = req_frames 配额死账的历史形态，
+                // 无自愈回路；生产不可达——send 只在主线程弃收时失败，即关
+                // 停。回归锁只注入可自愈的 Panic 路径）。计数自行归零
+                // （等价「该请求从未投出」——不欠回执）。
+                inflight.fetch_sub(1, Ordering::AcqRel);
+                return;
+            }
+            // DC-3 范本（game.rs:1317-1342 IO 失败回执）：catch_unwind 包
+            // 「计算」段，panic 时合成 `Err` 失败回执——drain 端既有 `Err`
+            // 分支释放 req_frames 名额（零新增记账）。**删除此包 = panic
+            // 静默吞产物 → req_frames 永真 → 配额槽泄漏满额后 pops≡0 全图
+            // 生成停摆（DC-2 死账复发）**——池层 run_isolated 只保 worker
+            // 线程存活，不保产物（pool.rs 池语义注）。
+            let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                generate_terrain_with(backend, seed, pos).map_err(|rc| (pos, rc))
+            }));
+            let result = match generated {
+                Ok(r) => GenResult::Terrain(r),
+                Err(payload) => {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("<non-string panic payload>");
+                    log::error!(
+                        "[terrain] generate panicked at {pos:?}; worker survives, failure receipt sent: {msg}"
+                    );
+                    GenResult::Terrain(Err((pos, ERR_PANIC)))
+                }
+            };
+            let _ = tx.send(result);
+            // 注意：在途计数**不在 send 后减**——「已产出未消化」的回执
+            // 窗口必须算在途（静默门原意），归零点在主线程消化回执处
+            // （[`Self::recv_result`]）。
         }));
+    }
+
+    /// 丢失注入钩子安装（`#[doc(hidden)]` 测试面）：按区块决定 worker 侧
+    /// 结局（Deliver/Swallow/Panic，语义见 [`mcv_core::pool::LossMode`]）。
+    /// 失败回执回归锁的注入机制（tests/terrain_receipt.rs）。
+    #[doc(hidden)]
+    pub fn install_loss_hook(
+        &self,
+        hook: Box<dyn Fn(ChunkPos) -> mcv_core::pool::LossMode + Send + Sync>,
+    ) {
+        *self.loss_hook.lock().unwrap() = Some(hook);
+    }
+
+    /// 消化一笔生成回执（主线程 drain 环唯一入口）：try_recv + 在途计数
+    /// 配对 −1——计数归零点 = 回执消化点（静默门语义见
+    /// [`Self::pool_quiesced`]）。None = 暂无回执。
+    pub fn recv_result(&self) -> Option<GenResult> {
+        let r = self.res_rx.try_recv().ok()?;
+        self.gen_inflight.fetch_sub(1, Ordering::AcqRel);
+        Some(r)
+    }
+
+    /// 测试钩子：合成一笔失败回执入通道（不跑生成——复现「已产出未消化」
+    /// 漏态窗；消化路径与真回执同走 [`Self::recv_result`]，计数配对归零）。
+    #[doc(hidden)]
+    pub fn debug_inject_receipt(&self, pos: ChunkPos) {
+        let _ = self.res_tx.send(GenResult::Terrain(Err((pos, ERR_PANIC))));
+    }
+
+    /// 测试钩子：在途计数 +1（模拟「已投递未回执」——静默门漏态锁的
+    /// 登记缝，与 [`GameRuntime` 上层 req_debug_mark] 配套）。
+    #[doc(hidden)]
+    pub fn debug_mark_inflight(&self) {
+        self.gen_inflight.fetch_add(1, Ordering::AcqRel);
     }
 
     pub fn results(&self) -> &Receiver<GenResult> {
         &self.res_rx
     }
 
-    /// 生成池是否已排空静默（running==0 ∧ queued==0）：此刻起任何未回执
-    /// 的在途请求都不可能再产出（任务 panic 被池隔离吞掉，池.rs 不变量
-    /// #9——panic 任务不回填结果）。Empty 驻留的孤儿回收以此为必要条件，
+    /// 生成侧是否已排空静默：**自记在途计数 == 0**（池内排队/执行 +
+    /// 已产出未消化的回执全零）。Empty 驻留的孤儿回收以此为必要条件，
     /// 近似原版「ticket 释放等 future」（DistanceManager.java:87-104）：
-    /// 只要池未静默，请求可能仍在排队/执行，回收即误逐活体（#178 刀 3c
-    /// 取证：矿石 pass 后队列+生成时延合法超 300 stream-frame，flap 测
-    /// fr99-101 逐帧复现——python 建模红窗 S0∈[202,212] 泵长）。
+    /// 只要未静默，请求可能仍在排队/执行、或产物已产出待消化，回收即
+    /// 误逐活体（#178 刀 3c 取证：矿石 pass 后队列+生成时延合法超 300
+    /// stream-frame，flap 测 fr99-101 逐帧复现——python 建模红窗
+    /// S0∈[202,212] 泵长）。旧判据 `stats().running==0 && queued==0`
+    /// 只看池内状态，在「send 完成后、回执等 drain」窗口误报静默
+    /// （flap 两连红根因，run 38478972059）——B 修改为计数判据。
     #[must_use]
     pub fn pool_quiesced(&self) -> bool {
-        let s = self.pool.stats();
-        s.running == 0 && s.queued == 0
+        self.gen_inflight.load(Ordering::Acquire) == 0
     }
 }
 

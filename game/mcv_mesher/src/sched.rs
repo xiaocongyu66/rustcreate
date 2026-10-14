@@ -2,6 +2,12 @@
 //! greedy mesh，主线程只做快照与提交——快照-计算-回传三段式的「计算」与
 //! 「回传」两端。
 //!
+//! **统一原则（worker 路死账教训，docs/worker-accounting.md）**：记账推进
+//! 必须与产物确认配对；失败路径必须有回执（DC-3 范本 = game.rs
+//! `spawn_io_worker` 的失败回执合成）。本模块的配对面 = `submit` 返回
+//! 派发 seq（上层登记在途账）↔ 产物/丢失标记经 mpsc 回传（上层销账或
+//! 即时回滚）+ 主线程侧 K 帧看门狗超时兜底。
+//!
 //! - **计算端** [`MeshScheduler`]：主线程把 3×3 快照字节（[`MeshJob`]）
 //!   投入专属 `TaskPool`（编辑源块 hi 通道 / 预算流 lo 通道），worker 只
 //!   见字节、无共享可变状态，调 [`Mesher::build`]（opaque+water，mesher
@@ -21,7 +27,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mcv_core::ChunkPos;
-use mcv_core::pool::TaskPool;
+use mcv_core::pool::{LossHook, LossMode, TaskPool};
 
 use crate::{MESH_OPAQUE, MESH_WATER, Mesher, Slot};
 
@@ -65,6 +71,10 @@ struct Gate {
     /// per-pos 提交地板：seq ≤ 地板的产物拒收。kill（卸载）抬到当前
     /// seq（杀全部在途），提交抬到所提交 seq（杀更旧的乱序产物）。
     floor: Mutex<HashMap<ChunkPos, u64>>,
+    /// 丢失注入钩子（`#[doc(hidden)]` 测试面；生产恒 None——查询短路
+    /// Deliver）。放 Gate = 回传端（测试持有）可装钩、worker 闭包（持
+    /// 同一 Arc）可查询，两端同源。
+    loss_hook: Mutex<Option<LossHook>>,
 }
 
 /// 计算端：专属 worker 池 + 产物通道发送端。
@@ -87,6 +97,7 @@ impl MeshScheduler {
             seq: AtomicU64::new(0),
             pending: AtomicU64::new(0),
             floor: Mutex::new(HashMap::new()),
+            loss_hook: Mutex::new(None),
         });
         (
             Self {
@@ -100,42 +111,82 @@ impl MeshScheduler {
     }
 
     /// 投递一笔网格任务。`hi` = 编辑源块优先通道（mesh_priority），else
-    /// 预算流。seq 在投递时点分配——「拿到快照的那一刻」的派发序。
-    pub fn submit(&self, job: MeshJob, hi: bool) {
+    /// 预算流。seq 在投递时点分配——「拿到快照的那一刻」的派发序；**返回
+    /// 值 = 派发序号**，上层 mesh 看门狗以 (pos, seq) 登记在途账（记账推进
+    /// 必须与产物确认配对，docs/worker-accounting.md）。
+    pub fn submit(&self, job: MeshJob, hi: bool) -> u64 {
         let seq = self.gate.seq.fetch_add(1, Ordering::Relaxed) + 1;
         let tx = self.tx.clone();
         // 闭包持整份 Arc<Gate>：seq 源/pending 计数/地板表同源（Send+Sync）。
         let gate = Arc::clone(&self.gate);
         let run = move || {
-            let vol = mcv_core::CHUNK_VOL;
-            let slots = neighborhood_slots(&job.voxels, &job.lights);
-            debug_assert_eq!(job.voxels.len(), 9 * vol);
-            debug_assert_eq!(job.lights.len(), 9 * vol);
-            // Mesher 零尺寸 Copy，worker 本地实例；同输入同产物（等价锁
-            // tests/mesh_parallel.rs::worker_output_bit_identical 锁定）。
-            let mesher = Mesher::new();
-            // #191：opaque pass 带群系 tint 场（原点 = 区块世界方块坐标），
-            // water pass 无 tint（流体常数色在着色器侧）。
-            let tint = job.tint.clone().map(|t| crate::TintInput {
-                block_x: job.pos.x * 16,
-                block_z: job.pos.z * 16,
-                tint: t,
-            });
-            let opaque = mesher.build_with_tint(&slots, MESH_OPAQUE, tint).ok();
-            let water = mesher.build(&slots, MESH_WATER).ok();
+            // 丢失注入钩子（测试面；生产恒 None）。
+            let mode = gate
+                .loss_hook
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(LossMode::Deliver, |f| f(job.pos));
+            if mode == LossMode::Swallow {
+                // 静默蒸发：不产生任何回执（看门狗 K 帧兜底路径的回归注入
+                // ——DC-4 死账的历史形态，tests/mesh_parallel.rs 看门狗锁）。
+                return;
+            }
+            // DC-3 范本（game.rs:1317-1342 IO 失败回执）：catch_unwind 包
+            // 「计算」段，panic 时合成 opaque=None 丢失标记回传。
+            // **删除此包 = panic 静默吞产物 → meshed 记账永真、重派门永久
+            // 关闭（DC-1 死账复发 = 真机隐形墙）**——池层 run_isolated 只
+            // 保 worker 线程存活，不保产物（pool.rs 池语义注）。
+            let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let vol = mcv_core::CHUNK_VOL;
+                let slots = neighborhood_slots(&job.voxels, &job.lights);
+                debug_assert_eq!(job.voxels.len(), 9 * vol);
+                debug_assert_eq!(job.lights.len(), 9 * vol);
+                // Mesher 零尺寸 Copy，worker 本地实例；同输入同产物（等价锁
+                // tests/mesh_parallel.rs::worker_output_bit_identical 锁定）。
+                let mesher = Mesher::new();
+                // #191：opaque pass 带群系 tint 场（原点 = 区块世界方块坐标），
+                // water pass 无 tint（流体常数色在着色器侧）。
+                let tint = job.tint.clone().map(|t| crate::TintInput {
+                    block_x: job.pos.x * 16,
+                    block_z: job.pos.z * 16,
+                    tint: t,
+                });
+                let opaque = mesher.build_with_tint(&slots, MESH_OPAQUE, tint).ok();
+                let water = mesher.build(&slots, MESH_WATER).ok();
+                (
+                    opaque.map(|m| MeshBytes {
+                        vertex: m.vertices,
+                        index: m.indices,
+                    }),
+                    water.map(|m| MeshBytes {
+                        vertex: m.vertices,
+                        index: m.indices,
+                    }),
+                )
+            }));
+            let (opaque, water) = match built {
+                Ok(pair) => pair,
+                Err(payload) => {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("<non-string panic payload>");
+                    log::error!(
+                        "[mesh] worker build panicked at {:?}; worker survives, loss marker sent: {msg}",
+                        job.pos
+                    );
+                    (None, None) // 丢失标记：回传端按「产物缺失」记账回滚
+                }
+            };
             let done = MeshDone {
                 pos: job.pos,
                 origin: job.origin,
                 hi,
                 seq,
-                opaque: opaque.map(|m| MeshBytes {
-                    vertex: m.vertices,
-                    index: m.indices,
-                }),
-                water: water.map(|m| MeshBytes {
-                    vertex: m.vertices,
-                    index: m.indices,
-                }),
+                opaque,
+                water,
             };
             if tx.send(done).is_ok() {
                 gate.pending.fetch_add(1, Ordering::Relaxed);
@@ -146,6 +197,7 @@ impl MeshScheduler {
         } else {
             self.pool.spawn_lo(Box::new(run));
         }
+        seq
     }
 
     /// 背压门：在途（排队+执行）≥ 高水位（workers+2）时为真——派发方
@@ -223,6 +275,15 @@ impl MeshResults {
             out.push(done);
         }
         out
+    }
+
+    /// 丢失注入钩子（`#[doc(hidden)]` 测试面）：按区块决定 worker 侧结局
+    /// （Deliver/Swallow/Panic，语义见 [`mcv_core::pool::LossMode`]）。
+    /// 生产装配不装钩子。看门狗/丢失回执回归锁的注入机制
+    /// （tests/mesh_parallel.rs）。
+    #[doc(hidden)]
+    pub fn install_loss_hook(&self, hook: LossHook) {
+        *self.gate.loss_hook.lock().unwrap() = Some(hook);
     }
 }
 

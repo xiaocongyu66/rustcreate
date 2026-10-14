@@ -3,6 +3,11 @@
 //! 「计算」与「回传」两端，结构对齐 E3 先例 `mcv_mesher::MeshScheduler`
 //! （seq 守卫 / 提交地板 / 积压护栏 / 近优先派发在上层 game.rs）。
 //!
+//! **统一原则（worker 路死账教训，docs/worker-accounting.md）**：记账推进
+//! 必须与产物确认配对；失败路径必须有回执（DC-3 范本 = game.rs
+//! `spawn_io_worker` 的失败回执合成）。本模块的配对面 = 派发即记 inflight
+//! ↔ 产物/失败回执回传时按 seq 配对解除——漏解除 = 该块永不重派（黑块）。
+//!
 //! - **计算端** [`LightScheduler`]：主线程把 voxels+heightmap 快照字节
 //!   （[`LightJob`]，~197 KiB/笔）投入专属 `TaskPool`，worker 只见字节、
 //!   无共享可变状态，调 [`crate::init`]（sky+block 双通道 BFS，引擎本体
@@ -15,7 +20,9 @@
 //!   relight_block_edit :411），覆盖即权威。
 //! - **回传端** [`LightResults`]：主线程侧取产物；按「提交地板」拒收
 //!   僵尸产物（区块已卸载——防把光写进已出环的旧键，卸载→重进环后旧
-//!   快照不得覆盖新读盘内容）。**边同步（`sync_light_edges`）不经过本
+//!   快照不得覆盖新读盘内容）与失败回执（`failed=true`，DC-3——worker
+//!   `init` panic 的失败标记只解在途账不写回，stage 仍 TerrainReady →
+//!   下帧派发门自然放行重派）。**边同步（`sync_light_edges`）不经过本
 //!   模块**——跨块边同步保持主线程串行（蓝图铁纪律：LIFO push→pull 序、
 //!   REMOVE-before-ADD 两相、in-flight 去重、512 步预算、两端
 //!   LightLocalReady 门五项时序假设全部建立在「边任务按确定序在同一线
@@ -40,7 +47,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use mcv_core::ChunkPos;
-use mcv_core::pool::TaskPool;
+use mcv_core::pool::{LossHook, LossMode, TaskPool};
 
 /// 主线程 → worker 的光照 init 任务：voxels+heightmap 快照裸字节
 /// （布局 `mcv_core::vidx` / `(z<<4)|x`，与串行路径同源装配）。
@@ -62,6 +69,11 @@ pub struct LightDone {
     /// 该返回值（跨块对齐由成对边标记驱动，game.rs border pairing），随
     /// 产物带回仅供测试/取证对拍，不参与写回决策。
     pub border_mask: u8,
+    /// **失败回执位（DC-3）**：worker 侧 `init` panic 时为 true（light
+    /// 为空缓冲、无有效产物）。回执端只解除在途记账、**不写回不推进
+    /// stage**——stage 仍 TerrainReady → 下帧派发门自然放行重派（重派门
+    /// 依赖 inflight 解除，本位就是「死账→黑块」的解药）。
+    pub failed: bool,
 }
 
 /// 提交地板（调度器与回传端共享）：seq 单调源 + per-pos 拒收线 + 在途
@@ -77,6 +89,11 @@ struct Gate {
     /// 在途记账：pos → 派发 seq。产物回传（无论获准与否）且 seq 相符才
     /// 解除——防陈旧产物误清新派发的在途位。
     inflight: Mutex<HashMap<ChunkPos, u64>>,
+    /// 失败回执累计（DC-3；观测面——自愈后仍累计，`lost_count` 读取）。
+    lost: AtomicU64,
+    /// 丢失注入钩子（`#[doc(hidden)]` 测试面；生产恒 None）。放 Gate =
+    /// 回传端（测试持有）可装钩、worker 闭包可查询（同 E3 先例）。
+    loss_hook: Mutex<Option<LossHook>>,
 }
 
 /// 计算端：专属 worker 池 + 产物通道发送端。
@@ -103,6 +120,8 @@ impl LightScheduler {
             pending: AtomicU64::new(0),
             floor: Mutex::new(HashMap::new()),
             inflight: Mutex::new(HashMap::new()),
+            lost: AtomicU64::new(0),
+            loss_hook: Mutex::new(None),
         });
         (
             Self {
@@ -133,18 +152,54 @@ impl LightScheduler {
         // 光照缓冲 worker 本地起零（见模块文档）。
         let gate = Arc::clone(&self.gate);
         let run = move || {
-            let mut light = vec![0u8; mcv_core::CHUNK_VOL];
-            let mut view = crate::LightChunk {
-                voxels: &job.voxels,
-                light: &mut light,
-                heightmap: &job.heightmap,
+            // 丢失注入钩子（测试面；生产恒 None）。
+            let mode = gate
+                .loss_hook
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map_or(LossMode::Deliver, |f| f(pos));
+            if mode == LossMode::Swallow {
+                // 静默蒸发：无回执（此形态对光照无自愈回路——inflight 永真
+                // = 重派门永久关闭；登记为不可自愈面，生产不可达：send 只
+                // 在主线程弃收时失败，即关停）。
+                return;
+            }
+            // DC-3 范本（game.rs:1317-1342 IO 失败回执）：catch_unwind 包
+            // 「计算」段，panic 时合成 failed 失败回执。**删除此包 = panic
+            // 静默吞产物 → inflight 永真 → 重派门永久关闭（DC-2 死账复发
+            // = 真机黑块 + 3×3 邻域网格连锁冻结）**——池层 run_isolated 只
+            // 保 worker 线程存活，不保产物（pool.rs 池语义注）。
+            let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let mut light = vec![0u8; mcv_core::CHUNK_VOL];
+                let mut view = crate::LightChunk {
+                    voxels: &job.voxels,
+                    light: &mut light,
+                    heightmap: &job.heightmap,
+                };
+                let border_mask = crate::init(&mut view);
+                (light, border_mask)
+            }));
+            let (light, border_mask, failed) = match ran {
+                Ok((light, mask)) => (light, mask, false),
+                Err(payload) => {
+                    let msg = payload
+                        .downcast_ref::<&str>()
+                        .copied()
+                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                        .unwrap_or("<non-string panic payload>");
+                    log::error!(
+                        "[light] worker init panicked at {pos:?}; worker survives, failure receipt sent: {msg}"
+                    );
+                    (Vec::new(), 0, true)
+                }
             };
-            let border_mask = crate::init(&mut view);
             let done = LightDone {
                 pos,
                 seq,
                 light,
                 border_mask,
+                failed,
             };
             if tx.send(done).is_ok() {
                 gate.pending.fetch_add(1, Ordering::Relaxed);
@@ -198,21 +253,29 @@ pub struct LightResults {
 const FLOOR_PRUNE_AGE: u64 = 256;
 
 impl LightResults {
-    /// 取走全部**获准套用**的产物：僵尸（seq ≤ kill 地板）在此拒收并
-    /// 就地弃置（光照字节对已卸载键无意义）。每次取走后按龄修剪地板表
-    /// （有界内存）；获准与否都解除在途记账（seq 相符时——陈旧产物不得
-    /// 误清新派发的在途位）。
+    /// 取走全部**获准套用**的产物：僵尸（seq ≤ kill 地板）与失败回执
+    /// （`failed=true`，DC-3——panic 的失败标记只解在途账）在此拒收并
+    /// 就地弃置（光照字节对已卸载键无意义、空缓冲不得写回清掉旧光）。
+    /// 每次取走后按龄修剪地板表（有界内存）；获准与否都解除在途记账
+    /// （seq 相符时——陈旧产物不得误清新派发的在途位）。
     pub fn drain(&mut self) -> Vec<LightDone> {
         let mut out = Vec::new();
         while let Ok(done) = self.rx.try_recv() {
             self.gate.pending.fetch_sub(1, Ordering::Relaxed);
             // 在途记账解除（seq 相符才动——kill 后重派发的新任务在途位
-            // 不被旧产物清掉）。
+            // 不被旧产物清掉）。失败回执也在此解除（重派门放行的关键——
+            // 解除后上层派发门自然重投，stage 仍 TerrainReady）。
             {
                 let mut inflight = self.gate.inflight.lock().unwrap();
                 if inflight.get(&done.pos) == Some(&done.seq) {
                     inflight.remove(&done.pos);
                 }
+            }
+            // 失败回执（DC-3）：只解账不写回——空光照缓冲套用会把已布光
+            // 清零，stage 推进会让门读到假证据。
+            if done.failed {
+                self.gate.lost.fetch_add(1, Ordering::Relaxed);
+                continue;
             }
             let mut floor = self.gate.floor.lock().unwrap();
             let admit = done.seq > *floor.get(&done.pos).unwrap_or(&0);
@@ -247,6 +310,13 @@ impl LightResults {
         self.gate.pending.load(Ordering::Relaxed) as usize
     }
 
+    /// 失败回执累计（DC-3 观测面；worker init panic 自愈后仍累计——
+    /// 上层并入 render-stats 的 `worker_lost` 合并字段）。
+    #[doc(hidden)]
+    pub fn lost_count(&self) -> u64 {
+        self.gate.lost.load(Ordering::Relaxed)
+    }
+
     /// 取走全部原始产物（不过滤；测试取证面——生产路径只走 [`Self::drain`]）。
     #[doc(hidden)]
     pub fn drain_all(&mut self) -> Vec<LightDone> {
@@ -261,6 +331,14 @@ impl LightResults {
             out.push(done);
         }
         out
+    }
+
+    /// 丢失注入钩子（`#[doc(hidden)]` 测试面）：按区块决定 worker 侧结局
+    /// （Deliver/Swallow/Panic，语义见 [`mcv_core::pool::LossMode`]）。
+    /// 生产装配不装钩子。失败回执回归锁的注入机制（tests/light_parallel.rs）。
+    #[doc(hidden)]
+    pub fn install_loss_hook(&self, hook: LossHook) {
+        *self.gate.loss_hook.lock().unwrap() = Some(hook);
     }
 }
 

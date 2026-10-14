@@ -592,6 +592,7 @@ fn same_frame_writeback_reorders_scrambled_arrivals() {
             seq,
             light,
             border_mask: mask,
+            failed: false, // 正常产物（failed 失败回执走调度器合成路径）
         });
     }
     let applied = rt.light_writeback(dones, ChunkPos::new(0, 0));

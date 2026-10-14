@@ -86,6 +86,13 @@ pub struct MeshStats {
     pub debt_chunks: usize,
     /// GPU 顶点字节账历史峰值（#168 重建瞬态放大实证分子）。
     pub live_vertex_peak_bytes: u64,
+    /// 派发超看门狗窗（K 帧）仍未获产物确认的在途块数（worker 路死账
+    /// 看门狗窗内滞留数；>0 = 丢失疑点在窗，回滚+重派在即）。
+    pub dispatch_gap: usize,
+    /// worker 产物丢失事件累计（三路合并一套命名：mesh 丢失标记/超时回滚、
+    /// light 失败回执、terrain 失败回执——失败自愈后仍累计，真机复现的
+    /// 一条日志定位面）。
+    pub worker_lost: u64,
 }
 
 /// Abstraction over the C++ mesher so the runtime wiring can land before
@@ -130,6 +137,47 @@ pub trait ChunkMesher: Send {
     fn drain_evicted(&mut self) -> Vec<ChunkPos> {
         Vec::new()
     }
+
+    /// 取走本帧 flush 段收集的回传事件（提交确认 + 丢失标记；供
+    /// [`GameRuntime`] 的 mesh 看门狗对账——记账推进与产物确认配对，
+    /// docs/worker-accounting.md。默认空 = 无头实现无回传段）。
+    fn take_flush_events(&mut self) -> MeshFlushEvents {
+        MeshFlushEvents::default()
+    }
+}
+
+/// flush 段回传事件（单帧；worker 路产物确认对账面）。
+/// - `committed`：产物获准提交的区块（看门狗销在途账 + 清连续丢失计数）。
+/// - `lost`：产物缺失（worker panic 丢失标记 / 构建报错）的区块——即时
+///   回滚三笔账（meshed/MESH 脏/stage），下一帧预算流重派。
+#[derive(Debug, Default)]
+pub struct MeshFlushEvents {
+    pub committed: Vec<(ChunkPos, u64)>,
+    pub lost: Vec<(ChunkPos, u64)>,
+}
+
+/// mesh 看门狗窗（stream 帧）：在途派发超此帧数未见产物确认（flush 回传
+/// "mesh worker commit"）即判死账回滚。**取值依据**：合法在途期上界 =
+/// 背压高水位笔数 × 单笔耗时——高水位 `workers+2`（sched.rs `high_water`，
+/// 真机 8 核 → 9 笔），单笔 worker 构建 ~10ms（E3 实测口径，game.rs
+/// build_chunk_mesh doc）→ 满编在途 ~90ms ≈ 6 帧 @60fps / 3 帧 @30fps；
+/// 再加派发与回传各 1 帧错位 + 一倍余量 → 保守 10 帧（@30fps ≈ 330ms，
+/// 覆盖满编在途 3.6 倍）。真机单笔耗时若漂移，观测面 `dispatch_gap`
+/// 常态 >0 即 K 过小的信号。
+const MESH_WATCHDOG_FRAMES: u64 = 10;
+
+/// 同块连续丢失次数上限：达到即降级同步路（断路器——重派风暴的防循环
+/// 设计；同步路失败走 mesh_fail 既有退避，不再进 worker 池）。
+const MESH_LOSS_DEGRADE_AFTER: u32 = 3;
+
+/// mesh 看门狗在途账条目（派发时登记、产物确认或回滚时销账）。
+#[derive(Clone, Copy, Debug)]
+struct MeshPending {
+    /// 派发时的 `stream_frame`（看门狗窗计时基准）。
+    dispatch_frame: u64,
+    /// 派发序号（`MeshScheduler::submit` 返回值；丢失事件按 seq 配对——
+    /// 只回滚仍指向该笔派发的记账，被更高 seq 派发取代的丢失事件无账可回）。
+    seq: u64,
 }
 
 /// E3 快照核：3×3 邻域拷出为裸字节（voxels u16 + light u8，布局
@@ -164,6 +212,9 @@ pub struct RustMesher {
     /// #191 群系顶点色源（同步路径经 [`ChunkMesher::attach_tint`] 注入；
     /// None = 染色禁用，顶点色恒白）。
     biome_tint: Option<Arc<crate::biome_tint::BiomeTintSource>>,
+    /// 本帧 flush 段收集的回传事件（提交/丢失；`take_flush_events` 取走
+    /// 即清——mesh 看门狗对账的事件源）。
+    events: MeshFlushEvents,
 }
 
 impl RustMesher {
@@ -181,6 +232,7 @@ impl RustMesher {
                     uploader,
                     results: None,
                     biome_tint: None,
+                    events: MeshFlushEvents::default(),
                 },
                 None,
             );
@@ -192,6 +244,7 @@ impl RustMesher {
                 uploader,
                 results: Some(results),
                 biome_tint: None,
+                events: MeshFlushEvents::default(),
             },
             Some(sched),
         )
@@ -254,15 +307,19 @@ impl ChunkMesher for RustMesher {
         // 每帧 stream 末尾必达，无结果饿死；消化成本落 E0 flush 子段窗。
         if let Some(results) = self.results.as_mut() {
             for done in results.drain_committed() {
-                // 产物缺失 = worker 侧 build 报错（kind 为编译期常量，
-                // BAD_ARG 不可达；若真发生与同步路失败同级别响亮记账），
-                // 不炸主线程：记 error 跳过该笔（该块网格缺失，MESH 位
-                // 已在派发时清除——下一笔编辑/重网格恢复）。
+                // 产物缺失 = worker 侧 panic 丢失标记（opaque=None，DC-3
+                // 失败回执）或 build 报错。不炸主线程：记 error + **登记
+                // 丢失事件**（看门狗即时回滚该块三笔账——meshed 删账 +
+                // MESH 置脏 + stage 回退，下一帧预算流重派；旧实现只打
+                // 日志，MESH 位已清除=下一笔编辑才恢复 = 真机隐形墙的
+                // 死账面之一）。
                 let Some(opaque) = done.opaque else {
                     log::error!(
-                        "mesh worker产物缺失 {:?}（worker 侧报错，跳过提交）",
-                        done.pos
+                        "mesh worker产物缺失 {:?} seq={}（丢失回执，回滚记账待重派）",
+                        done.pos,
+                        done.seq
                     );
+                    self.events.lost.push((done.pos, done.seq));
                     continue;
                 };
                 let rc = self.uploader.build_chunk(
@@ -272,12 +329,14 @@ impl ChunkMesher for RustMesher {
                     done.water.as_ref().map(|w| (&w.vertex[..], &w.index[..])),
                 );
                 // 真机取证埋点：worker 回传提交带区块坐标——与派发日志
-                // 对账可观测回传延迟（帧数差）。
+                // 对账可观测回传延迟（帧数差）。提交确认同帧登记（看门狗
+                // 销在途账的事件源）。
                 log::debug!(
                     "mesh worker commit {:?} idx={}",
                     done.pos,
                     rc.opaque_range.end
                 );
+                self.events.committed.push((done.pos, done.seq));
             }
         }
         self.uploader.flush();
@@ -285,6 +344,10 @@ impl ChunkMesher for RustMesher {
 
     fn set_retention(&mut self, anchor: ChunkPos, radius: i32) {
         self.uploader.set_retention((anchor.x, anchor.z), radius);
+    }
+
+    fn take_flush_events(&mut self) -> MeshFlushEvents {
+        std::mem::take(&mut self.events)
     }
 
     fn drain_evicted(&mut self) -> Vec<ChunkPos> {
@@ -308,6 +371,11 @@ impl ChunkMesher for RustMesher {
             trimmed_chunks: b.trimmed_chunks,
             debt_chunks: b.debt_chunks,
             live_vertex_peak_bytes: b.live_vertex_peak_bytes,
+            // dispatch_gap/worker_lost 是游戏层看门狗对账面（三路合并一
+            // 套字段），mesher 实现侧恒零——GameRuntime::mesh_stats 统一
+            // 并入（mesh 在途账/丢失事件 + light/terrain 失败回执）。
+            dispatch_gap: 0,
+            worker_lost: 0,
         }
     }
 }
@@ -886,6 +954,24 @@ pub struct GameRuntime {
     /// 取证坐标），后续同块重复失败降为 debug 不再刷屏；成功即清账。
     /// 无头 NullMesher 恒失败 = 预期路径，只报一次。
     mesh_fail: HashMap<ChunkPos, u32>,
+    /// mesh 看门狗在途账：worker 派发登记 (派发帧, 派发 seq)——「派发即
+    /// 记账」三笔账（meshed/MESH 脏/stage）与产物确认的配对键。产物提交
+    /// （flush 回传事件）或丢失回滚时销账；超 K 帧未见确认 = 死账 → 回滚
+    /// 重派（DC-1 教训：无此账，worker 产物丢失后 meshed 永真=永不重派 =
+    /// 真机隐形墙）。测试面经 [`Self::mesh_worker_commit`] 等三钩子驱动。
+    mesh_pending: HashMap<ChunkPos, MeshPending>,
+    /// 同块连续丢失计数（防循环）：回滚后重派再丢失 +1，产物确认清零；
+    /// ≥ [`MESH_LOSS_DEGRADE_AFTER`] 降级同步路（走 mesh_fail 退避），
+    /// 不许无限重派。
+    mesh_lost_streak: HashMap<ChunkPos, u32>,
+    /// 看门狗降级名单：连续丢失 M 次的块改走同步路（E3 前同款主线程直
+    /// 建，失败经 mesh_fail 退避）——重派风暴的断路器。卸载时清键。
+    mesh_sync_fallback: HashSet<ChunkPos>,
+    /// mesh worker 产物丢失事件累计（丢失标记 + 看门狗超时回滚；观测面）。
+    worker_lost: u64,
+    /// terrain worker 生成失败回执累计（DC-3 Err 回执；观测面，与
+    /// light/mesh 的丢失计数合并进 [`MeshStats::worker_lost`]）。
+    terrain_gen_lost: u64,
     /// 运行时 mob 集合（ECS App：World + 调度 + 事件总线；组件见
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
@@ -1624,6 +1710,11 @@ impl GameRuntime {
             light_writeback_log: Vec::new(),
             save_dir,
             meshed: HashSet::new(),
+            mesh_pending: HashMap::new(),
+            mesh_lost_streak: HashMap::new(),
+            mesh_sync_fallback: HashSet::new(),
+            worker_lost: 0,
+            terrain_gen_lost: 0,
             spawned: false,
             border_synced: HashMap::new(),
             stream_frame: 0,
@@ -2932,6 +3023,11 @@ impl GameRuntime {
                 self.chunks_mut().remove(&c);
                 self.border_synced.remove(&c);
                 self.mesh_fail.remove(&c);
+                // mesh 看门狗记账同步回收（Empty 态块无在途派发，防御性
+                // 对齐 mesh_fail 的 no-op 回收先例）。
+                self.mesh_pending.remove(&c);
+                self.mesh_lost_streak.remove(&c);
+                self.mesh_sync_fallback.remove(&c);
                 // E5：Empty 态不可能有光照在途任务（派发门 = stage 恰为
                 // TerrainReady，stage 单调不回退），记账回收按 no-op 防御
                 // 性对齐（串行路 None 本就 no-op）。
@@ -2942,6 +3038,12 @@ impl GameRuntime {
             self.chunks_mut().remove(&c);
             self.border_synced.remove(&c);
             self.mesh_fail.remove(&c);
+            // mesh 看门狗记账同步回收：在途账/丢失计数/降级名单随块出环
+            // ——重进视野的新派发 seq 更高，旧账不残留（防看门狗对已出环
+            // 键误报超时）。
+            self.mesh_pending.remove(&c);
+            self.mesh_lost_streak.remove(&c);
+            self.mesh_sync_fallback.remove(&c);
             // 网格记账同步回收：mesher 实现释放该块的网格字节与批次成员
             // 资格（GPU 缓冲随条目重建/清批 drop），meshed 集合删键保证重进
             // 视野时会重建网格（保持两者严格同步）。
@@ -3054,7 +3156,9 @@ impl GameRuntime {
         // drain completed terrain（结果到达即解除在途驻留记账）。置于请求
         // 段之前：先释放完成任务的在途名额，本帧的 pop 才能把名额补给新
         // 任务（原版 release→popTasks 的衔接；帧驱动下同帧先收后发）。
-        while let Ok(result) = self.scheduler.results().try_recv() {
+        // 走 [`mcv_worldgen::TerrainScheduler::recv_result`]：回执消化 =
+        // 自记在途计数 −1（静默门归零点，B 修）。
+        while let Some(result) = self.scheduler.recv_result() {
             match result {
                 mcv_worldgen::GenResult::Terrain(Ok(out)) => {
                     self.req_frames.remove(&out.pos);
@@ -3065,6 +3169,20 @@ impl GameRuntime {
                 mcv_worldgen::GenResult::Terrain(Err((pos, rc))) => {
                     self.req_frames.remove(&pos);
                     log::error!("terrain gen failed at {pos:?}: {rc}");
+                    self.terrain_gen_lost += 1;
+                    // Err 回执开重请求回路：请求环投递时 Empty 手柄已插册
+                    // （`contains_key` 恒真会让该 miss 永不重请求 = 死块，
+                    // DC-2 死账面）——移除手柄让下帧请求环重投。重投频率
+                    // 由 pops 名额门自限（quota − req_frames），panic 风暴
+                    // 下最多 quota 笔/帧，无风暴面。只在手柄仍为 Empty 时
+                    // 移除（防御：回执迟到且块已被其他路径推进时不回退）。
+                    if self
+                        .chunks
+                        .get(&pos)
+                        .is_some_and(|h| h.stage() == Stage::Empty)
+                    {
+                        self.chunks_mut().remove(&pos);
+                    }
                 }
             }
         }
@@ -3384,6 +3502,12 @@ impl GameRuntime {
         let flush_t0 = std::time::Instant::now();
         self.mesher.flush();
         self.timing_frame.flush_us += flush_t0.elapsed().as_micros() as u64;
+        // mesh 看门狗对账（worker 路死账兜底，flush 之后跑——提交确认先
+        // 销账，余下的在途才进超时窗）：①提交确认/丢失回执事件即时对账；
+        // ②超 K 帧未见确认的在途账超时回滚（DC-1——回执通道本身丢失的
+        // 极端面只有超时窗能兜底）。零回传帧为 O(pending) 纯内存扫。
+        let events = self.mesher.take_flush_events();
+        self.mesh_watchdog_step(events);
         self.timing_frame.stream_us += stream_t0.elapsed().as_micros() as u64;
     }
 
@@ -3399,6 +3523,30 @@ impl GameRuntime {
     #[doc(hidden)]
     pub fn take_light_writeback_log(&mut self) -> Vec<ChunkPos> {
         std::mem::take(&mut self.light_writeback_log)
+    }
+
+    /// E5 测试钩子：取光照回传端句柄（丢失注入钩子安装 / 原始产物取证，
+    /// tests/light_parallel.rs 失败回执锁）。
+    #[doc(hidden)]
+    pub fn light_debug_results(&mut self) -> Option<&mut mcv_light::LightResults> {
+        self.light_results.as_mut()
+    }
+
+    /// 世界生成在途请求观测面（死账锁取证：req_frames 名额记账条数；
+    /// 非调度依据）。
+    #[doc(hidden)]
+    pub fn gen_inflight(&self) -> usize {
+        self.req_frames.len()
+    }
+
+    /// 测试钩子：登记一笔在途生成记账（等价请求环投递后的驻留标记；配
+    /// [`mcv_worldgen::TerrainScheduler::debug_inject_receipt`] 的「假回执
+    /// 不消化」窗口，复现静默门漏态——B 修回归锁
+    /// tests/terrain_receipt.rs）。
+    #[doc(hidden)]
+    pub fn req_debug_mark(&mut self, pos: ChunkPos) {
+        self.scheduler.debug_mark_inflight();
+        self.req_frames.insert(pos, self.stream_frame);
     }
 
     /// E5 worker 路派发段：TerrainReady 且不在途的块按近优先环序
@@ -3554,8 +3702,11 @@ impl GameRuntime {
                 handles[idx] = self.chunks[&ChunkPos::new(pos.x + dx, pos.z + dz)].clone();
             }
         }
-        // E3 worker 路：快照-计算-回传三段式（默认）。
-        if let Some(sched) = self.mesh_sched.as_ref() {
+        // E3 worker 路：快照-计算-回传三段式（默认）。看门狗降级名单里的
+        // 块跳过本分支走下方同步路（连续丢失 M 次的断路器）。
+        if let Some(sched) = self.mesh_sched.as_ref()
+            && !self.mesh_sync_fallback.contains(&pos)
+        {
             // 背压门：在途（排队+执行）≥ 高水位时本帧不投递（不耗预算，
             // 下帧预算流自动重试）——worker 饥饿时快照/产物字节（~5 MiB/笔
             // 双端）不得无界堆积；峰值在途 ≈ workers+2 笔。
@@ -3570,7 +3721,7 @@ impl GameRuntime {
                 .biome_tint
                 .as_ref()
                 .and_then(|bt| bt.field_for(pos.x, pos.z));
-            sched.submit(
+            let seq = sched.submit(
                 mcv_mesher::MeshJob {
                     pos,
                     origin: [16.0 * pos.x as f32, 0.0, 16.0 * pos.z as f32],
@@ -3581,9 +3732,20 @@ impl GameRuntime {
                 hi,
             );
             // 派发即记账：快照与脏位清除在同一主线程瞬时（见函数 doc）。
-            // meshed 记账同步：记新。
+            // meshed 记账同步：记新。第四笔（看门狗在途账）同帧登记——
+            // **记账推进必须与产物确认配对**：无此账，worker 产物丢失后
+            // meshed 永真=永不重派=隐形墙死账（DC-1，docs/worker-
+            // accounting.md）；销账点在 flush 回传事件（提交确认/丢失回滚）
+            // 与看门狗超时扫描。
             self.meshed.insert(pos);
             handle.clear_dirty(mcv_core::dirty::MESH);
+            self.mesh_pending.insert(
+                pos,
+                MeshPending {
+                    dispatch_frame: self.stream_frame,
+                    seq,
+                },
+            );
             // 网格派发即推进状态机终点 Uploaded（GPU 字节经回传异步到位，
             // 差 1-2 帧；加载门谓词是 status ≥ Surface——刀 3b 解耦点①，
             // 不读 stage，加载语义不变；loading_progress_parts 的显示统计
@@ -3592,10 +3754,13 @@ impl GameRuntime {
             handle.advance_to(Stage::Uploaded);
             // 真机取证埋点（logcat -s RustMcv）：派发事件带区块坐标——
             // 与 flush 的 "mesh worker commit" 对账可观测回传延迟。
-            log::debug!("mesh dispatch {} {pos:?}", if hi { "hi" } else { "lo" });
+            log::debug!(
+                "mesh dispatch {} {pos:?} seq={seq}",
+                if hi { "hi" } else { "lo" }
+            );
             return true;
         }
-        // 同步路径（回滚开关）：E3 前逐字节同款。
+        // 同步路径（回滚开关 + 看门狗降级名单）：E3 前逐字节同款。
         let Some(rc) = self.mesher.build(pos, &handles) else {
             // 失败分支不得静默（审计 B2/F6）：首建失败 = 该块不在
             // render_chunks——不可见却按真实体素碰撞（另一种「看不见却
@@ -3613,6 +3778,9 @@ impl GameRuntime {
             return false;
         };
         self.mesh_fail.remove(&pos);
+        // 同步路成功即证明该块的 worker 丢失循环已被断路器终结——连续
+        // 丢失计数一并清零（降级名单保留至卸载，防再次进风暴）。
+        self.mesh_lost_streak.remove(&pos);
         let idx_count = rc.opaque_range.end;
         // #80 起网格字节已在 mesher 实现内入池并合批（条目表由实现自持、
         // 原位重建不受重网格影响），游戏层只做 meshed 记账；rc 仅取索引量
@@ -3633,6 +3801,117 @@ impl GameRuntime {
         // 区块坐标与索引量——静止期反复出现即重网格循环实证。
         log::debug!("mesh upload {pos:?} idx={idx_count}");
         true
+    }
+
+    /// mesh 看门狗对账步（每帧 stream flush 后）：①提交确认销账；②丢失
+    /// 回执即时回滚；③超窗在途账超时回滚。三路合流的语义：**记账推进必须
+    /// 与产物确认配对**——「派发即记账」的三笔账（meshed/MESH 脏/stage）
+    /// 只在产物确认或确认丢失时撤回，绝不信任何单一路径的「应该到了」。
+    /// 兜底语义：②覆盖 panic/构建报错（DC-3 失败回执可达路径），③覆盖
+    /// 回执通道本身丢失的极端面（Swallow/未知丢失——唯一能兜底的机制）；
+    /// 降级断路器（连续丢失 M 次 → 同步路）防「回滚→重派→再丢失」无限
+    /// 循环，重派风暴被 M×K 帧硬顶。
+    fn mesh_watchdog_step(&mut self, events: MeshFlushEvents) {
+        for (pos, seq) in events.committed {
+            self.mesh_worker_commit(pos, seq);
+        }
+        for (pos, seq) in events.lost {
+            self.mesh_worker_lost(pos, seq);
+        }
+        self.mesh_watchdog_scan();
+    }
+
+    /// 产物提交确认（销账点）：销在途账 + 清连续丢失计数。生产由
+    /// [`RustMesher::flush`] 的 committed 事件驱动；测试面等价钩子。
+    #[doc(hidden)]
+    pub fn mesh_worker_commit(&mut self, pos: ChunkPos, seq: u64) {
+        // seq 相符（或更新）才销账——陈旧产物不得清掉新派发的在途位、
+        // 不得代新派发清丢失计数（新派发的终态由其自身产物给出）。
+        if self.mesh_pending.get(&pos).is_some_and(|p| p.seq <= seq) {
+            self.mesh_pending.remove(&pos);
+            self.mesh_lost_streak.remove(&pos);
+        }
+    }
+
+    /// 产物丢失回执（即时回滚点）：worker panic 丢失标记 / 构建报错。
+    /// 只回滚仍指向该笔派发的记账（被更高 seq 派发取代的丢失事件无账可
+    /// 回——新派发的产物会给出终态）。生产由 flush 的 lost 事件驱动。
+    #[doc(hidden)]
+    pub fn mesh_worker_lost(&mut self, pos: ChunkPos, seq: u64) {
+        self.worker_lost += 1;
+        if !self.mesh_pending.get(&pos).is_some_and(|p| p.seq == seq) {
+            return;
+        }
+        self.mesh_rollback(pos, "loss marker");
+    }
+
+    /// 看门狗超时扫描：在途账超 [`MESH_WATCHDOG_FRAMES`] 帧未见产物确认
+    /// → 死账回滚（DC-4——「记账即推进」没有确认配对的历史形态）。
+    /// 生产在 stream flush 后驱动；测试面等价钩子。
+    #[doc(hidden)]
+    pub fn mesh_watchdog_scan(&mut self) {
+        let stale: Vec<ChunkPos> = self
+            .mesh_pending
+            .iter()
+            .filter(|(_, p)| self.stream_frame - p.dispatch_frame >= MESH_WATCHDOG_FRAMES)
+            .map(|(pos, _)| *pos)
+            .collect();
+        for pos in stale {
+            self.mesh_rollback(pos, "watchdog timeout");
+        }
+    }
+
+    /// 三笔回滚账（meshed 删账 + MESH 置脏 + stage 回退）+ 连续丢失断路
+    /// 器。回滚后预算流重派（meshed 缺席 ∧ MESH 脏 = 既有派发资格谓词，
+    /// 零新增派发逻辑）。
+    fn mesh_rollback(&mut self, pos: ChunkPos, why: &str) {
+        self.mesh_pending.remove(&pos);
+        // 断路器：连续丢失 ≥M 次降级同步路（不许无限重派）。
+        let streak = self.mesh_lost_streak.get(&pos).copied().unwrap_or(0) + 1;
+        if streak >= MESH_LOSS_DEGRADE_AFTER {
+            self.mesh_lost_streak.remove(&pos);
+            if self.mesh_sync_fallback.insert(pos) {
+                log::error!("mesh watchdog: {pos:?} 连续丢失 {streak} 次，降级同步路（{why}）");
+            }
+        } else {
+            self.mesh_lost_streak.insert(pos, streak);
+            log::warn!(
+                "mesh watchdog: {pos:?} 产物丢失（{why}），回滚三笔账待重派（streak {streak}）"
+            );
+        }
+        self.meshed.remove(&pos);
+        if let Some(handle) = self.chunks.get(&pos) {
+            handle.mark_dirty(mcv_core::dirty::MESH);
+            handle.regress_to(Stage::LightLocalReady);
+        }
+    }
+
+    /// mesh 看门狗在途账观测面（死账锁取证；非调度依据）：
+    /// `Some((派发帧, 派发 seq))` = 在途在账。
+    #[doc(hidden)]
+    pub fn mesh_watchdog_pending(&self, pos: ChunkPos) -> Option<(u64, u64)> {
+        self.mesh_pending
+            .get(&pos)
+            .map(|p| (p.dispatch_frame, p.seq))
+    }
+
+    /// mesh 看门狗连续丢失计数观测面（断路器锁取证）。
+    #[doc(hidden)]
+    pub fn mesh_watchdog_streak(&self, pos: ChunkPos) -> u32 {
+        self.mesh_lost_streak.get(&pos).copied().unwrap_or(0)
+    }
+
+    /// mesh 看门狗降级名单观测面（断路器锁取证）。
+    #[doc(hidden)]
+    pub fn mesh_watchdog_fallback(&self, pos: ChunkPos) -> bool {
+        self.mesh_sync_fallback.contains(&pos)
+    }
+
+    /// 已建网格记账观测面（死账终态一致性锁取证：回滚→重派→提交后
+    /// 记账必须回到「在账」态）。
+    #[doc(hidden)]
+    pub fn meshed_contains(&self, pos: ChunkPos) -> bool {
+        self.meshed.contains(&pos)
     }
 
     /// 在册区块按「玩家环距（Chebyshev）近优先」排序的键表，环内按
@@ -5663,7 +5942,7 @@ impl GameRuntime {
         if overlap {
             return;
         }
-        if let Some(handle) = self.chunks.get(&target.chunk()) {
+        if let Some(handle) = self.chunks.get(&target.chunk()).cloned() {
             let [lx, _, lz] = target.local();
             let idx = mcv_core::vidx(lx, target.y, lz);
             let old_id = handle.voxels.read().unwrap().get_flat(idx);
@@ -5681,6 +5960,9 @@ impl GameRuntime {
                 .unwrap()
                 .set_flat(idx, new_id.with_state(st));
             handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+            // 贴边放置同理：邻块朝新块的面被遮蔽/被剔除，边界格编辑必须
+            // 同帧重build邻块（原版 setBlockDirty pos±1 等价）。
+            self.mark_border_neighbor_mesh_dirty(target);
             // C1：写体素后立刻增量重光照 + heightmap 维护 + 跨区块边派发
             //（26.1 setBlock → LevelLightEngine.checkBlock 的对应位）。
             // 边派发只入队（stream 跨帧消化，审计 A1/F2），编辑源块进
@@ -5926,6 +6208,34 @@ impl GameRuntime {
         self.eat_progress().is_some() || self.bow_hold.is_some()
     }
 
+    /// 贴边编辑的邻块网格重build标记（原版 `LevelRenderer.setBlockDirty`
+    /// 的 pos±1 扫面等价，LevelRenderer.java:1344-1352——被编辑格 ±1 触及
+    /// 的每个 section 全部置脏）：编辑块位于区块边界时，邻块朝洞的边界
+    /// 面此前被按真实体素剔除/烘焙，不重build即陈旧缺失（与目标块的
+    /// MESH 脏同帧置位，走同一条预算流重派）。y 全列同块（v6 全高列），
+    /// 只扫 x/z 两轴；角落格的对角邻块一并覆盖（原版 ±1 环语义）。仅置
+    /// MESH 不置 SAVE（邻块自身数据未变）。
+    fn mark_border_neighbor_mesh_dirty(&mut self, target: BlockPos) {
+        let cpos = target.chunk();
+        let [lx, _, lz] = target.local();
+        for dx in [-1i32, 0, 1] {
+            for dz in [-1i32, 0, 1] {
+                // 邻格所属区块坐标（div_euclid：-1 跨到西/北邻块、16 跨到
+                // 东/南邻块；内部三格同块 → 与本块相同即跳过）。
+                let npos = ChunkPos::new(
+                    cpos.x + (lx as i32 + dx).div_euclid(16),
+                    cpos.z + (lz as i32 + dz).div_euclid(16),
+                );
+                if npos == cpos {
+                    continue;
+                }
+                if let Some(n) = self.chunks.get(&npos) {
+                    n.mark_dirty(mcv_core::dirty::MESH);
+                }
+            }
+        }
+    }
+
     /// 破坏目标方块：体素清零 + MESH/SAVE 脏 + 生存掉落/耐久/exhaustion
     /// （26.1 destroyBlock 三段拆门：掉落与记账走 `hasCorrectToolForDrops`，
     /// 耐久走 `mineBlock` 独立段）+ break 音效。挖掘进度完成与创造秒破共用。
@@ -5934,7 +6244,7 @@ impl GameRuntime {
         if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&target.y) {
             return;
         }
-        let Some(handle) = self.chunks.get(&target.chunk()) else {
+        let Some(handle) = self.chunks.get(&target.chunk()).cloned() else {
             return;
         };
         let [lx, _, lz] = target.local();
@@ -5945,6 +6255,9 @@ impl GameRuntime {
         }
         handle.voxels.write().unwrap().set_flat(idx, BlockId(0));
         handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        // 贴边编辑（方块在区块边界）：邻块朝洞的边界面前此被按真实体素
+        // 剔除，不重build即陈旧缺失（原版 setBlockDirty pos±1 等价）。
+        self.mark_border_neighbor_mesh_dirty(target);
         // 熔炉会话兜底（vanilla 炉毁经 BaseContainerBlockEntity.preRemoveSide
         // Effects/Containers.dropContents 落内容）：会话炉方块被毁即关屏归还，
         // 禁会话悬空成吞物黑洞（守恒硬约束，审计 #52）。
@@ -6414,8 +6727,24 @@ impl GameRuntime {
     }
 
     /// 网格侧结构性统计（#80 可观测性：draw 收敛 + 异步上传带宽）。
+    /// worker 路死账观测面在此并入（三路合并一套字段，不各起命名）：
+    /// `dispatch_gap` = mesh 在途账超看门狗窗的块数；`worker_lost` =
+    /// mesh 丢失事件 + light 失败回执 + terrain 失败回执累计。
     pub fn mesh_stats(&self) -> MeshStats {
-        self.mesher.mesh_stats()
+        let mut s = self.mesher.mesh_stats();
+        s.dispatch_gap = self
+            .mesh_pending
+            .values()
+            .filter(|p| self.stream_frame - p.dispatch_frame >= MESH_WATCHDOG_FRAMES)
+            .count();
+        s.worker_lost = self.worker_lost
+            + self
+                .light_results
+                .as_ref()
+                .map(|rs| rs.lost_count())
+                .unwrap_or(0)
+            + self.terrain_gen_lost;
+        s
     }
 
     /// E0 帧界归并：把本帧分段窗口（[`Self::timing_frame`]）并入 1Hz

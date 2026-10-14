@@ -11,6 +11,8 @@ use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
+use crate::ChunkPos;
+
 pub type Job = Box<dyn FnOnce() + Send + 'static>;
 
 /// 池遥测快照（只计数、不改调度；计数不是调度正确性的依据）。
@@ -148,12 +150,41 @@ impl TaskPool {
     }
 }
 
+/// worker 任务的结局指令（`#[doc(hidden)]` 测试注入面）：任务闭包在真正
+/// 干活前查询钩子，按模式演绎三种结局。生产装配恒不装钩子（查询短路为
+/// [`LossMode::Deliver`]，零成本分支）。
+///
+/// 统一命名面（三个调度器 mesh/light/terrain 共用本类型）：`Deliver` =
+/// 正常干活回传；`Swallow` = 任务静默蒸发（**不产生任何回执**——回执通道
+/// 本身丢失的极端面，只有主线程侧看门狗超时能兜底，mesh 专用回归注入）；
+/// `Panic` = 任务闭包 panic（池隔离存活 + 调度器 catch_unwind 合成失败
+/// 回执——DC-3 范本，docs/worker-accounting.md）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[doc(hidden)]
+pub enum LossMode {
+    Deliver,
+    Swallow,
+    Panic,
+}
+
+/// 丢失注入钩子（测试装配）：按区块坐标决定该笔任务的结局。
+#[doc(hidden)]
+pub type LossHook = Box<dyn Fn(ChunkPos) -> LossMode + Send + Sync>;
+
 /// 执行单个任务并做 panic 隔离（蓝图 §4 不变量 #9：任务 panic ≠ 池缩编）。
 /// 旧实现裸调用 job()，panic 会炸死 worker 线程、池永久静默缩编（加载洪峰
 /// 无声变慢、零告警）。panic 经默认 hook 打印位置信息（Android 由
 /// mcv_app/src/lib.rs 的 hook 写 logcat），这里再记一条池侧 error：worker
 /// 存活、满编保留。`AssertUnwindSafe`：Job 是 owned 闭包，池不承诺任务
 /// panic 后仍处于一致共享状态——隔离的目标是 worker 线程存活，不是任务重试。
+///
+/// **池语义（为什么这里不管产物）**：隔离保证 worker 线程存活，**不保证
+/// 任务产物**——被吞的 panic 不产生任何回执，任何依赖「每笔派发必有回执」
+/// 推进记账的消费者（在途表/配额/网格记账）必须在闭包内自带 catch_unwind
+/// 合成失败回执（DC-3 范本 = game.rs `spawn_io_worker` 的
+/// `failed_io_done`；三调度器 mesh/light/terrain 均已照做），否则记账
+/// 永真、重派门永久关闭——真机隐形墙（mesh）/黑块（light）/生成停摆
+/// （terrain）三案同根，教训见 docs/worker-accounting.md。
 fn run_isolated(job: Job) {
     if let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(job)) {
         let msg = payload
