@@ -127,26 +127,26 @@ xoroshiro.rs 金标准先例。）
 - **端到端 finalDensity 逐位对拍**：需样条/intercept 全展开（首证报告 §6.2），
   本刀只保证通道级位型。
 
-## 7. 黄金漂移清单（本刀只登记不重锚）
+## 7. 黄金漂移清单——CI 实测回填（run 38650650041，head 48e797ed）
 
-**确定红**（字节级黄金，输出必变）：
+预测先行（本节上半），CI 实测随后修正——**terrain golden 预测有误**：它锚
+Legacy 后端（CAVE-1 #1 前例口径），本刀只动 vanilla 路径 → 预测确定红、
+实测绿。quality.rs 全部统计带亦实测绿（气候 σ 归一后仍在带内）。
 
-| 件 | 测试 | 重锚流程预估 |
-| --- | --- | --- |
-| game/mcv_worldgen/tests/golden.rs | terrain_golden_hash_4_seeds_x_25_chunks、terrain_golden_full_dumps_byte_identical | `GOLDEN_UPDATE=1 cargo test --test golden`（必须 CI Linux x86_64 runner，tests/golden/README 口径）重写 terrain_parity.tsv + terrain/*.bin；cases.rs 输入规格不动 |
-| game/mcv_worldgen/tests/ores.rs | ore_v7_byte_golden | 失败输出直接打印六例新 fnv 哈希 → 填入 WANT（#192 surface 波同流程先例，run 38472795386 双 run 复核） |
+**实测红（6 target / 11 测试，`--no-fail-fast` 全量跑完）**：
 
-**统计带，可能漂**（换链后分布重抽，带宽内可能仍绿）：
+| 件 | 测试 | 诊断（CI 日志原文） | 重锚流程预估 |
+| --- | --- | --- | --- |
+| tests/ores.rs | ore_v7_byte_golden | 六例新 fnv 哈希已由断言打印（case0 b688092216ca91e1 / case1 1694df7b329415c1 / case2 6868c030cc34e823 / case3 e2337296a9636e56 / case4 ebe41767c4cf9363 / case6 略） | 填入 WANT（#192 surface 波同流程先例，双 run 复核） |
+| tests/aquifer.rs | sub_sea_caves_majority_dry_with_wet_and_lava_pockets | 湿+岩浆占比 0.386 距上界 | 四通道换链后 floodedness/spread 分布重抽 → 复定统计带 |
+| tests/aquifer.rs | generated_chunks_have_dry_caves_below_sea | K-AQUIFER-BUF dry_share=0.123 ≤0.30 | 同上 |
+| tests/cave_audit.rs | cave_audit_stats | 带 [0,16) 空洞率 0.002 ≤0.005 | 洞穴通道换链 → K-CAVE-AUDIT 新基线（量化对照日志跨提交存档，#192 前例口径） |
+| tests/deep_columns.rs | deep_columns_are_never_hollow | 无实心底列 127/5120（>1%） | density 换链后深层基座重抽 → 复定列级判据窗 |
+| tests/trees_cross_chunk.rs | boundary_trees_complete_on_both_sides / tree_spots_agree_across_chunk_views / trunk_bases_land_on_real_surface | 「区域无树/无跨界树——测试空转」 | 气候链切换后 biome 窗移动 → 换取样区（cases 内区域表）而非改判据 |
+| tests/trees_wiring.rs | forest_window_tree_count_in_band / ocean_and_desert_windows_treeless / tree_bases_above_sea_on_grassy_ground | 树窗/密度带越带 | 同上（复定频度带） |
 
-| 件 | 门 | 重锚流程预估 |
-| --- | --- | --- |
-| game/mcv_worldgen/tests/quality.rs | plains_share/σ 带/base_3d 谱带 | 跑 CI 取新分布，越带则按原口径复定带（climate 表补零使 σ 口径归真，方向可预期） |
-| game/mcv_worldgen/tests/aquifer.rs | 干占比/三态/囊袋并存带 | 同上（四通道换链） |
-| game/mcv_worldgen/tests/cave_audit.rs | K-CAVE-AUDIT 量化基线 | 新基线日志入 CI 对照（空洞率/连通体分布重抽） |
-| game/mcv_worldgen/tests/lakes.rs | 湖频度带 | 湖位判据依赖地形实顶，重抽后越带再收带 |
+**实测绿（含预期外）**：tests/golden.rs 双测试（Legacy 后端锚，零重锚）、
+quality.rs 全带（plains_share 0.206/谱 p90 0.0138 域内）、lakes、
+surface_rules、geometry_locks、deepslate_bedrock、os2s_golden/os2s_parity、
+mcv_mesher/tests/golden.rs、mcv_logic streaming、render-headless 双后端。
 
-**预期绿**（机制/语义锁，非字节锁）：geometry_locks（材质↔估计面自洽）、
-surface_rules、deep_columns、deepslate_bedrock（vertical_gradient RNG 链
-未动）、trees_cross_chunk（跨界一致性）、tests/terrain.rs（语义哨兵）、
-os2s_golden/os2s_parity（vendored 内核未动）、mcv_mesher/tests/golden.rs
-（几何规则表，非 worldgen 输入）。

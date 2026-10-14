@@ -267,7 +267,10 @@ class），本仓为**结构复刻**——判据内的四通道噪声与所传 d
    360/360 位型同、max|d|=0**（tools/fork-chain-mirror-report.md +
    tools/fork-chain-mirror-run.txt；noise.rs 金标准测试
    fork_chain_matches_official_jar_probe_bits 锁 3 向量）。随之漂移的
-   黄金/统计门重锚清单见对拍报告 §7（terrain golden、ore_v7 确定红）。
+   黄金/统计门重锚清单见对拍报告 §7（CI run 38650650041 实测：6 target
+   11 测试红——ores ore_v7 锚定哈希、aquifer/cave_audit/deep_columns/
+   trees_cross_chunk/trees_wiring 统计带与窗哨兵；terrain golden 锚
+   Legacy 后端零重锚仍绿，quality.rs 全带绿）。
    ImprovedNoise 三坑核对（lerp3 轴序/nextDouble f32 提升/常量精确性）
    随镜像 360/360 端到端通过，零修改。
 2. **胞心随机非原版 Xoroshiro 三连 nextInt**：splitmix 链 + Lemire
