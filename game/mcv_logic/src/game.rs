@@ -6086,7 +6086,7 @@ impl GameRuntime {
                 new_id.0,
                 &mut self.pending_light_edges,
             );
-            self.touch_mesh_neighbors(target);
+            self.mark_border_neighbor_mesh_dirty(target);
             self.mesh_priority = Some(target.chunk());
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
@@ -6387,7 +6387,7 @@ impl GameRuntime {
             0,
             &mut self.pending_light_edges,
         );
-        self.touch_mesh_neighbors(target);
+        self.mark_border_neighbor_mesh_dirty(target);
         self.mesh_priority = Some(target.chunk());
         // 破坏爆裂碎屑（ClientLevel.addDestroyBlockEffect:942-973：满块
         // 0.25 密度 4×4×4=64 粒，取被破坏方块图集层的 1/4 随机小矩形）。
