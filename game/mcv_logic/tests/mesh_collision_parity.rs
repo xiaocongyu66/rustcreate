@@ -71,8 +71,8 @@ fn isolated_mesh(id: BlockId, at: (i32, i32, i32)) -> (usize, usize) {
         vsa[i] = Some(&voxels[i * vol..(i + 1) * vol]);
         lsa[i] = Some(&lights[i * vol..(i + 1) * vol]);
     }
-    let solid = build_mesh(&vsa, &lsa, 0);
-    let water = build_mesh(&vsa, &lsa, 1);
+    let solid = build_mesh(&vsa, &lsa, 0, None);
+    let water = build_mesh(&vsa, &lsa, 1, None);
     (
         solid.vertices.len() / VERTEX_STRIDE,
         water.vertices.len() / VERTEX_STRIDE,
@@ -152,7 +152,7 @@ fn boundary_cell_parity() {
             vsa[i] = Some(&voxels[i * vol..(i + 1) * vol]);
             lsa[i] = Some(&lights[i * vol..(i + 1) * vol]);
         }
-        vertex_y(&build_mesh(&vsa, &lsa, 0))
+        vertex_y(&build_mesh(&vsa, &lsa, 0, None))
     };
     assert!(
         ys.iter()
@@ -186,7 +186,7 @@ fn deep_section_below_zero_is_meshed() {
         vsa[i] = Some(&voxels[i * vol..(i + 1) * vol]);
         lsa[i] = Some(&lights[i * vol..(i + 1) * vol]);
     }
-    let mesh = build_mesh(&vsa, &lsa, 0);
+    let mesh = build_mesh(&vsa, &lsa, 0, None);
     let ys = vertex_y(&mesh);
     assert!(!ys.is_empty(), "负 y 实心段零几何（深度盲区回归）");
     let has = |t: f32| ys.iter().any(|y| (y - t).abs() < 1e-3);
