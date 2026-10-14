@@ -3220,7 +3220,11 @@ impl AppState {
         // 记账（resident_kb = GPU 驻留、pool_kb = CPU 池留存、evicted =
         // 越预算 LRU 逐出笔数、live_peak_kb = GPU 顶点账峰值——#168 起后
         // 两者即池 LRU/重建瞬态放大的真机取证面）——真机 Mali 预算取证
-        // 行，口径表见 docs/memory-budget.md。
+        // 行，口径表见 docs/memory-budget.md。worker 路死账观测面（三路
+        // 合并一套字段）：dispatch_gap = mesh 在途账超看门狗窗的块数
+        // （>0 = 丢失疑点在窗）、worker_lost = mesh 丢失事件 + light/
+        // terrain 失败回执累计（自愈后仍累计）——「隐形墙/黑块/生成停摆」
+        // 复现的一条日志定位面，口径表见 docs/worker-accounting.md。
         // E0（蓝图 §3-E0）：同行扩展帧预算分段耗时——帧内执行序
         // fixed_step（含 ecs 单列）→ stream（init/edge/io/remesh 子段）→
         // flush → draw；mean = 窗口内帧均值、max = 单帧峰值（微秒）。
@@ -3234,7 +3238,7 @@ impl AppState {
             let tt = runtime.take_frame_timing_stats();
             let mean = tt.mean_us();
             log::info!(
-                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} trimmed={} evicted={} debt={} live_peak_kb={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
+                "render-stats: draws={} water_draws={} entries={} chunks={} rebuilds={} rebuild_kb={} staged_uploads={} staged_kb={} fallback={} resident_kb={} pool_kb={} trimmed={} evicted={} debt={} live_peak_kb={} dispatch_gap={} worker_lost={} | frame-timing[us] mean: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} | max: fixed_step={} ecs={} stream={} (init={} edge={} io={} remesh={}) flush={} draw={} frames={}",
                 st.opaque_draws,
                 st.water_draws,
                 ms.draw_entries,
@@ -3250,6 +3254,8 @@ impl AppState {
                 ms.evicted_chunks,
                 ms.debt_chunks,
                 ms.live_vertex_peak_bytes / 1024,
+                ms.dispatch_gap,
+                ms.worker_lost,
                 mean.fixed_step_us,
                 mean.ecs_us,
                 mean.stream_us,
