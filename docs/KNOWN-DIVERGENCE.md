@@ -412,3 +412,26 @@ tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
    最大连通体）。
 4. **vein_toggle/vein_ridged/vein_gap**（OreVeinifier，noise_router 三
    通道）：矿脉编织——未移植（本仓无矿石生成面，整体随矿脉波立项）。
+
+## MESH-WD-1 无模型技术方块（barrier/light）放置路径的可见性语义（mesh 看门狗波顺手登记）
+
+`blocks_gen.inc.rs:96`（barrier）与 `:549`（light）均为 solid=true（引擎
+整盒碰撞）+ 六面 missing 哨兵层 827 → 网格器 `INVISIBLE_GEOM` 恒不渲染
+（mesher.rs `INVISIBLE_GEOM` 名单，BLOCK-COVERAGE-1 #4 已锁名单本身）。
+放置路径（物品表有定义：mcv_item/src/lib.rs:880/:2934，手持右键即可落格）
+的可见性语义逐方块对照 26.1：
+
+1. **barrier**：碰撞语义与原版一致（Blocks.java:2563-2573 全盒碰撞、
+   无 `noCollision`）——放置产生「看不见但撞得动」的隐形墙**是原版行为**；
+   差异仅在视觉：原版手持 barrier 时显示线框粒子（BarrierBlock 持有门），
+   本仓恒不渲染。低风险（创造/调试用途与原版观感差异 ≤ 一层线框）。
+2. **light**：碰撞语义与原版**不一致**——原版 `getShape` 持有 light 物品
+   之外恒 `Shapes.empty()`（LightBlock.java:62-66，无碰撞、不可拾取命中、
+   `replaceable()` 可被放置直接替换，Blocks.java:2575-2582）；本仓
+   solid=true 整盒碰撞 + 不可替换——放置产生原版不存在的隐形实体墙，
+   且不能再往该格放方块。低风险（light 属技术方块，常规玩法不触达；
+   生存无获取路径，仅手持调试）。收敛方向：light 随状态位/碰撞形状表
+   波改 no-collision + replaceable，barrier 维持原版碰撞语义。
+
+（净零口径：本条经 mesh 看门狗修复波主线程派发批准登记，登记面 =
+放置路径可见性语义 2 项；无旧条目同步销账。）
