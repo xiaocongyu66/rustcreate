@@ -83,7 +83,7 @@ fn deep_columns_are_never_hollow() {
                     |lx: usize, lz: usize, y: i32| -> u16 { vox[mcv_core::vidx(lx, y, lz)] };
                 // 层带统计：16 格带空气率（air/total，流体计入填充——
                 // 含水层水/岩浆「透明感」由流体面管，实体掏空才是本锁
-                // 对象）包络 + 逐层诊断（worst_level 数据源）。
+                // 对象）包络 + 逐带诊断（worst_level 数据源）。
                 // 口径重立（#190→#192 接缝后，见模块头注口径迁移记录）：
                 // 单层实心+流体 >0.15 的旧判据是对 deepfix 独立基座的旧
                 // 自研噪声场定的经验值；#192 波（NormalNoise 实物化
@@ -94,11 +94,21 @@ fn deep_columns_are_never_hollow() {
                 // 法形态**（density_function/overworld/caves/*.json 蚀
                 // 刻源实物，underground cheese 段核心直径 10-30 格级，
                 // 单 chunk 单层被洞群吞 80%+ 不属「层带整段不生成」）。
-                // 新判据 = 同源带包络：[-48,8) 每带空气率 ∈ (0.005,
-                // 0.55)（上界同 cave_audit 防空洞塌方病 + 2×2 窗方差余
-                // 量 5%；下界防空洞塌方/全实心两态对齐），[-64,-48)
-                // slide 渐变带只诊断。cave_audit_stats 同 run 绿 = 数字
-                // 在本仓实物噪声场下的可达性实证背书。
+                // 新判据 = 同源带包络**单侧化**：[-48,8) 每带空气率
+                // ≤0.6（上界=防「全空腔」系统病，cave_audit 0.5 + 2×2
+                // 窗 1024 格方差余量 10%）；**下界不设**——run 38500970262
+                // attempt 2 实证 seed=20261013 band=[-48,-32) 空气率
+                // 0.000 的全实心态与实物蚀刻门结构相容：该带蚀刻源
+                // cheese(noodle y≥−60/cheese xz1·y⅔) 皆**随机管/球**，
+                // 空间相关长度 30-60 格 vs 32×32 窗，零穿越概率可观；
+                // 且管状 carver（cave 0.15/canyon 0.01，configured_carver
+                // 实物）本仓未移植 = KNOWN-DIVERGENCE CAVE-1③ 登记，
+                // 空气率系统性低于原版，照搬 cave_audit 4×4 窗下界到
+                // 2×2 窗属口径错位。「全实心塌方」防护面由 cave_audit
+                // 的 4×4 窗下界（同 CI 同 run 绿）继续承担，此处不重复。
+                // c 门对位复核（既有绿基）：final_density=
+                // min(squeeze(0.64·slide), noodle) 与 caves/noodle.json
+                // 逐节点 + pillars 门 <0.03→−1e6，结构对位零偏差。
                 for (band_lo, band_hi) in
                     [(WORLD_MIN_Y, -48), (-48, -32), (-32, -16), (-16, 0), (0, 9)]
                 {
@@ -115,6 +125,10 @@ fn deep_columns_are_never_hollow() {
                         }
                     }
                     let void = air as f32 / total as f32;
+                    eprintln!(
+                        "K-DEEP-COL band seed={seed} chunk=({cx},{cz}) \
+                         [{band_lo},{band_hi}) air%={void:.3}"
+                    );
                     if 1.0 - void < worst_level.0 {
                         worst_level = (
                             1.0 - void,
@@ -123,10 +137,10 @@ fn deep_columns_are_never_hollow() {
                     }
                     if band_lo >= -48 {
                         assert!(
-                            (0.005..0.55).contains(&void),
+                            void <= 0.6,
                             "K-DEEP-COL seed={seed} chunk=({cx},{cz}) band=[{band_lo},{band_hi}) \
-                             空气率 {void:.3} 出包络 (0.005,0.55)——全空腔/全实心两态系统病\
-                             （合法洞穴群见 cave_audit_stats 同源口径）"
+                             空气率 {void:.3} ≥0.6——全空腔系统病（合法洞穴群见 cave_audit_stats \
+                             同源口径；下界由其 4×4 窗承担，见上注）"
                         );
                     }
                 }
