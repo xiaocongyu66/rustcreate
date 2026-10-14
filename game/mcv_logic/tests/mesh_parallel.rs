@@ -487,9 +487,10 @@ fn watchdog_redispatches_after_silent_worker_loss() {
     rt.interact(false);
     rt.stream(); // 派发 #1（将被吞）+ 邻块 lo 预算
     // 派发即记账 = 主线程同步事实。
-    let (frame0, seq0) = rt
-        .mesh_watchdog_pending(center)
-        .expect("派发即登记看门狗在途账");
+    assert!(
+        rt.mesh_watchdog_pending(center).is_some(),
+        "派发即登记看门狗在途账"
+    );
     assert!(rt.meshed_contains(center), "派发即记 meshed 账");
     // 等 worker 真正咨询该笔（Swallow 决策已做出、产物必不来）——帧窗
     // 计时不得早于 worker 异步段收口（墙钟 deadline 兜底）。
