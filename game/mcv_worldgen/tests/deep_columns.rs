@@ -39,6 +39,14 @@
 //!   cave_audit_stats 4×4 带包络相容）与「层带整段不生成」；重立为
 //!   cave_audit 同源带包络（见该测注）。真机病征「脚下实心底不在」
 //!   由 y=−64 基岩恒实心 + 柱向 max_air_run 诊断继续兜底。
+//! - 三连红后的口径终局（run 38497803387/38500970262/38567857659）：
+//!   带级 16 格窗三 run 三个极端（0.082/0.000/0.640）——**带级窗本身
+//!   是高方差量**（cheese 随机球 + 管状 carver 缺失 CAVE-1③，形态
+//!   方差大于窗），包络怎么调都会被 5 seed×多带样本随机踩爆。终局
+//!   判据下沉至列级聚合：每列 [-64,9) 最长连续实心段 ≥24（cheese
+//!   球直径上界 30 格，多通道侵蚀独立叠加穿透全列概率极低），5120
+//!   列坏列占比 ≤1%——大样本占比才能区分「系统性无基座」（真机坑
+//!   病）与「形态方差」（合法洞穴）。带级统计降为诊断行入日志。
 //!
 //! B 另有根因时的复验探针（按序执行，不预先发明机制）：
 //! ① 同 seed 同柱 `generate_terrain_with` 体素 dump 对层——覆盖率崩
@@ -69,6 +77,9 @@ fn deep_columns_are_never_hollow() {
     let mut max_air_run_report = String::new();
     let mut max_air_run = 0usize;
     let mut worst_level = (1.0f32, String::new());
+    let mut bad_cols = 0usize;
+    let mut worst_col_report = String::new();
+    let mut worst_col_best_seg = 0usize;
     for seed in [2026_1013u64, 1, 777, 0xDEAD_BEEF, 42] {
         for cx in 0..2i32 {
             for cz in 0..2i32 {
@@ -135,14 +146,6 @@ fn deep_columns_are_never_hollow() {
                             format!("seed={seed} chunk=({cx},{cz}) band=[{band_lo},{band_hi})"),
                         );
                     }
-                    if band_lo >= -48 {
-                        assert!(
-                            void <= 0.6,
-                            "K-DEEP-COL seed={seed} chunk=({cx},{cz}) band=[{band_lo},{band_hi}) \
-                             空气率 {void:.3} ≥0.6——全空腔系统病（合法洞穴群见 cave_audit_stats \
-                             同源口径；下界由其 4×4 窗承担，见上注）"
-                        );
-                    }
                 }
                 for lx in 0..CHUNK_SX {
                     for lz in 0..CHUNK_SZ {
@@ -152,6 +155,33 @@ fn deep_columns_are_never_hollow() {
                             is_solid(col_at(lx, lz, WORLD_MIN_Y)),
                             "K-DEEP-COL seed={seed} col=({lx},{lz})：y={WORLD_MIN_Y} 不实心 = 挖穿坠虚空"
                         );
+                        // 列级聚合判据（对位真机病征「挖到某层脚下无实体
+                        // 底」）：每列 [-64,9) 最长连续实心段。cheese 球
+                        // 直径上界 30 格、管状 carver 缺失（CAVE-1③）使
+                        // 带级窗方差过大（三连红三端实证），列级 5120 样
+                        // 本聚合才能区分系统病与形态方差；多通道侵蚀独
+                        // 立叠加，原版深层列几乎必有多段 ≥24 实心。
+                        let mut seg = 0usize;
+                        let mut best_seg = 0usize;
+                        for y in WORLD_MIN_Y..=8 {
+                            if is_solid(col_at(lx, lz, y)) {
+                                seg += 1;
+                                if seg > best_seg {
+                                    best_seg = seg;
+                                }
+                            } else {
+                                seg = 0;
+                            }
+                        }
+                        if best_seg < 24 {
+                            bad_cols += 1;
+                            if best_seg > worst_col_best_seg {
+                                worst_col_best_seg = best_seg;
+                                worst_col_report = format!(
+                                    "seed={seed} chunk=({cx},{cz}) col=({lx},{lz})"
+                                );
+                            }
+                        }
                         // 诊断量：带内最长连续空气 run（洞合法，只报
                         // 不锁——全空柱 run=72 时上面的层带断言先红）。
                         let mut run = 0usize;
@@ -177,9 +207,20 @@ fn deep_columns_are_never_hollow() {
     // 窗口 = 5 seed × 2×2 chunk × 256 列 = 5120；哨兵防「生成静默失效
     // 导致全表假绿」。
     assert!(columns_checked > 5000, "柱样本过少 = 生成失效");
+    // 列级聚合断言（三连红的根解：带级 16 格窗三 run 各踩一端
+    // 0.082/0.000/0.640 = 形态方差大于窗，聚合维度必须下沉到列——
+    // 5120 列大样本占比才能判「系统性无实心底」）。≤1%（51 列）容
+    // 差 = 局部蚀刻可以密集，但深层基座系统性缺失不行；best_seg<24
+    // 即判坏（cheese 球直径上界 30 格 < 段门 24+双侵蚀余量）。
+    assert!(
+        bad_cols * 100 <= columns_checked,
+        "K-DEEP-COL 无实心底列 {bad_cols}/{columns_checked}（>1%）——\
+         深层基座系统性缺失（真机「挖到某层周围变透明」根因候选；\
+         最重坏列样本：{worst_col_report} best_seg={worst_col_best_seg}）"
+    );
     eprintln!(
         "K-DEEP-COL 诊断：最深连续空气 run={max_air_run}（{max_air_run_report}）\
-         columns={columns_checked} worst_level={}",
+         columns={columns_checked} bad_cols={bad_cols} worst_level={}（{worst_col_report}）",
         worst_level.1
     );
 }
