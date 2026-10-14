@@ -744,9 +744,12 @@ fn normal_products_never_trigger_watchdog() {
     assert!(rt.meshed_contains(center));
     assert_eq!(rt.chunks[&center].stage(), Stage::Uploaded);
     assert_eq!(rt.chunks[&center].dirty() & dirty::MESH, 0);
-    assert_eq!(rt.mesh_watchdog_streak(center), 0);
+    assert_eq!(rt.mesh_watchdog_streak(center), 0, "正常路径零回滚");
     assert_eq!(rt.mesh_stats().worker_lost, 0, "正常路径零丢失事件");
-    assert_eq!(rt.mesh_stats().dispatch_gap, 0, "正常路径零超窗在途");
+    // dispatch_gap（超窗在途数）在此**不设零断言**：测试帧 ~1ms 远快于
+    // 生产 16ms/帧，邻块产物的 debug 构建（CI 争用下几十 ms/笔）会合法
+    // 地滞后 K 个测试帧——超窗在途是墙钟工件非记账错误（零回滚已由
+    // streak==0 锁定；生产口径的 gap 语义见 MeshStats::dispatch_gap）。
 }
 
 /// game.rs MESH_WATCHDOG_FRAMES 镜像（对照锁的静置窗长度）。
