@@ -138,6 +138,11 @@ impl MeshScheduler {
             // 关闭（DC-1 死账复发 = 真机隐形墙）**——池层 run_isolated 只
             // 保 worker 线程存活，不保产物（pool.rs 池语义注）。
             let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // 丢失注入（测试面）：Panic 模式在包内引爆——被本 catch_unwind
+                // 接住合成丢失标记（Swallow 在包外已拦截，生产恒 Deliver）。
+                if mode == LossMode::Panic {
+                    panic!("mesh worker loss injection (test) at {:?}", job.pos);
+                }
                 let vol = mcv_core::CHUNK_VOL;
                 let slots = neighborhood_slots(&job.voxels, &job.lights);
                 debug_assert_eq!(job.voxels.len(), 9 * vol);

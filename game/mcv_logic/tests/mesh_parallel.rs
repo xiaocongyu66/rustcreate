@@ -446,15 +446,21 @@ fn mirror_flush(rt: &mut GameRuntime, results: &mut MeshResults) {
             rt.mesh_worker_lost(done.pos, done.seq);
         }
     }
+    // mesh_watchdog_step 的第三条腿（超时扫描）：生产在 stream flush 后驱动
+    // （owns_worker_results 武装门），测试装配显式驱动同款逻辑。
+    rt.mesh_watchdog_scan();
 }
 
 /// 看门狗锁（DC-4 主锁）：worker 静默吞掉首笔产物（无任何回执——回执
 /// 通道丢失的极端面）后，≤K+2 帧内看门狗必须回滚三笔账（meshed 删账 +
 /// MESH 置脏 + stage 回退）并重派，重派产物照常提交，终态记账与正常
 /// 路径一致（meshed 在账 / stage Uploaded / 脏位清除 / 在途账销账），
-/// 且不再有第三次派发（无回滚循环）。判定面全部取**主线程同步态**
-/// （在途账 seq / meshed / stage / 脏位）——丢失钩子计数在 worker 线程
-/// 递增，只作静默后的总量复核，不作时序判定（防竞态假红）。
+/// 且不再有第三次派发（无回滚循环）。
+///
+/// 确定性设计：worker 侧咨询是墙钟异步量（CI 争用下可秒级滞后），帧数
+/// 断言只允许锚在**主线程同步态**上——阶段边界用「钩子咨询计数到位」
+/// （Swallow 决策已做出）与「连续丢失计数 ≥1」（回滚已发生，持久信号）
+/// 把异步段与帧窗段隔开；重派产物落账用 deadline 泵收口。
 #[test]
 fn watchdog_redispatches_after_silent_worker_loss() {
     const K: u64 = 10; // game.rs MESH_WATCHDOG_FRAMES 镜像
@@ -479,35 +485,47 @@ fn watchdog_redispatches_after_silent_worker_loss() {
     }
 
     rt.interact(false);
-    rt.stream(); // 派发 #1（被吞）+ 邻块 lo 预算
-    // 派发即记账 = 主线程同步事实（钩子计数是 worker 侧异步量，不在此断）。
+    rt.stream(); // 派发 #1（将被吞）+ 邻块 lo 预算
+    // 派发即记账 = 主线程同步事实。
     let (frame0, seq0) = rt
         .mesh_watchdog_pending(center)
         .expect("派发即登记看门狗在途账");
     assert!(rt.meshed_contains(center), "派发即记 meshed 账");
-    mirror_flush(&mut rt, &mut results);
+    // 等 worker 真正咨询该笔（Swallow 决策已做出、产物必不来）——帧窗
+    // 计时不得早于 worker 异步段收口（墙钟 deadline 兜底）。
+    let t0 = Instant::now();
+    while dispatches.load(Ordering::Relaxed) < 1 {
+        assert!(t0.elapsed() < Duration::from_secs(30), "worker 未咨询首笔");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
-    // 泵至重派（窗口硬顶 = K+2 帧迭代，每迭代一帧——机制给出的恢复期
-    // 上界即 K+1 派发帧 + 1 提交帧；跑满未 break 即死账未自愈）。重派的
-    // 同步判定 = 在途账被看门狗回滚后由 worker 路重登新 seq（> seq0；
-    // 同步路不登账，故这同时证明重派走了 worker 池）。
-    let mut redispatched = false;
+    // 阶段1：≤K+2 帧内看门狗回滚（持久信号 = 连续丢失计数 ≥1——meshed/
+    // stage 会被紧随的重派翻新，不可作窗判定）。
+    let mut rolled_back = false;
     for _ in 0..=(K as usize + 2) {
         mirror_flush(&mut rt, &mut results);
         rt.stream();
         mirror_flush(&mut rt, &mut results);
-        if rt
-            .mesh_watchdog_pending(center)
-            .is_some_and(|(f, s)| s > seq0 && f > frame0)
-        {
-            redispatched = true;
+        if rt.mesh_watchdog_streak(center) >= 1 {
+            rolled_back = true;
             break;
         }
     }
-    assert!(redispatched, "≤K+2 帧内必须重派（看门狗死账兜底失效）");
+    assert!(rolled_back, "≤K+2 帧内必须回滚三笔账（看门狗死账兜底失效）");
 
-    // 终态：重派产物获准提交 → 记账回到正常路径形态（liveness 泵，deadline
-    // 兜底防 CI 争用挂死）。
+    // 阶段2：重派被 worker 咨询（同步路不进钩子——计数证重派走了池）。
+    let t0 = Instant::now();
+    while dispatches.load(Ordering::Relaxed) < 2 {
+        assert!(
+            t0.elapsed() < Duration::from_secs(30),
+            "回滚后必须重派（死账未自愈）"
+        );
+        rt.stream();
+        mirror_flush(&mut rt, &mut results);
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
+    // 阶段3：重派产物获准提交 → 记账回到正常路径形态。
     let mut settled = false;
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(30) {
@@ -542,11 +560,11 @@ fn watchdog_redispatches_after_silent_worker_loss() {
 
 /// 丢失标记锁（DC-3 即时回滚路）：worker panic → opaque=None 丢失标记 →
 /// **不等看门狗窗**即时回滚三笔账（meshed 删账/MESH 置脏/stage 回退），
-/// worker_lost 计数响亮累计；连续丢失 3 次 → 断路器降级同步路（派发次数
-/// 硬顶 = M，不许无限重派）。回滚发生在 mirror_flush 的 `mesh_worker_lost`
-/// 回灌点（主线程同步），判定面 = meshed/stage/脏位同步态。
+/// worker_lost 计数响亮累计。回滚发生在 mirror_flush 的 `mesh_worker_lost`
+/// 回灌点（主线程同步）；断言窗取「标记消化后、下一 stream 重派前」的
+/// 稳定态（三笔账会被紧随的重派翻新，账态断言必须锚在这段无流间隙）。
 #[test]
-fn loss_marker_rolls_back_immediately_and_degrades_after_repeat() {
+fn loss_marker_rolls_back_immediately() {
     let (mut rt, mut results, center) = watchdog_fixture("wd-loss-marker");
 
     let dispatches = Arc::new(AtomicU32::new(0));
@@ -563,24 +581,30 @@ fn loss_marker_rolls_back_immediately_and_degrades_after_repeat() {
 
     rt.interact(false);
     rt.stream(); // 派发 #1
+    // 等 worker 真正咨询该笔（panic 已引爆、丢失标记已入通道）。
+    let t0 = Instant::now();
+    while dispatches.load(Ordering::Relaxed) < 1 {
+        assert!(t0.elapsed() < Duration::from_secs(30), "worker 未咨询首笔");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
-    // 第一轮：丢失标记回流 → 即时回滚三笔账（不等看门狗窗）。
+    // 丢失标记回流 → 即时回滚（不等看门狗窗）。
     let t0 = Instant::now();
     loop {
         mirror_flush(&mut rt, &mut results);
-        if !rt.meshed_contains(center) {
-            break; // 回滚已发生（主线程同步态）
+        if rt.mesh_stats().worker_lost >= 1 {
+            break; // 标记已消化（主线程同步态；此刻在两次 stream 之间）
         }
         assert!(
             t0.elapsed() < Duration::from_secs(30),
-            "丢失标记必须即时回滚（meshed 删账）"
+            "丢失标记必须到达并被消化（DC-3 失败回执）"
         );
         rt.stream();
         std::thread::sleep(Duration::from_millis(1));
     }
     assert!(
-        rt.mesh_stats().worker_lost >= 1,
-        "丢失事件必须响亮记账（render-stats worker_lost）"
+        !rt.meshed_contains(center),
+        "回滚必须删 meshed 账（否则该块永不重派 = 隐形墙死账）"
     );
     assert_eq!(
         rt.chunks[&center].stage(),
@@ -592,36 +616,81 @@ fn loss_marker_rolls_back_immediately_and_degrades_after_repeat() {
         0,
         "回滚必须置 MESH 脏（预算流重派资格）"
     );
+    assert_eq!(
+        rt.mesh_watchdog_streak(center),
+        1,
+        "首次丢失计连续丢失 1（断路器输入）"
+    );
+}
 
-    // 再丢两轮 → 断路器：降级名单在册 + 派发硬顶 3 次 + 不再有 worker 派发。
-    let t0 = Instant::now();
-    loop {
+/// 断路器锁（防循环）：同一块连续丢失 3 次（K 帧看门狗超时——静默蒸发
+/// 的确定性丢失源）→ 降级同步路（走 mesh_fail 退避），worker 派发硬顶
+/// M=3、断路后零再派发（不许无限重派）、按块隔离不连坐。全 Swallow 注
+/// 入 = 丢失源纯由主线程帧窗驱动（K 帧确定性），无 worker 墙钟耦合。
+#[test]
+fn repeated_loss_degrades_to_sync_after_three_cycles() {
+    const K: u64 = 10; // game.rs MESH_WATCHDOG_FRAMES 镜像
+    let (mut rt, mut results, center) = watchdog_fixture("wd-degrade");
+
+    let dispatches = Arc::new(AtomicU32::new(0));
+    {
+        let dispatches = Arc::clone(&dispatches);
+        results.install_loss_hook(Box::new(move |p| {
+            if p != center {
+                return LossMode::Deliver;
+            }
+            dispatches.fetch_add(1, Ordering::Relaxed);
+            LossMode::Swallow // 每笔都静默蒸发（扫描超时是唯一丢失源）
+        }));
+    }
+
+    rt.interact(false);
+    rt.stream(); // 派发 #1
+
+    // 泵至断路器触发：3 轮 ×（K 帧回滚窗）+ 重派帧，硬顶留余量。
+    let mut degraded = false;
+    for _ in 0..=(3 * (K as usize + 2) + 4) {
         mirror_flush(&mut rt, &mut results);
         rt.stream();
         mirror_flush(&mut rt, &mut results);
         if rt.mesh_watchdog_fallback(center) {
+            degraded = true;
             break;
         }
-        assert!(
-            t0.elapsed() < Duration::from_secs(30),
-            "连续丢失 3 次必须降级同步路（防重派风暴）"
-        );
-        std::thread::sleep(Duration::from_millis(1));
     }
-    assert_eq!(
-        dispatches.load(Ordering::Relaxed),
-        3,
-        "worker 派发硬顶 M=3（断路器后不再进池）"
-    );
+    assert!(degraded, "连续丢失 3 次必须降级同步路（防重派风暴）");
     assert_eq!(rt.mesh_watchdog_streak(center), 0, "降级时清零丢失计数");
     assert!(
         !rt.mesh_watchdog_fallback(ChunkPos::new(1, 0)),
         "断路器必须按块隔离（邻块不连坐）"
     );
+
+    // 断路后零再派发：等最后一笔咨询落地后静置 K+3 帧，计数不得再涨。
+    let t0 = Instant::now();
+    while dispatches.load(Ordering::Relaxed) < 3 {
+        assert!(
+            t0.elapsed() < Duration::from_secs(30),
+            "断路前的第三笔咨询未落地"
+        );
+        rt.stream();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let before = dispatches.load(Ordering::Relaxed);
+    for _ in 0..(K as usize + 3) {
+        mirror_flush(&mut rt, &mut results);
+        rt.stream();
+    }
+    assert_eq!(
+        dispatches.load(Ordering::Relaxed),
+        before,
+        "断路器后零 worker 派发（不许无限重派）"
+    );
 }
 
 /// 对照组锁：正常产物路径零回滚——派发一次、提交确认一次、终态记账一致
-/// （排除看门狗误伤循环；K 帧静置不触发任何回滚/重派）。
+/// （排除看门狗误伤循环；K 帧静置不触发任何回滚/重派）。提交确认的判定
+/// 面 = 在途账销账 **且** meshed 仍在账（真提交；看门狗回滚虽也销在途账
+/// 但同时删 meshed——不满足即继续泵，自愈回路兜底）。
 #[test]
 fn normal_products_never_trigger_watchdog() {
     let (mut rt, mut results, center) = watchdog_fixture("wd-control");
@@ -634,16 +703,16 @@ fn normal_products_never_trigger_watchdog() {
         "派发即登记看门狗在途账"
     );
 
-    // 泵至提交确认（在途账销账 = 主线程同步态；deadline 兜底）。
+    // 泵至提交确认（deadline 兜底；回滚+重派自愈路径下循环自行收敛）。
     let t0 = Instant::now();
     loop {
         mirror_flush(&mut rt, &mut results);
-        if rt.mesh_watchdog_pending(center).is_none() {
+        if rt.mesh_watchdog_pending(center).is_none() && rt.meshed_contains(center) {
             break;
         }
         assert!(
             t0.elapsed() < Duration::from_secs(30),
-            "正常产物必须提交确认（在途账销账）"
+            "正常产物必须提交确认（在途账销账且 meshed 在账）"
         );
         rt.stream();
         mirror_flush(&mut rt, &mut results);

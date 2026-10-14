@@ -171,6 +171,11 @@ impl LightScheduler {
             // = 真机黑块 + 3×3 邻域网格连锁冻结）**——池层 run_isolated 只
             // 保 worker 线程存活，不保产物（pool.rs 池语义注）。
             let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // 丢失注入（测试面）：Panic 模式在包内引爆——被本 catch_unwind
+                // 接住合成失败回执（Swallow 在包外已拦截，生产恒 Deliver）。
+                if mode == LossMode::Panic {
+                    panic!("light worker loss injection (test) at {pos:?}");
+                }
                 let mut light = vec![0u8; mcv_core::CHUNK_VOL];
                 let mut view = crate::LightChunk {
                     voxels: &job.voxels,

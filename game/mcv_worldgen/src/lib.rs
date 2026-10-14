@@ -265,6 +265,11 @@ impl TerrainScheduler {
             // 生成停摆（DC-2 死账复发）**——池层 run_isolated 只保 worker
             // 线程存活，不保产物（pool.rs 池语义注）。
             let generated = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // 丢失注入（测试面）：Panic 模式在包内引爆——被本 catch_unwind
+                // 接住合成 Err 失败回执（Swallow 在包外已拦截，生产恒 Deliver）。
+                if mode == mcv_core::pool::LossMode::Panic {
+                    panic!("terrain worker loss injection (test) at {pos:?}");
+                }
                 generate_terrain_with(backend, seed, pos).map_err(|rc| (pos, rc))
             }));
             let result = match generated {

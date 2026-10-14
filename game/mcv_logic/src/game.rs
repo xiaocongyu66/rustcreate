@@ -144,6 +144,18 @@ pub trait ChunkMesher: Send {
     fn take_flush_events(&mut self) -> MeshFlushEvents {
         MeshFlushEvents::default()
     }
+
+    /// 本实现是否持有 worker 回传端的消费权（每帧 flush 必达——mesh 看门
+    /// 狗超时扫描的武装前提）。生产 [`RustMesher`]（results 在册）= true；
+    /// 无头 `NullMesher` = false——测试装配把产物经 `MeshResults::drain_all`
+    /// 交给测试侧取用，游戏侧 flush 恒见空通道，「K 帧无确认 = 丢失」的
+    /// 前提不成立：武装扫描会把测试取走的每笔产物误判丢失回滚（CI
+    /// run 38499554394 实锤 stale_mesh_evidence 连锁误伤）。看门狗语义锁
+    /// 在测试侧经 [`GameRuntime::mesh_watchdog_scan`] 显式驱动（同款
+    /// 逻辑、显式对账点）。
+    fn owns_worker_results(&self) -> bool {
+        false
+    }
 }
 
 /// flush 段回传事件（单帧；worker 路产物确认对账面）。
@@ -348,6 +360,10 @@ impl ChunkMesher for RustMesher {
 
     fn take_flush_events(&mut self) -> MeshFlushEvents {
         std::mem::take(&mut self.events)
+    }
+
+    fn owns_worker_results(&self) -> bool {
+        self.results.is_some()
     }
 
     fn drain_evicted(&mut self) -> Vec<ChunkPos> {
@@ -3505,9 +3521,13 @@ impl GameRuntime {
         // mesh 看门狗对账（worker 路死账兜底，flush 之后跑——提交确认先
         // 销账，余下的在途才进超时窗）：①提交确认/丢失回执事件即时对账；
         // ②超 K 帧未见确认的在途账超时回滚（DC-1——回执通道本身丢失的
-        // 极端面只有超时窗能兜底）。零回传帧为 O(pending) 纯内存扫。
-        let events = self.mesher.take_flush_events();
-        self.mesh_watchdog_step(events);
+        // 极端面只有超时窗能兜底）。零回传帧为 O(pending) 纯内存扫。武装
+        // 门 = [`ChunkMesher::owns_worker_results`]（测试装配无回传消费权，
+        // 扫描解除——见 trait 方法注）。
+        if self.mesher.owns_worker_results() {
+            let events = self.mesher.take_flush_events();
+            self.mesh_watchdog_step(events);
+        }
         self.timing_frame.stream_us += stream_t0.elapsed().as_micros() as u64;
     }
 

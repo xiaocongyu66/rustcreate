@@ -125,6 +125,18 @@ fn undrained_receipt_window_does_not_evict_empty_chunk() {
         std::thread::sleep(Duration::from_millis(1));
     }
 
+    // 先等外环真实生成收敛（req_frames 清空 = 全部真实回执已消化）——
+    // 否则注入回执消化后仍有合法在途，静默断言被外环噪声打红。
+    let t0b = Instant::now();
+    while rt.gen_inflight() != 0 {
+        rt.stream();
+        assert!(
+            t0b.elapsed() < Duration::from_secs(120),
+            "外环生成未收敛（req_frames 未清空）"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+
     // 回执消化（真/假同路径）：计数归零 → Err 分支移除 Empty 手柄（重请求
     // 回路打开）→ 远端键不再驻留。
     rt.scheduler.debug_inject_receipt(far);
