@@ -115,12 +115,12 @@ fn undrained_receipt_window_does_not_evict_empty_chunk() {
     rt.req_debug_mark(far); // 在途登记 + 自记计数 +1（模拟已投递未回执）
 
     // 320 帧：跨过 300 驻留窗（逐帧 drain 不动合成回执之外的账）。
-    for _ in 0..320u32 {
+    for frame in 0..320u32 {
         rt.stream();
         assert!(
             rt.chunks.contains_key(&far),
             "帧 {}：回执未消化窗口内 Empty 键被逐出（静默门误报静默 → 白生成振荡 = flap 根因）",
-            rt.stream_frame
+            frame + 1
         );
         std::thread::sleep(Duration::from_millis(1));
     }
