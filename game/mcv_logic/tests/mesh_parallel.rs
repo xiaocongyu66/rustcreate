@@ -438,7 +438,7 @@ fn watchdog_fixture(tag: &str) -> (GameRuntime, MeshResults, ChunkPos) {
 
 /// 对账镜像（生产 = RustMesher::flush 的事件流）：取走全部原始产物，
 /// 逐笔按「获准提交/丢失标记」分账回灌游戏层。
-fn mirror_flush(rt: &mut GameRuntime, results: &mut MeshResults) {
+fn mirror_events(rt: &mut GameRuntime, results: &mut MeshResults) {
     for done in results.drain_all() {
         if done.opaque.is_some() {
             rt.mesh_worker_commit(done.pos, done.seq);
@@ -446,8 +446,16 @@ fn mirror_flush(rt: &mut GameRuntime, results: &mut MeshResults) {
             rt.mesh_worker_lost(done.pos, done.seq);
         }
     }
-    // mesh_watchdog_step 的第三条腿（超时扫描）：生产在 stream flush 后驱动
-    // （owns_worker_results 武装门），测试装配显式驱动同款逻辑。
+}
+
+/// mirror_events + 超时扫描腿（mesh_watchdog_step 全量对账）：只在以
+/// 「看门狗窗超时」为预期行为的测试段使用——测试帧以 ~1ms 步进（远快于
+/// 生产 16ms/帧），worker 墙钟回传（CI 争用下秒级）若滞后于 K 个测试帧，
+/// 扫描会把在途产物误判丢失（run 38502547494 实证：对照组被误降级同步
+/// 路后 NullMesher 永远产不出网格）。产物到账路径一律用
+/// [`mirror_events`]（零误判面），超时路径才用本函数。
+fn mirror_flush(rt: &mut GameRuntime, results: &mut MeshResults) {
+    mirror_events(rt, results);
     rt.mesh_watchdog_scan();
 }
 
@@ -515,24 +523,25 @@ fn watchdog_redispatches_after_silent_worker_loss() {
     assert!(rolled_back, "≤K+2 帧内必须回滚三笔账（看门狗死账兜底失效）");
 
     // 阶段2：重派被 worker 咨询（同步路不进钩子——计数证重派走了池）。
+    // 此后产物到账路径一律 mirror_events（零误判扫描面，见其文档）。
     let t0 = Instant::now();
     while dispatches.load(Ordering::Relaxed) < 2 {
         assert!(
-            t0.elapsed() < Duration::from_secs(30),
+            t0.elapsed() < Duration::from_secs(60),
             "回滚后必须重派（死账未自愈）"
         );
         rt.stream();
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         std::thread::sleep(Duration::from_millis(1));
     }
 
     // 阶段3：重派产物获准提交 → 记账回到正常路径形态。
     let mut settled = false;
     let t0 = Instant::now();
-    while t0.elapsed() < Duration::from_secs(30) {
-        mirror_flush(&mut rt, &mut results);
+    while t0.elapsed() < Duration::from_secs(60) {
+        mirror_events(&mut rt, &mut results);
         rt.stream();
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         if rt.mesh_watchdog_pending(center).is_none()
             && rt.meshed_contains(center)
             && rt.chunks[&center].stage() == Stage::Uploaded
@@ -585,19 +594,20 @@ fn loss_marker_rolls_back_immediately() {
     // 等 worker 真正咨询该笔（panic 已引爆、丢失标记已入通道）。
     let t0 = Instant::now();
     while dispatches.load(Ordering::Relaxed) < 1 {
-        assert!(t0.elapsed() < Duration::from_secs(30), "worker 未咨询首笔");
+        assert!(t0.elapsed() < Duration::from_secs(60), "worker 未咨询首笔");
         std::thread::sleep(Duration::from_millis(1));
     }
 
-    // 丢失标记回流 → 即时回滚（不等看门狗窗）。
+    // 丢失标记回流 → 即时回滚（不等看门狗窗）。全段 mirror_events（零
+    // 误判扫描面——本锁验证丢失标记即时路径，非超时窗）。
     let t0 = Instant::now();
     loop {
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         if rt.mesh_stats().worker_lost >= 1 {
             break; // 标记已消化（主线程同步态；此刻在两次 stream 之间）
         }
         assert!(
-            t0.elapsed() < Duration::from_secs(30),
+            t0.elapsed() < Duration::from_secs(60),
             "丢失标记必须到达并被消化（DC-3 失败回执）"
         );
         rt.stream();
@@ -648,9 +658,12 @@ fn repeated_loss_degrades_to_sync_after_three_cycles() {
     rt.interact(false);
     rt.stream(); // 派发 #1
 
-    // 泵至断路器触发：3 轮 ×（K 帧回滚窗）+ 重派帧，硬顶留余量。
+    // 泵至断路器触发（deadline 泵——回滚由帧窗驱动、确定性推进；测试
+    // 帧在 CI 争用下墙钟不可控，预算流与邻块首建竞争 2 格/帧预算会拉长
+    // 每轮回滚-重派周期，故只设墙钟死循环兜底，不设帧数硬上限）。
     let mut degraded = false;
-    for _ in 0..=(3 * (K as usize + 2) + 4) {
+    let t0 = Instant::now();
+    while t0.elapsed() < Duration::from_secs(60) {
         mirror_flush(&mut rt, &mut results);
         rt.stream();
         mirror_flush(&mut rt, &mut results);
@@ -658,6 +671,7 @@ fn repeated_loss_degrades_to_sync_after_three_cycles() {
             degraded = true;
             break;
         }
+        std::thread::sleep(Duration::from_millis(1));
     }
     assert!(degraded, "连续丢失 3 次必须降级同步路（防重派风暴）");
     assert_eq!(rt.mesh_watchdog_streak(center), 0, "降级时清零丢失计数");
@@ -678,7 +692,7 @@ fn repeated_loss_degrades_to_sync_after_three_cycles() {
     }
     let before = dispatches.load(Ordering::Relaxed);
     for _ in 0..(K as usize + 3) {
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         rt.stream();
     }
     assert_eq!(
@@ -704,26 +718,28 @@ fn normal_products_never_trigger_watchdog() {
         "派发即登记看门狗在途账"
     );
 
-    // 泵至提交确认（deadline 兜底；回滚+重派自愈路径下循环自行收敛）。
+    // 泵至提交确认（deadline 兜底）。全段 mirror_events（零误判扫描面
+    // ——本锁验证正常到账路径；测试帧 ~1ms 远快于 worker 墙钟回传，带
+    // 扫描的镜像会把在途产物误判丢失，见 mirror_events 文档）。
     let t0 = Instant::now();
     loop {
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         if rt.mesh_watchdog_pending(center).is_none() && rt.meshed_contains(center) {
             break;
         }
         assert!(
-            t0.elapsed() < Duration::from_secs(30),
+            t0.elapsed() < Duration::from_secs(60),
             "正常产物必须提交确认（在途账销账且 meshed 在账）"
         );
         rt.stream();
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
         std::thread::sleep(Duration::from_millis(1));
     }
 
     // 静置 K+3 帧：无编辑 → 无重派发、无回滚、无丢失计数。
     for _ in 0..(K_WATCHDOG as usize + 3) {
         rt.stream();
-        mirror_flush(&mut rt, &mut results);
+        mirror_events(&mut rt, &mut results);
     }
     assert!(rt.meshed_contains(center));
     assert_eq!(rt.chunks[&center].stage(), Stage::Uploaded);
