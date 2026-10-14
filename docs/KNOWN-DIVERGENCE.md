@@ -244,17 +244,32 @@ AABB 0.25（Item.java SIZE）→ quad 边长 0.25、浮动 bob = sin(ageInTicks/
 ## AQUI-1 含水层（#175，feat/aquifer）的结构复刻裁剪
 
 原版机制 = `NoiseBasedAquifer`（26.1 已并入 Aquifer.java:58-513 inner
-class），本仓为**结构复刻非字节级同原版**——传入判据的 density 本身即
-clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐派生），
-端到端原版对拍在 density/preliminary surface 未同真前不可达；逐行复刻
-只锁死演进不换一致性。逐项登记：
+class），本仓为**结构复刻**——判据内的四通道噪声与所传 density 的种子链
+彼时均为 clean-room 派生；切链刀（noise-vanilla-fork，841b562a）后通道
+种子链已切原版 fork 链并逐位同真（下条 #1 销账），端到端 finalDensity
+逐位对拍仍待 base_3d（BlendedNoise）实物化与样条组装全展开（首证报告
+§6.2 路径）；逐行复刻锁死演进不换一致性。逐项登记：
 
-1. **种子链非原版**：四通道噪声（barrier/floodedness/spread/lava）用
-   本仓 NormalNoise 内核 + 自有域盐（SALT_*，TREE_DOMAIN 先例），非
-   Xoroshiro fork 序（RandomState.java:38 fromHashOf("aquifer") +
-   Java StringHashing）；统计形态同参数表（firstOctave/振幅/路由缩放
-   逐字抄 noise json 与 NoiseRouterData.java:319-322），由
-   tests/aquifer.rs 统计门（干占比/三态占比带）替代字节对拍。
+1. **种子链非原版**〔已销账，切链刀 841b562a + 3812e621〕：四通道噪声
+   （barrier/floodedness/spread/lava）原用本仓 NormalNoise 内核 + 自有
+   域盐（SALT_*，TREE_DOMAIN 先例），非 Xoroshiro fork 序。销账刀改走
+   **原版 fork 链实物接线**：RandomState.java:36 根位置随机工厂 →
+   `Noises.instantiate` = `NormalNoise.create(root.fromHashOf(
+   "minecraft:aquifer_barrier" 等实名), params)`（Noises.java:23-26
+   createKey 实名 + :78-83；RandomState.java:112-114——通道随机源是
+   **根工厂 fromHashOf**，非 :38 的 aquiferRandom，后者只喂胞心/位置
+   随机 = 本条 #2）。同刀连带：terrain 21 个 density 通道与 climate
+   6 实例（noise.rs 旧 v1 域盐派生整体退役）同链切换，并修两处对位差
+   （振幅表尾部零填充——表长进 PerlinNoise.lowestFreqValueFactor 归一；
+   shift 通道实名 offset 且 shift_x/shift_z 共用一实例 + ShiftB 采样
+   x/z 对调，DensityFunctions.java:1000-1043）。**销账证据 = python
+   镜像 × 官方 26.1 jar `--probe-noise` 探针 3 seed×10 通道×12 点
+   360/360 位型同、max|d|=0**（tools/fork-chain-mirror-report.md +
+   tools/fork-chain-mirror-run.txt；noise.rs 金标准测试
+   fork_chain_matches_official_jar_probe_bits 锁 3 向量）。随之漂移的
+   黄金/统计门重锚清单见对拍报告 §7（terrain golden、ore_v7 确定红）。
+   ImprovedNoise 三坑核对（lerp3 轴序/nextDouble f32 提升/常量精确性）
+   随镜像 360/360 端到端通过，零修改。
 2. **胞心随机非原版 Xoroshiro 三连 nextInt**：splitmix 链 + Lemire
    无偏归约（同值域 10/9/10、同分布）。
 3. **preliminary surface 用密度场解析过零面 crossing**（terrain.rs
@@ -367,8 +382,10 @@ int 域溢出乘细节保留）、`fromHashOf(name)→forkPositional→at().next
 链（XoroshiroRandomSource.java:38-41,113-155）——同 seed 同坐标与原版
 **同位型**（金标准向量锁在 xoroshiro.rs tests，python hashlib 独立复算
 生成）。残余（非本条义务）：位级对拍的另一个前置——defaultBlock 位的
-洞形与原版逐格一致——依赖 density 通道种子链（AQUI-1 债务），随该波
-统一收敛；tests/deepslate_bedrock.rs 保留统计带门。
+洞形与原版逐格一致——density **通道种子链**已切原版 fork 链（AQUI-1 #1
+销账，360/360 位型证据）；洞形逐位一致的残余 = base_3d（BlendedNoise
+legacy 初始化路径实物化）与 finalDensity 样条组装全展开，随地形保真
+闭环刀统一收敛；tests/deepslate_bedrock.rs 保留统计带门。
 
 ## CAVE-1 洞穴雕刻通道的未移植面（#192 对照审计登记）
 
