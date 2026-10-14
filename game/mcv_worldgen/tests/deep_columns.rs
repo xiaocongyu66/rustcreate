@@ -177,9 +177,8 @@ fn deep_columns_are_never_hollow() {
                             bad_cols += 1;
                             if best_seg > worst_col_best_seg {
                                 worst_col_best_seg = best_seg;
-                                worst_col_report = format!(
-                                    "seed={seed} chunk=({cx},{cz}) col=({lx},{lz})"
-                                );
+                                worst_col_report =
+                                    format!("seed={seed} chunk=({cx},{cz}) col=({lx},{lz})");
                             }
                         }
                         // 诊断量：带内最长连续空气 run（洞合法，只报
