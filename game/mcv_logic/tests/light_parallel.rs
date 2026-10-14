@@ -648,3 +648,152 @@ fn workers_zero_falls_back_to_serial_init() {
         "串行路未布光（天光全零）"
     );
 }
+
+// -----------------------------------------------------------------------
+// 失败回执锁（worker-accounting DC-2/DC-3：inflight 记账 × 回执配对）
+// -----------------------------------------------------------------------
+
+/// 失败回执锁（DC-3 单元路）：worker init panic → `failed=true` 失败回执
+/// 必达（不炸池、不丢账），**在途位随失败回执解除**（重派门放行的关键
+/// ——漏解除 = 该块永不重派 = 黑块连锁冻结 3×3 网格）；重派后正常产物
+/// 到账（光照非平凡）。注入机制 = [`LightResults::install_loss_hook`]。
+#[test]
+fn panicking_init_sends_failure_receipt_and_reopens_inflight_gate() {
+    let pos = ChunkPos::new(-2, 6);
+    let voxels = scene_voxels(0xE5_0001);
+    let heightmap = mcv_worldgen::recompute_heightmap(&voxels);
+    let (sched, mut results) = LightScheduler::new(1);
+    results.install_loss_hook(Box::new(move |p| {
+        if p == pos {
+            mcv_core::pool::LossMode::Panic
+        } else {
+            mcv_core::pool::LossMode::Deliver
+        }
+    }));
+
+    assert!(!sched.in_flight(&pos), "派发前不得记在途");
+    sched.submit(LightJob {
+        pos,
+        voxels: voxels.clone(),
+        heightmap: heightmap.to_vec(),
+    });
+    assert!(sched.in_flight(&pos), "派发后必须记在途");
+    let done = wait_all(&mut results, 1).pop().expect("失败回执必达");
+    assert!(done.failed, "panic 必须合成失败回执（DC-3）");
+    assert!(done.light.is_empty(), "失败回执不携带光照字节");
+    assert!(
+        !sched.in_flight(&pos),
+        "失败回执必须解除在途（漏解除 = 重派门永久关闭）"
+    );
+
+    // 重派：正常产物到账（等价锁同场景已锁逐位，这里锁 liveness + 非零）。
+    results.install_loss_hook(Box::new(|_| mcv_core::pool::LossMode::Deliver));
+    sched.submit(LightJob {
+        pos,
+        voxels,
+        heightmap: heightmap.to_vec(),
+    });
+    let done2 = wait_all(&mut results, 1).pop().expect("重派产物必达");
+    assert!(!done2.failed);
+    assert!(
+        done2.light.iter().any(|&b| b != 0),
+        "重派后必须正常布光（光照全零 = 黑块）"
+    );
+}
+
+/// 失败回执不得进入 drain 获准集（空光照缓冲套用会把已布光清零、stage
+/// 推进会让门读到假证据）——回执端拒收档锁。
+#[test]
+fn failed_receipt_never_admitted_by_drain() {
+    let pos = ChunkPos::new(9, -4);
+    let voxels = scene_voxels(0xE5_0001);
+    let heightmap = mcv_worldgen::recompute_heightmap(&voxels);
+    let (sched, mut results) = LightScheduler::new(1);
+    results.install_loss_hook(Box::new(move |p| {
+        if p == pos {
+            mcv_core::pool::LossMode::Panic
+        } else {
+            mcv_core::pool::LossMode::Deliver
+        }
+    }));
+    sched.submit(LightJob {
+        pos,
+        voxels,
+        heightmap: heightmap.to_vec(),
+    });
+    wait_pending(&results, 1);
+    assert!(
+        results.drain().is_empty(),
+        "失败回执必须被 drain 拒收（不得写回）"
+    );
+    assert_eq!(
+        results.lost_count(),
+        1,
+        "失败回执必须响亮累计（render-stats worker_lost）"
+    );
+}
+
+/// 游戏层死账锁（DC-2 主锁）：布光派发 → init panic → 失败回执只解账不
+/// 写回（stage 仍 TerrainReady、不推进假证据）→ **下帧派发门自然放行重派**
+/// （in_flight 解除 → 派发计数 ≥2）→ 正常产物写回 → LightLocalReady 推进
+/// 恢复（status Light 证据位落下）。旧实现（无失败回执）该块永久滞留
+/// in_flight = 黑块 + 3×3 邻域全部无法建网格。
+#[test]
+fn panicking_light_init_redispatches_and_advances_stage() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    let mut rt =
+        GameRuntime::new_headless_with_light(20261014, temp_dir("lp-loss"), GameMode::Creative, 1);
+    rt.render_dist = 0;
+    // 单块夹具：TerrainReady 场景块（火把富集种子，布光非平凡），停等
+    // worker 来点。rd=0 的请求环（Chebyshev ≤1）由本块 + 真实世界生成
+    // 邻块填充——只断言中心块，外环仅作 neighbors_ready 的背景。
+    let center = ChunkPos::new(0, 0);
+    rt.chunks_mut()
+        .insert(center, terrain_chunk(center, 0xE5_0003));
+
+    let dispatches = Arc::new(AtomicU32::new(0));
+    {
+        let dispatches = Arc::clone(&dispatches);
+        let hit = center;
+        rt.light_debug_results()
+            .expect("并行装配必有回传端")
+            .install_loss_hook(Box::new(move |p| {
+                if p != hit {
+                    return mcv_core::pool::LossMode::Deliver;
+                }
+                let n = dispatches.fetch_add(1, Ordering::Relaxed);
+                if n == 0 {
+                    mcv_core::pool::LossMode::Panic // 首笔 panic（确定性丢失）
+                } else {
+                    mcv_core::pool::LossMode::Deliver
+                }
+            }));
+    }
+
+    // 泵至：重派发生（≥2 次）且中心块推进 LightLocalReady（status Light）。
+    let t0 = Instant::now();
+    loop {
+        rt.stream();
+        let lit = (rt.chunks[&center].stage() as u8) >= (Stage::LightLocalReady as u8);
+        if lit && dispatches.load(Ordering::Relaxed) >= 2 {
+            break;
+        }
+        assert!(
+            t0.elapsed() < Duration::from_secs(60),
+            "布光死账未自愈：重派 {} 次、stage {:?}",
+            dispatches.load(Ordering::Relaxed),
+            rt.chunks[&center].stage()
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        rt.chunks[&center].status(),
+        mcv_core::ChunkStatus::Light,
+        "LightLocalReady 恢复后 status 证据位必须推进（Light/Full 阶梯解冻）"
+    );
+    assert!(
+        light_of(&rt, center).iter().any(|&b| b != 0),
+        "恢复后光照必须非零（黑块病面）"
+    );
+}
