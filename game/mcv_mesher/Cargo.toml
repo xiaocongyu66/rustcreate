@@ -6,3 +6,5 @@ license.workspace = true
 
 [dependencies]
 mcv_core.workspace = true
+# worker 路死账失败回执（DC-3）的池侧 error 日志（docs/worker-accounting.md）。
+log.workspace = true
