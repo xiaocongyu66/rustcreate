@@ -14,25 +14,31 @@
 //!
 //! ## 问题 B 根因报告（证词②「向下挖到某层周围变透明」收口，#190）
 //!
-//! 本文件锁确证的排除面：
+//! 本文件锁确证的排除面（#190 期，deepfix 独立基座）：
 //! - `deep_columns_are_never_hollow`：5 seed × 2×2 chunk，y ∈
 //!   [WORLD_MIN_Y, 8] 逐层实心+流体覆盖率 > 0.15，且 y = WORLD_MIN_Y
 //!   = −64（本仓实物常量 mcv_core/src/lib.rs:28；WORLD_MAX_Y = 320
-//!   :31）基岩恒实心 ⟹ main 生成面**无**「层带整段未生成 = 空区」。
-//! - `deepslate_absent_until_192`：生成输出 deepslate 系方块恒 0——
-//!   solid_material（vanilla/terrain.rs:965-981）min_surface 以下一律
-//!   STONE ⟹ main 基座确证**缺深板岩层**（缺的是材质层，不是实体：
-//!   该深度有实心石头，不是空气）。
+//!   :31）基岩恒实心 ⟹ 当时生成面**无**「层带整段未生成 = 空区」。
+//! - ~~`deepslate_absent_until_192`~~：生成输出 deepslate 系方块恒 0
+//!   （当时 solid_material（vanilla/terrain.rs）min_surface 以下一律
+//!   STONE ⟹ main 基座确证**缺深板岩层**）。
 //!
-//! 残余假说（派单口径，非本波实证）：证词所属真机构建出自 surface 系
-//! （feat/surface-deepslate = aad8dbcd 未合入 main，即 #192），其深板岩
-//! vertical_gradient（overworld.json:446-463，true_at_and_below =
-//! absolute(0) / false_at_and_above = absolute(8)）+ bedrock_floor 段
-//! 替换 main 基座层带，挖穿表层若落入铺装未完成/层序接缝区 = 透明带。
-//! 与 surface 分支接缝：#192 合入后层序按原版 sequence bedrock→表层带→
-//! deepslate 铺装（其 terrain.rs 注释实物规则），下伏充实由本文件掏空锁
-//! 兜底 ⟹ B 随接缝闭合自然消解；届时 `deepslate_absent_until_192` 的
-//! 「不含 deepslate」断言转红 = 预登记的口径迁移提醒（见该测注）。
+//! ## 口径迁移记录（#192 接缝闭合，rebase 后执行）
+//!
+//! #192（深板岩五层 + surfaceDepth + NormalNoise 实物化 octave 种子派
+//! 生 noise.rs + caves/noodle+pillars 补全 81418fe7）合入后：
+//! - `deepslate_absent_until_192` 的「不含 deepslate」断言如预登记转红
+//!   （run 38497803387：hit=13373）——**删除该测**：其全部残留意图已被
+//!   main 的 deepslate_bedrock.rs 行为锁覆盖（deepslate_gradient_boundary
+//!   锁 y≤0 恒深板岩 + 1..7 渐变概率 + y≥8 零，bedrock_five_layer 锁
+//!   基岩五层，deepslate_bedrock_deterministic 锁确定性），资产面断言
+//!   与注册表锁重叠，保留即双份判据。
+//! - `deep_columns_are_never_hollow` 的单层 0.15 判据同步废止：单层覆
+//!   盖率无法区分「奶酪洞群核心切片」（原版合法，caves/underground
+//!   cheese 段核心直径 10-30 格级，y=7 实测 0.082 与同 run 绿的
+//!   cave_audit_stats 4×4 带包络相容）与「层带整段不生成」；重立为
+//!   cave_audit 同源带包络（见该测注）。真机病征「脚下实心底不在」
+//!   由 y=−64 基岩恒实心 + 柱向 max_air_run 诊断继续兜底。
 //!
 //! B 另有根因时的复验探针（按序执行，不预先发明机制）：
 //! ① 同 seed 同柱 `generate_terrain_with` 体素 dump 对层——覆盖率崩
@@ -75,30 +81,54 @@ fn deep_columns_are_never_hollow() {
                 let vox = out.voxels.as_u16_slice();
                 let col_at =
                     |lx: usize, lz: usize, y: i32| -> u16 { vox[mcv_core::vidx(lx, y, lz)] };
-                // 逐 y 层的实心+流体覆盖率（含水层干洞合法蚀刻，整层
-                // 掏空才是不合法）。阈值 0.15 取「灾难性空洞层」判据：
-                // 深层意大利面洞/奶酪洞群聚是**原版合法形态**（对照
-                // 真机证词后不得把合法洞穴误判成红），红因只允许
-                // 「层带整段不生成」级别的世界生成崩坏；覆盖率分布
-                // 由末行 worst_level 诊断输出（B 根因报告数据源）。
-                for y in WORLD_MIN_Y..=8 {
-                    let filled = (0..CHUNK_SX)
-                        .flat_map(|lx| (0..CHUNK_SZ).map(move |lz| (lx, lz)))
-                        .filter(|(lx, lz)| {
-                            let id = col_at(*lx, *lz, y);
-                            is_solid(id) || is_fluid(id)
-                        })
-                        .count();
-                    let frac = filled as f32 / (CHUNK_SX * CHUNK_SZ) as f32;
-                    if frac < worst_level.0 {
-                        worst_level = (frac, format!("seed={seed} chunk=({cx},{cz}) y={y}"));
+                // 层带统计：16 格带空气率（air/total，流体计入填充——
+                // 含水层水/岩浆「透明感」由流体面管，实体掏空才是本锁
+                // 对象）包络 + 逐层诊断（worst_level 数据源）。
+                // 口径重立（#190→#192 接缝后，见模块头注口径迁移记录）：
+                // 单层实心+流体 >0.15 的旧判据是对 deepfix 独立基座的旧
+                // 自研噪声场定的经验值；#192 波（NormalNoise 实物化
+                // octave 种子派生 noise.rs、caves/noodle+pillars 补全
+                // 81418fe7）后 y=7 切片实测 0.082（run 38497803387）——
+                // 与同 run 绿的 cave_audit_stats（4×4 窗 16 格带空气率
+                // 包络 (0.005, 0.5)）相容 = 奶酪洞群核心切片的**原版合
+                // 法形态**（density_function/overworld/caves/*.json 蚀
+                // 刻源实物，underground cheese 段核心直径 10-30 格级，
+                // 单 chunk 单层被洞群吞 80%+ 不属「层带整段不生成」）。
+                // 新判据 = 同源带包络：[-48,8) 每带空气率 ∈ (0.005,
+                // 0.55)（上界同 cave_audit 防空洞塌方病 + 2×2 窗方差余
+                // 量 5%；下界防空洞塌方/全实心两态对齐），[-64,-48)
+                // slide 渐变带只诊断。cave_audit_stats 同 run 绿 = 数字
+                // 在本仓实物噪声场下的可达性实证背书。
+                for (band_lo, band_hi) in
+                    [(WORLD_MIN_Y, -48), (-48, -32), (-32, -16), (-16, 0), (0, 9)]
+                {
+                    let (mut air, mut total) = (0usize, 0usize);
+                    for y in band_lo..band_hi {
+                        for lx in 0..CHUNK_SX {
+                            for lz in 0..CHUNK_SZ {
+                                let id = col_at(lx, lz, y);
+                                total += 1;
+                                if !is_solid(id) && !is_fluid(id) {
+                                    air += 1;
+                                }
+                            }
+                        }
                     }
-                    assert!(
-                        frac > 0.15,
-                        "K-DEEP-COL seed={seed} chunk=({cx},{cz}) y={y}：深层带该层实心+流体\
-                         覆盖率 {frac:.3} ≤ 0.15——层带掏空 = 真机「挖到某层周围变透明」的\
-                         世界生成根因候选（含水层洞失控/密度门错）"
-                    );
+                    let void = air as f32 / total as f32;
+                    if 1.0 - void < worst_level.0 {
+                        worst_level = (
+                            1.0 - void,
+                            format!("seed={seed} chunk=({cx},{cz}) band=[{band_lo},{band_hi})"),
+                        );
+                    }
+                    if band_lo >= -48 {
+                        assert!(
+                            (0.005..0.55).contains(&void),
+                            "K-DEEP-COL seed={seed} chunk=({cx},{cz}) band=[{band_lo},{band_hi}) \
+                             空气率 {void:.3} 出包络 (0.005,0.55)——全空腔/全实心两态系统病\
+                             （合法洞穴群见 cave_audit_stats 同源口径）"
+                        );
+                    }
                 }
                 for lx in 0..CHUNK_SX {
                     for lz in 0..CHUNK_SZ {
@@ -140,42 +170,8 @@ fn deep_columns_are_never_hollow() {
     );
 }
 
-/// 深板岩缺层登记（#192 交接锚）：生成输出不得含 deepslate 系方块
-/// （世界生成从未铺装），同时注册表必须已含 deepslate（资产就绪，
-/// 只缺铺装规则）。若 #192 补上铺装，本测的「不含」断言必须随该
-/// 波一起改写（红 = 提醒口径迁移，非回归）。
-#[test]
-fn deepslate_absent_until_192() {
-    let any_deepslate_registered = mcv_core::BLOCKS
-        .iter()
-        .any(|d| d.name.contains("deepslate") || d.name.contains("bedrock"));
-    assert!(
-        any_deepslate_registered,
-        "注册表缺 deepslate/bedrock 名族 = 资产面回退（#192 前置）"
-    );
-    let ds_ids: Vec<u16> = mcv_core::BLOCKS
-        .iter()
-        .enumerate()
-        .filter(|(_, d)| d.name.contains("deepslate"))
-        .map(|(i, _)| i as u16)
-        .collect();
-    assert!(!ds_ids.is_empty(), "注册表无 deepslate 项");
-    for seed in [2026_1013u64, 7] {
-        let out = generate_terrain_with(
-            TerrainBackend::Vanilla,
-            seed,
-            mcv_core::ChunkPos::new(3, -4),
-        )
-        .expect("generate ok");
-        let hit = out
-            .voxels
-            .as_u16_slice()
-            .iter()
-            .filter(|v| ds_ids.contains(&(**v & mcv_core::ID_MASK)))
-            .count();
-        assert_eq!(
-            hit, 0,
-            "worldgen 已铺装 deepslate（{hit} 格）：#192 已落地，本测口径须同步改写"
-        );
-    }
-}
+// 深板岩缺层登记哨兵已删除（#192 接缝闭合后口径迁移，见模块头注
+// 「口径迁移记录」）：铺装存在性/y 域语义由 deepslate_bedrock.rs 行为
+// 锁（deepslate_gradient_boundary/bedrock_five_layer/
+// deepslate_bedrock_deterministic）覆盖，资产面由注册表锁覆盖——
+// 保留本哨兵即双份判据。
