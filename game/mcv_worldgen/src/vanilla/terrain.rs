@@ -797,11 +797,19 @@ impl Orchestrator {
         }
     }
 
-    /// 含水层列探针（`aquifer::ColumnProbe` 的构造点）：crossing =
-    /// 密度场解析过零面（原版 preliminarySurfaceLevel 的语义替身，登记
-    /// AQUI-1），附 deep dark 门两条通道值（erosion 原值 + offset，
-    /// depth = yClampedGradient(−64,320,1.5,−1.5)+offset，
+    /// 含水层列探针（`aquifer::ColumnProbe` 的构造点）：prelim =
+    /// 原版 `noise_router.preliminary_surface_level`（DensityFunctions.
+    /// FindTopSurface 实物，DensityFunctions.java:585-611）——专用 surface
+    /// 探测密度树（本函数 `surface_probe_density`，overworld.json
+    /// noise_router 段实物展开：offset/factor 双列常量内核 + 双端
+    /// y_clamped_gradient 裁剪）从 upper_bound 树钳定顶向下每 8 格步进
+    /// 找首个 density>0 的 y。附 deep dark 门两条通道值（erosion 原值 +
+    /// offset，depth = yClampedGradient(−64,320,1.5,−1.5)+offset，
     /// NoiseRouterData.java:180-182 在探针消费侧合成）。
+    /// （旧实现 = 128+128·(offset+jag) 解析式近似（AQUI-1），在腔区与
+    /// 探测树偏差大 → aquifer under 门误开 → floodedness 阈值抬 → 海
+    /// 平面下全灌水（#175 残余面，java-harness 对拍 run 38650650041
+    /// [0,16) 带 rust 3921 水 vs 官方 0 水钉出），本刀换源销账。）
     #[must_use]
     pub fn aquifer_probe(
         &self,
@@ -809,13 +817,60 @@ impl Orchestrator {
         block_z: i32,
     ) -> crate::vanilla::aquifer::ColumnProbe {
         let cs = self.column_state(block_x, block_z);
-        let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
-        let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
+        let crossing = self.find_top_surface(block_x, block_z, cs.offset, cs.factor);
         crate::vanilla::aquifer::ColumnProbe {
             prelim: crossing,
             offset: cs.offset,
             erosion: cs.erosion,
         }
+    }
+
+    /// `DensityFunctions.FindTopSurface`（DensityFunctions.java:597-611）：
+    /// topY = floor(upper_bound/8)·8；从 topY 每 8 格步进向下至
+    /// lower_bound=−64，首个 surface_probe_density>0 的 y 即返回；
+    /// topY≤lower_bound 或全程无过零 → 返回 lower_bound。整棵探测树
+    /// 零噪声采样（offset/factor 为列常量，其余解析）——每列至多 49
+    /// 次纯算术求值。
+    fn find_top_surface(&self, block_x: i32, block_z: i32, offset: f64, factor: f64) -> i32 {
+        // upper_bound 树（overworld.json 实物）：
+        // clamp(−40..320, 128 − 128·(0.2734375·(1−factor) − offset))
+        let upper = (128.0 - 128.0 * (0.273_437_5 * (1.0 - factor) - offset)).clamp(-40.0, 320.0);
+        let top_y = upper.div_euclid(8) * 8; // Mth.floor(v/cell)*cell，负域 div_euclid 同 floor
+        if top_y <= MIN_Y {
+            return MIN_Y;
+        }
+        let mut y = top_y;
+        while y >= MIN_Y {
+            if self.surface_probe_density(
+                f64::from(block_x),
+                f64::from(y),
+                f64::from(block_z),
+                offset,
+                factor,
+            ) > 0.0
+            {
+                return y;
+            }
+            y -= 8;
+        }
+        MIN_Y
+    }
+
+    /// preliminary_surface_level 的 density 探测树（overworld.json
+    /// noise_router.preliminary_surface_level.density 实物全展开）：
+    /// add(−0.390625, add(0.1171875, g1·(−0.1171875 + (−0.078125 +
+    /// g2·(0.078125 + clamp(−64..64, −0.703125 + 4·qneg(
+    /// (yClamp(y)+offset)·factor)))))））。
+    /// yClamp = y_clamped_gradient(−64,320,1.5→−1.5)（斜率 −1/128，
+    /// 与 offset 在海平面附近抵消）；g1 = gradient(−64,−40,0→1)（深
+    /// 海底压 0）、g2 = gradient(240,256,1→0)（高空压 0）。
+    fn surface_probe_density(&self, _x: f64, y_mc: f64, _z: f64, offset: f64, factor: f64) -> f64 {
+        let g1 = y_grad(y_mc, -64.0, -40.0, 0.0, 1.0);
+        let g2 = y_grad(y_mc, 240.0, 256.0, 1.0, 0.0);
+        let kernel = 4.0 * quarter_negative((y_clamp(y_mc) + offset) * factor);
+        // clamp 树：clamp(-64..64, -0.703125 + 4·qneg(...))
+        let inner = (-0.703_125 + kernel).clamp(-64.0, 64.0);
+        -0.390_625 + 0.117_187_5 + g1 * (-0.117_187_5 + (-0.078_125 + g2 * (0.078_125 + inner)))
     }
 
     /// spaghettiRoughnessFunction（NoiseRouterData.java:213-220）：

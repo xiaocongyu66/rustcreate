@@ -275,9 +275,22 @@ class），本仓为**结构复刻**——判据内的四通道噪声与所传 d
    随镜像 360/360 端到端通过，零修改。
 2. **胞心随机非原版 Xoroshiro 三连 nextInt**：splitmix 链 + Lemire
    无偏归约（同值域 10/9/10、同分布）。
-3. **preliminary surface 用密度场解析过零面 crossing**（terrain.rs
-   实顶扫描同款），非原版 preliminary_surface_level 密度函数（本仓
-   density 管线无该函数；两者同为无洞穴地表高度估计，语义对位）。
+3. **preliminary surface 用密度场解析过零面 crossing**〔已销账，本刀
+   find_top_surface 实装〕：旧实现 = 128+128·(offset+jag) 解析式近似，
+   原版 = noise_router.preliminary_surface_level =
+   **FindTopSurface**（DensityFunctions.java:585-611：专用 surface 探测
+   密度树从 upper_bound 树钳定顶向下每 8 格步进找首个 density>0）。
+   旧条目「两者同为无洞穴地表高度估计，语义对位」的断言被 java-harness
+   对拍**证伪**：腔区 crossing 远低于探测树值 → aquifer under 门
+   （surfaceAtCenterIsUnderGlobalFluidLevel）误开 → floodedness factor
+   抬高 → 阈值 0.8→−0.3 → 海平面下洞全灌水（#175 残余面；run
+   38650650041 K-CAVE-AUDIT [0,16) 带 rust 3921 水/138 空气 vs 官方
+   dump 0 水/4751 空气）。销账刀 = terrain.rs 实装探测树全展开
+   （offset/factor 列常量 + 双端 y_clamped_gradient 裁剪 +
+   quarter_negative + clamp(−64..64)，FindTopSurface 8 格步进语义）
+   + upper_bound 树。**销账证据 = python 双复刻对拍：20000 组随机
+   (offset, factor) 网格 rust 公式 vs json 树镜像 find_top_surface
+   输出 diff=0、密度值 max|d|=0.0**（f64 同构逐位）。
 4. **水流更新调度不建模**：shouldScheduleFluidUpdate/
    markPosForPostprocessing（Aquifer.java:160,246-294）无对应存储/
    tick 面——原版靠它把边界水交给随机刻流动，本仓生成期水静态
