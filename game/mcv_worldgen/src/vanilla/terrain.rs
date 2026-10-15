@@ -8,17 +8,21 @@
 //! 换算壳保留，勿散落魔法数）。
 //!
 //! 取舍（验收报告逐条说明）：
-//! - interpolated/blendDensity 的单元 8×4 插值不实现——段状高度带由气候
-//!   样条本身给出，单元插值只影响洞壁平滑度；
+//! - interpolated/blendDensity 的单元插值自 #210 起为实物
+//!   （`vanilla/cell_interp.rs`：NoiseChunk cell (4,8,4) 角点预积分 + 增量
+//!   序三线插值，final_density 树内 5 处 `minecraft:interpolated` 包裹
+//!   子树全部入壳；填充环/树基/湖重放走 cell 面，任意点 raw 面不变）——
+//!   旧「单元 8×4 插值不实现」取舍作废；
 //! - base_3d_noise 自 T4 起为真移植 BlendedNoise（vanilla/blended.rs：
 //!   NoiseRouterData.java:86 `createUnseeded(0.25,0.125,80,160,8)`，上下限
 //!   夹逼混合；此前「双层 fBm 近其破面」取舍作废）；
 //! - noodle / pillars 自 #192 洞穴改进波起为实物移植
 //!   （`density_function/overworld/caves/{noodle,pillars}.json` 逐节点对位，
 //!   见 [`Orchestrator::noodle`] / [`Orchestrator::pillars`] 注）；
-//!   noodle 各通道的 `minecraft:interpolated` 外壳按本模块既定口径跳过
-//!   （与 final_density 外层 interpolated/blend_density 同一取舍——只影响
-//!   8×8×4 单元级管壁平滑度，不改变掩膜/雕刻判定语义）。
+//!   noodle 各通道（掩膜/厚度基底/ridge_a/b）的 `minecraft:interpolated`
+//!   外壳同入 cell 壳（#210）——掩膜门/abs/1.5·max 在包裹外作用于插值后
+//!   值，语义对位 noodle.json；raw 单点面（ore_pass 等）仍走本模块。
+//!   （事故备案：cell-perf-report §6——corner() 维序错位塌方，已修。）
 //!
 //! 洞穴/山脊噪声通道（2026-10-11 质量门修订）：全部改走 `NormalNoise`
 //! fBm + 26.1 noise 参数表（data/minecraft/worldgen/noise/*.json），不再
