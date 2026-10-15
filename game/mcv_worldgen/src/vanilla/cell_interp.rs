@@ -60,18 +60,18 @@ pub(crate) const W_SLOTS: usize = 5;
 
 /// 一个角列（world xz ≡ 0 mod 4）的全部角层值：`[槽位][角层 gy]`，
 /// gy 的角 y = −64 + 8·gy。
-pub(crate) struct CornerColumn {
+pub struct CornerColumn {
     w: Box<[[f64; GY_LEVELS]; W_SLOTS]>,
 }
 
 /// 角列四件套（体素所在的 cell 的 4 个 XZ 角列）：[x0z0, x1z0, x0z1, x1z1]。
 /// Rc 在 [`CellShell`] 缓存与填充环 per-column 快照之间共享，serve 期间
 /// 无可变访问（缓存只在 cols4 预取时构建）。
-pub(crate) type CellCorners = [Rc<CornerColumn>; 4];
+pub type CellCorners = [Rc<CornerColumn>; 4];
 
 /// per-世界（可跨块）cell 外壳：角列缓存 + 角面构建。确定性：同为
 /// (orch, 角列坐标) 纯函数——双块重放两侧各自构建逐位一致。
-pub(crate) struct CellShell<'a> {
+pub struct CellShell<'a> {
     orch: &'a Orchestrator,
     cols: HashMap<(i32, i32), Rc<CornerColumn>>,
 }
