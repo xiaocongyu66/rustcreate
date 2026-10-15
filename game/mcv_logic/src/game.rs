@@ -2266,14 +2266,14 @@ impl GameRuntime {
         }
     }
 
-    /// 步末位置钳制（已退役，2026-10-16 真机隐形墙Ⅱ）：原实现钉玩家回
-    /// 票覆盖的 Full 矩形（sim_ready_rect 外沿）——「前面的区块一加载
-    /// 墙立马前移」的机制本体，与原版「走进未加载区块畅通」（Level
-    /// .getBlockState VOID_AIR / ServerLevel 即时生成）相悖。物理安全
-    /// 现由三面承担：fixed_step 的 r_safe 门（本块未就位=整步冻结）、
-    /// WorldView::block 未加载列 air 化（mcv_logic game.rs :414-433，
-    /// #190）、player ticket 邻环生成回填。sim_ready_rect 保留为纯
-    /// 查询（rect 语义测试/未来 mob 流式安全面）。
+    // 步末位置钳制（已退役，2026-10-16 真机隐形墙Ⅱ）：原实现钉玩家回
+    // 票覆盖的 Full 矩形（sim_ready_rect 外沿）——「前面的区块一加载
+    // 墙立马前移」的机制本体，与原版「走进未加载区块畅通」（Level
+    // .getBlockState VOID_AIR / ServerLevel 即时生成）相悖。物理安全
+    // 现由三面承担：fixed_step 的 r_safe 门（本块未就位=整步冻结）、
+    // WorldView::block 未加载列 air 化（mcv_logic game.rs :414-433，
+    // #190）、player ticket 邻环生成回填。sim_ready_rect 保留为纯
+    // 查询（rect 语义测试/未来 mob 流式安全面）。
 
     /// 出生搜索窗（区块 (0,0) ± [`Self::load_radius`]）是否全部
     /// TerrainReady。投放等齐窗再搜：只看 (0,0) 时邻块往往还在生成，
@@ -8942,10 +8942,10 @@ mod tests {
         }
     }
 
-    /// （墙行为锁 clamp_rect_derives_from_ticket_full_domain /
-    /// clamp_rect_hole_behind_does_not_wall_forward 已随步末钳制退役
-    /// ——它们锁定的「墙位推导/洞环钉回」语义正是真机隐形墙Ⅱ的
-    /// 机制本体；git 历史 keep，原版无墙语义不需要替代锁。）
+    // （墙行为锁 clamp_rect_derives_from_ticket_full_domain /
+    // clamp_rect_hole_behind_does_not_wall_forward 已随步末钳制退役
+    // ——它们锁定的「墙位推导/洞环钉回」语义正是真机隐形墙Ⅱ的
+    // 机制本体；git 历史 keep，原版无墙语义不需要替代锁。）
 
     /// #190 回归锁（派单口径「钳制矩形 ⊇ 可见已上传环」）：生产不变量
     /// 「可见网格半径 ≤ sim_dist」（remesh 环过滤，杜绝「看得见却穿透」）
