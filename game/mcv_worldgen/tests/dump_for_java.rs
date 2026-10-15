@@ -14,9 +14,13 @@
 //! 体素序 = (y-ymin)*256 + z*16 + x（每层 z 行，行内 x）。
 
 use mcv_core::{ChunkPos, WORLD_MIN_Y};
-use mcv_worldgen::{TerrainBackend, generate_terrain_with};
+use mcv_worldgen::{generate_terrain_with, TerrainBackend};
 
-const SEED: u64 = 0x7E_A20_0B1;
+// 官方对拍世界 = 132784305（0x7EA20B1，tools/fork-reanchor/jobs_all.txt
+// 十进制同值实锤）。前刀常量多一个零（0x7EA200B1=2124546225，cave_audit
+// 审计窗自家世界）→ dump 通道从未与官方同世界——矩阵跨世界失真（#210
+// 作业发现；audit 行为锁锚值另属世界，此处不动）。
+const SEED: u64 = 0x7EA20B1;
 const Y_LO: i32 = WORLD_MIN_Y; // −64
 const Y_HI: i32 = 96; // 审计窗上沿（与 cave_audit_stats 同口径）
 const CX0: i32 = 2;
