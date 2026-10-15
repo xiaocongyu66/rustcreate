@@ -64,14 +64,16 @@ const GLOBAL_OFFSET: f64 = -0.50375;
 pub const ENTRANCE_FADE: i32 = 14;
 /// noodle 关闭哨兵（noodle.json 外层 range_choice
 /// `when_in_range[-10⁶,0) → 64`：掩膜噪声 < 0 处不参与 min）。
-const NOODLE_OFF: f64 = 64.0;
+/// `pub(crate)` 供 cell_interp.rs 外壳合成复用（原文件单源）。
+pub(crate) const NOODLE_OFF: f64 = 64.0;
 /// pillars 门（final_density out_of_range 支
 /// `range_choice(pillars, [-10⁶, 0.03) → −10⁶, 否则 pillars)`）。
 const PILLARS_GATE_MIN: f64 = 0.03;
 /// pillars/noodle 门哨兵（range_choice 越界常量，语义=「不抬升」）。
 const CARVE_OFF: f64 = -1.0e6;
 /// noodle_ridge_a/b 求值缩放（noodle.json `2.6666666666666665`）。
-const NOODLE_RIDGE_SCALE: f64 = 2.666_666_666_666_666_5_f64;
+/// `pub(crate)` 供 cell_interp.rs 角面求值复用（原文件单源）。
+pub(crate) const NOODLE_RIDGE_SCALE: f64 = 2.666_666_666_666_666_5_f64;
 
 /// Noises.SURFACE 注册名（Noises.java:78-83 instantiate 用
 /// `factory.fromHashOf(name.identifier())` 的字符串形态）与 surface.json
@@ -141,11 +143,19 @@ fn y_clamp(y_mc: f64) -> f64 {
 }
 
 fn quarter_negative(x: f64) -> f64 {
-    if x > 0.0 { x } else { x * 0.25 }
+    if x > 0.0 {
+        x
+    } else {
+        x * 0.25
+    }
 }
 
 pub(crate) fn half_negative(x: f64) -> f64 {
-    if x > 0.0 { x } else { x * 0.5 }
+    if x > 0.0 {
+        x
+    } else {
+        x * 0.5
+    }
 }
 
 /// 山脊折叠形（NoiseRouterData.peaksAndValleys）。
@@ -705,6 +715,7 @@ impl Orchestrator {
         block_x: i32,
         block_z: i32,
         field: &mut crate::vanilla::aquifer::AquiferField<'_>,
+        cell: &mut crate::vanilla::cell_interp::CellShell<'_>,
     ) -> Option<(i32, u16)> {
         use crate::vanilla::aquifer::Substance as Sub;
         let cs = self.column_state(block_x, block_z);
@@ -725,8 +736,16 @@ impl Orchestrator {
         // （压力封口袋不允许悬浮在半空被认作实顶——否则树基落点与
         // 缓冲实顶漂移）。
         let mut hit_solid = false;
+        // 树基判定 = 读 pass-1 已生成块（原版 feature 读生成面语义）——
+        // 走与填充环同一 cell 插值外壳（角列缓存纯函数，跨块一致）。
+        let cell_corners = cell.cols4(block_x, block_z);
         for y in ((SEA + 1)..=fill_top).rev() {
-            let dval = self.density(&cs, block_x, y, block_z);
+            let dval = crate::vanilla::cell_interp::CellShell::density_at(
+                &cell_corners,
+                block_x,
+                y,
+                block_z,
+            );
             let subst = if dval > 0.0 {
                 None // 实心直判（含水层前置，Aquifer.java:150-152）
             } else if !hit_solid {
@@ -1002,9 +1021,21 @@ impl Orchestrator {
         -0.075_000_000_000_000_01_f64 - 0.025 * t + 1.5 * a.abs().max(b.abs())
     }
 
-    /// 最终 density 场值（> 0 实心）。
+    /// final_density 内被 `minecraft:interpolated` 包裹的合成树
+    /// （cell-perf-report §1 W1：blend_density + slide 全合成）。
+    /// blend_density 在 fill 单块语义（`Blender.empty`，无邻块混合）下
+    /// 恒等；slide 双 lerp（-0.078125 / 0.1171875 + ygrad 240..256 /
+    /// -64..-40）与原 op 序逐位不变。
+    /// 消费面：[`Self::density`]（raw 单点直透语义）与
+    /// `cell_interp::CellShell` 角面求值（角点 = 插值恒等点）。
     #[must_use]
-    pub fn density(&self, cs: &ColumnState, block_x: i32, block_y: i32, block_z: i32) -> f64 {
+    pub(crate) fn terrain_density(
+        &self,
+        cs: &ColumnState,
+        block_x: i32,
+        block_y: i32,
+        block_z: i32,
+    ) -> f64 {
         let bx = f64::from(block_x);
         let bz = f64::from(block_z);
         let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
@@ -1038,11 +1069,48 @@ impl Orchestrator {
         let top_factor = y_grad(y_mc, 240.0, 256.0, 1.0, 0.0);
         let v = lerp1(-0.078125, caves, top_factor);
         let bottom_factor = y_grad(y_mc, -64.0, -40.0, 0.0, 1.0);
-        let v = lerp1(0.1171875, v, bottom_factor);
+        lerp1(0.1171875, v, bottom_factor)
+    }
+
+    /// 最终 density 场值（> 0 实心）。raw 单点求值（无 cell 上下文时
+    /// `Interpolated.compute` 直透 wrapped——NoiseChunk.java:757-760，
+    /// 官方任意点探针 `--density` 同口径）。
+    #[must_use]
+    pub fn density(&self, cs: &ColumnState, block_x: i32, block_y: i32, block_z: i32) -> f64 {
+        let bx = f64::from(block_x);
+        let bz = f64::from(block_z);
+        let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
+        let v = self.terrain_density(cs, block_x, block_y, block_z);
         // postProcess = squeeze(0.64·slide)，与 noodle 取 min（final_density
         // 最外层 min，noodle.json——掩膜外=64 不生效，掩膜内雕细长管洞）。
         let noodle_v = self.noodle(bx, y_mc, bz);
         squeeze(0.64 * v).min(noodle_v)
+    }
+
+    /// noodle 掩膜通道 raw 值（noodle.json 内层 range_choice
+    /// `when_in_range = noise(noodle,1,1)` ——cell_interp.rs 角面求值用，
+    /// y∈[-60,321) 门与 else=-1 在外壳侧应用）。
+    #[must_use]
+    pub(crate) fn noodle_mask_at(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        self.noodle_noise.get_value(bx, y_mc, bz)
+    }
+
+    /// noodle_thickness 通道 raw 值（W3 里 `mul(-0.025, ·)` 的输入）。
+    #[must_use]
+    pub(crate) fn noodle_thickness_at(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        self.noodle_thickness.get_value(bx, y_mc, bz)
+    }
+
+    /// noodle_ridge_a 通道 raw 值（W4，xz/y 2.6666… 缩放在外壳侧）。
+    #[must_use]
+    pub(crate) fn noodle_ridge_a_at(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        self.noodle_ridge_a.get_value(bx, y_mc, bz)
+    }
+
+    /// noodle_ridge_b 通道 raw 值（W5 同 W4）。
+    #[must_use]
+    pub(crate) fn noodle_ridge_b_at(&self, bx: f64, y_mc: f64, bz: f64) -> f64 {
+        self.noodle_ridge_b.get_value(bx, y_mc, bz)
     }
 
     /// 测试出口：base_3d 通道在 density() 同坐标约定下的原始值（破面输入）。
@@ -1129,7 +1197,9 @@ impl Orchestrator {
     }
 }
 
-fn squeeze(c: f64) -> f64 {
+/// squeeze（DamageFunction squeeze 实物：`x/2 − x³/24`，定义域 clamp
+/// [-1,1]）。`pub(crate)` 供 cell_interp.rs 外壳合成复用。
+pub(crate) fn squeeze(c: f64) -> f64 {
     let c = c.clamp(-1.0, 1.0);
     c / 2.0 - c * c * c / 24.0
 }
@@ -1155,6 +1225,14 @@ pub fn generate(
     // 区块免采样线（chunk_skip，Aquifer.java:134-137）。
     let aq = crate::vanilla::aquifer::Aquifer::new(seed);
     let mut field = crate::vanilla::aquifer::AquiferField::new(&aq, &orch);
+    // #210 cell 预积分插值外壳：chunk fill 环 = 官方 NoiseBasedChunk
+    // Generator.java:392-453 语义面——被 `minecraft:interpolated` 包裹的
+    // 5 个子树只在 cell 角点采样，cell 内三线插值（cell_interp.rs 头注
+    // 逐引注；角面构建逐角列一份，Rc 共享 across 列）。densities 随之
+    // 为插值面：aquifer substance / surface 判据吃同值（原版 fill 环内
+    // BlockStateFiller 全走 NoiseChunk context）。角列纯世界坐标函数
+    // （同 seed 同角列恒同值），跨块重放两侧一致。
+    let mut cell = crate::vanilla::cell_interp::CellShell::new(&orch);
     let skip = field.chunk_skip(base_x, base_z);
 
     for cz in 0..16_i32 {
@@ -1162,6 +1240,9 @@ pub fn generate(
             let wx = base_x.wrapping_add(cx);
             let wz = base_z.wrapping_add(cz);
             let cs = orch.column_state(wx, wz);
+            // 本列所在 cell 的 4 个 XZ 角列（≈每 4 列第一次实建，其余命中
+            // 缓存 Rc 共享）——体素插值输入全在这里，循环内零可变访问。
+            let cell_corners = cell.cols4(wx, wz);
             // 群系面表（#140 表层波，滩/雪带 + 群系顶格判定——判定语义与
             // 引注集中在 Orchestrator::column_surface_ids，树 pass 的
             // column_real_top 共用同一函数，杜绝两套表层规则漂移）。
@@ -1202,7 +1283,8 @@ pub fn generate(
             // 重放由构造一致。
             let mut hit_solid = false;
             for y in (MIN_Y..=fill_top).rev() {
-                let dval = orch.density(&cs, wx, y, wz);
+                let dval =
+                    crate::vanilla::cell_interp::CellShell::density_at(&cell_corners, wx, y, wz);
                 // #192：旧「y==MIN_Y 恒基岩 + 其上 4 格 50% 噪声」前置分支
                 // 删除——实物里基岩是 surface_rule 的 vertical_gradient
                 // （overworld.json top[0]），只对 defaultBlock=石头位生效

@@ -95,9 +95,9 @@
 //! 已放置特征；重放模型下跨界树重叠格的赢家由各自区块的池序决定，单格
 //! 物种归属可与原版全局序不同（逐格仍确定、跨块无裂缝）。
 
-use crate::trees::{BlockSetter, TreeKind, TreesRng, ids, place_tree};
+use crate::trees::{ids, place_tree, BlockSetter, TreeKind, TreesRng};
 use crate::vanilla::biomes::Biome;
-use crate::vanilla::terrain::{AIR, DIRT, GRASS, Orchestrator, SNOW_GRASS, WATER};
+use crate::vanilla::terrain::{Orchestrator, AIR, DIRT, GRASS, SNOW_GRASS, WATER};
 
 /// 树装饰专属域盐（树 pass 唯一随机域入口；与地形/气候/洞穴通道隔离）。
 const TREE_DOMAIN: u64 = 0x7BEE_5501;
@@ -253,6 +253,10 @@ pub fn tree_spots(seed: u64, chunk_x: i32, chunk_z: i32, orch: &Orchestrator) ->
     // 函数集——两侧块各自新建 field 结果逐字节一致（缓存只省算力）。
     let aq = crate::vanilla::aquifer::Aquifer::new(seed);
     let mut field = crate::vanilla::aquifer::AquiferField::new(&aq, orch);
+    // #210：树基判定走与填充环同一 cell 插值外壳（读 pass-1 已生成块
+    // 语义——原版 feature 读生成面；角列缓存纯世界坐标函数，跨界树两侧
+    // 重放逐位一致）。
+    let mut cell = crate::vanilla::cell_interp::CellShell::new(orch);
     // 邻域池扫描：树落点世界坐标纯函数；CROWN_REACH 环带内的池（含树干
     // 在邻块的）全部入选——树干所属块投影其裁剪整体，邻块重放伸入部分
     // （模块头注 fix/tree-chunk-clip）。
@@ -284,7 +288,7 @@ pub fn tree_spots(seed: u64, chunk_x: i32, chunk_z: i32, orch: &Orchestrator) ->
             // `continue`，跨界冠两侧皆失 = 真机「树少一边树叶」），且与
             // 树干所属块的读数字节一致（两侧各算各的必同 (base_y, ground)，
             // 否则重放错位出新裂缝）。
-            let Some((base_y, ground)) = orch.column_real_top(wx, wz, &mut field) else {
+            let Some((base_y, ground)) = orch.column_real_top(wx, wz, &mut field, &mut cell) else {
                 continue;
             };
             if !GROUND.contains(&ground) {

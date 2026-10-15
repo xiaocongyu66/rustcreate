@@ -49,10 +49,10 @@
 //! 内湖间重叠为低频边缘（登记 KNOWN-DIVERGENCE LAKE-1）。应用序 =
 //! (chunk_x, chunk_z, variant) 全序，两侧块重放同序 ⇒ 覆盖写一致。
 
-use crate::vanilla::aquifer::{AquiferField, Substance, open_column};
+use crate::vanilla::aquifer::{open_column, AquiferField, Substance};
 use crate::vanilla::channel_seed;
 use crate::vanilla::splitmix64;
-use crate::vanilla::terrain::{AIR, BEDROCK, ColumnState, LAVA, Orchestrator, STONE, WATER};
+use crate::vanilla::terrain::{Orchestrator, AIR, BEDROCK, LAVA, STONE, WATER};
 use std::collections::HashMap;
 
 /// 湖通道域盐（TREE_DOMAIN 先例；非原版 WorldgenRandom 大特征种子链，
@@ -71,30 +71,27 @@ const HY: i32 = 4;
 /// Rock 封口袋 ∪ 基岩层 −64；air = !solid ∧ substance==Air（水/岩浆
 /// 为非空气 = environment_scan 的 not-air 判据面）。
 struct Replay<'a, 'f> {
-    orch: &'a Orchestrator,
     field: &'a mut AquiferField<'f>,
-    cols: HashMap<(i32, i32), ColumnState>,
+    cell: crate::vanilla::cell_interp::CellShell<'a>,
     tops: HashMap<(i32, i32), i32>,
 }
 
 impl<'a, 'f> Replay<'a, 'f> {
     fn new(orch: &'a Orchestrator, field: &'a mut AquiferField<'f>) -> Self {
         Self {
-            orch,
             field,
-            cols: HashMap::new(),
+            cell: crate::vanilla::cell_interp::CellShell::new(orch),
             tops: HashMap::new(),
         }
     }
 
     fn density(&mut self, x: i32, y: i32, z: i32) -> f64 {
-        let key = (x, z);
-        if !self.cols.contains_key(&key) {
-            let cs = self.orch.column_state(x, z);
-            self.cols.insert(key, cs);
-        }
-        let cs = &self.cols[&key];
-        self.orch.density(cs, x, y, z)
+        // #210：判据面与填充环同走 cell 插值外壳（读 pass-1 已生成块
+        // 语义——原版 feature 读生成面；角列缓存纯世界坐标函数，
+        // 跨块重放与缓冲构造一致）。column_state 列缓存随迁删除
+        // （cell 面不再逐体素取列状态）。
+        let cell = self.cell.cols4(x, z);
+        crate::vanilla::cell_interp::CellShell::density_at(&cell, x, y, z)
     }
 
     /// 实顶：自顶向下首个 density>0 位（缓冲侧 `hit_solid` 首实心位
