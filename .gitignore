@@ -12,3 +12,8 @@ assets/minecraft/sounds/
 assets/minecraft/sounds.json
 # 全量原版结构模板 .nbt:构建时 ci/fetch-structures.sh 从版本 JAR 解包,不入 git。
 assets/minecraft/structure/
+# 官方 jar dump 与 job 队列：可再生验证产物（前代理遗留资产），不入仓
+tools/fork-reanchor-dumps/
+tools/fork-reanchor/jobs/
+tools/fork-reanchor/done/
+tools/fork-reanchor/logs/

@@ -1,9 +1,0 @@
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/cave_s0x7EA20B1_c2_-1.job' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/cave_s0x7EA20B1_c2_-2.job' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/done/cave_s0x7EA20B1_c2_-2.job.working' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/done/cave_s0x7EA20B1_c3_-1.job.working' 调用 stat 失败: 没有那个文件或目录
-./dump-worker.sh: 行 18: /root/noise-fork/tools/fork-reanchor/jobs/cave_s0x7EA20B1_c3_-3.job: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/cave_s0x7EA20B1_c3_-3.job' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/cave_s0x7EA20B1_c4_-3.job' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/deep_s3735928559_c1_1.job' 调用 stat 失败: 没有那个文件或目录
-mv: 对 '/root/noise-fork/tools/fork-reanchor/jobs/deep_s777_c1_1.job' 调用 stat 失败: 没有那个文件或目录
