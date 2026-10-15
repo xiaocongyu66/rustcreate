@@ -134,3 +134,31 @@ cell 内点 = python 镜像 vs rust 公式（CI dump_for_java 面）间接收敛
 - 角面构建 25 列×49 层×5W（ lazily 4 角列起步）≈1225 次 raw 树求值/块,
   对比现逐体素 ~98k 次求值/块（16×16×384）——3D 噪声调用 ~64× ↓
   （cell 4×8×4=128 体素/角 8 点）。
+
+
+## §6 首发塌方事故与根因（CI run 38798627796 → 38812058727 探针实锤）
+
+实装首刀（42b7e097）CI dump 全线「塌方」：c2..c5 窗 4096 列逐列
+surf_eq=4096 但流体面崩——chunk 内基本全水/全岩浆（老 raw dump 深层
+deepslate vs 新 dump lava/water），行为锁新增红 16 只。
+
+**根因（CI 探针 38812058727 实锤）**：`corner()` 的
+`for (gy, level) in w.iter_mut()` 把 `Box<[[f64; 49]; 5]>` 的**外维
+（slot，5）**误标为 gy——槽位常数 `W_TERRAIN..=W_RIDGE_B` 被当行号写入
+`level[0..5]`，row5..48 恒 **0.0**。修复前探针值：
+
+```
+P x=32 z=-32 y=-63 cell=-0.007187 raw=+0.039671
+P x=32 z=-32 y=-56 cell=-0.309077 raw=+0.048135
+P x=32 z=-32 y=-48 cell=+0.000000 raw=+0.045290   ← 精确零（零矩阵插值）
+P x=32 z=-32 y=  0 cell=+0.000000 raw=+0.127537
+```
+
+cell=+0.000000 恰为零矩阵三线（所有角=0 ⇒ interp=0 ⇒ squeeze=0，
+mask=0 ⇒ noodle=0，min(0,0)=0）——dval≤0 ⇒ 全柱进 open_column/aquifer
+流体面。修复（ffa57cb0）：`for gy in 0..GY_LEVELS { w[slot][gy] = … }`
+双下标直写。
+
+教训入册：`w[slot][gy]` 维序 = 外 slot 内 gy；「iter_mut 首循环变量」
+语义上是**外维**，与 gy 无关——凡二维数组必须下标常量落笔，禁
+`(misnomer, level) in iter_mut()`。
