@@ -581,11 +581,12 @@ fn physics_frozen_until_own_chunk_terrain_ready() {
     assert!(rt.player.pos.x > 8.5, "恢复后应能前进");
 }
 
-/// 边缘钳制（r_safe=1：仅 3×3 就位）：玩家贴边行走被钉回本区块内侧，
-/// 永不越进未就位列（AABB 触达 ≤ ring1 ≤ 已就位环）。
+/// 无墙语义锁（隐形墙Ⅱ退役后）：仅 3×3 就位时玩家朝 +X 直行**可以
+/// 越进未就位区块**（26.1 Level.getBlockState VOID_AIR——悬空、区块
+/// 生成回填即落地），物理不得凭空加载或瞬移或 NaN。
 #[test]
-fn edge_clamp_pins_player_inside_ready_ring() {
-    let mut rt = headless("clamp1");
+fn walking_into_unready_chunk_is_legal_air() {
+    let mut rt = headless("clamp1b");
     rt.render_dist = 4;
     for dx in -1..=1 {
         for dz in -1..=1 {
@@ -601,31 +602,22 @@ fn edge_clamp_pins_player_inside_ready_ring() {
     for _ in 0..600 {
         rt.fixed_step(1.0 / 60.0);
         assert!(
-            rt.player.pos.x < 16.0,
-            "钳制失效，玩家越进未就位区块：x={}",
-            rt.player.pos.x
-        );
-        assert!(
-            rt.player.pos.z >= 0.0 && rt.player.pos.z < 16.0,
-            "Z 同理：z={}",
+            rt.player.pos.x.is_finite()
+                && rt.player.pos.y.is_finite()
+                && rt.player.pos.z.is_finite(),
+            "位置非有限（物理 NaN 崩坏）：x={} y={} z={}",
+            rt.player.pos.x,
+            rt.player.pos.y,
             rt.player.pos.z
         );
     }
+    // 越进未就位邻块合法（甚至必然：600 步直行），墙不得再钉回。
     assert!(
-        rt.player.pos.x > 15.0,
-        "应被推逼到钳制边界附近：x={}",
+        rt.player.pos.x > 16.0,
+        "玩家应能走进未就位区块（墙未拆净）：x={}",
         rt.player.pos.x
     );
     assert_eq!(rt.chunks.len(), 9, "物理路径不得偷偷加载新区块");
-    // 模拟区不变量（原版语义修订）：block() 对未加载列一律 VOID_AIR
-    // （26.1 Level.java:361-363），玩家进入未就位邻块合法（ticket 邻环
-    // 已覆盖，生成回填）——不再断言「触达列恒 TerrainReady」（那是
-    // 空气墙的测试灯）。此处只锁：位置有限 + 无假石（防 #190 回归在
-    // block() 侧重引入实心代理）。
-    assert!(
-        rt.player.pos.x.is_finite() && rt.player.pos.z.is_finite(),
-        "物理钳制后位置非有限"
-    );
 }
 
 /// 边缘钳制（r_safe=2：±2 环就位）：可活动区扩到 pc±1 区块，钳制位 =
