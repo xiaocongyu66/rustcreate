@@ -8,7 +8,8 @@ fn cell_probe_values() {
     let seed: u64 = 0x7E_A20_0B1;
     let orch = Orchestrator::new(seed);
     let mut cell = CellShell::new(&orch);
-    println!("== probe seed 0x7EA200B1 col world (34,-30) and corner (32,-32) ==");
+    let mut out =
+        String::from("== probe seed 0x7EA200B1 col world (34,-30) and corner (32,-32) ==\n");
     let mut sh = cell;
     for y in [
         -63i32, -56, -48, -40, -30, -14, -12, 0, 16, 28, 40, 43, 63, 80,
@@ -35,4 +36,5 @@ fn cell_probe_values() {
             c00.corner_value(4, gy)
         );
     }
+    panic!("CELL-PROBE-DUMP\n{out}");
 }
