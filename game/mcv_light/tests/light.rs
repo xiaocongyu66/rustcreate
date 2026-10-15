@@ -1246,3 +1246,144 @@ fn lava_emission_seeded_by_init() {
         assert_eq!(blk(&c, 6, 34, 8), 11, "水平 4 格衰减到 11");
     }
 }
+
+// ---------------------------------------------------------------------------
+// 真机光照波回归锁（天光穿透深板岩指控）：从陆地挖到深板岩层，天光必须
+// 只存在于「开天柱」与其曼哈顿扇内——侧向/竖向 BFS 每步 -1（SkyLightEngine
+// .propagateIncrease :148-153 无方向特例），「直下 15」只是源柱直写的等价
+// （ChunkSkyLightSources.isEdgeOccluded :140-148 截断 + addSourcesAbove
+// :106-136）；石盖未开的洞腔必须全黑。
+// ---------------------------------------------------------------------------
+
+const DEEPSLATE: u16 = 342; // blocks_gen.inc.rs:370（damp 15，石族同型）
+
+/// 阶梯井（逐阶 2 高槽：踏面+头顶）下探深板岩：浅挖一块不改变「本列顶部
+/// 遮光位」的列不开源柱——台阶光按 15,15,13,11,…,-2/阶衰减（BFS 每步 -1，
+/// 每阶水平+竖直两步），约 15 格后归零；井侧实心盖与井底横厅全黑。
+#[test]
+fn deepslate_stairwell_fades_per_vanilla() {
+    let mut w = World::flat(40);
+    // 深板岩层 y ≤ 8（surface 波同型分层）。
+    w.box_fill(0, 15, -60, 8, 0, 15, DEEPSLATE);
+    w.rebuild_heightmap();
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+    // 逐阶下挖（生产路径：先写体素再 update_block）。
+    for k in 0..14usize {
+        let x = 1 + k;
+        let (tread, head) = (40 - k as i32, 41 - k as i32);
+        let old_t = {
+            let mut c = w.chunk();
+            c.voxels[vidx(x, tread, 8)]
+        };
+        edit(&mut w, x, tread, 8, old_t, AIR);
+        let old_h = {
+            let mut c = w.chunk();
+            c.voxels[vidx(x, head, 8)]
+        };
+        edit(&mut w, x, head, 8, old_h, AIR);
+    }
+    let c = w.chunk();
+    // 台阶衰减序列：tread col1/col2 整列开天=15；col3 起顶格 (x,40-k+1)
+    // 实心（只挖了踏面+头顶两格，(3,40) 起未挖）→ 非源柱，逐阶 -2。
+    for (x, y, expect) in [
+        (1usize, 40i32, 15u8),
+        (2, 39, 15),
+        (3, 38, 13),
+        (4, 37, 11),
+        (5, 36, 9),
+        (6, 35, 7),
+        (7, 34, 5),
+        (8, 33, 3),
+        (9, 32, 1),
+        (10, 31, 0),
+        (11, 30, 0),
+        (12, 29, 0),
+    ] {
+        assert_eq!(sky(&c, x, y, 8), expect, "台阶 ({x},{y}) 期望 {expect}");
+    }
+    // 井侧实心盖原样全黑（(3,40) 未挖 = col3 的遮光位）。
+    assert_eq!(sky(&c, 3, 40, 8), 0, "未挖顶格保持暗");
+    assert_eq!(sky(&c, 5, 38, 8), 0, "未挖顶格保持暗");
+    // 井底横厅（x 8..12, y 22..24, z 6..10，仅与井尾 (9..12,31 以上) 相邻
+    // 隔 ≥6 格石）必须全黑。
+    for y in 22..=24 {
+        for x in 8..=12usize {
+            assert_eq!(sky(&c, x, y, 8), 0, "井底横厅 ({x},{y}) 全黑");
+        }
+    }
+}
+
+/// 浅挖一块（地表单格）+ 深板岩层无光：挖开格成为该列源柱底（15），
+/// 其下方实心体与邻列实心体一律 0——update_block 列重算不得把「下方仍有
+/// 岩层」的列误判为全透（ChunkSkyLightSources.java:140-148 的 damp 维 +
+/// face_shape 维都要截断）。
+#[test]
+fn single_shallow_dig_deepslate_layer_stays_dark() {
+    let mut w = World::flat(40);
+    w.box_fill(0, 15, -60, 8, 0, 15, DEEPSLATE);
+    w.rebuild_heightmap();
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+    // 浅挖一块：地表 (8,40,8)。
+    edit(&mut w, 8, 40, 8, 1, AIR);
+    let c = w.chunk();
+    // 挖开格=该列新源柱底（(8,39) 实心截断），其下全黑。
+    assert_eq!(sky(&c, 8, 40, 8), 15, "挖开格成为源柱底");
+    for y in (9..=39).rev() {
+        assert_eq!(sky(&c, 8, y, 8), 0, "挖开格下方实心 y={y}");
+    }
+    assert_eq!(sky(&c, 8, -10, 8), 0, "深板岩层深处无光");
+    // 邻列未挖：地表实心格与深处一律 0。
+    assert_eq!(sky(&c, 7, 40, 8), 0);
+    assert_eq!(sky(&c, 9, 39, 8), 0);
+    assert_eq!(sky(&c, 7, -10, 8), 0);
+}
+
+/// 顶盖下平洞（石顶住的天花板）：光只从洞口曼哈顿扇衰减进来，超过 15 格
+/// 归零；洞顶/洞底两行实心保持 0。原版「只在洞口几格内渐弱」。
+#[test]
+fn covered_tunnel_in_deepslate_dark_beyond_entry() {
+    let mut w = World::flat(40);
+    w.box_fill(0, 15, -60, 8, 0, 15, DEEPSLATE);
+    w.rebuild_heightmap();
+    {
+        let mut c = w.chunk();
+        init(&mut c);
+    }
+    // 竖井 (2, 8) 从地表挖到 y=6（源柱，vanilla 同值直灌）。
+    for y in (6..=40).rev() {
+        let old = {
+            let mut c = w.chunk();
+            c.voxels[vidx(2, y, 8)]
+        };
+        edit(&mut w, 2, y, 8, old, AIR);
+    }
+    // 封顶平洞 y=6 从井 (2,6) 向西挖 x=1..0（顶 y=7..40  intact）。
+    for x in (0..2usize).rev() {
+        let old = {
+            let mut c = w.chunk();
+            c.voxels[vidx(x, 6, 8)]
+        };
+        edit(&mut w, x, 6, 8, old, AIR);
+    }
+    let c = w.chunk();
+    // 井 = 源柱 15；平洞逐格 -1。
+    assert_eq!(sky(&c, 2, 6, 8), 15, "井底格=源柱底 15");
+    assert_eq!(sky(&c, 1, 6, 8), 14, "平洞 1 格 -1");
+    assert_eq!(sky(&c, 0, 6, 8), 13, "平洞 2 格 -1");
+    // 洞顶/洞底实心 0（光不再往岩里走）；(2,7) 是井柱自身（15）。
+    for x in 0..=1usize {
+        assert_eq!(sky(&c, x, 7, 8), 0, "洞顶实心 x={x}");
+    }
+    for x in 0..=2usize {
+        assert_eq!(sky(&c, x, 5, 8), 0, "洞底实心 x={x}");
+    }
+    // 深板岩远处全黑。
+    assert_eq!(sky(&c, 0, -10, 8), 0);
+    assert_eq!(sky(&c, 8, -20, 8), 0);
+}
