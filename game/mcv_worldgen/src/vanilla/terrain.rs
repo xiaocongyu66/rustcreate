@@ -818,6 +818,15 @@ impl Orchestrator {
     ) -> crate::vanilla::aquifer::ColumnProbe {
         let cs = self.column_state(block_x, block_z);
         let crossing = self.find_top_surface(block_x, block_z, cs.offset, cs.factor);
+        // 取证探针（#209 prelim 对拍）：每 chunk 原点列一行（CI 日志
+        // --nocapture 可见，K- 前缀与 cave_audit 同约定；对拍官方
+        // --probe-prelim 真值后移除）。
+        if block_x.rem_euclid(16) == 0 && block_z.rem_euclid(16) == 0 {
+            println!(
+                "K-PRELIM-AQUIFER x={} z={} prelim={} offset={:.6} factor={:.6}",
+                block_x, block_z, crossing, cs.offset, cs.factor
+            );
+        }
         crate::vanilla::aquifer::ColumnProbe {
             prelim: crossing,
             offset: cs.offset,
