@@ -3912,6 +3912,11 @@ fn flatten_hud(quads: &[HudQuad]) -> (Vec<HudVertex>, Vec<u32>) {
 #[cfg(test)]
 mod tests {
     use super::step_underwater_hysteresis as step;
+    // wall-fade 测试面依赖：父模块的 `use` 绑定不下渗子模块，需显式导入
+    // （首推 CI 38795625378 E0422/E0433×7 实证）。
+    use crate::camera::Camera;
+    use crate::frustum::Frustum;
+    use glam::Vec3;
 
     /// 迟滞语义锁：抖动输入不翻转确认态；持续反向 N 帧才翻转，且
     /// 翻转后计数归零（下一次反向同样需要 N 帧）。
