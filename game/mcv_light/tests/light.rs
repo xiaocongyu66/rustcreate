@@ -1275,12 +1275,12 @@ fn deepslate_stairwell_fades_per_vanilla() {
         let x = 1 + k;
         let (tread, head) = (40 - k as i32, 41 - k as i32);
         let old_t = {
-            let mut c = w.chunk();
+            let c = w.chunk();
             c.voxels[vidx(x, tread, 8)]
         };
         edit(&mut w, x, tread, 8, old_t, AIR);
         let old_h = {
-            let mut c = w.chunk();
+            let c = w.chunk();
             c.voxels[vidx(x, head, 8)]
         };
         edit(&mut w, x, head, 8, old_h, AIR);
@@ -1358,7 +1358,7 @@ fn covered_tunnel_in_deepslate_dark_beyond_entry() {
     // 竖井 (2, 8) 从地表挖到 y=6（源柱，vanilla 同值直灌）。
     for y in (6..=40).rev() {
         let old = {
-            let mut c = w.chunk();
+            let c = w.chunk();
             c.voxels[vidx(2, y, 8)]
         };
         edit(&mut w, 2, y, 8, old, AIR);
@@ -1366,7 +1366,7 @@ fn covered_tunnel_in_deepslate_dark_beyond_entry() {
     // 封顶平洞 y=6 从井 (2,6) 向西挖 x=1..0（顶 y=7..40  intact）。
     for x in (0..2usize).rev() {
         let old = {
-            let mut c = w.chunk();
+            let c = w.chunk();
             c.voxels[vidx(x, 6, 8)]
         };
         edit(&mut w, x, 6, 8, old, AIR);
