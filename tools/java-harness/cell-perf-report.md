@@ -123,8 +123,10 @@ cell 内点 = python 镜像 vs rust 公式（CI dump_for_java 面）间接收敛
 | (36,8,-4) | +0.013660416446115153 | 0 | True |
 | (36,8,0) | +0.017275322394550756 | 0 | True |
 
-（全量模式：c3_-3/c3_-4 带、窗东半 c5 带、通道 ladder 全展开——补录于
-/tmp/cell-mirror-full.log，数字随 CI 刀更新。）
+**全量模式补录**（14 raw 点 + cell 角点，/tmp/cell-mirror-full.log）：
+raw 13/14 bit_eq，唯一残差 **(40,60,-8) |d|=0.0133**（y=60 近海面
+jag/factor 样条域，已入 KNOWN-DIVERGENCE #210 #6）；cell 角点 12/12
+bit_eq max|d|=0（同 quick）；in-cell |cell-raw| ≤ 0.0018（平滑幅度）。
 
 ## §5 循环节与性能备注
 
@@ -162,3 +164,30 @@ mask=0 ⇒ noodle=0，min(0,0)=0）——dval≤0 ⇒ 全柱进 open_column/aqui
 教训入册：`w[slot][gy]` 维序 = 外 slot 内 gy；「iter_mut 首循环变量」
 语义上是**外维**，与 gy 无关——凡二维数组必须下标常量落笔，禁
 `(misnomer, level) in iter_mut()`。
+
+
+## §7 终局矩阵（真世界 132784305=0x7EA20B1，CI run 38816912004 artifact）
+
+发现并先修通道性笔误：dump_for_java SEED 原常量 `0x7E_A20_0B1`
+（多一零）≠ 官方世界——历次矩阵跨世界失真（详见 KNOWN-DIVERGENCE
+#210 #5）。修正常量 → CI 重出 artifact → 真矩阵首跑：
+
+| 指标 | 值 |
+|---|---|
+| surf_eq（逐列首实心） | **4096/4096**，bad(>8) = 0 |
+| c2_-2 西洞（band[0,16) air） | 官 2335 / rust 2398 —— **洞腔出现** |
+| band[−32,−16)（c2_-2/chunks 全窗） | 官 0 / rust 0（旧跨世界假差 1618 归零） |
+| band[64,80) 海带 air 差 | 部分chunk ~2-4 格均深（山体/海带表层，#6 样条残差 + carver 缺口域） |
+| band-air 大差 chunk（c2_-4 152/1066 等） | 管状 carver 未移植域（CAVE-1 #3）+ #6，随 carver 波收敛 |
+
+（官方 cave dump 名称表只含 air/stone——流体在官方侧恒记 "solid"，
+水/气列数对比以 air/solid 面为准；流体真值对拍属 aquifer 波 aq3_* 件。）
+
+**行为锁终值（run 38816912004，红=预期，锚定旧 raw 世界未改）**：
+cave_audit `带 [-16,0) 空洞率 0.003 ≤0.005`；deep_columns（:214 洞网
+判定）；ore_v7_byte_golden `left: 37 right: 0`（WANT 未动，红=预期）；
+lakes `surface_lava_lake_placed_and_visible_in_buffers`；surface_rules
+`vanilla_surface_material_bands (x=14,z=4,y=48 非SAND)` + Forest/Ocean
+窗气候漂移（trees_wiring :104）；trees 立地族 4 项
+（boundary/tree_spots/trunk_bases/tree_bases）。修复期曾现的
+bedrock/deepslate/geometry/beach-top 族随角值修正**自动复绿**。
