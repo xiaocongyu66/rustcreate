@@ -835,7 +835,7 @@ impl Orchestrator {
         // upper_bound 树（overworld.json 实物）：
         // clamp(−40..320, 128 − 128·(0.2734375·(1−factor) − offset))
         let upper = (128.0 - 128.0 * (0.273_437_5 * (1.0 - factor) - offset)).clamp(-40.0, 320.0);
-        let top_y = upper.div_euclid(8) * 8; // Mth.floor(v/cell)*cell，负域 div_euclid 同 floor
+        let top_y = (upper.div_euclid(8.0) * 8.0) as i32; // Mth.floor(v/cell)*cell，负域 div_euclid 同 floor
         if top_y <= MIN_Y {
             return MIN_Y;
         }
