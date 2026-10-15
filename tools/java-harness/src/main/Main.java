@@ -65,6 +65,7 @@ public class Main {
       String out = null;
       String densityArg = null;
       java.util.List<String> probeNoiseArgs = new java.util.ArrayList<>();
+      java.util.List<String> probePrelimArgs = new java.util.ArrayList<>();
       Path dataRoot = null;
       for (int i = 0; i < args.length; i++) {
          switch (args[i]) {
@@ -79,6 +80,7 @@ public class Main {
             case "-o" -> out = args[++i];
             case "--density" -> densityArg = args[++i];
             case "--probe-noise" -> probeNoiseArgs.add(args[++i]);
+            case "--probe-prelim" -> probePrelimArgs.add(args[++i]);
             case "--data-root" -> dataRoot = Path.of(args[++i]);
             default -> {
                System.err.println("unknown arg: " + args[i]);
@@ -125,6 +127,20 @@ public class Main {
             double v = noise.getValue(x, y, z);
             System.out.printf("noise %s y=%d x=%d z=%d decimal=%.17g bits=0x%016x%n",
                name, y, x, z, v, Double.doubleToLongBits(v));
+         }
+         return;
+      }
+
+      if (!probePrelimArgs.isEmpty()) {
+         // repeated flags: --probe-prelim x,z ...（FindTopSurface 只消费 blockX/Z）
+         for (String spec : probePrelimArgs) {
+            String[] p = spec.split(",");
+            int x = Integer.parseInt(p[0]);
+            int z = Integer.parseInt(p[1]);
+            double v = randomState.router().preliminarySurfaceLevel()
+               .compute(new DensityFunction.SinglePointContext(x, 0, z));
+            System.out.printf("prelim x=%d z=%d decimal=%.17g floor8=%d%n",
+               x, z, v, (long) Math.floor(v / 8.0) * 8);
          }
          return;
       }

@@ -10,6 +10,7 @@ MC_REF="${MC_REF:-/root/mc-ref/src-26.1}"
 [[ -d "$MC_REF/net/minecraft/world/level/levelgen" ]] || { echo "缺参考树: $MC_REF"; exit 1; }
 n=0
 while IFS= read -r rel; do
+    rel="${rel#src/}"            # manifest 记仓内路径（src/net/...），参考树无此前缀
     src="$MC_REF/$rel"; dst="src/$rel"
     [[ -f "$src" ]] || { echo "缺文件: $rel"; exit 1; }
     mkdir -p "$(dirname "$dst")"

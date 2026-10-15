@@ -1,10 +1,17 @@
 # java-gen-harness：Mojang 反编译源**绝不入仓**（合规铁律，EULA 禁再分发）。
 # src/net/** 由 harness/bootstrap.sh 从本地参考树（mc-ref）按清单生成，
 # 生成物与本地产物一律本地化：
-src/net/
-build/
-libs/
+**/src/net/
+**/build/
+**/libs/
 dumps/
+**/logs/*.gz
+**/logs/*.log
+**/logs/*.log.gz
+dumps/
+**/logs/*.gz
+**/logs/*.log
+**/logs/*.log.gz
 logs/*.log
 logs/*.gz
 __pycache__/
