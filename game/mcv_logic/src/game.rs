@@ -2286,17 +2286,18 @@ impl GameRuntime {
                 .get(&c)
                 .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8))
         };
-        let pad = |m_side: i32, nb: ChunkPos| {
-            if m_side == 0 && !ready(nb) {
-                1.0
-            } else {
-                half + 0.02
-            }
-        };
-        let pad_xl = pad(m_xl, ChunkPos::new(pc.x - 1, pc.z));
-        let pad_xh = pad(m_xh, ChunkPos::new(pc.x + 1, pc.z));
-        let pad_zl = pad(m_zl, ChunkPos::new(pc.x, pc.z - 1));
-        let pad_zh = pad(m_zh, ChunkPos::new(pc.x, pc.z + 1));
+        // 真机报告（原版对照）：玩家贴到未生成区块 1 格即被空气墙挡住
+        // ——原版**无此行为**（Level.getBlockState 一律 VOID_AIR，走进
+        // 未加载区块畅通；ServerLevel 对邻块即时同步生成）。旧 pad=1.0
+        // 铁板是 #190「步末踩空未就位列」担忧的过度防御：block() 已
+        // air 化（本文件 :404-433），air 上物理=悬空坠落、区块 ticket
+        // 本就覆盖玩家邻环（PLAYER_SIMULATION 锚），生成补上一格远快
+        // 于行走。钳制维持 half pad 防 AABB 单点穿沿，不再软墙。
+        let pad = half + 0.02;
+        let pad_xl = pad;
+        let pad_xh = pad;
+        let pad_zl = pad;
+        let pad_zh = pad;
         let lo_x = (pc.x - m_xl) as f32 * 16.0 + pad_xl;
         let hi_x = (pc.x + m_xh + 1) as f32 * 16.0 - pad_xh;
         let lo_z = (pc.z - m_zl) as f32 * 16.0 + pad_zl;
@@ -2312,17 +2313,13 @@ impl GameRuntime {
             p.pos.z = nz;
             p.vel.z = 0.0;
         }
-        // 不变量兜底（debug）：钳制后玩家所在区块必须仍满足新 ready 判据
-        // （status ≥ Full，与 sim_safe_radius 谓词同步——隐形墙回归前哨；
-        // 矩形 ⊆ Full 集 + pad 越界侧恒紧邻 Full，恒成立）。
+        // 不变量兜底（debug）：钳制后位置必须有限（finite）。原版语义下
+        // 玩家可借 air 进入未就位区块（ticket 邻环已覆盖，生成回填即神
+        // 速），所在 chunk 不再要求 Full——旧「恒就位」断言与空气墙同
+        // 源（过度防御），随 pad 铁板一并退役。
         debug_assert!(
-            self.chunks
-                .get(&ChunkPos::new(
-                    (p.pos.x / 16.0).floor() as i32,
-                    (p.pos.z / 16.0).floor() as i32
-                ))
-                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8)),
-            "clamp_to_sim_area 后玩家仍在未就位区块：pos={} rect=({m_xl},{m_xh},{m_zl},{m_zh})",
+            p.pos.x.is_finite() && p.pos.y.is_finite() && p.pos.z.is_finite(),
+            "clamp_to_sim_area 后位置非有限：{}",
             p.pos,
         );
     }

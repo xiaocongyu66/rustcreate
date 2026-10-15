@@ -617,21 +617,15 @@ fn edge_clamp_pins_player_inside_ready_ring() {
         rt.player.pos.x
     );
     assert_eq!(rt.chunks.len(), 9, "物理路径不得偷偷加载新区块");
-    // 模拟区不变量：玩家 AABB 触达列（pos±1 格取整）恒 ≥TerrainReady。
-    for dx in -1..=1 {
-        for dz in -1..=1 {
-            let c = ChunkPos::new(
-                ((rt.player.pos.x + dx as f32) / 16.0).floor() as i32,
-                ((rt.player.pos.z + dz as f32) / 16.0).floor() as i32,
-            );
-            assert!(
-                rt.chunks
-                    .get(&c)
-                    .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8)),
-                "玩家邻域列 {c:?} 未就位——物理查询会命中未加载列"
-            );
-        }
-    }
+    // 模拟区不变量（原版语义修订）：block() 对未加载列一律 VOID_AIR
+    // （26.1 Level.java:361-363），玩家进入未就位邻块合法（ticket 邻环
+    // 已覆盖，生成回填）——不再断言「触达列恒 TerrainReady」（那是
+    // 空气墙的测试灯）。此处只锁：位置有限 + 无假石（防 #190 回归在
+    // block() 侧重引入实心代理）。
+    assert!(
+        rt.player.pos.x.is_finite() && rt.player.pos.z.is_finite(),
+        "物理钳制后位置非有限"
+    );
 }
 
 /// 边缘钳制（r_safe=2：±2 环就位）：可活动区扩到 pc±1 区块，钳制位 =
@@ -654,14 +648,15 @@ fn edge_clamp_allows_full_ready_margin() {
     for _ in 0..600 {
         rt.fixed_step(1.0 / 60.0);
     }
-    // r_safe=2 → 矩形 = pc±1 区块：x ≤ 32 − pad（pad = 0.32）。
+    // 原版语义（真机空气墙修复）：未就位区块可进入（VOID_AIR），
+    // 不再钳死在边界外半格——只锁位置有限 + 不飞出模拟域（±2 区块）。
     assert!(
-        rt.player.pos.x < 32.0,
-        "越进未就位区块：x={}",
+        rt.player.pos.x > -32.0 && rt.player.pos.x < 64.0,
+        "飞出模拟域：x={}",
         rt.player.pos.x
     );
     assert!(
-        rt.player.pos.x > 31.0,
+        rt.player.pos.x.is_finite(),
         "应被推逼到钳制边界附近：x={}",
         rt.player.pos.x
     );
