@@ -17,3 +17,6 @@ tools/fork-reanchor-dumps/
 tools/fork-reanchor/jobs/
 tools/fork-reanchor/done/
 tools/fork-reanchor/logs/
+
+# rust dump 产物目录（CI artifact 已上云，本地可再生）
+rust-dumpout/
