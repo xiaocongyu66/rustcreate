@@ -101,6 +101,17 @@ jobs:
       # 原文，不能只在红跑回显时可见）。
       - name: Lava lake audit (K-LAKES lines into log)
         run: cargo test -p mcv_worldgen --test lakes --locked -- --nocapture
+      # #209/#206 黑盒对拍 Rust 翼：RUST_DUMPOUT 门控 dump_for_java——
+      # cave_audit 同窗 JGH1 逐 chunk 输出 + artifact（与 java-harness
+      # 官方 jar dump 逐列矩阵对拍；未设 env 的例行跑零开销 no-op）。
+      - name: JGH1 dump for java-harness parity
+        run: cargo test -p mcv_worldgen --test dump_for_java --locked -- --nocapture
+        env:
+          RUST_DUMPOUT: rust-dumpout
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-dumpout
+          path: rust-dumpout/
 
   render-headless:
     runs-on: ubuntu-24.04
