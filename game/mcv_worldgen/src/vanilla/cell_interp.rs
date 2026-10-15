@@ -114,21 +114,25 @@ impl<'a> CellShell<'a> {
         // 角值 = fillSlice 语义：inCellX=inCellY=inCellZ=0 的单点 raw 求值
         // （NoiseChunk.java:235-252），列状态取角列（flat_cache/
         // cache_2d 的列 = 求值点所在列，逐角列各自采样）。
+        // ⚠ 维序：w[slot][gy]——外层=槽位（5），内层=角层（49）。前刀
+        // bug：iter_mut 首维（slot）误标 gy、槽位常数当行号写 → 角值全挤
+        // row0..4、row5..48 恒 0（cell=0.0 精确零，CI dump 塌方全水）。
         let corner_x = key.0;
         let corner_z = key.1;
         let cs: ColumnState = self.orch.column_state(corner_x, corner_z);
         let mut w: Box<[[f64; GY_LEVELS]; W_SLOTS]> = Box::new([[0.0; GY_LEVELS]; W_SLOTS]);
-        for (gy, level) in w.iter_mut().enumerate() {
+        let s = crate::vanilla::terrain::NOODLE_RIDGE_SCALE;
+        for gy in 0..GY_LEVELS {
             let corner_y = crate::vanilla::MIN_Y + 8 * gy as i32;
             let y_mc = crate::vanilla::ours_y_to_mc(f64::from(corner_y));
             // W1：地形+slide 全合成（含 base_3d/splines/entrances/
             // spaghetti/underground/pillars 门——树内无包裹节点）。
-            level[W_TERRAIN] = self.orch.terrain_density(&cs, corner_x, corner_y, corner_z);
+            w[W_TERRAIN][gy] = self.orch.terrain_density(&cs, corner_x, corner_y, corner_z);
             // W2：noodle 掩膜——range_choice(y∈[-60,321) → noise(noodle,1,1),
             // else −1)（noodle.json 内层分支；else 取 -1 使外层门走
             // when_in_range=64，与 terrain.rs `noodle()` 的 NOODLE_OFF
             // 提前返回同语义）。
-            level[W_MASK] = if y_mc < NOODLE_Y_MIN {
+            w[W_MASK][gy] = if y_mc < NOODLE_Y_MIN {
                 -1.0
             } else {
                 self.orch
@@ -136,7 +140,7 @@ impl<'a> CellShell<'a> {
             };
             // W3：厚度基底 add(-0.07500000000000001, -0.025·thickness)
             // ——与 terrain.rs `noodle()` 左半 op 序逐位同（a - b·t）。
-            level[W_BASE] = if y_mc < NOODLE_Y_MIN {
+            w[W_BASE][gy] = if y_mc < NOODLE_Y_MIN {
                 0.0
             } else {
                 let t =
@@ -146,8 +150,7 @@ impl<'a> CellShell<'a> {
             };
             // W4/W5：ridge_a/b——abs 在包裹外（对插值后值取 |·|），
             // xz/y 缩放 2.6666666666666665 在包裹内。
-            let s = crate::vanilla::terrain::NOODLE_RIDGE_SCALE;
-            level[W_RIDGE_A] = if y_mc < NOODLE_Y_MIN {
+            w[W_RIDGE_A][gy] = if y_mc < NOODLE_Y_MIN {
                 0.0
             } else {
                 self.orch.noodle_ridge_a_at(
@@ -156,7 +159,7 @@ impl<'a> CellShell<'a> {
                     f64::from(corner_z) * s,
                 )
             };
-            level[W_RIDGE_B] = if y_mc < NOODLE_Y_MIN {
+            w[W_RIDGE_B][gy] = if y_mc < NOODLE_Y_MIN {
                 0.0
             } else {
                 self.orch.noodle_ridge_b_at(
