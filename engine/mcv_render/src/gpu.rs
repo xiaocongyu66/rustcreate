@@ -939,10 +939,7 @@ impl MeshUploader {
             vbytes.extend_from_slice(&mv);
             vbytes.extend_from_slice(&wv);
             let c_origin = Vec3::new(16.0 * cx as f32, 0.0, 16.0 * cz as f32);
-            let c_aabb = (
-                c_origin,
-                Vec3::new(c_origin.x + 16.0, 256.0, c_origin.z + 16.0),
-            );
+            let c_aabb = chunk_cull_box(c_origin);
             aabb = Some(match aabb {
                 None => c_aabb,
                 Some((mn, mx)) => (mn.min(c_aabb.0), mx.max(c_aabb.1)),
@@ -1004,6 +1001,25 @@ impl MeshUploader {
             uploads,
         )
     }
+}
+
+/// 区块剔除包围盒（frustum cull 用）：y 域必须是**全世界带**
+/// [`WORLD_MIN_Y`, `WORLD_MAX_Y`]。v6 mesher 顶点为绝对世界 y（mesher.rs:555
+/// 「层/格局部量 + WORLD_MIN_Y」），深板岩层 y<0 与 256..320 的几何都在
+/// 旧写死值 [0,256]（1.18 前世界高残留）之外——地下（相机 y<0）时批次盒
+/// 整片悬在视锥上平面上方，微俯视角整列被误剔除（真机「转视角一整面墙
+/// 变透明、能看到邻区块内部、摇回即恢复」；取证见 docs/wall-fade-report.md）。
+/// 原版 26.1 按 section 立方逐节剔除覆盖真实几何带，不存在此面——本仓
+/// 批次路径的域 bug，此处对齐。
+fn chunk_cull_box(origin: Vec3) -> (Vec3, Vec3) {
+    (
+        Vec3::new(origin.x, mcv_core::WORLD_MIN_Y as f32, origin.z),
+        Vec3::new(
+            origin.x + 16.0,
+            mcv_core::WORLD_MAX_Y as f32,
+            origin.z + 16.0,
+        ),
+    )
 }
 
 /// 顶点位置重定基：每 TERRAIN_STRIDE 字节的前 12 字节是 f32x3 pos，x/z 加
@@ -3927,5 +3943,59 @@ mod tests {
     fn underwater_hysteresis_passthrough_at_one() {
         let (confirmed, _) = step((false, 0), true, 1);
         assert!(confirmed);
+    }
+
+    /// wall-fade：批次剔除盒 y 域锁**全世界带** [−64, 320]（26.1 世界）。
+    /// 旧值 [0,256] 是 1.18 前世界高残留——深板岩层 y<0 与 256..320 的
+    /// 几何都在盒外；取证见 docs/wall-fade-report.md（真机地下转视角
+    /// 整面墙透明）。
+    #[test]
+    fn chunk_cull_box_spans_world_y_band() {
+        let (mn, mx) = super::chunk_cull_box(Vec3::new(32.0, 0.0, -96.0));
+        assert_eq!(mn.x, 32.0);
+        assert_eq!(
+            mn.y,
+            mcv_core::WORLD_MIN_Y as f32,
+            "剔除盒必须盖住世界底(-64)"
+        );
+        assert_eq!(mn.z, -96.0);
+        assert_eq!(mx.x, 48.0);
+        assert_eq!(
+            mx.y,
+            mcv_core::WORLD_MAX_Y as f32,
+            "剔除盒必须盖住世界上界(320)"
+        );
+        assert_eq!(mx.z, -80.0);
+    }
+
+    /// wall-fade 真机病理双向锁：eye y=−40、微俯视 −8°（拖屏典型仰角）、
+    /// 正前方隔一列的区块批次——旧 [0,256] 盒整列被视锥误剔（现象：
+    /// 一整面墙透明、看见邻区块矿洞/岩浆）；世界带 [−64,320] 盒必可见
+    /// （修复生效且不反向过度剔除）。纯视锥数学，无 GPU 依赖。
+    #[test]
+    fn underground_slight_downpitch_world_band_visible_buggy_band_culled() {
+        let cam = Camera {
+            pos: Vec3::new(0.0, -40.0 - crate::EYE_HEIGHT, 0.0),
+            yaw: 0.0,
+            pitch: -8.0f32.to_radians(),
+            fov_y: 1.2,
+            aspect: 1.6,
+            near: 0.1,
+            far: 256.0,
+            bob: glam::Mat4::IDENTITY,
+        };
+        let fr = Frustum::from_view_proj(&cam.view_proj());
+        // 旧残留域 [0,256]：盒底 y=0 高出视锥上平面（32 格前仅到
+        // y ≈ −24）24+ 格 → 整盒在视锥上方。
+        assert!(
+            !fr.intersects_aabb(Vec3::new(-16.0, 0.0, -48.0), Vec3::new(0.0, 256.0, -32.0)),
+            "旧 [0,256] 域在地下微俯视必被误剔除（病理复现守护：若此断言红，症状机制已不成立）"
+        );
+        // 产线盒（chunk_cull_box = 世界带）：盒子含 y=−64 角点落在视锥内。
+        let (mn, mx) = super::chunk_cull_box(Vec3::new(-16.0, 0.0, -48.0));
+        assert!(
+            fr.intersects_aabb(mn, mx),
+            "世界带盒必须可见（修复生效且不反向过度剔除）：盒 {mn:?}..{mx:?}"
+        );
     }
 }
