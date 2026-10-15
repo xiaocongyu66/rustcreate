@@ -10,7 +10,7 @@
 //!
 //! JGH1 布局（big-endian，java_dupe.py:377-395 实物）：
 //! magic(4) + icnt(i32) + seed(i64) + cx(i32) + cz(i32) + ymin(i32)
-//! + ymax(i32) + [u16 len + utf8 name]×icnt + u16 vox ×(160·16·16)，
+//! + ymax(i32) + [u16 len + utf8 name]×icnt + u16 vox ×(160·16·16)。
 //! 体素序 = (y-ymin)*256 + z*16 + x（每层 z 行，行内 x）。
 
 use mcv_core::{ChunkPos, WORLD_MIN_Y};
