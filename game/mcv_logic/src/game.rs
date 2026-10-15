@@ -2281,7 +2281,10 @@ impl GameRuntime {
             "clamp_to_sim_area 只应在本块就位（r_safe ≥ 0）后调用"
         );
         let half = mcv_game::Player::HALF[0];
-        let ready = |c: ChunkPos| {
+        // 空气墙拆除后钳制不再查就位（原语义：区块 Full 才放行，现恒
+        // 放行 ticket 邻环）——闭包退役留档，`_` 前缀过 clippy
+        // `-D warnings`（main 1d809aaf 遗留，wall-fade 波顺路还债）。
+        let _ready = |c: ChunkPos| {
             self.chunks
                 .get(&c)
                 .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8))
