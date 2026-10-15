@@ -67,7 +67,7 @@
 //! density 组装的逐位同真依赖 base_3d（BlendedNoise，仍 clean-room 种子）
 //! 与样条面全展开，端到端对拍随地形保真闭环刀推进。故本波口径 =
 //! **结构复刻**：同胞格几何/阈值/相似度/压力数学、同噪声参数
-//!（firstOctave/振幅表/路由缩放逐一照抄），胞心随机用 splitmix+Lemire
+//!（firstOctave/振幅表/路由缩放逐一照抄），胞心随机 = positionalRandomFactory
 //! 无偏整除（替代 Xoroshiro 三连 nextInt，同分布，AQUI-1 #2）。
 //! 统计形态由 tests/aquifer.rs 对拍门锁定（干洞穴占比/囊袋并存/三态）。
 //!
@@ -78,7 +78,7 @@
 //!   扫描同款），非原版 preliminary_surface_level 密度函数（本仓 density
 //!   管线未移植该函数；两者同为「无洞穴地表高度估计」，语义对位）。
 
-use crate::vanilla::noise::{NormalNoise, splitmix64};
+use crate::vanilla::noise::NormalNoise;
 use crate::vanilla::terrain::Orchestrator;
 use crate::vanilla::{MIN_Y, SEA};
 use std::collections::HashMap;
@@ -183,17 +183,17 @@ pub struct ColumnProbe {
 
 static AMPS_ONE: [f64; 1] = [1.0];
 
-/// 胞心随机域盐（splitmix 链，AQUI-1 #2——非原版 Xoroshiro
-/// aquiferRandom 位置随机，同分布替代，保留登记）。
-const SALT_CENTER: u64 = 0x0000_A01F_00FF;
-
 /// 四条含水层密度通道（NoiseRouterData.java:319-322 + noise json 参数）。
 pub struct Aquifer {
     barrier: NormalNoise,
     floodedness: NormalNoise,
     spread: NormalNoise,
     lavan: NormalNoise,
-    center_seed: u64,
+    /// 胞心位置随机工厂（Aquifer.java:94 positionalRandomFactory =
+    /// RandomState.java:36 根工厂——与四通道同源；center_seed/splitmix
+    /// 序列已退役，AQUI-1 #2 销账——序列差异=囊袋点坐标错位=灌水
+    /// 分歧根因（tools/java-harness par-water.py 矩阵）。
+    aquifer_random: crate::vanilla::xoroshiro::PositionalRandomFactory,
 }
 
 impl Aquifer {
@@ -212,7 +212,7 @@ impl Aquifer {
             floodedness: ch("minecraft:aquifer_fluid_level_floodedness", -7),
             spread: ch("minecraft:aquifer_fluid_level_spread", -5),
             lavan: ch("minecraft:aquifer_lava", -1),
-            center_seed: splitmix64(world_seed ^ SALT_CENTER),
+            aquifer_random: root,
         }
     }
 
@@ -243,29 +243,20 @@ impl Aquifer {
             .get_value(f64::from(cx), f64::from(cy), f64::from(cz))
     }
 
-    /// 胞心（Aquifer.java:199-207：原点 + nextInt(10/9/10)）。胞格
-    /// 16×12×16（X/Y/Z_SPACING，:67-69）；随机三元 = splitmix 链 +
-    /// Lemire 高位乘无偏归约（替代 Xoroshiro 三连 nextInt，AQUI-1 #2）。
+    /// 胞心（Aquifer.java:183-190：`positionalRandomFactory.at(gx,gy,gz)`
+    /// → 三连 `nextInt(10)/nextInt(9)/nextInt(10)` → fromGridX/Y/Z 格内
+    /// 偏移）。胞格 16×12×16（X/Y/Z_SPACING，:67-69）。AQUI-1 #2 销账：
+    /// 旧 splitmix 链与原版 Xoroshiro 序列同分布不同值 → 囊袋点坐标
+    /// 错位 → floodedness 采样点偏 → 算子判水门分歧大到全窗（par-water
+    /// 矩阵：官方 [0,16) 全 air、rust 全水，首实心面却 0 差——骨架同、
+    /// 随机位异）。
     #[must_use]
     pub fn cell_center(&self, gx: i32, gy: i32, gz: i32) -> (i32, i32, i32) {
-        let mix = {
-            let a = u64::from(gx.cast_unsigned()).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-            let b = u64::from(gy.cast_unsigned())
-                .wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
-                .rotate_left(17);
-            let c = u64::from(gz.cast_unsigned())
-                .wrapping_mul(0x1656_67B1_9E37_79F9)
-                .rotate_left(31);
-            splitmix64(self.center_seed ^ a ^ b ^ c)
-        };
-        let h1 = splitmix64(mix);
-        let h2 = splitmix64(h1);
-        let h3 = splitmix64(h2);
-        // Lemire：floor(n · r / 2^64)（trees.rs:86 同款无偏整除）
-        let r10x = ((h1 as u128 * 10) >> 64) as i32;
-        let r9y = ((h2 as u128 * 9) >> 64) as i32;
-        let r10z = ((h3 as u128 * 10) >> 64) as i32;
-        (gx * 16 + r10x, gy * 12 + r9y, gz * 16 + r10z)
+        let mut rnd = self.aquifer_random.at(gx, gy, gz);
+        let rx = rnd.next_int_bounded(10) as i32;
+        let ry = rnd.next_int_bounded(9) as i32;
+        let rz = rnd.next_int_bounded(10) as i32;
+        (gx * 16 + rx, gy * 12 + ry, gz * 16 + rz)
     }
 
     /// barrier 压力（calculatePressure，Aquifer.java:304-365）。
