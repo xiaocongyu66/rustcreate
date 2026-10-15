@@ -1,0 +1,33 @@
+==============================================================================
+java-gen-harness first-proof report
+==============================================================================
+pack root: /root/mc-ref/src-26.1/data
+seeds: [1, 123, 20260114]  chunk: (0, 0)  probe points per (seed,channel): 12
+
+[1] voxel dumps (stage=noise fill, JGH1)
+  seed 1: seed1_c00.bin  196698 B  states=3 solid=31219 (0.318)
+  seed 123: seed123_c00.bin  196672 B  states=2 solid=23639 (0.240)
+  seed 20260114: seed20260114_c00.bin  196672 B  states=2 solid=31779 (0.323)
+  determinism gate: run-twice identical = True
+
+[2] NormalNoise channel probes (java truth vs python replicas)
+    probe points (y,x,z): [(-32, 17, 25), (-25, 20, 30), (-18, 23, 35), (-11, 26, 40), (-4, 29, 45), (3, 32, 50), (10, 35, 55), (17, 38, 60), (24, 41, 65), (31, 44, 70), (38, 47, 75), (45, 50, 80)]
+  seed          1 temperature n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.244)
+  seed          1 erosion     n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.301)
+  seed          1 ridge       n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.35)
+  seed        123 temperature n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.477)
+  seed        123 erosion     n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.229)
+  seed        123 ridge       n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.935)
+  seed   20260114 temperature n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.656)
+  seed   20260114 erosion     n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.27)
+  seed   20260114 ridge       n=12   py-vanilla same=12/12 (max|d|=0)  rust-v1 same=0/12 (max|d|=0.418)
+
+[3] interpretation
+  - py-vanilla same=N/N: python replica of the vanilla xoroshiro fork
+    chain reproduces the java (official-jar) NormalNoise bit stream; failures
+    localize the gap to ImprovedNoise/rounding, fork semantics, or MD5 names.
+    Your rust code targets this same chain (noise.rs from_vanilla_name).
+  - rust-v1 same=N/N: the v1 splitmix seed derivation documented in noise.rs
+    lines 30-33 as a v1 subset gap vs vanilla fork chain; numbers quantify it.
+  - voxel band table: run 'dupe tools/java_dupe.py voxel-diff -a A.bin -b B.bin'
+    with the Rust CI dump as -b for first-diff coordinates and per-band rates.
