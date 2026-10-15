@@ -407,7 +407,7 @@ impl VoxelAccess for WorldView<'_> {
     /// 「未加载=实心石」代理。旧石安全垫是真机「隐形墙」（撞上看不见
     /// 的实心边界）与「看得见却穿透」错位（石面高度≠地形）的共同根因。
     /// 玩家物理安全不再靠假方块，而靠模拟区不变量：`fixed_step` 步进
-    /// 前 [`GameRuntime::sim_safe_radius`] 门、步末 [`GameRuntime::clamp_to_sim_area`]
+    /// 前 [`GameRuntime::sim_safe_radius`] 门（步末钳制已退役）
     /// 钳回已就位区——玩家 AABB 查询的列恒 ≥TerrainReady（恒真体素）。
     /// 区外查询（mob 远景射线、缺块粒子等）得空气=原版该区不 tick 的
     /// 等价近似（ServerLevel.java:419），不再是假石头。
@@ -2061,7 +2061,8 @@ impl GameRuntime {
     //   = view_dist + RADIUS + 2 = rd+4 ≡ 旧自研 unload_dist（迟滞带 3 环
     //   ≥ 2，消除边界翻动；旧值 rd+2 与请求环仅隔 1 环，是「动一下就换
     //   一批块」的直接来源），
-    //   玩家物理恒走真体素（sim_safe_radius 门 + clamp_to_sim_area 钳制）。
+    //   玩家物理恒走真体素（sim_safe_radius 门；步末钳制已退役——原版
+    //   语义=未加载区块可进（VOID_AIR），墙=本仓自造）。
     // 模拟环 ≫ 一步最远位移：钳制保证玩家与最近未就位区块恒隔 ≥1 整区块
     // （16 格），而单个固定步（1/60 s）最大位移（疾跑 5.6 m/s、创造冲刺
     // 飞行 20.2 m/s、击退初速叠加 ≈0.4 格）不足其 1/40。
@@ -2125,7 +2126,9 @@ impl GameRuntime {
     /// :35-43 fullStatus，level ≤ 33 → FULL；Full 证据链 = worldgen commit
     /// 加 3×3 邻域光照齐，见 [`Self::advance_status_by_level`]）；玩家本块
     /// 未就位返回 **-1**（物理门：整步冻结，26.1 玩家实体在区块就绪前
-    /// 不参与物理）。返回值同时导出钳制矩形（[`Self::clamp_to_sim_area`]），
+    /// 不参与物理）。返回值同时导出钳制矩形（[`Self::sim_ready_rect`]，
+    /// 已不作步末钳制消费——原版语义下可进未加载区间，见本文件
+    /// clamp_to_sim_area 的退役注），
     /// 玩家 AABB 查询的列恒真体素。
     ///
     /// r = min(票环派生值, stage 证据环)（刀 4a）：
@@ -2263,66 +2266,14 @@ impl GameRuntime {
         }
     }
 
-    /// 步末位置钳制：把玩家钉回票覆盖的已就位矩形（#190 起矩形 =
-    /// [`Self::sim_ready_rect`] 四向最大 Full 矩形；旧版 = 票环半径派生
-    /// 对称方形，旧症状与对照见该函数「旧 vs 原版 vs 新」）。
-    ///
-    /// 触达 pad 按侧独立：某侧余量 = 0 且该侧紧邻块未 Full（触达不出本
-    /// 块）时 pad 收到 1.0 格（单步过冲 0.4 + AABB 半宽 0.3 < 0.7 < 1.0，
-    /// 步中 AABB 也不越界）；否则 pad = 玩家半宽 + 0.02（矩形外扩一环的
-    /// 触达盒恒 Full，由 [`Self::sim_ready_rect`] 两列门归纳保证，越界进
-    /// 的是恒 Full 的外触达列）。
-    /// 被钳轴向速度清零（贴原版：移动在已加载区边缘自然停止——玩家区块
-    /// 恒有 ticket、物理从不越界，而非撞假石头或穿进虚空）。
-    fn clamp_to_sim_area(&mut self, pc: ChunkPos) {
-        let (m_xl, m_xh, m_zl, m_zh) = self.sim_ready_rect(pc);
-        debug_assert!(
-            m_xl >= 0,
-            "clamp_to_sim_area 只应在本块就位（r_safe ≥ 0）后调用"
-        );
-        let half = mcv_game::Player::HALF[0];
-        let ready = |c: ChunkPos| {
-            self.chunks
-                .get(&c)
-                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8))
-        };
-        // 真机报告（原版对照）：玩家贴到未生成区块 1 格即被空气墙挡住
-        // ——原版**无此行为**（Level.getBlockState 一律 VOID_AIR，走进
-        // 未加载区块畅通；ServerLevel 对邻块即时同步生成）。旧 pad=1.0
-        // 铁板是 #190「步末踩空未就位列」担忧的过度防御：block() 已
-        // air 化（本文件 :404-433），air 上物理=悬空坠落、区块 ticket
-        // 本就覆盖玩家邻环（PLAYER_SIMULATION 锚），生成补上一格远快
-        // 于行走。钳制维持 half pad 防 AABB 单点穿沿，不再软墙。
-        let pad = half + 0.02;
-        let pad_xl = pad;
-        let pad_xh = pad;
-        let pad_zl = pad;
-        let pad_zh = pad;
-        let lo_x = (pc.x - m_xl) as f32 * 16.0 + pad_xl;
-        let hi_x = (pc.x + m_xh + 1) as f32 * 16.0 - pad_xh;
-        let lo_z = (pc.z - m_zl) as f32 * 16.0 + pad_zl;
-        let hi_z = (pc.z + m_zh + 1) as f32 * 16.0 - pad_zh;
-        let p = &mut self.player;
-        let nx = p.pos.x.clamp(lo_x, hi_x);
-        if nx != p.pos.x {
-            p.pos.x = nx;
-            p.vel.x = 0.0;
-        }
-        let nz = p.pos.z.clamp(lo_z, hi_z);
-        if nz != p.pos.z {
-            p.pos.z = nz;
-            p.vel.z = 0.0;
-        }
-        // 不变量兜底（debug）：钳制后位置必须有限（finite）。原版语义下
-        // 玩家可借 air 进入未就位区块（ticket 邻环已覆盖，生成回填即神
-        // 速），所在 chunk 不再要求 Full——旧「恒就位」断言与空气墙同
-        // 源（过度防御），随 pad 铁板一并退役。
-        debug_assert!(
-            p.pos.x.is_finite() && p.pos.y.is_finite() && p.pos.z.is_finite(),
-            "clamp_to_sim_area 后位置非有限：{}",
-            p.pos,
-        );
-    }
+    /// 步末位置钳制（已退役，2026-10-16 真机隐形墙Ⅱ）：原实现钉玩家回
+    /// 票覆盖的 Full 矩形（sim_ready_rect 外沿）——「前面的区块一加载
+    /// 墙立马前移」的机制本体，与原版「走进未加载区块畅通」（Level
+    /// .getBlockState VOID_AIR / ServerLevel 即时生成）相悖。物理安全
+    /// 现由三面承担：fixed_step 的 r_safe 门（本块未就位=整步冻结）、
+    /// WorldView::block 未加载列 air 化（mcv_logic game.rs :414-433，
+    /// #190）、player ticket 邻环生成回填。sim_ready_rect 保留为纯
+    /// 查询（rect 语义测试/未来 mob 流式安全面）。
 
     /// 出生搜索窗（区块 (0,0) ± [`Self::load_radius`]）是否全部
     /// TerrainReady。投放等齐窗再搜：只看 (0,0) 时邻块往往还在生成，
@@ -4474,7 +4425,7 @@ impl GameRuntime {
         // 区块 status 未达 Full（刀 4a 谓词重接：FULL 级证据链 =
         // worldgen commit + 邻域光照齐，ChunkLevel.java:35-43；超时放行
         // 前沿/重生后 IO 未回）则整步冻结（原版：玩家实体在区块就绪前
-        // 不参与物理），就绪后步末再钳回已就位矩形（clamp_to_sim_area，
+        // 不参与物理），就绪后即正常物理（步末位置钳制已退役，
         // 见流式分层节注释）。
         let pc = ChunkPos::new(
             (self.player.pos.x / 16.0).floor() as i32,
@@ -4627,10 +4578,12 @@ impl GameRuntime {
             {
                 self.player.vel.y += 2.0 * (f32::from(a) + 1.0);
             }
-            // 步末钳制：一步最大位移（≤0.4 格）≪ 钳制余量（≥1 整区块），
-            // 常态不可达；只有生成/IO 掉队时才把玩家钉在已就位区边缘
-            // （替代旧「隐形石墙」）。
-            self.clamp_to_sim_area(pc);
+            // 步末钳制已退役（真机隐形墙Ⅱ：Full 矩形钳线 = 「隔 1 区块
+            // 拦人、邻块加载即墙前移」的机制本体；原版玩家可进未加载区
+            // ——Level.getBlockState VOID_AIR + ServerLevel 即时生成）。
+            // 物理安全由 r_safe 门（本块未就位=整步冻结）+ block() air
+            // 化（未加载列悬空）+ 生成补块承担；步末不变量见 fixed_step
+            // 尾部 finite 断言。
             // ---- 行为音效：脚步 / 落地 ----
             let delta = self.player.pos - before;
             // exhaustion 只认水平位移（ServerPlayer.checkMovementStatistics:1444
@@ -8989,121 +8942,10 @@ mod tests {
         }
     }
 
-    /// 刀 4b + #190 改版：钳制矩形由「四向最大 Full 矩形」派生，每侧
-    /// 余量 ≤ cap − 1（cap = sim_dist + (FULL − ENTITY_TICKING)，票级别
-    /// 场 Full 授权域半径，与 sim_safe_radius 上界同源）。**对称盘位形下
-    /// 与旧「票环半径 − 1」逐边相等**（整盘 r=R 就位 ⟺ 扩边「列 k,k+1 全
-    /// Full」成立至 k=R−1 ⟹ 余量 = R−1 = 旧 m）——旧边界值原样锁定：
-    /// 盘 r=1 → 矩形=本块（pad=半宽+余量）、盘 r=0 → 紧邻缺席 pad 收
-    /// 1.0、cap 绑定（盘大于票域被压回）、被钳轴清速/余轴保速、钳后玩家
-    /// 块满足 ready 判据（status≥Full 前哨）。旧 fixture 用「单行带」位形，
-    /// 新两列门下四向余量恒 0（生产票方环位形不存在单行带，改整盘对拍）。
-    #[test]
-    fn clamp_rect_derives_from_ticket_full_domain() {
-        let mut rt = headless_rt("clamp4b");
-        rt.render_dist = 4; // vd=5 → cap = 5 + 2 = 7，每侧余量上界 6
-        let pad = mcv_game::Player::HALF[0] + 0.02;
-        let pc = ChunkPos::new(0, 0);
-
-        // 盘 r=1 → 四向余量 0：矩形=本块，x 钳回 16−pad、vel.x 清零；
-        // z 未触钳位（8.5 ∈ [pad, 16−pad]），vel.z 保留。紧邻 (1,0) Full
-        // → pad = 半宽 + 0.02（旧 r_safe=1 分支）。
-        full_disk(&mut rt, 1);
-        rt.player.pos = Vec3::new(15.9, 70.0, 8.5);
-        rt.player.vel = Vec3::new(9.0, 0.0, 3.0);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(rt.player.pos.x, 16.0 - pad, "盘 r=1 右边界 = 16−pad");
-        assert_eq!(rt.player.vel.x, 0.0, "被钳轴清速");
-        assert_eq!(rt.player.vel.z, 3.0, "未钳轴保速");
-        assert_eq!(rt.player.pos.y, 70.0, "钳制不动 y");
-
-        // 左边界同理：lo = 0+pad。
-        rt.player.pos = Vec3::new(0.1, 70.0, 8.5);
-        rt.player.vel = Vec3::new(-9.0, 0.0, 0.0);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(rt.player.pos.x, pad, "盘 r=1 左边界 = pad");
-
-        // 盘 r=2 → 四向余量 1：矩形=pc±1，右界 = 32−pad。
-        full_disk(&mut rt, 2);
-        rt.player.pos = Vec3::new(31.9, 70.0, 8.5);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(rt.player.pos.x, 32.0 - pad, "盘 r=2 → 矩形 pc±1");
-
-        // 仅本块 Full（盘 r=0）：紧邻缺席 → pad 收 1.0 格（触达不出本块）。
-        full_disk(&mut rt, 0);
-        rt.player.pos = Vec3::new(15.9, 70.0, 8.5);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(rt.player.pos.x, 15.0, "紧邻缺席 → pad=1.0");
-
-        // cap 绑定：盘 r=9 远超票 Full 授权域（cap=7）→ 每侧余量 6；与盘
-        // r=7（恰好票域）矩形一致（票环派生防线纵深，旧 cap 语义同源）。
-        full_disk(&mut rt, 9);
-        rt.player.pos = Vec3::new(150.0, 70.0, 8.5);
-        rt.clamp_to_sim_area(pc);
-        let capped_hi = rt.player.pos.x;
-        assert_eq!(capped_hi, 112.0 - pad, "cap=7 → 余量 6 → 右界 112−pad");
-        full_disk(&mut rt, 7);
-        rt.player.pos = Vec3::new(150.0, 70.0, 8.5);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(
-            rt.player.pos.x, capped_hi,
-            "盘超票域被压回 cap，与盘 = 票域同矩形"
-        );
-        // 钳后玩家块 = (6,0)（111.68/16=6.98）：fixture 已 Full，debug
-        // 前哨（钳后 status≥Full）在此放行。
-        assert_eq!(
-            (rt.player.pos.x / 16.0).floor() as i32,
-            6,
-            "钳位落点在票覆盖域内"
-        );
-    }
-
-    // ---- #190 取证：隐形墙 = 钳制矩形「对称环」崩塌（真机证词 A 复现）----
-
-    /// #190 隐形墙行为锁（旧实现红）：环上单块洞（回访区慢 IO 回执在途，
-    /// 位置在玩家身后）**不得**把四周余量一起压到洞环之里——旧对称环
-    /// 语义 r_safe=2 → m=1，玩家在东侧 chunk6（x=100）会被旧实现钉回
-    /// 32−pad（真机症状「在已加载区块中平飞，面前什么都没有却突然停住」）。
-    /// 新四向矩形：东余量照常到票域上界，西余量被洞侵蚀（保守方向不变）。
-    /// 单位矩形余量直接读 [`GameRuntime::sim_ready_rect`]，位置/速度经
-    /// [`GameRuntime::clamp_to_sim_area`]。
-    #[test]
-    fn clamp_rect_hole_behind_does_not_wall_forward() {
-        let mut rt = headless_rt("inviswall-rect");
-        rt.render_dist = 4; // sim=5 → cap=7 → 每侧余量上界 6
-        let pad = mcv_game::Player::HALF[0] + 0.02;
-        let pc = ChunkPos::new(0, 0);
-        // 盘 r=7 全 Full，仅 (-3, 0) 缺席（身后慢 IO 洞）。
-        full_disk(&mut rt, 7);
-        rt.chunks_mut().remove(&ChunkPos::new(-3, 0));
-        // 旧谓词读数（对照基线）：r_safe=2（ring3 有洞）→ 旧 m=1 →
-        // 旧东界 32−pad——本测断言的旧钉点。
-        assert_eq!(rt.sim_safe_radius(pc), 2, "洞在 ring3：旧对称环基线");
-        let rect = rt.sim_ready_rect(pc);
-        assert_eq!(rect.1, 6, "东余量必须到票域上界（got {rect:?}）");
-        assert!(rect.0 < rect.1, "西侧洞侵蚀西侧（got {rect:?}）");
-        // 玩家在东 6 块（x=100 ∈ 新东界内、旧东界外）：新语义原样保留、
-        // 不清速（旧实现此处会钉回 32−pad 并清 vel.x → 红）。
-        rt.player.pos = Vec3::new(100.0, 70.0, 8.5);
-        rt.player.vel = Vec3::new(9.0, 0.0, 0.0);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(
-            rt.player.pos.x, 100.0,
-            "#190：洞在身后，前方已就位区必须可飞"
-        );
-        assert_eq!(rt.player.vel.x, 9.0, "未触钳不清速");
-        // 西侧照常钉回西界（洞环之里，保守方向）：西余量 rect.0 →
-        // lo = (pc.x − rect.0)*16 + pad。
-        rt.player.pos = Vec3::new(-100.0, 70.0, 8.5);
-        rt.player.vel = Vec3::new(-9.0, 0.0, 0.0);
-        rt.clamp_to_sim_area(pc);
-        assert_eq!(
-            rt.player.pos.x,
-            (pc.x - rect.0) as f32 * 16.0 + pad,
-            "西界 = 洞环之里（保守钉回，got {rect:?}）"
-        );
-        assert_eq!(rt.player.vel.x, 0.0);
-    }
+    /// （墙行为锁 clamp_rect_derives_from_ticket_full_domain /
+    /// clamp_rect_hole_behind_does_not_wall_forward 已随步末钳制退役
+    /// ——它们锁定的「墙位推导/洞环钉回」语义正是真机隐形墙Ⅱ的
+    /// 机制本体；git 历史 keep，原版无墙语义不需要替代锁。）
 
     /// #190 回归锁（派单口径「钳制矩形 ⊇ 可见已上传环」）：生产不变量
     /// 「可见网格半径 ≤ sim_dist」（remesh 环过滤，杜绝「看得见却穿透」）
@@ -9190,20 +9032,19 @@ mod tests {
         );
     }
 
-    /// #190 soundness 锁（旧新实现都要绿）：洞在飞行方向上时，钳制必须
-    /// 把玩家挡在洞块**之外**——任何钳制矩形实现都不允许玩家 AABB
-    /// 步进末端触达未 Full 区块（真体素查询前提，WorldView::block 注；
-    /// 触达未提交块 = 从「撞隐形墙」翻车成「穿进虚空」）。表驱动四向。
+    /// 音墙Ⅱ soundness 锁（替代旧「不准触未 Full 列」——其真体素前提
+    /// 已被 block() 空气化推翻，未就位列查询 = VOID_AIR，原版走进未
+    /// 加载区块亦如此）：飞向未就位的洞区块合法——不 panic、位置恒有
+    /// 限、ticket 定位不因越面报废。表驱动四向。
     #[test]
-    fn clamp_soundness_flying_toward_hole_never_reaches_notready() {
-        // (标签, 洞位, yaw)——yaw 使 forward 指向洞：dir=(sin,0,−cos)。
+    fn flying_into_unready_chunk_is_legal_air() {
         for (tag, hole, yaw) in [
             ("+X", (3i32, 0i32), std::f32::consts::FRAC_PI_2),
             ("-X", (-3, 0), -std::f32::consts::FRAC_PI_2),
             ("+Z", (0, 3), std::f32::consts::PI),
             ("-Z", (0, -3), 0.0),
         ] {
-            let mut rt = headless_rt("sound190");
+            let mut rt = headless_rt("sound190b");
             rt.render_dist = 4;
             rt.phase = GamePhase::Playing;
             full_disk(&mut rt, 7);
@@ -9212,28 +9053,21 @@ mod tests {
             rt.player.flying = true;
             rt.player.yaw = yaw;
             rt.input.forward = true;
-            let half = mcv_game::Player::HALF[0];
             for i in 0..600 {
                 rt.fixed_step(1.0 / 60.0);
-                // 步末 AABB 足迹的每个区块列必须存在且 status ≥ Full。
-                let p = rt.player.pos;
-                let x0 = ((p.x - half) / 16.0).floor() as i32;
-                let x1 = ((p.x + half) / 16.0).floor() as i32;
-                let z0 = ((p.z - half) / 16.0).floor() as i32;
-                let z1 = ((p.z + half) / 16.0).floor() as i32;
-                for cx in x0..=x1 {
-                    for cz in z0..=z1 {
-                        assert!(
-                            rt.chunks
-                                .get(&ChunkPos::new(cx, cz))
-                                .is_some_and(|h| (h.status() as u8) >= (ChunkStatus::Full as u8)),
-                            "{tag} 步 {i}：玩家 AABB 触达未 Full 列 ({cx},{cz})，\
-                             pos={}（真体素不变量破坏）",
-                            rt.player.pos
-                        );
-                    }
-                }
+                assert!(
+                    rt.player.pos.x.is_finite()
+                        && rt.player.pos.y.is_finite()
+                        && rt.player.pos.z.is_finite(),
+                    "{tag} 步 {i}：位置非有限（物理 NaN 崩坏）",
+                );
             }
+            // 缺席块仍未就位（无人凭空造块）；玩家可达洞块之上（原版
+            // 行为：air 悬落、加载后落地）。
+            assert!(
+                rt.chunks.get(&ChunkPos::new(hole.0, hole.1)).is_none(),
+                "{tag}：缺席块被凭空补齐（fixture 语义破坏）"
+            );
         }
     }
 
