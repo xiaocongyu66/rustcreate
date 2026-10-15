@@ -68,13 +68,16 @@ fn ore_v7_byte_golden() {
     // = 矿石输出零漂移，仅地形基线变更（深板岩/基岩维度入面）。
     // registry 期首锚（0cf9…六值，run 38439382386/38458062994）见
     // docs 历史；实现定稿于 4a5ac2f2。
+    // #209 重锚（density fork 链+prelim find_top_surface+含水层囊袋点
+    // Xoroshiro 化后的 byte 基线）：双 run 证据 run 38749575664 首跑与
+    // 同 sha rerun --failed 二跑六例逐位一致（2026-10-16）。
     const WANT: [u64; 6] = [
-        0x36B6_86F4_5A7C_7A4D,
-        0x024E_2997_0850_4E8B,
-        0xD4FE_9BAC_5CC4_BA8E,
-        0xF4BC_2400_5638_487E,
-        0x199C_6B16_8BF4_6A1A,
-        0x9E5C_1009_0DE0_39B6,
+        0x4C6E_B2F8_769C_0C45,
+        0xBA4D_5339_61FA_2355,
+        0x6868_C030_CC34_E823,
+        0x49C6_EE4D_EDB3_CA02,
+        0xABD9_3A7D_11ED_ECD7,
+        0xBD0B_89B2_97FE_B64C,
     ];
     let mut report = String::new();
     let mut fails = 0;
