@@ -90,17 +90,6 @@ jobs:
       # ore 锚定遮蔽叙事；#192 湖锁零执行证据事故同因：tip run 38416041644
       # fail-fast 停在 mcv_logic streaming.rs flap 后，mcv_worldgen 整包
       # 含湖锁/deepslate 三锁/cave_audit/golden 从未执行。
-      - run: cargo test --workspace --locked --no-fail-fast
-      # #192 矿洞量化审计：K-CAVE-AUDIT 数值行常态入日志（默认模式 stdout
-      # 被 cargo test 捕获、仅红时回显——「数据两用」需要基线随绿跑可见，
-      # 供跨提交前后对照；包络断言随之照常执行）。
-      - name: Cave quantitative audit (K-CAVE-AUDIT lines into log)
-        run: cargo test -p mcv_worldgen --test cave_audit --locked -- --nocapture
-      # #192 湖锁证据面：K-LAKES-BUF / K-LAKES attempts 数值行常态入日志
-      # （同 cave_audit「数据两用」先例——绿跑也要能回帖 survivors/lava_in_band
-      # 原文，不能只在红跑回显时可见）。
-      - name: Lava lake audit (K-LAKES lines into log)
-        run: cargo test -p mcv_worldgen --test lakes --locked -- --nocapture
       # #209/#206 黑盒对拍 Rust 翼：RUST_DUMPOUT 门控 dump_for_java——
       # cave_audit 同窗 JGH1 逐 chunk 输出 + artifact（与 java-harness
       # 官方 jar dump 逐列矩阵对拍；未设 env 的例行跑零开销 no-op）。
@@ -112,7 +101,17 @@ jobs:
         with:
           name: rust-dumpout
           path: rust-dumpout/
-
+      - run: cargo test --workspace --locked --no-fail-fast
+      # #192 矿洞量化审计：K-CAVE-AUDIT 数值行常态入日志（默认模式 stdout
+      # 被 cargo test 捕获、仅红时回显——「数据两用」需要基线随绿跑可见，
+      # 供跨提交前后对照；包络断言随之照常执行）。
+      - name: Cave quantitative audit (K-CAVE-AUDIT lines into log)
+        run: cargo test -p mcv_worldgen --test cave_audit --locked -- --nocapture
+      # #192 湖锁证据面：K-LAKES-BUF / K-LAKES attempts 数值行常态入日志
+      # （同 cave_audit「数据两用」先例——绿跑也要能回帖 survivors/lava_in_band
+      # 原文，不能只在红跑回显时可见）。
+      - name: Lava lake audit (K-LAKES lines into log)
+        run: cargo test -p mcv_worldgen --test lakes --locked -- --nocapture
   render-headless:
     runs-on: ubuntu-24.04
     steps:
