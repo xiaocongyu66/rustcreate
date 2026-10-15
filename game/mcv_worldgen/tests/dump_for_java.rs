@@ -14,7 +14,7 @@
 //! 体素序 = (y-ymin)*256 + z*16 + x（每层 z 行，行内 x）。
 
 use mcv_core::{ChunkPos, WORLD_MIN_Y};
-use mcv_worldgen::{generate_terrain_with, TerrainBackend};
+use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 // 官方对拍世界 = 132784305（0x7EA20B1，tools/fork-reanchor/jobs_all.txt
 // 十进制同值实锤）。前刀常量多一个零（0x7EA200B1=2124546225，cave_audit

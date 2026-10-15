@@ -95,9 +95,9 @@
 //! 已放置特征；重放模型下跨界树重叠格的赢家由各自区块的池序决定，单格
 //! 物种归属可与原版全局序不同（逐格仍确定、跨块无裂缝）。
 
-use crate::trees::{ids, place_tree, BlockSetter, TreeKind, TreesRng};
+use crate::trees::{BlockSetter, TreeKind, TreesRng, ids, place_tree};
 use crate::vanilla::biomes::Biome;
-use crate::vanilla::terrain::{Orchestrator, AIR, DIRT, GRASS, SNOW_GRASS, WATER};
+use crate::vanilla::terrain::{AIR, DIRT, GRASS, Orchestrator, SNOW_GRASS, WATER};
 
 /// 树装饰专属域盐（树 pass 唯一随机域入口；与地形/气候/洞穴通道隔离）。
 const TREE_DOMAIN: u64 = 0x7BEE_5501;

@@ -147,19 +147,11 @@ fn y_clamp(y_mc: f64) -> f64 {
 }
 
 fn quarter_negative(x: f64) -> f64 {
-    if x > 0.0 {
-        x
-    } else {
-        x * 0.25
-    }
+    if x > 0.0 { x } else { x * 0.25 }
 }
 
 pub(crate) fn half_negative(x: f64) -> f64 {
-    if x > 0.0 {
-        x
-    } else {
-        x * 0.5
-    }
+    if x > 0.0 { x } else { x * 0.5 }
 }
 
 /// 山脊折叠形（NoiseRouterData.peaksAndValleys）。

@@ -49,10 +49,10 @@
 //! 内湖间重叠为低频边缘（登记 KNOWN-DIVERGENCE LAKE-1）。应用序 =
 //! (chunk_x, chunk_z, variant) 全序，两侧块重放同序 ⇒ 覆盖写一致。
 
-use crate::vanilla::aquifer::{open_column, AquiferField, Substance};
+use crate::vanilla::aquifer::{AquiferField, Substance, open_column};
 use crate::vanilla::channel_seed;
 use crate::vanilla::splitmix64;
-use crate::vanilla::terrain::{Orchestrator, AIR, BEDROCK, LAVA, STONE, WATER};
+use crate::vanilla::terrain::{AIR, BEDROCK, LAVA, Orchestrator, STONE, WATER};
 use std::collections::HashMap;
 
 /// 湖通道域盐（TREE_DOMAIN 先例；非原版 WorldgenRandom 大特征种子链，
