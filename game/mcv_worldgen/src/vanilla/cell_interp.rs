@@ -64,6 +64,14 @@ pub struct CornerColumn {
     w: Box<[[f64; GY_LEVELS]; W_SLOTS]>,
 }
 
+impl CornerColumn {
+    /// 槽位角值（对拍/探针出口；运行时 kernel 直接走字段）。
+    #[must_use]
+    pub fn corner_value(&self, slot: usize, gy: usize) -> f64 {
+        self.w[slot][gy]
+    }
+}
+
 /// 角列四件套（体素所在的 cell 的 4 个 XZ 角列）：[x0z0, x1z0, x0z1, x1z1]。
 /// Rc 在 [`CellShell`] 缓存与填充环 per-column 快照之间共享，serve 期间
 /// 无可变访问（缓存只在 cols4 预取时构建）。

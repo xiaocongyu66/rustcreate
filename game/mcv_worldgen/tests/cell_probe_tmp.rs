@@ -28,7 +28,11 @@ fn cell_probe_values() {
         let c00 = &corners[0];
         println!(
             "W gy={gy} y={y} terr={:+.6} mask={:+.6} base={:+.6} ra={:+.6} rb={:+.6}",
-            c00.w[0][gy], c00.w[1][gy], c00.w[2][gy], c00.w[3][gy], c00.w[4][gy]
+            c00.corner_value(0, gy),
+            c00.corner_value(1, gy),
+            c00.corner_value(2, gy),
+            c00.corner_value(3, gy),
+            c00.corner_value(4, gy)
         );
     }
 }
