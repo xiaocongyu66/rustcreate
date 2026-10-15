@@ -96,7 +96,10 @@ jobs:
       - name: JGH1 dump for java-harness parity
         run: cargo test -p mcv_worldgen --test dump_for_java --locked -- --nocapture
         env:
-          RUST_DUMPOUT: rust-dumpout
+          # cargo test 的 cwd=crate 目录（game/mcv_worldgen）——相对路径会
+          # 落到 crate 下而 artifact path 锚 workspace 根（实测 run
+          # 38743002965 16 bin 出数但 artifact 空）——用绝对路径对齐：
+          RUST_DUMPOUT: ${{ github.workspace }}/rust-dumpout
       - uses: actions/upload-artifact@v4
         with:
           name: rust-dumpout
