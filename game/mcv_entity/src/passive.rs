@@ -59,8 +59,8 @@ pub fn update_wing(flap: f32, flap_speed: f32, on_ground: bool) -> (f32, f32) {
 /// 行走摆动账本推进（`player_mesh::update_walk_animation` 同款换算；60 Hz
 /// 物理步语义，`dt` = 步长秒）。`horiz` = 水平速度 m/s。供被动系统与
 /// game.rs `mob_ai_system`（Brain 路线，含敌对怪）共用——移动速度不同只按
-/// [`PLAYER_WALK_SPEED`] 比值缩放相位/幅值（原版 LivingEntity.walkAnimation：
-/// h Experienced·speed·1.2/tick，满速腿摆 ≈ ±1.4 rad，见 mob_mesh 模块头）。
+/// [`PLAYER_WALK_SPEED`] 比值缩放相位/幅值（原版 LivingEntity.walkAnimation
+/// 账本：满速腿摆 ≈ ±1.4 rad，见 mob_mesh 模块头）。
 pub fn advance_walk_anim(anim: &mut AnimState, horiz: f32, dt: f32) {
     // 玩家 0.1 速度属性 = 4.317 m/s；怪属性不同，直接按比值缩放。
     let ratio = (horiz / PLAYER_WALK_SPEED).min(1.0);

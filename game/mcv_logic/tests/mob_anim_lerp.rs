@@ -51,7 +51,7 @@ fn player_tickets(player: Vec3) -> TicketTable {
     t
 }
 
-/// 单区块世界：y<64 实心石、以上空气（lit 参数仅代理天光表）。
+/// 单区块世界：y<64 实心石、以上空气。
 fn world_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
     let h = ChunkHandle::new(ChunkPos::new(0, 0));
     {
@@ -202,11 +202,45 @@ fn zombie_walk_ledger_advances_and_swings_legs() {
     );
     assert!(anim.phase > 0.1, "行走相位应推进，实际 {}", anim.phase);
 
-    // 渲染消费面：legs（humanoid 部位 4/5）矩阵互异 = 摆动非零相写入。
+    // 渲染消费面：摆动写入 MobInstance 矩阵。测试期固定账本值做确定性
+    // 断言（AI 跑出的 phase 可能落在 cos→0 的退火点，幅值改动偶发不可见；
+    // phase=1.1 → cos≈0.45 非零）：基线 = 同位置（含 collect 的 partial=0.5
+    // 插值位置！否则躯干平移差会虚构通过）/朝向/相位 + 零幅值——双腿
+    // WalkLeg 矩阵应只被非零 amount 改写。
+    *app.world
+        .write::<mcv_entity::AnimState>()
+        .get_mut(z)
+        .unwrap() = mcv_entity::AnimState {
+        phase: 1.1,
+        amount: 0.88,
+        ..Default::default()
+    };
+    let walk_yaw = app
+        .world
+        .read::<mcv_entity::Yaw>()
+        .get(z)
+        .map(|y| y.0)
+        .unwrap_or(0.0);
+    let render_pos = body.pos_old + (body.pos - body.pos_old) * 0.5;
+    let baseline = mcv_render::mob_mesh::mob_model_matrices(
+        mcv_render::mob_mesh::MobModelKind::Zombie,
+        &mcv_render::mob_mesh::MobPose {
+            pos: render_pos,
+            yaw: walk_yaw,
+            phase: 1.1,
+            amount: 0.0,
+            ..Default::default()
+        },
+    );
     let mobs = collect_mob_instances_in(&app.world, None, 0.5);
     assert_eq!(mobs.len(), 1);
-    let legs = (&mobs[0].models[4], &mobs[0].models[5]);
-    assert_ne!(legs.0, legs.1, "amount>0 时双腿相位应互异（WalkLeg 摆动）");
+    for idx in [4usize, 5usize] {
+        assert_ne!(
+            mobs[0].models[idx],
+            baseline[idx].to_cols_array_2d(),
+            "腿 {idx} 矩阵应偏离零幅值基线（WalkLeg 被 amount 改写）"
+        );
+    }
     for part in &mobs[0].models {
         for col in part {
             for v in col {
