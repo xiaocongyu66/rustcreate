@@ -3,6 +3,7 @@
 
 pub mod atlas;
 pub mod chunk;
+pub mod placement;
 pub mod pool;
 pub mod rand;
 pub mod shape;
@@ -147,6 +148,16 @@ pub struct BlockDef {
     /// `Player.java:619` `!requiresCorrectToolForDrops() || 手持工具
     /// Tool.isCorrectForDrops(state)`。提取与继承闭包见 ci/gen-blocks.py。
     pub requires_tool: bool,
+    /// 逐面 overlay 插层贴图（GEN_BLOCKS 第 10 列，0 = 无插层）：
+    /// [+X, -X, +Y, -Y, +Z, -Z]。26.1 模型 JSON 的**后绘制元素**带
+    /// `tintindex` 重新覆盖同面（grass_block.json 第 2 元素 4 侧 #overlay
+    /// tintindex 0 = 草裙），原版逐元素烘焙两条同位 quad——base 面无
+    /// tintindex 不染，overlay 面按 tintIndex 查 BlockColors 色源乘顶点色
+    /// （ModelBlockRenderer.java:212-214）。渲染链 = mcv_mesher build_pass
+    /// 在 base 面之上逐面再发一条同几何 overlay quad，tint 按 overlay 层号
+    /// 查 tint 注册表（草裙侧面经 grass_block_side_overlay 层染群系色；
+    /// 顶/底/雪覆行恒 0 = 与原版一致无插层）。
+    pub overlays: [u16; 6],
 }
 
 /// 旧 14 冻结行的行序常量（id 0..13 地形生成器硬依赖，永不重排）。
@@ -162,7 +173,18 @@ pub const fn tag_row_of(id: u16) -> u16 {
 }
 
 /// `blocks_gen.inc.rs` 中 GEN_BLOCKS 的元组类型（生成文件不导出别名，补一个）。
-type GenBlock = (&'static str, bool, bool, bool, u8, [u16; 6], f32, u8, bool);
+type GenBlock = (
+    &'static str,
+    bool,
+    bool,
+    bool,
+    u8,
+    [u16; 6],
+    f32,
+    u8,
+    bool,
+    [u16; 6],
+);
 
 // 千块表：1171 方块，id 0..13 与旧 14 方块表逐字段一致（回归锁见 tests），
 // 14+ 按官方名字典序。格式/来源/限制见 blocks_gen.inc.rs 头部注释。
@@ -176,7 +198,8 @@ pub mod tags {
 }
 
 /// 生成表元组 → BlockDef。model_kind（第 8 字段）是网格器未来字段，此处丢弃；
-/// 第 9 字段 requires_tool = 掉落门（#178 刀2a）。
+/// 第 9 字段 requires_tool = 掉落门（#178 刀2a）；第 10 字段 overlays =
+/// 逐面 tintindex 插层贴图（草裙侧面群系染色数据源，见 [`BlockDef::overlays`]）。
 /// `f32::from_bits` 保证 const 路径与旧表字面量逐位一致（含 INFINITY）。
 const fn gen_def(t: &GenBlock) -> BlockDef {
     BlockDef {
@@ -189,6 +212,7 @@ const fn gen_def(t: &GenBlock) -> BlockDef {
         hardness: f32::from_bits(t.6.to_bits()),
         shape: shape::shape_of_name(t.0),
         requires_tool: t.8,
+        overlays: t.9,
     }
 }
 
@@ -203,6 +227,7 @@ const fn gen_blocks() -> [BlockDef; GEN_BLOCKS.len()] {
         tiles: [0; 6],
         hardness: 0.0,
         requires_tool: false,
+        overlays: [0; 6],
         shape: 0,
     }; GEN_BLOCKS.len()];
     let mut i = 0;
@@ -241,7 +266,7 @@ const fn name_ends_with(name: &str, suf: &str) -> bool {
 
 /// 单块 lightDampening 判定（三段规则 + 例外覆盖，Java 依据见 [`OPACITY`]）。
 const fn gen_opacity(t: &GenBlock) -> u8 {
-    let (name, _solid, opaque, liquid, _emit, _tiles, _hard, model_kind, _requires) = t;
+    let (name, _solid, opaque, liquid, _emit, _tiles, _hard, model_kind, _requires, _overlays) = t;
     // ① solidRender（整方块不透明渲染）→ 15。表内 opaque=true 即"全不透明
     //    整方块"，对应原版 solidRender=满块 occlusionShape
     //    （BlockBehaviour.java:512-513, 305-310）。
@@ -455,7 +480,11 @@ impl BlockId {
     /// context.getHorizontalDirection()`），几何上踏步（整高半）位于朝向侧
     /// 半格（StairBlock.java:37-38，facing=NORTH → 上半占 -Z 半格）；
     /// bit2=1 对应原版 Half.TOP（点底面放置，StairBlock.java:103-105）。
-    /// 其余形状恒 0。
+    /// RotatedPillarBlock 族（log/wood/stem/hyphae/basalt/deepslate…AXIS
+    /// 属性表见 [`crate::placement`]）：bit0-1=axis（0=Y 1=X 2=Z；默认态
+    /// AXIS=Y 编 0，与竖置纯 id 逐位兼容）。放置状态默认 identity
+    /// （BlockItem.java:115-118 → Block.java:465-467）——无上述属性的
+    /// 方块恒 0。
     #[inline]
     pub const fn state(self) -> u8 {
         ((self.0 >> STATE_SHIFT) & 0xF) as u8
@@ -571,6 +600,7 @@ mod tests {
             hardness: 0.0,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "stone",
@@ -582,6 +612,7 @@ mod tests {
             hardness: 1.5,
             shape: 0,
             requires_tool: true,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "dirt",
@@ -593,6 +624,7 @@ mod tests {
             hardness: 0.5,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "grass",
@@ -604,6 +636,7 @@ mod tests {
             hardness: 0.6,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "sand",
@@ -615,6 +648,7 @@ mod tests {
             hardness: 0.5,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "water",
@@ -626,6 +660,7 @@ mod tests {
             hardness: 100.0,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "log",
@@ -637,6 +672,7 @@ mod tests {
             hardness: 2.0,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "leaves",
@@ -648,6 +684,7 @@ mod tests {
             hardness: 0.2,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "planks",
@@ -659,6 +696,7 @@ mod tests {
             hardness: 2.0,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "cobble",
@@ -670,6 +708,7 @@ mod tests {
             hardness: 2.0,
             shape: 0,
             requires_tool: true,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "bedrock",
@@ -681,6 +720,7 @@ mod tests {
             hardness: f32::INFINITY,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "snow_grass",
@@ -692,6 +732,7 @@ mod tests {
             hardness: 0.6,
             shape: 0,
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "flower_red",
@@ -703,6 +744,7 @@ mod tests {
             hardness: 0.0,
             shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
             requires_tool: false,
+            overlays: [0; 6],
         },
         BlockDef {
             name: "flower_yellow",
@@ -714,6 +756,7 @@ mod tests {
             hardness: 0.0,
             shape: 1, // 十字植物 → Cross（C++ 网格器按模板出双面 quad）
             requires_tool: false,
+            overlays: [0; 6],
         },
     ];
 

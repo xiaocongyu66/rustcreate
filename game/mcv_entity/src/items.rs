@@ -134,6 +134,7 @@ pub fn spawn_item_drop(
             pos,
             vel: initial_vel(rng),
             on_ground: false,
+            pos_old: pos,
         },
     );
     world.insert(

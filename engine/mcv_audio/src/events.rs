@@ -23,6 +23,19 @@ pub const PLAYER_SPLASH: &str = "entity.player.splash";
 /// 入水溅落高速档（SoundEvents.java:1294；消费点同上）。
 pub const PLAYER_SPLASH_HIGH_SPEED: &str = "entity.player.splash.high_speed";
 
+/// 水中行进游泳音（SoundEvents.java:1295 `PLAYER_SWIM`；消费点双路——
+/// 趟水步门内 `Player.playStepSound` Player.java:1468-1471，自由泳外门
+/// `Entity.applyMovementEmissionAndPlaySound` else-分支 Entity.java:831-835；
+/// 音量 = min(1, √(vx²·0.2+vy²+vz²·0.2))×0.35（waterSwimSound
+/// Entity.java:1360-1370，自身控制 volumeModifier=0.35）、音高 =
+/// 1.0+(rand−rand)×0.4（playSwimSound :1407-1409））。
+pub const PLAYER_SWIM: &str = "entity.player.swim";
+
+/// 完食打嗝（SoundEvents.java:1284 `PLAYER_BURP`；消费点
+/// FoodProperties.onConsume FoodProperties.java:39-48——完食音之后
+/// 接播，volume 0.5、pitch = randomBetween(0.9, 1.0) 均匀档）。
+pub const PLAYER_BURP: &str = "entity.player.burp";
+
 /// 摔落伤害 >4 档（SoundEvents.java:1282 `PLAYER_BIG_FALL`；消费点
 /// LivingEntity.java:1772 `playSound(getFallDamageSound(dmg), 1.0F, 1.0F)`，
 /// 档位门 getFallDamageSound LivingEntity.java:2573）。
@@ -75,10 +88,12 @@ pub const WIRED: &[&str] = &[
     PLAYER_HURT,
     PLAYER_SPLASH,
     PLAYER_SPLASH_HIGH_SPEED,
+    PLAYER_SWIM,
     PLAYER_FALL_BIG,
     PLAYER_FALL_SMALL,
     ITEM_BREAK,
     GENERIC_EAT,
+    PLAYER_BURP,
     ARROW_SHOOT,
     ITEM_PICKUP,
     UI_BUTTON_CLICK,
