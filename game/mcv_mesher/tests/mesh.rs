@@ -184,24 +184,30 @@ fn single_block_six_faces() {
 
     let verts = decode(&buf);
     let mut base_geom: [[[f32; 3]; 4]; 6] = [[[0.0; 3]; 4]; 6]; // base 逐面顶点 pos
+    let mut n_base = 0usize;
+    let mut n_ovl = 0usize;
+    // 分档按 tex 不锁位序：插层 quad **紧随其 base 面**发射（emit_quad
+    // 单函数内 base→overlay 连发，draw 序 winner 语义所需），quad 位序为
+    // base0/ovl0/base1/ovl1/.../base5 交错——旧写法「qi==face 且 0..5 全
+    // base 段」是插层发射前的位置约定（CI 38843334897 红：vertex 1
+    // grouped into face 0）。分组的本质不变式=4 顶点/quad + 面档 flags +
+    // 逐面 tex 对位，全数保留。
     for (qi, quad) in verts.chunks(4).enumerate() {
         let face = (quad[0].flags & 7) as usize;
-        if qi < 6 {
-            // base 段：quad 序 = 面档序（发射序 0..5），tex = 生成表 base 列。
-            assert_eq!(
-                qi as u8,
-                quad[0].flags & 7,
-                "vertex {qi} grouped into face {face}"
-            );
+        if quad[0].tex == def.tiles[face] {
+            // base quad：tex = 生成表 base 列；记录几何供 overlay 对位。
             for v in quad {
-                assert_eq!(v.tex as usize, def.tiles[face] as usize);
+                assert_eq!(
+                    v.tex as usize, def.tiles[face] as usize,
+                    "quad {qi} face {face} base tex"
+                );
             }
-            // 记录 base 面几何供 overlay 对位（面内顶点序一致）。
             for (k, v) in quad.iter().enumerate() {
                 base_geom[face][k] = v.pos;
             }
+            n_base += 1;
         } else {
-            // 插层段：同面档、tex = 生成表 overlay 列、**同位共面**（顶点
+            // 插层 quad：同面档、tex = 生成表 overlay 列、**同位共面**（顶点
             // 坐标逐位复刻 base 同面——深度 LEQUAL + 后绘制 winner 语义，
             // 与 26.1 同平面双元素模型一致）。
             assert!(
@@ -215,8 +221,11 @@ fn single_block_six_faces() {
                 );
                 assert_eq!(v.pos, base_geom[face][k], "overlay 同位复刻 base 面几何");
             }
+            n_ovl += 1;
         }
     }
+    assert_eq!(n_base, 6, "六条 base 面条");
+    assert_eq!(n_ovl, extra, "插层条数 = 非零 overlay 档数");
     // index pattern: per quad (0,1,2),(0,2,3)
     for (t, &ix) in buf.indices().iter().enumerate() {
         let expected = (t / 6 * 4) as u32 + [0u32, 1, 2, 0, 2, 3][t % 6];
