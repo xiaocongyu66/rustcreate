@@ -568,7 +568,7 @@ fn supports(below: u16) -> bool {
 /// 梯形 spread 一抽（TrapezoidInt.sample 的 plateau 0 + 对称界快路，
 /// TrapezoidInt.java:40-43：`nextInt(b+1) − nextInt(b+1)`，2 抽）。
 fn trapezoid(rng: &mut FloraRng, b: i32) -> i32 {
-    i32::from(rng.next_int((b + 1) as u32)) - i32::from(rng.next_int((b + 1) as u32))
+    rng.next_int((b + 1) as u32) as i32 - rng.next_int((b + 1) as u32) as i32
 }
 
 /// WeightedStateProvider 一抽（WeightedList.java:66-73 nextInt(total)，
@@ -629,9 +629,9 @@ fn place_feature(
             const LOW: [u16; 4] = [ORANGE_TULIP, RED_TULIP, PINK_TULIP, WHITE_TULIP];
             const HIGH: [u16; 4] = [POPPY, AZURE_BLUET, OXEYE_DAISY, CORNFLOWER];
             if v < f64::from(-0.8_f32) {
-                LOW[usize::from(rng.next_int(4))]
+                LOW[rng.next_int(4) as usize]
             } else if rng.next_float() < 0.333_333_34_f32 {
-                HIGH[usize::from(rng.next_int(4))]
+                HIGH[rng.next_int(4) as usize]
             } else {
                 DANDELION
             }
@@ -697,13 +697,13 @@ pub fn origin_flora_writes(
         for _ in 0..copies {
             // rarity（RarityFilter.java:20-23，在 in_square 之前）。
             if let Some(chance) = row.rarity {
-                if !(rng.next_float() < 1.0 / f32::from(chance)) {
+                if !(rng.next_float() < 1.0 / chance as f32) {
                     continue;
                 }
             }
             // in_square（InSquarePlacement.java:17-18，2 抽）。
-            let x = ocx * 16 + i32::from(rng.next_int(16));
-            let z = ocz * 16 + i32::from(rng.next_int(16));
+            let x = ocx * 16 + rng.next_int(16) as i32;
+            let z = ocz * 16 + rng.next_int(16) as i32;
             // heightmap（HeightmapPlacement.java:25-34，零随机；pass-1
             // 口径 = max(fs, SEA)+1，两型同值见头注 KNOWN-DIVERGENCE 2）。
             let y = rp.top_floor(x, z);

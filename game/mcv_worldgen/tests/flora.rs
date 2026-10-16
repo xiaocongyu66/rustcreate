@@ -200,8 +200,9 @@ fn k_print(tag: &str, sv: &Survey, orch: &Orchestrator, field: &mut AquiferField
     for b in keys {
         let (n, ww, h) = &by[&b];
         eprintln!(
-            "K-FLORA {tag} biome={b:?} chunks={n} with_writes={ww} ids=[sg={} tg={} fern={} \
-             dandelion={} poppy={} azure={} cornflower={} oxeye={} tulip={}/{}/{}/{}]",
+            "K-FLORA {tag} biome={b:?} chunks={n} with_writes={ww} total={} ids=[sg={} tg={} \
+             fern={} dandelion={} poppy={} azure={} cornflower={} oxeye={} tulip={}/{}/{}/{}]",
+            h.n,
             h.sg,
             h.tg,
             h.fern,
