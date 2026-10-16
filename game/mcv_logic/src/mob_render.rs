@@ -76,23 +76,23 @@ pub fn collect_mob_instances_in(
             }
         }
         let yaw = yaws.get(e).map(|y| y.0).unwrap_or(0.0);
-        let (phase, amount, wing) = match (anims.get(e), wanders.get(e)) {
-            (Some(a), Some(w)) => (
-                a.phase,
-                a.amount,
-                ((a.wing_phase.sin() + 1.0) * a.wing_speed, w.eat_ticks),
-            ),
-            _ => (0.0, 0.0, (0.0, 0)),
+        // AnimState 与 WanderState 独立读取（此前按元组 match，敌对怪有
+        // AnimState 无 WanderState → 整组落零相位兜底——账本推进被消费端
+        // 丢弃的第二个根因；spawn_mob 统一装配后两类怪都必须吃同一条）。
+        let (phase, amount, wing_angle) = match anims.get(e) {
+            Some(a) => (a.phase, a.amount, (a.wing_phase.sin() + 1.0) * a.wing_speed),
+            None => (0.0, 0.0, 0.0),
         };
+        let eat_ticks = wanders.get(e).map_or(0, |w| w.eat_ticks);
         let pose = MobPose {
             pos: render_pos,
             yaw,
             phase,
             amount,
             head_pitch: 0.0,
-            wing_angle: wing.0,
-            head_drop: anims.get(e).map_or(0.0, |a| a.head_drop(wing.1)),
-            head_eat_angle: anims.get(e).map_or(0.0, |a| a.head_eat_angle(wing.1)),
+            wing_angle,
+            head_drop: anims.get(e).map_or(0.0, |a| a.head_drop(eat_ticks)),
+            head_eat_angle: anims.get(e).map_or(0.0, |a| a.head_eat_angle(eat_ticks)),
         };
         let mats = mob_model_matrices(kind, &pose);
         let mut models = [[[0.0f32; 4]; 4]; MAX_MOB_PARTS];
