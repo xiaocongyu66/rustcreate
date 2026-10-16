@@ -745,11 +745,41 @@ pub fn origin_flora_writes(
     writes
 }
 
+/// 本 pass 写集 id 面（投影护栏白名单）。
+fn owns(id: u16) -> bool {
+    matches!(
+        id,
+        SHORT_GRASS
+            | TALL_GRASS
+            | FERN
+            | DANDELION
+            | POPPY
+            | AZURE_BLUET
+            | CORNFLOWER
+            | OXEYE_DAISY
+            | ORANGE_TULIP
+            | RED_TULIP
+            | PINK_TULIP
+            | WHITE_TULIP
+    )
+}
+
 /// pass 2.2：陆地植被投影。3×3 origin 区块重放 + 裁剪写自块（ore_pass
 /// ·project_ores / water_flora·project_water_flora 同型；random_offset
 /// ±7 抖动可越界本块 7 格——统一 3×3 域重放两侧块恒同几何）。替换写 =
 /// 原版 setBlock(flags 2) 直写语义；y 域出界格丢（offset 上探 +3 兜底，
 /// 高草上格 y+1 同域）。返回写数。
+///
+/// 投影缓冲护栏（tree_pass ChunkClipper 直写门同型先例）：放置链的
+/// live-world 前置门（BlockPredicateFilter #air / canSurvive 下方支撑面）
+/// 在原版读**含特征写**的世界态（Heightmap.java:147 NOT_AIR 谓词、
+/// VegetationBlock.java:44-46），本仓判据面 = pass-1 重放态（树/湖/先后
+/// 特征写不入，模块头注 KNOWN-DIVERGENCE 登记）——树 pass（2.1）先于本
+/// pass，其干/冠已落缓冲：SURF-2 判据面收口后植被 y 精对实顶+1 位（=
+/// 树基位），直写吞原木 = 树基格 907 非原木（trees_cross_chunk.rs:262
+/// 树基格 (-1760,66,-1884)=907，CI 38907640949）。护栏 = 缓冲格仅在
+/// AIR 或本 pass 植被 id（KNOWN-DIVERGENCE「跨行同格叠写后写者赢」放行）
+/// 才落写；原木/叶/石/水格丢弃 = live-world 门败位的投影侧等价。
 pub fn project_land_flora(
     seed: u64,
     chunk_x: i32,
@@ -773,7 +803,11 @@ pub fn project_land_flora(
                 if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&w.y) {
                     continue;
                 }
-                voxels[mcv_core::vidx(lx as usize, w.y, lz as usize)] = w.id;
+                let cell = &mut voxels[mcv_core::vidx(lx as usize, w.y, lz as usize)];
+                if *cell != AIR && !owns(*cell) {
+                    continue; // 缓冲护栏：原版 live-world 门败位（干/冠/石/水）
+                }
+                *cell = w.id;
                 applied += 1;
             }
         }

@@ -64,8 +64,8 @@ use crate::vanilla::channel_seed;
 use crate::vanilla::ores_data::{HeightDist, ORE_ROWS, OreCount, OreRow, biome_allowed};
 use crate::vanilla::splitmix64;
 use crate::vanilla::terrain::{
-    AIR, BEDROCK, LAVA, Orchestrator, PRELIM_SURFACE_BAND, REAL_TOP_SCAN_MARGIN,
-    STONE, WATER, bedrock_noise, half_negative, solid_material,
+    AIR, BEDROCK, LAVA, Orchestrator, PRELIM_SURFACE_BAND, REAL_TOP_SCAN_MARGIN, STONE, WATER,
+    bedrock_noise, half_negative, solid_material,
 };
 use std::collections::HashMap;
 use std::sync::OnceLock;
