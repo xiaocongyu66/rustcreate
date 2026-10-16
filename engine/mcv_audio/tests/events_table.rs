@@ -21,6 +21,7 @@ const MAPPING: &[(&str, &str)] = &[
     ("player_fall_small", events::PLAYER_FALL_SMALL),
     ("item_break", events::ITEM_BREAK),
     ("generic_eat", events::GENERIC_EAT),
+    ("player_burp", events::PLAYER_BURP),
     ("arrow_shoot", events::ARROW_SHOOT),
     ("item_pickup", events::ITEM_PICKUP),
     ("ui_button_click", events::UI_BUTTON_CLICK),

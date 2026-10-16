@@ -31,6 +31,11 @@ pub const PLAYER_SPLASH_HIGH_SPEED: &str = "entity.player.splash.high_speed";
 /// 1.0+(rand−rand)×0.4（playSwimSound :1407-1409））。
 pub const PLAYER_SWIM: &str = "entity.player.swim";
 
+/// 完食打嗝（SoundEvents.java:1284 `PLAYER_BURP`；消费点
+/// FoodProperties.onConsume FoodProperties.java:39-48——完食音之后
+/// 接播，volume 0.5、pitch = randomBetween(0.9, 1.0) 均匀档）。
+pub const PLAYER_BURP: &str = "entity.player.burp";
+
 /// 摔落伤害 >4 档（SoundEvents.java:1282 `PLAYER_BIG_FALL`；消费点
 /// LivingEntity.java:1772 `playSound(getFallDamageSound(dmg), 1.0F, 1.0F)`，
 /// 档位门 getFallDamageSound LivingEntity.java:2573）。
@@ -88,6 +93,7 @@ pub const WIRED: &[&str] = &[
     PLAYER_FALL_SMALL,
     ITEM_BREAK,
     GENERIC_EAT,
+    PLAYER_BURP,
     ARROW_SHOOT,
     ITEM_PICKUP,
     UI_BUTTON_CLICK,

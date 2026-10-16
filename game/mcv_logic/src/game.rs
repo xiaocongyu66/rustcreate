@@ -6263,6 +6263,18 @@ impl GameRuntime {
             vol,
             pitch,
         );
+        // 完食打嗝（FoodProperties.onConsume FoodProperties.java:43-47：玩家
+        // 吃完即接播 PLAYER_BURP = "entity.player.burp"（SoundEvents.java:1284），
+        // volume 0.5、pitch = randomBetween(0.9, 1.0) 均匀档——本仓 fast_rand
+        // 1024 档近似同 jitter 惯例）。
+        let r = (fast_rand() % 1024) as f32 / 1024.0;
+        self.audio.play_event_pitched(
+            mcv_audio::events::PLAYER_BURP,
+            [p.x, p.y, p.z],
+            [p.x, p.y, p.z],
+            0.5,
+            0.9 + r * 0.1,
+        );
         // FoodData.eat(int, float)（FoodData.java:24-26；溢出规则 :19-22）。
         mcv_item::food::eat(
             &mut self.player.hunger,
