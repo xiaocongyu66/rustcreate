@@ -74,13 +74,19 @@ fn ore_v7_byte_golden() {
     // 插值改变地形体素（西洞复活）→ 字节序列变 → ore 输出自身 raw
     // 语义不变（OreVeinifier 任意点采样未进壳）。新六值=run 38825194406
     // 实测；双 run 一致性由同 seed 确定性保证（下一 run 复核）。
+    // 第四锚（花草入面连带判据面位移：ore_pass::Replay density 换
+    // CellShell 插值面——OCEAN_FLOOR_WG 探针门/块判据随判据面全量位移
+    // （ore_pass.rs SURF-2 注）；陆地植被落位精对实顶+1）——六值全部
+    // 重测，run 38910266568（与 38907640949 同值双证：判据面收敛后
+    // 字节稳定；surface_rules 草窗双红转绿、trees_cross_chunk/
+    // trees_wiring 树基双红转绿同 run）。
     const WANT: [u64; 6] = [
-        0x1614_0783_B016_FBEB,
-        0x6529_94EC_D96E_2A15,
-        0x38F4_704E_1B82_4776,
-        0xD520_0EA1_4C08_0585,
-        0x0452_6C85_D51A_DBA6,
-        0x9428_8A75_7BF6_C737,
+        0x2048_EE1C_EB44_A11A,
+        0x7D1C_2D9F_00E8_9359,
+        0xAE72_EC07_0D01_D5CF,
+        0xD30F_3E06_8C7B_2F6A,
+        0xCC00_C3F5_482C_FA49,
+        0xEFCF_FC99_7C7E_01AD,
     ];
     let mut report = String::new();
     let mut fails = 0;

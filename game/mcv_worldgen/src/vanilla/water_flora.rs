@@ -5,9 +5,11 @@
 //! freeze 前——原版两特征与树同在 VEGETAL_DECORATION 特征阶，槽内按群系
 //! features 数组序（ocean.json 的 vegetal 槽 trees_water 先于
 //! seagrass_normal/kelp_cold）；freeze_top_layer 是次阶（freeze_pass 头注
-//! features[10]），terrain.rs 调度序（lake→ore→tree→水草→freeze）与之逐段
-//! 对齐。执行器与重放模型照 [`crate::vanilla::ore_pass`] 先例（#178 执行
-//! 器面）：3×3 origin 区块重放 + 裁剪写自块；判据读 pass-1 纯函数重放态
+//! features[10]），terrain.rs 调度序（lake→ore→tree→陆地植被→水草→freeze）
+//! 与之逐段对齐（陆地植被 2.2 在 RIVER 槽序上先于 seagrass_river 行，
+//! river.json features[9] 行序——flora 模块头注）。执行器与重放模型照
+//! [`crate::vanilla::ore_pass`] 先例（#178 执行器面）：3×3 origin 区块重
+//! 放 + 裁剪写自块；判据读 pass-1 纯函数重放态
 //! （[`crate::vanilla::ore_pass::Replay`]，不读缓冲、不读先前特征写）。
 //!
 //! ## 26.1 实物锚点（相对 `data/minecraft/worldgen/`，Java 相对
@@ -134,7 +136,9 @@ const SEAGRASS: u16 = 905; // blocks_gen.inc.rs:933 ("seagrass")
 const TALL_SEAGRASS: u16 = 1002; // blocks_gen.inc.rs:1030 ("tall_seagrass")
 
 /// BIOME_INFO_NOISE（Biome.java:66，常量种子 2345、octave 集 [0]）。
-fn biome_info_noise() -> &'static PerlinSimplexNoise {
+/// pub(crate)：flora（陆地植被）的 NoiseThresholdCountPlacement（:35）
+/// 走同一常量单例（Biome.java:66 静态字段全 JVM 一份）。
+pub(crate) fn biome_info_noise() -> &'static PerlinSimplexNoise {
     static NOISE: OnceLock<PerlinSimplexNoise> = OnceLock::new();
     NOISE.get_or_init(|| {
         let mut r = LegacyRandom::new(2345);
@@ -208,13 +212,15 @@ const FLORA_ROWS: [FloraRow; 3] = [
 
 /// 水草通道随机流（OreRng 同型：splitmix64 续流 + Lemire 无偏；尾数位
 /// 数对位 Java nextFloat 24 / nextDouble 53——ore_pass 头注「本仓每个
-/// (origin 区块, 行) 一条独立流」同款，非原版特征种子链）。
-struct FloraRng {
+/// (origin 区块, 行) 一条独立流」同款，非原版特征种子链）。pub(crate)：
+/// flora 陆地植被执行器共用同型流（行序域盐自派生），模块头注随机域
+/// 段同款登记。
+pub(crate) struct FloraRng {
     s: u64,
 }
 
 impl FloraRng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         Self { s: seed }
     }
 
@@ -223,12 +229,19 @@ impl FloraRng {
         self.s
     }
 
-    fn next_double(&mut self) -> f64 {
+    pub(crate) fn next_double(&mut self) -> f64 {
         (self.next_u64() >> 11) as f64 / (1u64 << 53) as f64
     }
 
+    /// nextFloat 对位（Java 24 位尾数）：前 24 位 / 2²⁴，f32 域比较
+    /// 面供 RarityFilter（RarityFilter.java:22）与 NoiseThresholdProvider
+    /// （:64 highChance 抽）。
+    pub(crate) fn next_float(&mut self) -> f32 {
+        ((self.next_u64() >> 40) as u32) as f32 / 16_777_216.0_f32
+    }
+
     /// [0,n) 均匀（`RandomSource.nextInt(bound)` 语义面）。
-    fn next_int(&mut self, n: u32) -> u32 {
+    pub(crate) fn next_int(&mut self, n: u32) -> u32 {
         ((self.next_u64() as u128 * u128::from(n)) >> 64) as u32
     }
 }

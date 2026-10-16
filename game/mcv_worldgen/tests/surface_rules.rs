@@ -64,11 +64,18 @@ const LEAF_IDS: [u16; 6] = [
     ids::SPRUCE_LEAVES,
 ];
 
-/// pass 2.3 水草四 id（ocean-flora2；water_flora.rs 头注 blocks_gen.inc.rs
-/// 行号锚）。植被非 terrain——ground_block 的跳过集与树同列（ pass-1 水
-/// 柱内容格：海窗测试的 ground_block 扫描自顶向下，先撞水草再撞海床，
-/// 不跳过会让海床断言拿到 905/1002/508/509 假红）。
-const FLORA_IDS: [u16; 4] = [508, 509, 905, 1002];
+/// pass 2.3/2.2 植被 id 集（ocean-flora2 水草四 id + 草原植被案陆地 12
+/// id——flora.rs/water_flora.rs 头注 blocks_gen.inc.rs 行号锚）。植被非
+/// terrain——ground_block 的跳过集与树同列（pass-1 水/陆表内容格：扫描自
+/// 顶向下，先撞植被再撞海床/地表，不跳过会让海床/亚表断言拿到 905/1002/
+/// 508/509/907/1001/13/12… 假红；ocean-flora2 先例 = 水草四 id 同款重锚）。
+const FLORA_IDS: [u16; 16] = [
+    508, 509, 905, 1002, // 水草族（kelp 头体/seagrass/tall_seagrass）
+    907, 1001, 404, // short_grass/tall_grass/fern（taiga weighted）
+    13, 12, // dandelion(legacy flower_yellow)/poppy(legacy flower_red)
+    46, 245, 675, // azure_bluet/cornflower/oxeye_daisy（flower_plain high）
+    672, 872, 732, 1148, // 四色 tulip（flower_plain low）
+];
 
 fn is_flora(id: u16) -> bool {
     FLORA_IDS.contains(&id)

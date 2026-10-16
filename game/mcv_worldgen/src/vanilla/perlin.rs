@@ -186,6 +186,30 @@ impl ImprovedNoise {
         Self { xo, yo, zo, p }
     }
 
+    /// 同机制的 **legacy 随机源流**构造（flora 花域噪声链专用）：
+    /// 随机源 = 48-bit LCG（`simplex::LegacyRandom`，LegacyRandomSource
+    /// 透传 BitRandomSource——nextDouble = 浮点域乘、nextInt(bound) =
+    /// 2 幂折叠/拒绝采样），与 `from_xoroshiro` 同一消耗序
+    /// （ImprovedNoise.java:14-30：xo/yo/zo = nextDouble()·256 +
+    /// Fisher–Yates `nextInt(256−i)`）。给 flora 花域
+    /// `NormalNoise.create(LegacyRandomSource)` 路径（NoiseBasedState
+    /// Provider.java:31）供体；与 new()/from_xoroshiro() 三流互不互通。
+    #[must_use]
+    pub fn from_legacy(rng: &mut crate::vanilla::simplex::LegacyRandom) -> Self {
+        let xo = rng.next_double() * 256.0;
+        let yo = rng.next_double() * 256.0;
+        let zo = rng.next_double() * 256.0;
+        let mut p = [0_u8; 256];
+        for (i, v) in p.iter_mut().enumerate() {
+            *v = i as u8;
+        }
+        for i in 0..256_usize {
+            let offset = rng.next_int_bound((256 - i) as i32) as usize;
+            p.swap(i, i + offset);
+        }
+        Self { xo, yo, zo, p }
+    }
+
     /// 排列查询（ImprovedNoise.java:81-83：`p[x & 0xFF] & 0xFF`）。
     #[inline]
     fn p_at(&self, x: i64) -> usize {
