@@ -17,6 +17,7 @@ use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SAND: u16 = 4;
 const WATER: u16 = 5;
+const DIRT: u16 = 2;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
 
