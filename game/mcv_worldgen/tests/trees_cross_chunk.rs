@@ -189,7 +189,11 @@ fn boundary_trees_complete_on_both_sides() {
     }
     assert!(
         crossing_trees > 0,
-        "Forest 区域 {area3().0}..={area3().1}×{area3().2}..={area3().3} 无跨界树——测试空转"
+        "Forest 区域 {:?}..={:?}×{:?}..={:?} 无跨界树——测试空转",
+        area3().0,
+        area3().1,
+        area3().2,
+        area3().3
     );
     assert!(
         hit_blocks > 0,
