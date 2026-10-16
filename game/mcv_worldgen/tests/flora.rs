@@ -20,7 +20,7 @@ use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
 use mcv_worldgen::vanilla::biomes::Biome;
 use mcv_worldgen::vanilla::flora::{
-    FloraWrite, LAND_FLORA_DOMAIN, flora_writes, origin_flora_writes,
+    FloraWrite, LAND_FLORA_DOMAIN, flora_writes, flower_noise_probe, origin_flora_writes,
 };
 use mcv_worldgen::vanilla::ore_pass::{ORE_DOMAIN, Replay};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
@@ -412,4 +412,28 @@ fn ocean_silent_and_end_to_end_visibility() {
     }
     eprintln!("K-FLORA e2e seen={seen}/{best} anchor=({ox},{oz})");
     assert!(seen > 0, "锚块写全部越界（offset 边角退化？）");
+}
+
+/// ⑤ 花域 NormalNoise 位型（legacy 种子链第一输入面；`ci/flora-legacy-
+/// noise-mirror.py` python 独立复算对报表——K- 打印为据，期望位型以
+/// CI 实测回填后锁死）。
+#[test]
+fn flower_noise_bits_match_independent_mirror() {
+    let probes = [
+        ((0.0_f64, 64.0, 0.0), 0x0000_0000_0000_0000_u64),
+        ((320.0, 64.0, 320.0), 0x0000_0000_0000_0000),
+        ((-2455.0, 70.0, 841.0), 0x0000_0000_0000_0000),
+        ((12345.0, 63.0, -6789.0), 0x0000_0000_0000_0000),
+    ];
+    for ((x, y, z), want) in probes {
+        let v = flower_noise_probe(x, y, z);
+        let bits = v.to_bits();
+        eprintln!("K-FLORA-MIRROR probe=({x},{y},{z}) value_bits=0x{bits:016x} decimal={v!r}");
+        if want != 0 {
+            assert_eq!(
+                bits, want,
+                "花域噪声位型漂移 ({x},{y},{z}) got 0x{bits:016x}"
+            );
+        }
+    }
 }

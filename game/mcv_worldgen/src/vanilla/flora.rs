@@ -270,6 +270,15 @@ fn flower_noise() -> &'static FlowerNoise {
     NOISE.get_or_init(FlowerNoise::new)
 }
 
+/// 花域 NormalNoise 值域暴露（测试/工具面：`ci/flora-legacy-noise-mirror.
+/// py` python 独立复算对拍 + K-FLORA 位型打印；生产判据零消费——
+/// noise_threshold_provider 的分支门在本值面外不导出）。
+#[doc(hidden)]
+#[must_use]
+pub fn flower_noise_probe(x: f64, y: f64, z: f64) -> f64 {
+    flower_noise().get_value(x, y, z)
+}
+
 /// feat 子类（configured_feature 面见模块头注数据行段）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Feat {
@@ -695,11 +704,12 @@ pub fn origin_flora_writes(
             }
         };
         for _ in 0..copies {
-            // rarity（RarityFilter.java:20-23，在 in_square 之前）。
-            if let Some(chance) = row.rarity {
-                if !(rng.next_float() < 1.0 / chance as f32) {
-                    continue;
-                }
+            // rarity（RarityFilter.java:20-23，在 in_square 之前；nextFloat
+            // 有界无 NaN——`>=` 与 `!(<)` 同面，clippy neg_cmp_op 直写式）。
+            if let Some(chance) = row.rarity
+                && rng.next_float() >= 1.0 / chance as f32
+            {
+                continue;
             }
             // in_square（InSquarePlacement.java:17-18，2 抽）。
             let x = ocx * 16 + rng.next_int(16) as i32;
