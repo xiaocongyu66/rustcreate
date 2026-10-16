@@ -64,7 +64,7 @@ use crate::vanilla::channel_seed;
 use crate::vanilla::ores_data::{HeightDist, ORE_ROWS, OreCount, OreRow, biome_allowed};
 use crate::vanilla::splitmix64;
 use crate::vanilla::terrain::{
-    AIR, BEDROCK, ColumnState, LAVA, Orchestrator, PRELIM_SURFACE_BAND, REAL_TOP_SCAN_MARGIN,
+    AIR, BEDROCK, LAVA, Orchestrator, PRELIM_SURFACE_BAND, REAL_TOP_SCAN_MARGIN,
     STONE, WATER, bedrock_noise, half_negative, solid_material,
 };
 use std::collections::HashMap;
@@ -152,15 +152,31 @@ pub struct OreWrite {
 ///   才做有界自顶向下 depth_above 计数（SurfaceSystem.java:146/126-128
 ///   同式）；d≤0 走含水层三态；
 /// - 基岩层 −64..−60 同 generate:894-901。
+///
+/// #210 收口（SURF-2）：density 面 = [`CellShell`] cell 插值值（与本仓
+/// `generate` 柱层填充环同一外壳：`minecraft:interpolated` 包裹的 5 子树
+/// 只在 cell 角点采样、cell 内三线插值，NoiseChunk.java:693-717 角面
+/// slice + :749-766 updateForY/X/Z 逐体素重算，cell_interp.rs 头注逐
+/// 引注）——fill 环（= 原版 FeaturesChunkGenerator 前置的 NoiseChunk
+/// buffer，SurfaceSystem.buildSurface 的 WORLD_SURFACE_WG 高度图读数
+/// 之源，SurfaceSystem.java:109-116）吃插值面，判据/规划面必须吃同一
+/// 面，否则 fs 与缓冲实顶差 ±1-2 格（cell 内 base_3d 曲率的三线插值
+/// 残差）：旧 raw 单点面下，陆地植被（flora）heightmap `top_floor =
+/// max(fs,SEA)+1` 恰命中缓冲草顶格/亚表带（canSurvive 读重放态看到
+/// GRASS 而缓冲位已是 DIRT）——植被 setBlock 覆写草顶 = 表层裸土
+/// （tests/surface_rules.rs grass 窗 dirt_top=6 / 亚表错位 6>4，CI
+/// 38869248223/38865516031 双证）。OreVeinifier 自身噪声通道的单点
+/// raw 口径不在本判据（cell_interp.rs 头注「另有口径」）。
 pub struct Replay<'a, 'f> {
     seed: u64,
     orch: &'a Orchestrator,
     field: &'a mut AquiferField<'f>,
+    /// cell 插值外壳（角列缓存；判据密度面 = fill 环同源，见 SURF-2 注）。
+    cell: crate::vanilla::cell_interp::CellShell<'a>,
     cols: HashMap<(i32, i32), Col>,
 }
 
 struct Col {
-    cs: ColumnState,
     fill_top: i32,
     min_surface: i32,
     surface_id: u16,
@@ -182,6 +198,7 @@ impl<'a, 'f> Replay<'a, 'f> {
             seed,
             orch,
             field,
+            cell: crate::vanilla::cell_interp::CellShell::new(orch),
             cols: HashMap::new(),
         }
     }
@@ -225,7 +242,6 @@ impl<'a, 'f> Replay<'a, 'f> {
                 .field
                 .chunk_skip(x.div_euclid(16) * 16, z.div_euclid(16) * 16);
             let mut c = Col {
-                cs,
                 fill_top: scan_top.max(mcv_core::SEA_LEVEL),
                 min_surface: crossing - PRELIM_SURFACE_BAND,
                 surface_id,
@@ -235,9 +251,13 @@ impl<'a, 'f> Replay<'a, 'f> {
                 blocks: HashMap::new(),
                 depths: None,
             };
-            // fs 扫描（开放段有界：fill_top→fs 通常 <20 格）。
+            // fs 扫描（开放段有界：fill_top→fs 通常 <20 格）。density 面 =
+            // CellShell 插值值（SURF-2：fill 环同源，见 Replay 头注）。
+            let corners = self.cell.cols4(x, z);
             let mut y = c.fill_top;
-            while y > mcv_core::WORLD_MIN_Y && self.orch.density(&c.cs, x, y, z) <= 0.0 {
+            while y > mcv_core::WORLD_MIN_Y
+                && crate::vanilla::cell_interp::CellShell::density_at(&corners, x, y, z) <= 0.0
+            {
                 y -= 1;
             }
             c.first_solid = y;
@@ -246,9 +266,11 @@ impl<'a, 'f> Replay<'a, 'f> {
         self.cols.get_mut(&(x, z)).expect("刚插入")
     }
 
+    /// 判据 density 面（纯函数）：CellShell 插值值 —— SURF-2，同源
+    /// fill 环（Replay 头注引注）；旧 orch.density 单点 raw 面退役。
     fn density(&mut self, x: i32, y: i32, z: i32) -> f64 {
-        let cs = self.col(x, z).cs;
-        self.orch.density(&cs, x, y, z)
+        let corners = self.cell.cols4(x, z);
+        crate::vanilla::cell_interp::CellShell::density_at(&corners, x, y, z)
     }
 
     /// 带内 depth_above（自 fs 向下连续实心计数、空气重置；y ∈
