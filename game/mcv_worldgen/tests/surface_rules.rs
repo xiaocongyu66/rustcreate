@@ -433,6 +433,7 @@ fn surface_rules_deterministic() {
 ///   harness 复核 stdout 逐位一致）；
 /// - 本仓值（v1 splitmix 域盐气候链，AQUI-1 近似级）：(0,0)=56
 ///   （run 38857740856 锚定）。
+///
 /// 本仓 findTopSurface 结构为官方逐构件直译（remap −128/+128
 /// NoiseRouterData.java:310-314、upper_bound 钳 [−40,320]、noiseGradient
 /// 4·quarterNegative(offsetToDepth·factor)−0.703125 钳 ±64、slide
