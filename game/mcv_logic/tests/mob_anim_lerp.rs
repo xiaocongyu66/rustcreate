@@ -307,3 +307,118 @@ fn fixed_tick_sequence_frame_positions_track_steps() {
         "中点应落在步进端点之间：{pm} ∉ [{lo_x}, {hi_x}]"
     );
 }
+
+/// 四足（猪）面：Brain 路线游走（游戏内唯一装配面，spawn_mob 同款）→
+/// 行走账本推进 + 四腿消费 + body yaw 随航向（子案①/②的联合回归锁）。
+/// 前置直写 Brain 状态（Wander + 沿 +x 目标点）确定性触发游走，不走
+/// 1/120 掷点；27 步后切 on_tick=false——AI 决策只进 tick 门，随机源
+/// （全局 fast_rand 流，测试并行下不确定）在游走窗内零暴露，yaw/幅值
+/// 断言免掷点竞态。相位推进用分桶见证（账本 phase 每 60 Hz 步 mod TAU
+/// 回卷，终值可能落回原点附近，净位移不可终态判读）。
+#[test]
+fn pig_stroll_advances_ledger_turns_body_and_swing_four_legs() {
+    use std::collections::HashSet;
+
+    let mut app = harness();
+    let chunks = world_chunk();
+    let player = Vec3::new(8.0, 64.0, 40.0); // 被动怪不索敌：玩家位形不掺和
+    let pig = spawn_mob(&mut app.world, MobId::PIG, Vec3::new(8.0, 64.0, 8.0));
+    {
+        let mut brains = app.world.write::<mcv_entity::MobBrain>();
+        let brain = brains.get_mut(pig).expect("spawn_mob 装配 MobBrain");
+        brain.0.state = mcv_entity::MobState::Wander;
+        brain.0.wander_target = Vec3::new(13.0, 64.0, 8.0); // 纯 +x：目标 yaw=π/2
+    }
+
+    let start = Vec3::new(8.0, 64.0, 8.0);
+    let mut peak_amount = 0.0f32;
+    let mut phase_buckets: HashSet<i64> = HashSet::new();
+    for i in 0..45 {
+        step(&mut app, &chunks, player, i < 27);
+        let a = app
+            .world
+            .read::<mcv_entity::AnimState>()
+            .get(pig)
+            .copied()
+            .unwrap_or_default();
+        peak_amount = peak_amount.max(a.amount);
+        if a.amount > 0.15 {
+            phase_buckets.insert((a.phase * 100.0).round() as i64);
+        }
+    }
+
+    // 位移面：45 步内猪沿 +x 走出真实距离（27 步游走 + 18 步沿用末次
+    // 意图的物理推进；意图不随 on_tick 断流清零）。
+    let body = *app.world.read::<PhysBody>().get(pig).unwrap();
+    let moved = (body.pos - start).length();
+    assert!(moved > 3.0, "45 步内猪应向游走点位移，实际 {moved:.3}");
+
+    // 账本面：走动窗口幅值收敛（满速 0.88）+ 相位推进（分桶数＝步进见证）。
+    assert!(peak_amount > 0.3, "行走幅值峰值应上行，实际 {peak_amount}");
+    assert!(
+        phase_buckets.len() > 6,
+        "行走相位应推进（分桶见证），实际 {} 个",
+        phase_buckets.len()
+    );
+
+    // 朝向面：body yaw 有界转身贴住航向 π/2（此前 Walk 分支从不写 Yaw →
+    // 生成起恒 0，模型朝向不随移动方向——「横着往前面走不转头」根因）。
+    let yaw = app
+        .world
+        .read::<mcv_entity::Yaw>()
+        .get(pig)
+        .map(|y| y.0)
+        .expect("spawn_mob 装配 Yaw");
+    assert!(
+        (yaw - std::f32::consts::FRAC_PI_2).abs() < 0.02,
+        "body yaw 应随航向收敛到 π/2，实际 {yaw}"
+    );
+
+    // 渲染消费面：四腿矩阵被非零 amount 改写（对角步相位一致性在引擎层
+    // mob_walk_phase.rs 锁，这里锁「四腿全在消费」不偏科两足）。
+    {
+        let mut anims = app.world.write::<mcv_entity::AnimState>();
+        *anims.get_mut(pig).unwrap() = mcv_entity::AnimState {
+            phase: 1.1,
+            amount: 0.88,
+            ..Default::default()
+        };
+    }
+    let walk_yaw = yaw;
+    let render_pos = body.pos_old + (body.pos - body.pos_old) * 0.5;
+    let baseline = mcv_render::mob_mesh::mob_model_matrices(
+        mcv_render::mob_mesh::MobModelKind::Pig,
+        &mcv_render::mob_mesh::MobPose {
+            pos: render_pos,
+            yaw: walk_yaw,
+            phase: 1.1,
+            amount: 0.0,
+            ..Default::default()
+        },
+    );
+    let mobs = collect_mob_instances_in(&app.world, None, 0.5);
+    assert_eq!(mobs.len(), 1);
+    for idx in [2usize, 3, 4, 5] {
+        assert_ne!(
+            mobs[0].models[idx],
+            baseline[idx].to_cols_array_2d(),
+            "猪腿 {idx} 矩阵应偏离零幅值基线（WalkLeg 被 amount 改写）"
+        );
+    }
+    // 躯干（Fixed 位）与头（Head 位，pitch=0）与行走幅值无关——腿部改动
+    // 不得外溢其它部位。
+    for idx in [0usize, 1usize] {
+        assert_eq!(
+            mobs[0].models[idx],
+            baseline[idx].to_cols_array_2d(),
+            "部位 {idx} 必须保持零幅值基线"
+        );
+    }
+    for part in &mobs[0].models {
+        for col in part {
+            for v in col {
+                assert!(v.is_finite(), "矩阵必须有限");
+            }
+        }
+    }
+}
