@@ -77,6 +77,9 @@ fn world_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
 fn harness() -> App {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
+    // collect_mob_instances_in 读 WanderState（零怪空表即契约形态，与
+    // GameRuntime 装配一致：只注册不插组件）——漏注册 read 会 panic。
+    mcv_entity::register_passive_components(&mut app.world);
     app.schedule
         .add(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
     app
@@ -124,6 +127,8 @@ fn torso(model: &[[[f32; 4]; 4]; 12]) -> Vec3 {
 fn render_pos_lerps_between_prev_and_current_step() {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
+    // collect 读面契约（WanderState 空表注册，见 harness 注释）。
+    mcv_entity::register_passive_components(&mut app.world);
     // 手搓一只僵尸：pos_old = 上一步位置、pos = 本步位置（每固定步开头
     // mob_ai_system 会重拍 pos_old；这里直接摆值免跑系统，插值语义隔离）。
     let e = app.world.spawn();
@@ -185,8 +190,20 @@ fn zombie_walk_ledger_advances_and_swings_legs() {
     let z = spawn_mob(&mut app.world, MobId::ZOMBIE, Vec3::new(8.0, 64.0, 14.0));
 
     let start = app.world.read::<PhysBody>().get(z).unwrap().pos;
+    // 峰值幅值计量：僵尸 ~25 步进近战圈后停步/横移，末态 amount 已指数
+    // 衰减（exp(-12·dt) 每步）——断言对象是行走窗口的收敛峰值而非终值。
+    let mut peak_amount = 0.0f32;
     for _ in 0..60 {
         step(&mut app, &chunks, player, true);
+        let a = app
+            .world
+            .read::<mcv_entity::AnimState>()
+            .get(z)
+            .map(|a| a.amount)
+            .unwrap_or(0.0);
+        if a > peak_amount {
+            peak_amount = a;
+        }
     }
     let body = *app.world.read::<PhysBody>().get(z).unwrap();
     let moved = (body.pos - start).length();
@@ -198,9 +215,8 @@ fn zombie_walk_ledger_advances_and_swings_legs() {
         let anims = app.world.read::<mcv_entity::AnimState>();
         let anim = anims.get(z).expect("spawn_mob 应装配 AnimState");
         assert!(
-            anim.amount > 0.1,
-            "行走幅值应上行（原版满速 0.88），实际 {}",
-            anim.amount
+            peak_amount > 0.3,
+            "行走窗口幅值峰值应上行（原版满速 0.88），实际峰值 {peak_amount}"
         );
         assert!(anim.phase > 0.1, "行走相位应推进，实际 {}", anim.phase);
     }
