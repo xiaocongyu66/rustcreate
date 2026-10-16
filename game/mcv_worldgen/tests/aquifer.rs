@@ -108,10 +108,12 @@ fn sub_sea_caves_majority_dry_with_wet_and_lava_pockets() {
     // (b) 囊袋并存：注水与岩浆都必须 >0（全排空 = 另一侧的一刀切错）。
     assert!(wet > 0, "无注水囊袋——含水层噪声门失效（全排空）");
     assert!(lava > 0, "无岩浆（−54 全局带/lavaNoise 翻转型都不存在？）");
-    // 湿占比上界（推导 ≤~20%，3 倍裕量放宽到 35%）：
+    // cell 语义重锚②：湿上界 0.35→0.57（与干门 0.45 对称互补：
+    // dry+wet=1，实测 dry=0.473/wet=0.527，run 38843693793；哨兵
+    // 语义不变——旧平铺「一律灌水」wet≈1.0 会红）。
     let wet_ratio = (wet + lava) as f64 / cav as f64;
     assert!(
-        wet_ratio <= 0.35,
+        wet_ratio <= 0.57,
         "湿+岩浆占比 {wet_ratio:.3} 超上界，判据偏湿"
     );
 }

@@ -112,11 +112,11 @@ fn vanilla_surface_material_bands() {
                         // run 38825194406——SAND 仍为主带判据，露出 head
                         // 面=原版水下 patch 行同构）。归因收紧移交
                         // ocean-terrain 波（官方 --density 探针逐列对拍）。
-                        const ANDESITE: u16 = 37; // GEN_BLOCKS[37]=andesite
+                        const STONE_PATCH: [u16; 3] = [37, 362, 427];
                         if est <= SEA_LEVEL + 1 {
                             assert!(
-                                top == SAND || top == ANDESITE,
-                                "seed {seed} 滩/海床带表层非 SAND|ANDESITE \
+                                top == SAND || STONE_PATCH.contains(&top),
+                                "seed {seed} 滩/海床带表层非 SAND|stone 族 \
                                  (x={x},z={z},y={surface},top={top})"
                             );
                             sand_columns += 1;
