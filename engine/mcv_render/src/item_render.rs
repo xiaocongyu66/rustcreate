@@ -80,12 +80,15 @@ pub fn block_drop_is_cube(bid: u16) -> bool {
         .is_some_and(|def| def.shape == mcv_core::Shape::Cube as u8)
 }
 
+/// 单面模板：4 角单位立方坐标 + 4 组 uv（拆别名以满足 clippy type_complexity）。
+type FaceTemplate = ([[f32; 3]; 4], [[f32; 2]; 4]);
+
 /// 6 面立方模板（单位立方 0..1³ 的 4 角 + 贴图 uv），面序 = face_id
 /// +X,-X,+Y,-Y,+Z,-Z（= [`mcv_core::BlockDef::tiles`] 序）。uv 轴向 =
 /// mcv_mesher `face_uv_axes`/`box_face` 约定同源：侧面 u = 水平轴、
 /// v = 竖直且 **v=0 落盒顶**（图集上传行序无翻转，row 0 = 贴图顶边，
 /// mesher.rs:562-565/731 注）；顶/底面 u = x、v = z（无镜像）。
-const CUBE_FACES: [([[f32; 3]; 4], [[f32; 2]; 4]); 6] = [
+const CUBE_FACES: [FaceTemplate; 6] = [
     // +X：u 沿 +z（u_axis=2），v 镜像（v_axis=1）。
     (
         [
@@ -725,7 +728,10 @@ mod tests {
         let zero = block_cube_verts(&tiles, Vec3::ZERO, 0.0, [1.0; 3]);
         let full = block_cube_verts(&tiles, Vec3::ZERO, std::f32::consts::TAU, [1.0; 3]);
         for (a, bf) in zero.iter().zip(full.iter()) {
-            assert!(a.pos.abs_diff_eq(bf.pos, 1e-4), "2π 自转必须复位");
+            assert!(
+                Vec3::from(a.pos).abs_diff_eq(Vec3::from(bf.pos), 1e-4),
+                "2π 自转必须复位"
+            );
         }
     }
 
