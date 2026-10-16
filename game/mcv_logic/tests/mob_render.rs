@@ -122,9 +122,11 @@ fn radius_clip_drops_far_mobs() {
     spawn_passive_mob(&mut app.world, MobId::SHEEP, Vec3::new(1.0, 64.0, 1.0));
     spawn_passive_mob(&mut app.world, MobId::COW, Vec3::new(50.0, 64.0, 50.0));
     // 观察眼与生物同层（y=64）：裁剪按 3D 距离，别把同层生物误判 64m 外。
+    // partial=1（便捷面）：出生快照 pos_old==pos，插值两端点同值。
     let near = mcv_logic::mob_render::collect_mob_instances_in(
         &app.world,
         Some((Vec3::new(0.0, 64.0, 0.0), 10.0)),
+        1.0,
     );
     assert_eq!(near.len(), 1, "远处的牛应被剔除");
     let all = mcv_logic::mob_render::collect_mob_instances(&app.world);

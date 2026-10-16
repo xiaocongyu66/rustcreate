@@ -1,12 +1,14 @@
 //! mob 渲染拼装：从 mobs ECS World 收集 [`MobInstance`] 供 `Scene.mobs`。
 //!
 //! 主控接线（已落地）：
-//! 1. mcv_app 的 in-game 场景装配处每帧调用 [`collect_mob_instances_in`]（视距
-//!    裁剪 = 渲染距离），结果以 `Some(&instances[..])` 喂 `scene.mobs`；
+//! 1. mcv_app 的 in-game 场景装配处每帧调用 [`collect_mob_instances_in`]
+//!    （视距裁剪 = 渲染距离），结果以 `Some(&instances[..])` 喂
+//!    `scene.mobs`；第三参 `partial` = 60 Hz 步间残差（partialTick），
+//!    怪渲染取 `pos_old→pos` 插值；
 //! 2. 贴图上传由 `Renderer::new` 内建（assets 根存在即自动加载 9 层数组）；
-//! 3. 依赖面：被收集的 World 须注册被动组件（WanderState/AnimState——
-//!    read 未注册类型会 panic），GameRuntime 构造时统一注册。敌对怪
-//!    不持有这两组件，姿态走零相位静止路径，不 panic。
+//! 3. 动画面：全部怪经 `spawn_mob` 持有 `AnimState`（行走摆动账本，
+//!    `mob_ai_system` 每 60 Hz 物理步推进 `advance_walk_anim`）——
+//!    此前仅测试侧 passive 路线持有，游戏内恒零相位（僵尸腿不摆根因）。
 
 use glam::Vec3;
 use mcv_ecs::World;
@@ -32,17 +34,29 @@ pub const fn model_kind(id: mcv_entity::MobId) -> Option<MobModelKind> {
 }
 
 /// 收集全部生物实例（无剔除；量小，数百实体下开销可忽略）。
+/// `partial` = 1.0：不插值，直接取最新固定步位置（测试侧便捷面）。
 pub fn collect_mob_instances(world: &World) -> Vec<MobInstance> {
-    collect_mob_instances_in(world, None)
+    collect_mob_instances_in(world, None, 1.0)
 }
 
 /// 带视距裁剪的收集：`center` = 观察眼位，`radius` = 视距（格）。
-pub fn collect_mob_instances_in(world: &World, view: Option<(Vec3, f32)>) -> Vec<MobInstance> {
+///
+/// `partial` = partialTick ∈ [0,1]（26.1 LivingEntity 渲染位置
+/// `lerp(xOld, x, partialTick)` 等价）：渲染帧取 `pos_old→pos` 的插值，
+/// 消除固定步边界的位置跳变（此前直接消费 `body.pos` → 渲染帧率 ≠ 步率
+/// 时怪瞬移/顿挫，即 #59 Scene.mobs 快照缺插值余量）。调用方把喂步
+/// 累加器余量归一化后续入（app.rs `step_accum × 60`）。
+pub fn collect_mob_instances_in(
+    world: &World,
+    view: Option<(Vec3, f32)>,
+    partial: f32,
+) -> Vec<MobInstance> {
     let kinds = world.read::<mcv_entity::MobKind>();
     let bodies = world.read::<mcv_entity::PhysBody>();
     let yaws = world.read::<mcv_entity::Yaw>();
     let wanders = world.read::<mcv_entity::WanderState>();
     let anims = world.read::<mcv_entity::AnimState>();
+    let t = partial.clamp(0.0, 1.0);
 
     let mut out = Vec::new();
     for (e, kind) in kinds.iter() {
@@ -53,8 +67,10 @@ pub fn collect_mob_instances_in(world: &World, view: Option<(Vec3, f32)>) -> Vec
         let Some(body) = bodies.get(e) else {
             continue;
         };
+        // 视距裁剪按插值后的渲染位置（观察眼剔除的语义对象是"看到什么"）。
+        let render_pos = body.pos_old + (body.pos - body.pos_old) * t;
         if let Some((eye, radius)) = view {
-            let d = (body.pos - eye).length();
+            let d = (render_pos - eye).length();
             if d > radius {
                 continue;
             }
@@ -69,7 +85,7 @@ pub fn collect_mob_instances_in(world: &World, view: Option<(Vec3, f32)>) -> Vec
             _ => (0.0, 0.0, (0.0, 0)),
         };
         let pose = MobPose {
-            pos: body.pos,
+            pos: render_pos,
             yaw,
             phase,
             amount,
