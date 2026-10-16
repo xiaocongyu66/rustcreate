@@ -1,7 +1,9 @@
 # 音效审查矩阵——移动族优先（sfx-walk 波）
 
 批量重写对照：`/root/mc-ref/src-26.1` 实物（音 26.1 SoundEvents/SoundType 均为
-原版全称），核对日 2026-10-16，分支 sfx-walk（基线 origin/main=1d809aaf）。
+原版全称），核对日 2026-10-16，分支 sfx-walk（基线 origin/main=67ea1fc8，
+盘点点位 1d809aaf——中途 main 快进含隐形墙波退役，本波 rebase 跟进、
+音效面无交集）。
 
 ## 0. 基建现状（不重考古，只列消费面）
 
