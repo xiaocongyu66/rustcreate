@@ -21,6 +21,7 @@
 
 pub mod biome_tint;
 pub mod difficulty;
+pub mod fluid;
 pub mod game;
 pub mod growth;
 pub mod mob_render;

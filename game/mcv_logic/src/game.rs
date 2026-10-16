@@ -962,6 +962,10 @@ pub struct GameRuntime {
     /// stream() 开头按步预算跨帧消化，未完不丢弃（原版 LevelLightEngine
     /// 重排语义）。fixed_step 编辑栈内不再跑边同步。
     pending_light_edges: Vec<(ChunkPos, u8)>,
+    /// 流体 scheduled tick 队列（26.1 LevelTicks 裁剪面，(格,流体) 单账去
+    /// 重堆）：destroy/interact/流体落格的触发面入队，[`Self::fluid_tick`]
+    /// 每 game tick 排空。驱动水/岩浆挖破支撑流动（crate::fluid 模块文档）。
+    fluid_queue: crate::fluid::FluidQueue,
     /// 编辑源区块当帧优先重建网格（审计 A2/F3）：place/destroy 置位，
     /// remesh 循环最先消费（预算内第一位），消除「已挖开仍画实心」的
     /// 玩家正前方陈旧窗口；级联标脏的邻块仍走近优先预算流。
@@ -1739,6 +1743,7 @@ impl GameRuntime {
             ticket_anchor: None,
             pending_unloads: Vec::new(),
             pending_light_edges: Vec::new(),
+            fluid_queue: crate::fluid::FluidQueue::new(),
             mesh_priority: None,
             mesh_fail: HashMap::new(),
             mobs_app: mcv_ecs::App::new(),
@@ -4181,6 +4186,9 @@ impl GameRuntime {
             // ---- 生长 tick（#146：树苗→树 + 作物 age；ServerLevel.tickChunk
             // 的 random tick 驱动，唯一调用点）----
             self.growth_tick();
+            // ---- 流体 scheduled tick（LiquidBlock/FlowingFluid；LevelTicks
+            // 的 scheduled tick 驱动，唯一调用点同 growth）----
+            self.fluid_tick();
             // ---- 行走 bob 状态（26.1 LocalPlayer.aiStep → updateBob 链）----
             // LocalPlayer.java:989 walkDist += Mth.length(Δx,Δz)·0.6（每 tick）；
             // AbstractClientPlayer.java:84-87 tBob = min(0.1, |Δv|水平)，
@@ -5274,6 +5282,238 @@ impl GameRuntime {
         }
     }
 
+    // ---- 流体 scheduled tick（水/岩浆挖破支撑流动波；crate::fluid 决策核
+    // + 本宿主半边。触发/tick/落格的 Java 锚见 crate::fluid 模块文档）----
+
+    /// 每 game tick 的流体队列排空（26.1 ServerLevel tick 流程中
+    /// scheduled tick 队列的消化面，growth_tick 同挂点）。防御预算内不丢
+    /// 活账：超限余量留堆，下一拍续吃。
+    fn fluid_tick(&mut self) {
+        if self.phase != GamePhase::Playing || self.fluid_queue.is_empty() {
+            return;
+        }
+        let now = self.game_ticks;
+        let mut processed = 0usize;
+        while processed < crate::fluid::FLUID_TICKS_STEP_BUDGET {
+            let Some((pos, fluid)) = self.fluid_queue.pop_due(now) else {
+                break;
+            };
+            processed += 1;
+            self.run_fluid_tick(pos, fluid);
+        }
+        if processed >= crate::fluid::FLUID_TICKS_STEP_BUDGET {
+            log::warn!(
+                "流体 tick 单拍预算饱和（{}），余量留堆下拍续（原版同拍多 tick 亦归并消化）",
+                crate::fluid::FLUID_TICKS_STEP_BUDGET
+            );
+        }
+    }
+
+    /// 一格流体的 tick 结算（FlowingFluid.java:442-459）：入队到出队间格
+    /// 可能被玩家/流水改过——先验配（型不符即弃，原版 tick 类型配对同面），
+    /// 决策纯核跑 [`crate::fluid::tick`]，宿主按计划落格。
+    fn run_fluid_tick(&mut self, pos: BlockPos, fluid: u16) {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&pos.y)
+            || !self.chunks.contains_key(&pos.chunk())
+        {
+            return; // 未装载/界外读取即空气，验配必败（WorldView 语义）
+        }
+        // 决策块借 &self.chunks 只读快照；出块后借用释放，落格走 &mut。
+        let (kind, old_cell, plan) = {
+            let view = WorldView {
+                chunks: &self.chunks,
+            };
+            let cur = view.block(pos);
+            let Some(kind) = crate::fluid::fluid_of(cur.id()) else {
+                return;
+            };
+            if cur.id() != fluid {
+                return; // 排队期间被改型（玩家拆/换液）→ 弃
+            }
+            let old_cell = crate::fluid::decode(cur);
+            let plan = crate::fluid::tick(kind, &|p: BlockPos| view.block(p), pos, cur);
+            (kind, old_cell, plan)
+        };
+        self.apply_fluid_plan(pos, kind, old_cell, plan);
+    }
+
+    /// 计划落格（宿主半边）：① 自写（FF:446-455 setBlock）+ 按结果重排
+    /// （FF:454 spreadDelay，lava ×4 上升规则）；② 漫毁掉落（FF:271-273
+    /// beforeDestroyingBlock → WF:81-84 dropResources）；③ spread 落格
+    /// （FF:275）；④ 岩浆漫水置石（LF:204-218）。每笔成功写走
+    /// [`Self::update_fluid_around`]（setBlock flags=3 的触发面）。
+    fn apply_fluid_plan(
+        &mut self,
+        pos: BlockPos,
+        kind: crate::fluid::FluidKind,
+        old_cell: Option<crate::fluid::FluidCell>,
+        plan: crate::fluid::Plan,
+    ) {
+        // ① 自身。同型液位改写不触发 onPlace（原版 onPlace 仅在 block 型
+        // 变时走，LB:150 的 scheduleTick 不入此处）——自身重排唯一来源是
+        // FF:454 的 spreadDelay（lava ×4 规则不被常量延迟冲掉）。
+        let mut new_cell = None;
+        match plan.self_write {
+            crate::fluid::SelfWrite::Stay => {}
+            crate::fluid::SelfWrite::Air => {
+                if self.write_block_tracked(pos, BlockId(0)) {
+                    self.update_fluid_around(pos);
+                }
+            }
+            crate::fluid::SelfWrite::Change(raw) => {
+                if self.write_block_tracked(pos, raw) {
+                    self.update_fluid_neighbors(pos);
+                    new_cell = crate::fluid::decode(raw);
+                }
+            }
+        }
+        if plan.self_reschedule {
+            let mut adapt = DropRng(spawn_rng());
+            let delay = crate::fluid::spread_delay(kind, old_cell, new_cell, &mut adapt) as u64;
+            self.fluid_queue.schedule(self.game_ticks + delay, pos, kind.raw());
+        }
+        // ② 漫毁掉落（beforeDestroyingBlock；嘶声 levelEvent 1501 不做）
+        for (p, destroyed_raw) in &plan.destroyed {
+            let mut rng = spawn_rng();
+            let c = Vec3::new(p.x as f32 + 0.5, p.y as f32 + 0.5, p.z as f32 + 0.5);
+            for drop in mcv_item::drops_for_block(BlockId(*destroyed_raw), &mut rng) {
+                mcv_entity::spawn_item_drop(
+                    &mut self.mobs_app.world,
+                    c,
+                    drop.item,
+                    drop.count,
+                    mcv_entity::PICKUP_DELAY,
+                    &mut rng,
+                );
+            }
+        }
+        // ③ spread 落格（型变 = onPlace+邻格更新；同型液位改写 = 仅邻格
+        // 更新——原版 setBlock flags=3 的 onPlace 只在 block 型变时走）。
+        for (p, raw) in &plan.spread {
+            // 落笔前承载型读（post-write 读不到旧值）。
+            let before = {
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                view.block(*p)
+            };
+            if self.write_block_tracked(*p, *raw) {
+                if before.id() == raw.id() {
+                    self.update_fluid_neighbors(*p);
+                } else {
+                    self.update_fluid_around(*p);
+                }
+            }
+        }
+        // ④ 岩浆漫水置石
+        for p in &plan.lava_stone {
+            if self.write_block_tracked(*p, BlockId(crate::fluid::STONE)) {
+                self.update_fluid_around(*p);
+            }
+        }
+    }
+
+    /// 体素写 + 记账（MESH/SAVE；型变走增量重光照 + 高度图 + 贴边邻块网
+    /// 格标脏，同型液位重写只重网格——遮光/高度面不变）。返回是否实际落笔
+    /// （原值同值 = 幂等跳过，MC setBlock 同态 no-op 语义）。
+    fn write_block_tracked(&mut self, p: BlockPos, raw: BlockId) -> bool {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&p.y) {
+            return false;
+        }
+        let Some(handle) = self.chunks.get(&p.chunk()).cloned() else {
+            return false;
+        };
+        let [lx, _, lz] = p.local();
+        let idx = mcv_core::vidx(lx, p.y, lz);
+        let old_id = handle.voxels.read().unwrap().get_flat(idx);
+        if old_id == raw {
+            return false;
+        }
+        handle.voxels.write().unwrap().set_flat(idx, raw);
+        handle.mark_dirty(mcv_core::dirty::MESH | mcv_core::dirty::SAVE);
+        if old_id.id() != raw.id() {
+            relight_block_edit(
+                &self.chunks,
+                p,
+                old_id.0,
+                raw.0,
+                &mut self.pending_light_edges,
+            );
+            self.mark_border_neighbor_mesh_dirty(p);
+        }
+        true
+    }
+
+    /// 流体触发面（LB:150-153 onPlace / LB:180-182 updateShape / LB:196-207
+    /// neighborChanged 合成）：液体格按型入 scheduled tick 队列；岩浆格先
+    /// 走 [`crate::fluid`] 侧 shouldSpreadLiquid 石化判。pub = 测试与宿主
+    /// 编辑路（destroy/interact）共用入口。
+    pub fn update_fluid_at(&mut self, at: BlockPos) {
+        if !(mcv_core::WORLD_MIN_Y..mcv_core::WORLD_MAX_Y).contains(&at.y) {
+            return;
+        }
+        let b = WorldView {
+            chunks: &self.chunks,
+        }
+        .block(at);
+        let Some(kind) = crate::fluid::fluid_of(b.id()) else {
+            return;
+        };
+        if kind == crate::fluid::FluidKind::Lava {
+            // LB:215-239 shouldSpreadLiquid：扫 上+四横（LB:221-222 对
+            // LB:56-58 的 relative(getOpposite()) 反演），见水 → 源化黑曜
+            // 石／非源化圆石，且**不再入队**（LB:224-228）。
+            let dirs = [
+                crate::fluid::Dir::Up,
+                crate::fluid::Dir::North,
+                crate::fluid::Dir::South,
+                crate::fluid::Dir::West,
+                crate::fluid::Dir::East,
+            ];
+            let touched_water = {
+                let view = WorldView {
+                    chunks: &self.chunks,
+                };
+                dirs.iter().any(|d| {
+                    crate::fluid::fluid_of(view.block(at.step(*d)).id())
+                        .is_some_and(|k| k == crate::fluid::FluidKind::Water)
+                })
+            };
+            if touched_water {
+                let target = if b.state() == 0 {
+                    crate::fluid::OBSIDIAN
+                } else {
+                    crate::fluid::COBBLE
+                };
+                if self.write_block_tracked(at, BlockId(target)) {
+                    self.update_fluid_around(at);
+                }
+                return;
+            }
+            // 灵魂土+蓝冰 → 玄武岩支线不建模（crate::fluid 模块头注 ④）。
+        }
+        self.fluid_queue.schedule(
+            self.game_ticks + crate::fluid::tick_delay(kind) as u64,
+            at,
+            kind.raw(),
+        );
+    }
+
+    /// 邻格流体广播半边（updateShape/neighborChanged 面，不含自身
+    /// onPlace——同型液位改写不触发 onPlace，见 apply_fluid_plan ①）。
+    fn update_fluid_neighbors(&mut self, changed: BlockPos) {
+        for d in crate::fluid::ALL_DIRS {
+            self.update_fluid_at(changed.step(d));
+        }
+    }
+
+    /// 体素写后的流体广播面（26.1 setBlock(flags=3)：自身 onPlace + 六邻
+    /// updateShape/neighborChanged）：逐格 [`Self::update_fluid_at`]。
+    pub fn update_fluid_around(&mut self, changed: BlockPos) {
+        self.update_fluid_at(changed);
+        self.update_fluid_neighbors(changed);
+    }
+
     /// 苗位长树（SaplingBlock.java:55 → TreeGrower.growTree 的本仓结构面）：
     /// 先清苗位（TreeGrower.java:169 `setBlock(pos, emptyBlock, 260)`），
     /// 再 `place_tree` 投影（树基 = 苗原位），逐格增量重光照。
@@ -6074,6 +6314,9 @@ impl GameRuntime {
             );
             self.mark_border_neighbor_mesh_dirty(target);
             self.mesh_priority = Some(target.chunk());
+            // 流体挂载（26.1 place → setBlock flags=3 广播面）：放置切断/
+            // 排开液体，邻格液重算入队（crate::fluid 触发面）。
+            self.update_fluid_around(target);
             // 生存放置消耗一格（vanilla consumeItem）；创造不消耗。
             if self.mode != GameMode::Creative {
                 self.hotbar.take_one(self.player.sel_slot);
@@ -6387,6 +6630,9 @@ impl GameRuntime {
         );
         self.mark_border_neighbor_mesh_dirty(target);
         self.mesh_priority = Some(target.chunk());
+        // 流体挂载（26.1 destroy → setBlock AIR → updateShape/neighborChanged
+        // 广播面）：挖破支撑让邻格液流入队（crate::fluid 触发面）。
+        self.update_fluid_around(target);
         // 破坏爆裂碎屑（ClientLevel.addDestroyBlockEffect:942-973：满块
         // 0.25 密度 4×4×4=64 粒，取被破坏方块图集层的 1/4 随机小矩形）。
         self.particles.spawn_block_crack(
@@ -7960,6 +8206,21 @@ fn spawn_rng() -> impl FnMut() -> u32 {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         (s >> 33) as u32
+    }
+}
+
+/// 掉落随机流 → [`mcv_worldgen::trees::Rng`] 适配（流体 spreadDelay 的
+/// lava ×4 上升概率抽取消费同一全局流；next_int 非均匀余数差在 1/4 门上
+/// ≤ 1 ulp 影响面，与 drop 系同源即可——不是 byte-exact 对拍面）。
+struct DropRng<F: FnMut() -> u32>(F);
+
+impl<F: FnMut() -> u32> mcv_worldgen::trees::Rng for DropRng<F> {
+    fn next_int(&mut self, bound: u32) -> u32 {
+        assert!(bound >= 1, "nextInt bound must be positive");
+        (self.0)() % bound
+    }
+    fn next_bool(&mut self) -> bool {
+        (self.0)() & 1 != 0
     }
 }
 
