@@ -22,6 +22,14 @@
 //! block_light u8 | sky_light u8 | ao u8 | flags u8（bit0-2 面档，bit3
 //! 水顶波动）| pad 2B | tint_rgb u8x3（群系染色，None 场 = 白）| pad 1B；
 //! 索引 u32，外视 CCW，每 quad (0,1,2)(0,2,3)。
+//!
+//! **tintindex 插层面（26.1 模型层叠要素）**：`Info::overlays`（gen-blocks
+//! 第 10 列，JSON 驱动逐面 tintindex 提取）非零面在 base quad 后**同几何**
+//! 再发一条 overlay tex 的第二层 quad（grass_block 草裙实物：侧面 base
+//! 贴图不染 + 插层灰度草裙经 grass 群系色 → 26.1 侧面双元素 UV 同位。
+//! ModelBlockRenderer.java:212-214 按 quad tintIndex 乘 BlockColors）。
+//! 黄金件随本层落地重锚（每暴露草侧 +1 条第二层 quad，面档/顶点 ABI 不变，
+//! 见 tests/golden/README.md）。
 
 use std::sync::OnceLock;
 
@@ -81,13 +89,20 @@ const RAIL_MAX: f32 = 0.5625;
 /// 数据吃 mcv_core::BLOCKS 生成表（与已删除的 C++ kBlocks 同一次
 /// gen-blocks.py 生成，mesher.cpp:77-82），geom 是 C++ 表独有字段，按
 /// cpp_geom 规则推导（见 [`block_geom`]）并受 tests/golden.rs 逐 id 对照
-/// 黄金生成表锁定。
+/// 黄金生成表锁定。overlays 是 Rust 表独有列（26.1 模型 JSON tintindex
+/// 插层贴图，草裙侧面群系染色数据源）。
 #[derive(Clone, Copy)]
 pub(crate) struct Info {
     pub opaque: bool,
     pub geom: bool,
     pub tiles: [u16; 6], // [+X, -X, +Y, -Y, +Z, -Z]
     pub shape: u8,
+    /// 逐面 overlay 插层贴图层（0 = 无插层）：26.1 模型 JSON「后绘制元素带
+    /// tintindex 重覆同面 = 插层」的数据列（grass_block 草裙实物；上方数据
+    /// 侧由 ci/gen-blocks.py 生成，数据侧消费由 mcv_core::tint 注记）。网格
+    /// 侧消费见 [`emit_quad`]/[`build_pass`]：base 面之上同几何再发一条
+    /// overlay quad，tint 按 overlay 层号查注册表（草裙 = grass 族）。
+    pub overlays: [u16; 6],
 }
 
 /// 未注册 id（& 0xFFF 后越界）回退：全不透明（mesher.cpp:170-172 kUnknown，
@@ -97,6 +112,7 @@ static UNKNOWN_INFO: Info = Info {
     geom: false,
     tiles: [0; 6],
     shape: 0,
+    overlays: [0; 6],
 };
 
 /// 原版不可见方块：几何上不渲染（ci/gen-blocks.py INVISIBLE_GEOM，
@@ -149,6 +165,7 @@ fn tables() -> &'static Tables {
                 geom: block_geom(d),
                 tiles: d.tiles,
                 shape: d.shape,
+                overlays: d.overlays,
             })
             .collect(),
         water_id: mcv_core::BLOCKS
@@ -524,6 +541,15 @@ impl MeshData {
 /// sl4/bl4 打包（键相等 ⇒ 远角格的四角光场与锚格逐位同，几何上大 quad
 /// 的远角顶点 = 远格同序角）；`smooth == false` 或水 pass（水取光平采
 /// 语义，M8/129-L，FluidRenderer.java:430-432）回落面单采值。
+///
+/// `overlay != 0`（26.1 tintindex 插层，数据列 [`Info::overlays`]）：base
+/// quad 之后**同几何**再发一条 overlay tex 的第二层 quad（26.1 模型逐
+/// 元素烘焙双 quad，ModelBlockRenderer.java:212-214；grass_block
+/// 第 2 元素 4 侧 #overlay 与首元素贴同一面）。顶层与 base 同位共面——
+/// 表面流水线深度判 LEQUAL 且 overlay 在 base 后发射（同 draw 序 winner），
+/// 与原版同平要素「后绘制元素盖 base」一致，无需几何皮偏移；overlay 贴图
+/// 透明像素走 fs_terrain alpha discard，base 从空隙透出。tint 由
+/// push_vertex 按 tex 层号取（草裙 334 = grass 族 → 侧面群系染色）。
 #[allow(clippy::too_many_arguments)]
 fn emit_quad(
     out: &mut MeshData,
@@ -537,6 +563,7 @@ fn emit_quad(
     hq: i32,
     anchor: &Cell,
     smooth: bool,
+    overlay: u16,
 ) {
     let face = axis * 2 + dir;
     let mut plane = layer as f32 + if dir == 0 { 1.0 } else { 0.0 };
@@ -547,41 +574,47 @@ fn emit_quad(
     let v_max = uv_coord(hq as f32);
     let flags = (face as u8) | if anchor.wave != 0 { 0x08 } else { 0x00 };
     let base = out.vertex_base();
-    for [a, b] in CORNER_ORDER[face] {
-        let uu = (u0 as i32 + a * wq) as f32;
-        let vv = (v0 as i32 + b * hq) as f32;
-        // v6：顶点 y 为绝对世界 y（层/格局部量 + WORLD_MIN_Y；上传 origin
-        // 的 y 分量恒 0，见 RustMesher）。
-        let mine = mcv_core::WORLD_MIN_Y as f32;
-        let (x, y, z) = match axis {
-            0 => (plane, vv + mine, uu),
-            1 => (uu, plane + mine, vv),
-            _ => (uu, vv + mine, plane),
-        };
-        let cu = if a != 0 { u_max } else { 0 };
-        // 侧面（v 轴=世界 +y）：v=0 必须在顶边——上传行序无翻转，row 0=贴图
-        // 顶边（草裙），shader coord.y=0 采 row 0。旧约定 v 随 y 增 → 草裙
-        // 落在方块底部（真机 round 2）。顶/底面（v 轴=z）方向不敏感。
-        let cv = if axis != 1 {
-            if b != 0 { 0 } else { v_max }
-        } else if b != 0 {
-            v_max
-        } else {
-            0
-        };
-        let k = b as u8 * 2 + a as u8;
-        let ao = (anchor.ao4 >> (2 * k)) & 0x3;
-        let (blk, sky) = if smooth && !water_pass {
-            (
-                ((anchor.bl4 >> (4 * k)) & 0xF) as u8,
-                ((anchor.sl4 >> (4 * k)) & 0xF) as u8,
-            )
-        } else {
-            (anchor.blk, anchor.sky)
-        };
-        out.push_vertex(x, y, z, cu, cv, anchor.tex, blk, sky, ao, flags);
+    // 第 0 层 = base 贴图；第 1 层 = tintindex 插层贴图（0 = 无；与 base
+    // 同贴图的重复层不发——同图重染 ×2 无原版对应实例，防数据侧漂移放大）。
+    let layers: [u16; 2] = [anchor.tex, overlay];
+    let layer_count = usize::from(overlay != 0 && overlay != anchor.tex);
+    for (li, &tex) in layers.iter().take(layer_count).enumerate() {
+        for [a, b] in CORNER_ORDER[face] {
+            let uu = (u0 as i32 + a * wq) as f32;
+            let vv = (v0 as i32 + b * hq) as f32;
+            // v6：顶点 y 为绝对世界 y（层/格局部量 + WORLD_MIN_Y；上传 origin
+            // 的 y 分量恒 0，见 RustMesher）。
+            let mine = mcv_core::WORLD_MIN_Y as f32;
+            let (x, y, z) = match axis {
+                0 => (plane, vv + mine, uu),
+                1 => (uu, plane + mine, vv),
+                _ => (uu, vv + mine, plane),
+            };
+            let cu = if a != 0 { u_max } else { 0 };
+            // 侧面（v 轴=世界 +y）：v=0 必须在顶边——上传行序无翻转，row 0=贴图
+            // 顶边（草裙），shader coord.y=0 采 row 0。旧约定 v 随 y 增 → 草裙
+            // 落在方块底部（真机 round 2）。顶/底面（v 轴=z）方向不敏感。
+            let cv = if axis != 1 {
+                if b != 0 { 0 } else { v_max }
+            } else if b != 0 {
+                v_max
+            } else {
+                0
+            };
+            let k = b as u8 * 2 + a as u8;
+            let ao = (anchor.ao4 >> (2 * k)) & 0x3;
+            let (blk, sky) = if smooth && !water_pass {
+                (
+                    ((anchor.bl4 >> (4 * k)) & 0xF) as u8,
+                    ((anchor.sl4 >> (4 * k)) & 0xF) as u8,
+                )
+            } else {
+                (anchor.blk, anchor.sky)
+            };
+            out.push_vertex(x, y, z, cu, cv, tex, blk, sky, ao, flags);
+        }
+        out.push_quad_indices(base + 4 * li as u32);
     }
-    out.push_quad_indices(base);
 }
 
 /// 方块内局部盒（mesher.cpp:388-391 Box3，0..1 局部坐标）。
@@ -1002,7 +1035,9 @@ fn emit_shapes(n: &Nb, out: &mut MeshData, smooth: bool) {
 /// 标准贪心扫描（mesher.cpp:671-803 build_pass）：每 (轴, 方向, 层) 先沿
 /// 格 u 轴扩宽、再沿 v 轴扩高；仅整格 quad 键（方块/贴图/天空/方块光/
 /// 打包 AO/波动）全等才合并。贪心仅限 shape==0（Cube）；非立方由
-/// emit_shapes 另行发射。
+/// emit_shapes 另行发射。不透明 pass 每条发射 quad 追加消费
+/// [`Info::overlays`]（26.1 tintindex 插层——overlay 只在贪心 Cube 路径，
+/// shape 模板路径方块的模型 kind=1 → 生成表 overlay 恒空，无需双发）。
 fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: bool) {
     for axis in 0..3 {
         let (gu, gv, layers) = slice_geom(axis);
@@ -1172,8 +1207,16 @@ fn build_pass(n: &Nb, water_pass: bool, out: &mut MeshData, t: &Tables, smooth: 
                                 visited[(v + dv) * gu + u + du] = 1;
                             }
                         }
+                        // tintindex 插层数据列消费：合并键含 id 相等 ⇒
+                        // 锚格 overlays[face] 对整张合并面同值（同方块行
+                        // 同插层），face 档下发一条同几何第二层 quad。
+                        let overlay = if water_pass {
+                            0
+                        } else {
+                            info_of(key.id).overlays[face]
+                        };
                         emit_quad(
-                            out, water_pass, axis, dir, layer, u, v, wq, hq, &key, smooth,
+                            out, water_pass, axis, dir, layer, u, v, wq, hq, &key, smooth, overlay,
                         );
                     }
                 }
