@@ -3,6 +3,7 @@
 
 pub mod atlas;
 pub mod chunk;
+pub mod placement;
 pub mod pool;
 pub mod rand;
 pub mod shape;
@@ -455,7 +456,11 @@ impl BlockId {
     /// context.getHorizontalDirection()`），几何上踏步（整高半）位于朝向侧
     /// 半格（StairBlock.java:37-38，facing=NORTH → 上半占 -Z 半格）；
     /// bit2=1 对应原版 Half.TOP（点底面放置，StairBlock.java:103-105）。
-    /// 其余形状恒 0。
+    /// RotatedPillarBlock 族（log/wood/stem/hyphae/basalt/deepslate…AXIS
+    /// 属性表见 [`crate::placement`]）：bit0-1=axis（0=Y 1=X 2=Z；默认态
+    /// AXIS=Y 编 0，与竖置纯 id 逐位兼容）。放置状态默认 identity
+    /// （BlockItem.java:115-118 → Block.java:465-467）——无上述属性的
+    /// 方块恒 0。
     #[inline]
     pub const fn state(self) -> u8 {
         ((self.0 >> STATE_SHIFT) & 0xF) as u8
