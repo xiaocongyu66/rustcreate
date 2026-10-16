@@ -32,7 +32,9 @@
 //!   「tintSource → BlockColors → 顶点色」链路）。跨区块顶点采样同一张
 //!   世界坐标函数（两相邻区块各自独立构造网格，重叠带取色逐列一致）→
 //!   无接缝。grass_block_top 顶面层染色、grass_block_side 本体不染色
-//!   （侧 overlay 层染色），与原版一致。
+//!   （侧 overlay 层染色），与原版一致；侧面插层 quad 由生成表 overlays
+//!   列（grass 行 4 侧 = grass_block_side_overlay，模型 JSON tintindex
+//!   表驱动）接进网格器，见发源 ci/gen-blocks.py。
 
 use crate::atlas::tile_file_names;
 

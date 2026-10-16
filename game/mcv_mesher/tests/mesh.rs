@@ -55,6 +55,7 @@ struct Vtx {
     sky: u8,
     ao: u8,
     flags: u8,
+    tint: [u8; 3],
 }
 
 #[allow(clippy::almost_complete_range)]
@@ -74,6 +75,7 @@ fn decode(buf: &MeshData) -> Vec<Vtx> {
                 sky: b[19],
                 ao: b[20],
                 flags: b[21],
+                tint: [b[24], b[25], b[26]],
             }
         })
         .collect()
@@ -158,7 +160,10 @@ fn side_face_uv_v0_at_top_edge() {
             );
         }
     }
-    assert_eq!(sides, 4, "one floating block = exactly 4 side quads");
+    assert_eq!(
+        sides, 8,
+        "one floating block = 4 base + 4 overlay side quads (overlays 334)"
+    );
 }
 
 #[test]
@@ -168,16 +173,59 @@ fn single_block_six_faces() {
     let mut c = chunk(0, 0xF0);
     put(&mut c.0, 8, 8, 8, 3); // grass block floating in air
 
+    // 6 base 面条 + 4 侧 tintindex 插层（overlays [334,334,0,0,334,334]，
+    // 顶/底无插层）：26.1 grass_block 双元素模型逐元素烘焙双 quad。
+    let def = &mcv_core::BLOCKS[3];
+    let overlay_faces: Vec<usize> = (0..6).filter(|&f| def.overlays[f] != 0).collect();
+    let extra = overlay_faces.len();
+    assert_eq!(extra, 4, "grass 行应四侧带插层数据");
     let buf = mesher.build(&full9(&c, &side), 0).unwrap();
-    assert_eq!(buf.counts(), (24, 36));
+    assert_eq!(buf.counts(), (24 + 4 * extra as u32, 36 + 6 * extra as u32));
 
     let verts = decode(&buf);
-    for (i, v) in verts.iter().enumerate() {
-        let face = (v.flags & 7) as usize;
-        // quad grouping: 4 consecutive vertices per face, face ids 0..5
-        assert_eq!(i / 4, face, "vertex {i} grouped into face {face}");
-        assert_eq!(v.tex as usize, mcv_core::BLOCKS[3].tiles[face] as usize);
+    let mut base_geom: [[[f32; 3]; 4]; 6] = [[[0.0; 3]; 4]; 6]; // base 逐面顶点 pos
+    let mut n_base = 0usize;
+    let mut n_ovl = 0usize;
+    // 分档按 tex 不锁位序：插层 quad **紧随其 base 面**发射（emit_quad
+    // 单函数内 base→overlay 连发，draw 序 winner 语义所需），quad 位序为
+    // base0/ovl0/base1/ovl1/.../base5 交错——旧写法「qi==face 且 0..5 全
+    // base 段」是插层发射前的位置约定（CI 38843334897 红：vertex 1
+    // grouped into face 0）。分组的本质不变式=4 顶点/quad + 面档 flags +
+    // 逐面 tex 对位，全数保留。
+    for (qi, quad) in verts.chunks(4).enumerate() {
+        let face = (quad[0].flags & 7) as usize;
+        if quad[0].tex == def.tiles[face] {
+            // base quad：tex = 生成表 base 列；记录几何供 overlay 对位。
+            for v in quad {
+                assert_eq!(
+                    v.tex as usize, def.tiles[face] as usize,
+                    "quad {qi} face {face} base tex"
+                );
+            }
+            for (k, v) in quad.iter().enumerate() {
+                base_geom[face][k] = v.pos;
+            }
+            n_base += 1;
+        } else {
+            // 插层 quad：同面档、tex = 生成表 overlay 列、**同位共面**（顶点
+            // 坐标逐位复刻 base 同面——深度 LEQUAL + 后绘制 winner 语义，
+            // 与 26.1 同平面双元素模型一致）。
+            assert!(
+                overlay_faces.contains(&face),
+                "overlay 仅应有侧面档，got face {face}"
+            );
+            for (k, v) in quad.iter().enumerate() {
+                assert_eq!(
+                    v.tex, def.overlays[face],
+                    "quad {qi} face {face} overlay tex"
+                );
+                assert_eq!(v.pos, base_geom[face][k], "overlay 同位复刻 base 面几何");
+            }
+            n_ovl += 1;
+        }
     }
+    assert_eq!(n_base, 6, "六条 base 面条");
+    assert_eq!(n_ovl, extra, "插层条数 = 非零 overlay 档数");
     // index pattern: per quad (0,1,2),(0,2,3)
     for (t, &ix) in buf.indices().iter().enumerate() {
         let expected = (t / 6 * 4) as u32 + [0u32, 1, 2, 0, 2, 3][t % 6];
@@ -216,20 +264,26 @@ fn block_table_tex_parity_with_mcv_core() {
         put(&mut c.0, 8, 8, 8, id);
         let buf = mesher.build(&full9(&c, &side), 0).unwrap();
         let def = &mcv_core::BLOCKS[id as usize];
-        let expected = if INVISIBLE.contains(&def.name) {
-            (0, 0)
+        // 全空气下插层 quad 与 base 面同盯同剔：6 面全暴露 → 非零 overlay
+        // 档（生成表允许 kind==0 立方的面）各发一条 4 顶点/6 索引的第二层
+        // quad（当前数据全表仅 grass 行——kind==1 模板的 overlay 恒 0）。
+        if INVISIBLE.contains(&def.name) {
+            assert_eq!(buf.counts(), (0, 0), "block {id} face count");
         } else {
-            match mcv_core::shape::Shape::from_u8(def.shape) {
+            let base = match mcv_core::shape::Shape::from_u8(def.shape) {
                 mcv_core::shape::Shape::Cross => (8, 24),
                 mcv_core::shape::Shape::Stairs => (48, 72),
                 _ => (24, 36),
-            }
-        };
-        assert_eq!(buf.counts(), expected, "block {id} face count");
+            };
+            let extra = def.overlays.iter().filter(|&&o| o != 0).count() as u32;
+            let expected = (base.0 + 4 * extra, base.1 + 6 * extra);
+            assert_eq!(buf.counts(), expected, "block {id} face count");
+        }
         for v in decode(&buf) {
             let face = (v.flags & 7) as usize;
-            assert_eq!(
-                v.tex as usize, def.tiles[face] as usize,
+            assert!(
+                v.tex == def.tiles[face]
+                    || (def.overlays[face] != 0 && v.tex == def.overlays[face]),
                 "block {id} face {face} tex layer"
             );
         }
@@ -966,4 +1020,75 @@ fn side_faces_keep_every_row_boundary_y() {
             );
         }
     }
+}
+
+/// tintindex 插层面的群系染色（26.1 面档 tint 消费，#191 顶点色通路的
+/// 草裙侧面接线）：grass 悬空块全暴露，带 plains 气候 tint 场逐顶点断言
+/// ——base 侧面（grass_block_side，模型无 tintindex）恒白；草顶
+/// （grass_block_top）与四侧插层（grass_block_side_overlay）按世界列乘
+/// grass colormap（ModelBlockRenderer.java:212-214 按 quad tintIndex 查
+/// BlockColors；基础侧脸首元素无 tintindex 不染）。
+#[test]
+fn grass_overlay_faces_carry_biome_tint() {
+    let colormap = |name: &str| {
+        mcv_core::tint::decode_colormap(
+            &std::fs::read(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+                    "../../assets/minecraft/textures/colormap/{name}.png"
+                )),
+            )
+            .expect("colormap 素材应在仓库内"),
+        )
+        .expect("colormap 应为 256x256")
+    };
+    let grass_png = colormap("grass");
+    let foliage_png = colormap("foliage");
+    let ct = mcv_core::tint::ChunkTint::from_climate(0, 0, &[[0.8, 0.4]], &grass_png, &foliage_png)
+        .expect("1x1 气候场");
+    // plains（temp 0.8 / rain 0.4）= #91BD59（colormap_formula 先例同源值）。
+    let expect = ct.color_at(mcv_core::tint::TINT_GRASS, 8, 8);
+    assert_eq!(expect, [0x91, 0xBD, 0x59], "单列场盒均值 = plains 草色");
+
+    let side = chunk(0, 0xF0);
+    let mut c = chunk(0, 0xF0);
+    put(&mut c.0, 8, 8, 8, 3);
+    let def = &mcv_core::BLOCKS[3];
+    let buf = Mesher::new()
+        .build_with_tint(
+            &full9(&c, &side),
+            0,
+            Some(mcv_mesher::TintInput {
+                block_x: 0,
+                block_z: 0,
+                tint: ct,
+            }),
+        )
+        .unwrap();
+
+    let mut n_base_side = 0;
+    for (qi, quad) in decode(&buf).chunks(4).enumerate() {
+        let face = (quad[0].flags & 7) as usize;
+        if def.overlays[face] != 0 && quad[0].tex == def.overlays[face] {
+            // 插层 quad：tex = grass_block_side_overlay → grass 族 → 群系色。
+            for v in quad {
+                assert_eq!(v.tint, expect, "quad {qi} face {face}: 插层顶点应带群系色");
+            }
+        } else if face == 2 && quad[0].tex == def.tiles[2] {
+            // 草顶 quad：grass_block_top → grass 族 → 群系色。
+            for v in quad {
+                assert_eq!(v.tint, expect, "quad {qi}: 草顶顶点应带群系色");
+            }
+        } else {
+            // base 侧面（grass_block_side 无 tintindex）/底面：恒白。
+            n_base_side += usize::from(face != 3 && face != 2);
+            for v in quad {
+                assert_eq!(
+                    v.tint,
+                    mcv_core::tint::TINT_WHITE,
+                    "quad {qi} face {face}: 无 tintindex 面恒白"
+                );
+            }
+        }
+    }
+    assert_eq!(n_base_side, 4, "四条 base 侧 quad 应全数在场");
 }
