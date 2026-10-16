@@ -64,6 +64,16 @@ const LEAF_IDS: [u16; 6] = [
     ids::SPRUCE_LEAVES,
 ];
 
+/// pass 2.3 水草四 id（ocean-flora2；water_flora.rs 头注 blocks_gen.inc.rs
+/// 行号锚）。植被非 terrain——ground_block 的跳过集与树同列（ pass-1 水
+/// 柱内容格：海窗测试的 ground_block 扫描自顶向下，先撞水草再撞海床，
+/// 不跳过会让海床断言拿到 905/1002/508/509 假红）。
+const FLORA_IDS: [u16; 4] = [508, 509, 905, 1002];
+
+fn is_flora(id: u16) -> bool {
+    FLORA_IDS.contains(&id)
+}
+
 fn vidx(x: usize, y: i32, z: usize) -> usize {
     mcv_core::vidx(x, y, z)
 }
@@ -77,7 +87,7 @@ fn is_tree(id: u16) -> bool {
 fn ground_block(vox: &[u16], x: usize, z: usize) -> Option<(i32, u16)> {
     for y in ((WORLD_MIN_Y + 1)..(WORLD_MAX_Y - 1)).rev() {
         let id = vox[vidx(x, y, z)];
-        if id == AIR || id == WATER || is_tree(id) {
+        if id == AIR || id == WATER || is_tree(id) || is_flora(id) {
             continue;
         }
         return Some((y, id));

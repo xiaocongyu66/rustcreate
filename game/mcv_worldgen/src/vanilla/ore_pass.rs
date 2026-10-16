@@ -188,9 +188,29 @@ impl<'a, 'f> Replay<'a, 'f> {
 
     /// OCEAN_FLOOR_WG 高度图值（探针用；water 计顶 = max(fs, SEA)+1，
     /// lake_pass::Replay::top_floor 引注同口径）。
-    fn top_floor(&mut self, x: i32, z: i32) -> i32 {
+    #[must_use]
+    pub fn top_floor(&mut self, x: i32, z: i32) -> i32 {
         let c = self.col(x, z);
         c.first_solid.max(mcv_core::SEA_LEVEL) + 1
+    }
+
+    /// `getHeight(OCEAN_FLOOR_WG)` 实物口径（Heightmap.java:149-150：
+    /// predicate = MATERIAL_MOTION_BLOCKING——水不 blocksMotion，**不计
+    /// 顶**；值 = 实顶 fs+1 首空位）。与 [`Self::top_floor`] 的 SEA 钳位
+    /// 口径分离：湖/矿探针沿用旧口径（其测试锁），水草 pass 消费本
+    /// 实物口径（water_flora 头注 SeagrassFeature.java:28 / KelpFeature
+    /// .java:24 对位——洋底/河床水柱顶均远低于 SEA，钳位会把草顶出海面、
+    /// 水位门恒败）。
+    #[must_use]
+    pub fn top_ocean_floor(&mut self, x: i32, z: i32) -> i32 {
+        self.col(x, z).first_solid + 1
+    }
+
+    /// 群系查点（BiomeFilter.java:24-28 零随机对位；水草 pass 复用
+    /// 重放面，不另开 Orchestrator 通道）。
+    #[must_use]
+    pub fn biome_at(&self, x: i32, z: i32) -> crate::vanilla::biomes::Biome {
+        self.orch.biome_at(x, z)
     }
 
     fn col(&mut self, x: i32, z: i32) -> &mut Col {
