@@ -574,10 +574,11 @@ fn emit_quad(
     let v_max = uv_coord(hq as f32);
     let flags = (face as u8) | if anchor.wave != 0 { 0x08 } else { 0x00 };
     let base = out.vertex_base();
-    // 第 0 层 = base 贴图；第 1 层 = tintindex 插层贴图（0 = 无；与 base
-    // 同贴图的重复层不发——同图重染 ×2 无原版对应实例，防数据侧漂移放大）。
+    // 第 0 层 = base 贴图（恒发）；第 1 层 = tintindex 插层贴图（0 = 无；
+    // 与 base 同贴图的重复层不发——同图重染 ×2 无原版对应实例，防数据侧
+    // 漂移放大）。
     let layers: [u16; 2] = [anchor.tex, overlay];
-    let layer_count = usize::from(overlay != 0 && overlay != anchor.tex);
+    let layer_count = 1 + usize::from(overlay != 0 && overlay != anchor.tex);
     for (li, &tex) in layers.iter().take(layer_count).enumerate() {
         for [a, b] in CORNER_ORDER[face] {
             let uu = (u0 as i32 + a * wq) as f32;
