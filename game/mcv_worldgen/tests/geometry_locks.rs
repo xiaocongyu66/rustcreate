@@ -83,7 +83,7 @@ fn vanilla_surface_bounds_and_sea_fill() {
 }
 
 /// 3) 地表材质带：滩带（est==SEA+1 乾柱）SAND、海床带（est≤SEA 湿柱）
-/// GRAVEL/SAND、雪带 SNOW_GRASS（海洋 SURF-2 波重锚，见测内注记）。
+///    GRAVEL/SAND、雪带 SNOW_GRASS（海洋 SURF-2 波重锚，见测内注记）。
 #[test]
 fn vanilla_surface_material_bands() {
     use wg::terrain::{GRAVEL, Orchestrator};
