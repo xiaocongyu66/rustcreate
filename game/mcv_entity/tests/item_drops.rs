@@ -208,6 +208,7 @@ fn physics_skips_non_drops() {
             pos: Vec3::new(8.5, 70.0, 8.5),
             vel: Vec3::ZERO,
             on_ground: false,
+            pos_old: Vec3::new(8.5, 70.0, 8.5),
         },
     );
     for _ in 0..10 {

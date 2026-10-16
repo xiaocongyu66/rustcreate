@@ -13,8 +13,8 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath,
-    MobTicks, PhysBody, PickupReq, Yaw, spawn_mob,
+    AiAction, AnimState, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind,
+    MobPath, MobTicks, PhysBody, PickupReq, Yaw, advance_walk_anim, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;

@@ -100,6 +100,7 @@ pub fn spawn_xp_orb(
             pos,
             vel: initial_vel(rng),
             on_ground: false,
+            pos_old: pos,
         },
     );
     world.insert(e, XpOrb { value, age: 0 });

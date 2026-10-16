@@ -55,6 +55,7 @@ fn collect_instances_maps_kinds() {
             pos: Vec3::new(1.0, 64.0, 1.0),
             vel: Vec3::ZERO,
             on_ground: false,
+            pos_old: Vec3::new(1.0, 64.0, 1.0),
         },
     );
 

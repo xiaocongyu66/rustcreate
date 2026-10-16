@@ -6,6 +6,7 @@
 
 use crate::ai::Brain;
 use crate::defs::MobId;
+use crate::passive::AnimState;
 use glam::Vec3;
 use mcv_core::BlockPos;
 use mcv_ecs::{Entity, World};
@@ -21,6 +22,11 @@ pub struct PhysBody {
     pub pos: Vec3,
     pub vel: Vec3,
     pub on_ground: bool,
+    /// 上一固定步的位置（渲染插值基准，26.1 `xOld/yOld/zOld` 等价）：每个
+    /// 60 Hz 物理步开头由系统拍快照，渲染帧用 `pos_old→pos` 按 partialTick
+    /// 残差插值（26.1 LivingEntity render pos = lerp(xOld, x, partialTick)）。
+    /// 生成时与 `pos` 同值（首步零差值，不跳）。
+    pub pos_old: Vec3,
 }
 
 impl PhysBody {
@@ -157,6 +163,11 @@ pub fn register_mob_components(world: &mut World) {
     world.register::<MobPath>();
     world.register::<MobArrow>();
     world.register::<Effects>();
+    // 行走动画账本（渲染拼装消费 AnimState.phase/amount → mob_mesh 腿摆）。
+    // register 幂等（ensure_store 只建空表）：register_passive_components 的
+    // 二次注册无冲突。此前敌对怪不插不推进此组件 → mob_render 走零相位
+    // 静止路径（僵尸走路腿不摆的根因，随 spawn_mob 统一装配解除）。
+    world.register::<AnimState>();
 }
 
 /// 集中装配一只怪（原 `Mob::new` 的组件化等价），避免散点漏插。
@@ -169,6 +180,7 @@ pub fn spawn_mob(world: &mut World, id: MobId, pos: Vec3) -> Entity {
             pos,
             vel: Vec3::ZERO,
             on_ground: false,
+            pos_old: pos,
         },
     );
     world.insert(e, Health(id.def().health));
@@ -187,5 +199,8 @@ pub fn spawn_mob(world: &mut World, id: MobId, pos: Vec3) -> Entity {
     world.insert(e, MobIntent::IDLE);
     world.insert(e, MobPath::default());
     world.insert(e, Effects::default());
+    // 行走动画账本随装配统一给出（敌对/被动同面）：mob_ai_system 每个 60 Hz
+    // 物理步推进（advance_walk_anim），渲染拼装 collect_mob_instances_in 消费。
+    world.insert(e, AnimState::default());
     e
 }
