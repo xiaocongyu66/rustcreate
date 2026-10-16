@@ -705,6 +705,43 @@ impl Brain {
     }
 }
 
+// ---- 朝向（body yaw）推导 ---------------------------------------------------
+
+/// 有界转身步长（rad / AI tick）。与 `passive.rs` 有界转身同值（≈20°/tick、
+/// 平滑逼近航向）；原版 MoveControl.rotlerp 上限 90°/tick（MoveControl.java
+/// :96，近乎瞬转），本仓两端共用较缓的步长作收敛上界——只是下界语义，不
+/// 改判定值。
+pub const BODY_TURN_STEP: f32 = 0.35;
+
+/// 包裹到 (−π, π]（与 passive.rs 同式；集中到 ai.rs 供两路共用）。
+pub fn wrap_angle(a: f32) -> f32 {
+    let tau = std::f32::consts::TAU;
+    let mut x = a % tau;
+    if x > std::f32::consts::PI {
+        x -= tau;
+    } else if x <= -std::f32::consts::PI {
+        x += tau;
+    }
+    x
+}
+
+/// 移动 body 朝向推导（26.1 与移动方向同面，LivingEntity.java:2734-2746：
+/// 实际位移 sideDist>0.0025 → `walkDirection = atan2(zd,xd)·180/π − 90°`；
+/// BodyRotationControl.clientTick:19-20：移动中 `yBodyRot = getYRot()`）。
+/// 引擎朝向角约定 `f(yaw) = (sin yaw, 0, −cos yaw)`（与 `Camera::dir` 同型），
+/// vanilla 的 atan2(zd,xd)−90° 在引擎空间镜像为 `wish.x.atan2(−wish.z)`（与
+/// passive.rs 有界转身同式，yaw=0 即 −z 正面）。`wish` 近零（站立）返回
+/// None——不转（原版站立时 body 缓跟头 rot，RenderSide 单 yaw 面不建模）。
+/// 返回有界步进后的新 yaw（每 tick 至多 [`BODY_TURN_STEP`]，环回最短角）。
+pub fn walk_body_yaw(current: f32, wish: Vec3, max_step: f32) -> Option<f32> {
+    if wish.length_squared() < 1e-8 {
+        return None;
+    }
+    let target = wish.x.atan2(-wish.z);
+    let diff = wrap_angle(target - current);
+    Some(wrap_angle(current + diff.clamp(-max_step, max_step)))
+}
+
 // ---- 小工具 -----------------------------------------------------------------
 
 fn flat_dir(v: Vec3) -> Vec3 {
@@ -751,4 +788,47 @@ pub fn random_point_around(pos: Vec3, rng: &mut impl FnMut() -> u32) -> Vec3 {
     let by = (pos.y + yt).floor() as i32;
     let bz = (pos.z + zt).floor() as i32;
     Vec3::new(bx as f32 + 0.5, by as f32, bz as f32 + 0.5)
+}
+
+#[cfg(test)]
+mod walk_yaw_tests {
+    use super::*;
+
+    /// 引擎朝向约定 f(yaw)=(sin yaw, 0, −cos yaw)：+x 航向 → 目标角 π/2。
+    /// vanilla 镜像核对：MoveControl.java:93 `yRotD = atan2(zd,xd)·180/π−90°`
+    /// 在引擎空间（yaw 与 MC yaw 互反、z 取反后拍型同 Camera::dir）等价于
+    /// `wish.x.atan2(−wish.z)`——与 passive.rs 旧式逐字一致。
+    #[test]
+    fn yaw_target_matches_engine_convention() {
+        let east = walk_body_yaw(0.0, Vec3::new(1.0, 0.0, 0.0), 10.0).unwrap();
+        assert!((east - std::f32::consts::FRAC_PI_2).abs() < 1e-5, "{east}");
+        let south = walk_body_yaw(0.0, Vec3::new(0.0, 0.0, 1.0), 10.0).unwrap();
+        assert!((south - std::f32::consts::PI).abs() < 1e-5, "{south}");
+        // 与 f(yaw) 反推互证：目标角处单位航向 = dir。
+        let dir = Vec3::new(east.sin(), 0.0, -east.cos());
+        assert!((dir - Vec3::new(1.0, 0.0, 0.0)).length() < 1e-5, "{dir}");
+    }
+
+    /// 站立（wish 近零）不转——BodyRotationControl.java:24-37 站立分支走
+    /// head-stable 账本（body 缓跟头），单 yaw 面不建模，显式跳过。
+    #[test]
+    fn zero_wish_does_not_turn() {
+        for w in [Vec3::ZERO, Vec3::new(1e-5, 0.0, 1e-5)] {
+            assert!(walk_body_yaw(0.7, w, BODY_TURN_STEP).is_none());
+        }
+        // y 分量（重力/俯仰抖动）不参与水平航向。
+        assert!(walk_body_yaw(0.7, Vec3::new(0.0, -9.8, 0.0), BODY_TURN_STEP).is_none());
+    }
+
+    /// 有界逼近 + 收敛：每 tick 步长 ≤ BODY_TURN_STEP，逐步贴住目标且不
+    /// 越冲（walk 的 wish 恒为单位向量，收敛终点 = 精确航向）。
+    #[test]
+    fn bounded_turn_converges() {
+        let target_dir = Vec3::new(1.0, 0.0, 0.0); // 目标 π/2，从 0 起转
+        let mut yaw = 0.0f32;
+        for _ in 0..60 {
+            yaw = walk_body_yaw(yaw, target_dir, BODY_TURN_STEP).unwrap();
+        }
+        assert!((yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-4, "{yaw}");
+    }
 }

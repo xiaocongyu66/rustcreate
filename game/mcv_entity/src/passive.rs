@@ -403,9 +403,12 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                 && let Some(y) = yaws.get_mut(e)
             {
                 // 有界转身：每 tick 至多 0.35 rad（≈20°），平滑接近航向。
-                let target_yaw = wish.x.atan2(-wish.z);
-                let diff = wrap_angle(target_yaw - y.0);
-                y.0 = wrap_angle(y.0 + diff.clamp(-0.35, 0.35));
+                // 26.1 同面 = ai.rs walk_body_yaw（LivingEntity.java:2734-2746
+                // 位移推导 + MoveControl.java:96 rotlerp 有界逼近），收敛公式
+                // 集中共享，不再各持一份。
+                if let Some(nyaw) = crate::ai::walk_body_yaw(y.0, wish, crate::ai::BODY_TURN_STEP) {
+                    y.0 = nyaw;
+                }
             }
         }
 
@@ -476,18 +479,6 @@ fn horizontal_dist(a: Vec3, b: Vec3) -> f32 {
     let dx = a.x - b.x;
     let dz = a.z - b.z;
     (dx * dx + dz * dz).sqrt()
-}
-
-/// 包裹到 (−π, π]。
-fn wrap_angle(a: f32) -> f32 {
-    let tau = std::f32::consts::TAU;
-    let mut x = a % tau;
-    if x > std::f32::consts::PI {
-        x -= tau;
-    } else if x <= -std::f32::consts::PI {
-        x += tau;
-    }
-    x
 }
 
 #[cfg(test)]

@@ -16,7 +16,10 @@ pub mod pathfinding;
 pub mod spawner;
 pub mod xp;
 
-pub use ai::{AiAction, Brain, MobAiTable, MobState, Percept, ai_table};
+pub use ai::{
+    AiAction, BODY_TURN_STEP, Brain, MobAiTable, MobState, Percept, ai_table, walk_body_yaw,
+    wrap_angle,
+};
 pub use arrow::{BOW_MIN_POWER, crit_bonus, hit_damage, mob_base_damage, ranged_power, triangle};
 pub use components::{
     Effects, Health, LastHurt, MobArrow, MobBrain, MobIntent, MobKind, MobPath, MobTicks, PhysBody,
