@@ -657,7 +657,7 @@ mod tests {
         let verts = block_cube_verts(&tiles, center, 0.0, [0.9; 3]);
         assert_eq!(verts.len(), VERTS_PER_CUBE);
         let corner_r = DROP_QUAD * 0.5 * (3.0f32.sqrt());
-        for (f, face) in verts.chunks_exact(4).enumerate() {
+        for (f, face) in verts.as_chunks::<4>().0.iter().enumerate() {
             for v in face {
                 assert_eq!(v.layer, u32::from(tiles[f]), "面 {f} layer=tiles[{f}]");
                 assert_eq!(v.tex_set, 1);
@@ -699,7 +699,7 @@ mod tests {
         let base = [0.5f32, 0.75, 1.0];
         let verts = block_cube_verts(&tiles, Vec3::ZERO, 0.0, base);
         let expected: [f32; 6] = [0.60, 0.60, 1.00, 0.50, 0.80, 0.80];
-        for (f, face) in verts.chunks_exact(4).enumerate() {
+        for (f, face) in verts.as_chunks::<4>().0.iter().enumerate() {
             for v in face {
                 for (ch, e) in v.light.iter().zip(base.iter()) {
                     assert!((*ch - e * expected[f]).abs() < 1e-6, "面 {f} 亮度 {ch}");
