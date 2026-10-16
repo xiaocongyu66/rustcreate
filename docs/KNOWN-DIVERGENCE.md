@@ -435,3 +435,30 @@ tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
 
 （净零口径：本条经 mesh 看门狗修复波主线程派发批准登记，登记面 =
 放置路径可见性语义 2 项；无旧条目同步销账。）
+
+## PLACEMENT-1 原木族放置 axis 已入 nibble、渲染几何未消费（place-state 波）
+
+26.1 放置状态默认 identity（BlockItem.java:115-118 → Block.java:465-467，
+`getStateForPlacement` 基类恒 `defaultBlockState()`）；放置朝向只在覆写方
+块族生效。本波把该属性门落到 `mcv_core::placement`（RotatedPillarBlock
+类属 56 名逐块表，Blocks.java `RotatedPillarBlock::new` 注册行全集）+
+mcv_logic `placement_state`（axis=命中面轴，RotatedPillarBlock.java:54-56；
+stairs/slab 照旧按既有形状门）：
+
+1. **已实装**：普通方块（stone/dirt 等无属性方块）放置恒 state=0（不随
+   玩家朝向/命中面——普通方块不该带朝向的病灶面）；RotatedPillar 族
+   （log/wood/stem/hyphae/basalt/deepslate/骨块/石英柱/紫珀柱/蛙明灯…）
+   放置按命中面写 axis（nibble bit0-1，0=Y 1=X 2=Z，默认态 Y=0 与竖置
+   纯 id 兼容；侧面放置=横置轴已记录并可存档往返）。
+2. **未消费（本条登记面）**：网格器 Cube 路径不读状态 nibble——横置
+   log 的端面环贴图（axis X → 环贴图应转 ±X 面）尚未实现，渲染仍按
+   竖置贴图约定（±Y 面=端面）；碰撞整盒无差异。收敛方向：网格器
+   贴图面选择按 `BlockId::state` axis 旋转端面/侧面映射（与楼梯
+   emit_stairs 同一接入点级别）。
+3. **furnace 等 DirectionalBlock 族**（FACING）未纳入本波：26.1 有
+   facing 放置属性（如熔炉 front 面随朝向），但引擎尚无 facing 状态
+   位与渲染消费（blocks-report.md 已登记朝向语义待网格器支持）；表驱动
+   架构已预留扩展位（名单+编码常量同范式追加）。
+
+（净零口径：本条由 place-state 波登记，登记面 = axis 渲染消费滞后 1 项
++ facing 族未纳入 1 项；无旧条目同步销账。）

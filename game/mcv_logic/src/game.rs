@@ -6008,14 +6008,10 @@ impl GameRuntime {
             let [lx, _, lz] = target.local();
             let idx = mcv_core::vidx(lx, target.y, lz);
             let old_id = handle.voxels.read().unwrap().get_flat(idx);
-            // 形状状态位（半砖上下/楼梯朝向）写入体素高 nibble，
+            // 属性状态位（半砖上下/楼梯朝向/原木族 axis）写入体素高
+            // nibble；无属性方块恒 identity（state=0，普通方块不随朝向）。
             // 网格与碰撞按 mcv_core::BlockId::state 读取。
-            let st = placement_state(
-                mcv_core::shape::shape(new_id.0),
-                normal,
-                self.input.sneak,
-                self.player.yaw,
-            );
+            let st = placement_state(new_id, normal, self.input.sneak, self.player.yaw);
             handle
                 .voxels
                 .write()
@@ -8029,8 +8025,14 @@ fn load_voxels(ids: &[u16]) -> mcv_core::VoxelStore {
     mcv_core::VoxelStore::from_flat_u16(ids)
 }
 
-/// 放置时按形状计算状态 nibble（写进体素 bit12-15，规则见 mcv_core）。
+/// 放置时按方块属性计算状态 nibble（写进体素 bit12-15，规则见 mcv_core）。
 /// `normal` = 命中面外法线（+Y 表示点了顶面，= 26.1 getClickedFace）。
+///
+/// 属性门（26.1 BlockItem.getPlacementState）：放置状态默认 **identity**——
+/// `BlockItem.java:115-118` 直接取 `getStateForPlacement`，基类恒返回
+/// `defaultBlockState()`（Block.java:465-467）。**只有覆写方块才有放置
+/// 朝向**：无属性方块（stone/dirt 等普通方块）原样 state（nibble=0），
+/// 不随玩家朝向/命中面变。
 ///
 /// 朝向（C1）：26.1 `StairBlock.getStateForPlacement`（StairBlock.java:101-102）
 /// 写 `FACING = context.getHorizontalDirection()` = `player.getDirection()`
@@ -8040,6 +8042,19 @@ fn load_voxels(ids: &[u16]) -> mcv_core::VoxelStore {
 /// 0=+Z 1=-Z 2=+X 3=-X 与网格器 `emit_stairs`/`mcv_core::BlockId::state`
 /// 同一约定；楼梯几何为"踏步（整高半）位于 FACING 朝向侧"
 /// （StairBlock.java:37-38：facing=NORTH → 上半占 -Z 半格）。
+/// 本分支按 shape=Stairs 门生效——注册表 `*_stairs` 即 StairBlock
+/// 类属，属性存在性由此联动。
+///
+/// 原木族 axis：26.1 `RotatedPillarBlock.getStateForPlacement`
+/// （RotatedPillarBlock.java:54-56）写 `AXIS = context.getClickedFace()
+/// .getAxis()`——**命中面的轴**（点顶/底面 → 竖置；点侧面 → 沿该面轴
+/// 水平横置）。类属逐块表驱动（`mcv_core::placement::has_axis`，名单 =
+/// Blocks.java 全部 `RotatedPillarBlock::new` 注册行），不按名字后缀猜——
+/// melon_stem 等后缀近亲属 StemBlock 系、无 AXIS 属性，不得套朝向。
+/// nibble 编码 0=Y 1=X 2=Z（`mcv_core::placement`；默认态 AXIS=Y
+/// RotatedPillarBlock.java:23，Y 编 0 使竖置体素值=纯 id，旧数据兼容）。
+/// 渲染按 axis 选端面贴图待网格器消费 nibble（KNOWN-DIVERGENCE：现阶段
+/// 网格器 Cube 路径无状态消费，axis 只记录进体素/存档）。
 ///
 /// 半区（C2）：26.1 `StairBlock.java:103-105` 与 `SlabBlock.java:77-80`
 /// 同一规则——点底面（DOWN）→ 上半；点顶面（UP）→ 下半；水平面按
@@ -8047,14 +8062,14 @@ fn load_voxels(ids: &[u16]) -> mcv_core::VoxelStore {
 /// KNOWN-DIVERGENCE），水平面近似为下半，与半砖一致。
 /// `sneak` 翻转上下为自加行为（KNOWN-DIVERGENCE：26.1 半砖/楼梯放置均
 /// 不看潜行，SlabBlock/StairBlock 源码无 isSecondaryUseActive 分支）。
-/// 放置状态 nibble（半砖 bit0；楼梯 bit0-1 朝向 + bit2 上半）。
-/// 朝向=视线水平同向（26.1 `StairBlock.java:102` `getHorizontalDirection`，
+/// 放置状态 nibble（半砖 bit0；楼梯 bit0-1 朝向 + bit2 上半；原木族
+/// bit0-1 axis）。朝向=视线水平同向（26.1 `StairBlock.java:102` `getHorizontalDirection`，
 /// `UseOnContext.java:70`/`DirectionalPlaceContext.java:59`）。半区判据为
 /// 近似：原版按格内点击点 Y 定上下（`SlabBlock.java:78`、`StairBlock.java:
 /// 104`），DDA 仅有进入面法线 → 顶/底面按法线、侧面恒下半，且原版无潜行
 /// 切换（`!= sneak` 为引擎自设便捷位，KNOWN-DIVERGENCE）。
-fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f32) -> u8 {
-    match shape {
+fn placement_state(id: BlockId, normal: [i32; 3], sneak: bool, yaw: f32) -> u8 {
+    match mcv_core::shape::shape(id.0) {
         mcv_core::Shape::Slab => u8::from((normal[1] == -1) != sneak),
         mcv_core::Shape::Stairs => {
             // 视线水平分量 (sin yaw, -cos yaw)，同向归四向（C1）。
@@ -8069,6 +8084,12 @@ fn placement_state(shape: mcv_core::Shape, normal: [i32; 3], sneak: bool, yaw: f
             // bit2=上半：点底面(-Y)→上半，点顶面(+Y)→下半（C2，
             // 与半砖 normal[1]==-1 分支同向，StairBlock.java:104）。
             facing | (u8::from((normal[1] == -1) != sneak) << 2)
+        }
+        // RotatedPillarBlock 族：AXIS=命中面轴（RotatedPillarBlock.java:54-56）。
+        // 族内全 Cube 形状，shape 口径无法表达，故按属性表门；表未命中的
+        // 普通方块到此仍取 identity（Block.java:465-467）。
+        _ if mcv_core::placement::has_axis(id.0) => {
+            mcv_core::placement::axis_from_clicked_face(normal)
         }
         _ => 0,
     }
@@ -8442,15 +8463,26 @@ pub fn step_gate(step_dist: f32, next_step: f32) -> Option<f32> {
 #[cfg(test)]
 mod placement_tests {
     use super::placement_state;
-    use mcv_core::Shape;
+    use mcv_core::BlockId;
+
+    /// 注册名 → id（表驱动测试唯一入口，防手拍 id 漂移）。
+    fn id_of(name: &str) -> BlockId {
+        BlockId(
+            mcv_core::BLOCKS
+                .iter()
+                .position(|b| b.name == name)
+                .unwrap_or_else(|| panic!("registry lacks {name}")) as u16,
+        )
+    }
 
     #[test]
     fn slab_top_bit() {
         // 点顶面（法线 +Y）→ 下半砖；点底面 → 上半砖；潜行翻转。
-        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], false, 0.0), 0);
-        assert_eq!(placement_state(Shape::Slab, [0, -1, 0], false, 0.0), 1);
-        assert_eq!(placement_state(Shape::Slab, [0, 1, 0], true, 0.0), 1);
-        assert_eq!(placement_state(Shape::Slab, [1, 0, 0], false, 0.0), 0);
+        let slab = id_of("oak_slab");
+        assert_eq!(placement_state(slab, [0, 1, 0], false, 0.0), 0);
+        assert_eq!(placement_state(slab, [0, -1, 0], false, 0.0), 1);
+        assert_eq!(placement_state(slab, [0, 1, 0], true, 0.0), 1);
+        assert_eq!(placement_state(slab, [1, 0, 0], false, 0.0), 0);
     }
 
     /// 三段贯通之一（placement→nibble）：26.1 StairBlock.java:101-102
@@ -8460,35 +8492,100 @@ mod placement_tests {
     /// 玩家面向 -Z（yaw=0）放置 → nibble facing=1 → 几何踏步占 -Z 半格。
     #[test]
     fn stairs_facing_follows_vanilla() {
+        let stairs = id_of("oak_stairs");
         // yaw=0 视线 (sin0, -cos0)=(0,-1) 即 -Z → facing=1；
         // 点顶面(+Y 法线)→下半（bit2=0）。
-        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], false, 0.0), 1);
+        assert_eq!(placement_state(stairs, [0, 1, 0], false, 0.0), 1);
         // yaw=π/2 视线 (+1,0) 即 +X → facing=2。
         assert_eq!(
-            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
+            placement_state(stairs, [0, 1, 0], false, std::f32::consts::FRAC_PI_2),
             2
         );
         // yaw=π 视线 (0,+1) 即 +Z → facing=0。
         assert_eq!(
-            placement_state(Shape::Stairs, [0, 1, 0], false, std::f32::consts::PI) & 3,
+            placement_state(stairs, [0, 1, 0], false, std::f32::consts::PI) & 3,
             0
         );
         // 点底面（法线 -Y）→ 上半（bit2=1），与半砖规则同向。
-        assert_eq!(
-            placement_state(Shape::Stairs, [0, -1, 0], false, 0.0),
-            1 | 4
-        );
+        assert_eq!(placement_state(stairs, [0, -1, 0], false, 0.0), 1 | 4);
         // 水平面：DDA 无格内点击点，近似下半（KNOWN-DIVERGENCE，同半砖）。
-        assert_eq!(placement_state(Shape::Stairs, [0, 0, 1], false, 0.0) & 4, 0);
-        assert_eq!(placement_state(Shape::Stairs, [1, 0, 0], false, 0.0) & 4, 0);
+        assert_eq!(placement_state(stairs, [0, 0, 1], false, 0.0) & 4, 0);
+        assert_eq!(placement_state(stairs, [1, 0, 0], false, 0.0) & 4, 0);
         // 潜行 XOR 翻转上下（KNOWN-DIVERGENCE：原版无潜行逻辑，保留现状）。
-        assert_eq!(placement_state(Shape::Stairs, [0, 1, 0], true, 0.0), 1 | 4);
+        assert_eq!(placement_state(stairs, [0, 1, 0], true, 0.0), 1 | 4);
     }
 
+    /// 属性门=identity 默认（26.1 BlockItem.java:115-118 → Block.java:
+    /// 465-467）：无放置属性方块（stone/dirt/工作台）state 恒 0，不随
+    /// 玩家朝向（yaw）/命中面/潜行变——「普通方块不该带朝向」回归锁。
     #[test]
-    fn other_shapes_zero() {
-        for s in [Shape::Cube, Shape::Cross, Shape::Torch, Shape::Fence] {
-            assert_eq!(placement_state(s, [0, -1, 0], true, 1.23), 0);
+    fn plain_blocks_keep_identity() {
+        for id in [id_of("stone"), id_of("dirt"), id_of("crafting_table")] {
+            for normal in [
+                [1, 0, 0],
+                [-1, 0, 0],
+                [0, 1, 0],
+                [0, -1, 0],
+                [0, 0, 1],
+                [0, 0, -1],
+            ] {
+                for (yaw, sneak) in [(0.0f32, false), (1.23, true)] {
+                    assert_eq!(
+                        placement_state(id, normal, sneak, yaw),
+                        0,
+                        "id {} normal {normal:?}",
+                        id.0
+                    );
+                }
+            }
+        }
+    }
+
+    /// 原木族 axis=命中面轴（26.1 RotatedPillarBlock.java:54-56
+    /// `AXIS = context.getClickedFace().getAxis()`）：点顶/底面 → 竖置
+    /// （axis=0=Y）、点 ±X 面 → axis=1、点 ±Z 面 → axis=2；yaw/潜行无关。
+    /// 编码与几何异步显现规则见 mcv_core::placement AXIS_*。
+    #[test]
+    fn log_axis_from_clicked_face() {
+        let log = id_of("log");
+        for normal in [[0, 1, 0], [0, -1, 0]] {
+            assert_eq!(
+                placement_state(log, normal, false, 7.7),
+                0,
+                "顶/底面 → axis Y"
+            );
+        }
+        for normal in [[1, 0, 0], [-1, 0, 0]] {
+            assert_eq!(
+                placement_state(log, normal, false, 7.7),
+                1,
+                "±X 面 → axis X"
+            );
+        }
+        for normal in [[0, 0, 1], [0, 0, -1]] {
+            assert_eq!(placement_state(log, normal, true, 7.7), 2, "±Z 面 → axis Z");
+        }
+        // 潜行不参与（26.1 无潜行分支）；同族非 log 名（deepslate）同规则。
+        let deepslate = id_of("deepslate");
+        assert_eq!(placement_state(deepslate, [1, 0, 0], false, 0.0), 1);
+    }
+
+    /// 属性存在性门=逐块表，不按名字后缀猜：`*_stem` 后缀近亲
+    /// （melon/pumpkin 种植族，StemBlock 系，Blocks.java 无
+    /// RotatedPillarBlock 注册行）无 AXIS 属性 → identity（朝向套到
+    /// 无状态方块 = 本案修的目标病灶之一，反向锁）。
+    #[test]
+    fn stem_suffix_plants_have_no_axis() {
+        for name in [
+            "melon_stem",
+            "pumpkin_stem",
+            "attached_melon_stem",
+            "attached_pumpkin_stem",
+        ] {
+            let id = id_of(name);
+            for normal in [[1, 0, 0], [0, 0, 1], [0, 1, 0]] {
+                assert_eq!(placement_state(id, normal, false, 2.5), 0, "{name}");
+            }
         }
     }
 }
