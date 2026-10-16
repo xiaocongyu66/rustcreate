@@ -431,8 +431,8 @@ fn surface_rules_deterministic() {
 /// 实物）+ NoiseRouterData.java:479-499 组合链）：
 /// - 官方 fork 链实测：(0,0)=32、(800,800)=80、(−400,−400)=24（本机
 ///   harness 复核 stdout 逐位一致）；
-/// - 本仓值（v1 splitmix 域盐气候链，AQUI-1 近似级）：(0,0)=56
-///   （run 38857740856 锚定）。
+/// - 本仓值（v1 splitmix 域盐气候链，AQUI-1 近似级）：56/48/48（runs
+///   38857740856 + 38861487832 锚定）。
 ///
 /// 本仓 findTopSurface 结构为官方逐构件直译（remap −128/+128
 /// NoiseRouterData.java:310-314、upper_bound 钳 [−40,320]、noiseGradient
@@ -445,8 +445,10 @@ fn surface_rules_deterministic() {
 #[test]
 fn prelim_gate_probe_constants_anchored() {
     /// (x, z, official_fork_probe, ours_v1_chain)；ours=0 → 首锚通道。
+    /// 官方列=java-harness --probe-prelim seed7 实测；ours 列=本链
+    /// （(0,0)/(800,800) run 38857740856 锚、(−400,−400) run 38861487832 锚）。
     const PROBES: [(i32, i32, i32, i32); 3] =
-        [(0, 0, 32, 56), (800, 800, 80, 0), (-400, -400, 24, 0)];
+        [(0, 0, 32, 56), (800, 800, 80, 48), (-400, -400, 24, 48)];
     let orch = Orchestrator::new(7);
     let mut report = String::new();
     let mut fails = 0;
