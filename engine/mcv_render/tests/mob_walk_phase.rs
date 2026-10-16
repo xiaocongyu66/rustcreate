@@ -107,13 +107,12 @@ fn pig_rest_pose_is_identity_blocks() {
     let rest = matrices(0.9, 0.0);
     for p in PIG_LEGS {
         let blk = rot_block(&rest, p);
-        for r in 0..3usize {
-            for c in 0..3usize {
+        for (r, row) in blk.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
                 let want = if r == c { 1.0 } else { 0.0 };
                 assert!(
-                    (blk[r][c] - want).abs() < 1e-5,
-                    "腿 {p} 静止旋转块应为单位阵 at [{r}][{c}]，得 {}",
-                    blk[r][c]
+                    (v - want).abs() < 1e-5,
+                    "腿 {p} 静止旋转块应为单位阵 at [{r}][{c}]，得 {v}"
                 );
             }
         }
