@@ -115,24 +115,17 @@ vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场
 `ON_FLOOR` = stoneDepthAbove≤1，SurfaceRules.java:680）+ 群系面表（
 `SurfaceRuleData.overworldLike`）。10 群系子集与 id 面之下的偏差：
 
-1. **缺失方块 id（千块表登记债）——海洋/河床部分〔已销账，海洋 SURF-2
-   波〕**：千块表（#147 后 1171 方块）已含砾石 GRAVEL（id 431）与砂岩
-   SANDSTONE（id 893），海洋/河床海床链按 SurfaceRuleData.java 官方归位：
-   ON_FLOOR 默认 gravelOrStoneIfCeiling = 砾石（:258-265）、暖温度段
-   （WARM_OCEAN 近似，见 SURF-2③）沙（:262）、UNDER_FLOOR 带默认 DIRT
-   /沙群系 SAND（:86,124,253）、DEEP_UNDER_FLOOR 带 SANDSTONE（:254-255）、
-   notUnderDeepWater 深水门（:249, SurfaceRules.java:802-815）。仍有债：
-   各色彩陶与红沙（badlands 带 :202-232 + bandlands）、灰化土/粗泥土
-   （老生长针叶林 :158-161、风袭系 :113-156）、菌丝（蘑菇岛 :164）、泥
-   （红树滩 :123）、雪块/浮冰/细雪/冰（frozen peaks/slopes/grove/
-   frozen ocean :96-143,240-252）、方解石（stony peaks :78-79）——对应
-   群系不在 10 群系点表（biomes.rs v1），扩群系表后须按 SurfaceRuleData
-   逐群系补全；锁定面 = 内陆草群系顶格草、滩/沙漠沙、海床按温度段
-   砾石/沙（tests/surface_rules.rs）。
-1b. **sand/clay/gravel 碟状湖床 feature（disk）不实现**：原版河/海床另由
-   disk feature（biome features[6] UNDERGROUND_ORES 阶）铺沙/黏土/砾石碟，
-   本仓未排期（海洋 SURF-2 波只修 SurfaceRules 链）——本仓河海床为纯链
-   材质，无碟状杂色。
+1. **缺失方块 id（千块表登记债）**：原版表层规则表引用的方块中，本仓
+   生成面缺——砾石 GRAVEL（海洋/河床 ON_FLOOR 默认
+   SurfaceRuleData.java:258-265 gravelOrStoneIfCeiling；砾石补丁另出
+   disk feature）、砂岩 SANDSTONE（滩/沙漠 DEEP/VERY_DEEP_UNDER_FLOOR
+   :254-255 与洞顶 :72）、各色彩陶与红沙（badlands 带 :202-232 + bandlands）、
+   灰化土/粗泥土（老生长针叶林 :158-161、风袭系 :113-156）、菌丝（蘑菇岛
+   :164）、泥（红树滩 :123）、雪块/浮冰/细雪/冰（frozen peaks/slopes/grove/
+   frozen ocean :96-143,240-252）、方解石（stony peaks :78-79）。以上群系
+   多数不在 10 群系点表（biomes.rs v1），可达者（海洋/河流底）以沙近似；
+   扩群系表/扩千块表后须按 SurfaceRuleData 逐群系补全，本波只锁「内陆
+   草群系顶格 = 草、滩/沙漠 = 沙、水下沉底 ∈ {沙,土}」（tests/surface_rules.rs）。
 2. **UNDER_FLOOR 带宽取块级常数 3**〔已销账 #192 主世界地形波〕：实物接线
    `Orchestrator::surface_depth` = getSurfaceDepth 逐列值（噪声·2.75+3+jitter
    ·0.25 截断，SurfaceSystem.java:165-168）；surface 通道（surface.json
@@ -140,55 +133,25 @@ vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场
    （`NormalNoise::from_vanilla_name`/根位置随机工厂直传），同 seed 与原版
    同位型（内核求值口径同 perlin.rs 头注）。量化门 = cave_audit.rs
    K-SURFACE-DEPTH（均值带 + 分布塌缩哨兵，histogram 入 CI 日志）。
-   〔海洋 SURF-2 波补零头：UNDER_FLOOR 带与 DEEP_UNDER_FLOOR 带取块级
-   上界 6（secondaryDepthRange，SurfaceRules.java:36/:697-703 的
-   map(surfaceSecondary,−1,1,0,6) 的固定段宽近似——mirror 通道
-   surface_secondary 未单独接线），subsoil 带外即落石。〕
-3. **abovePreliminarySurface 门简化**〔已销账，海洋 SURF-2 波官方结构
-   实物化〕：原 = 无 jag 初始密度零点按 16 格单元双线性插值 + surfaceDepth
-   − 8（SurfaceRules.java:343-383 preliminarySurfaceLevel/
-   `HOW_FAR_BELOW…=8` :379）；旧实现 = 逐列含 jag 解析过零面 − 8（破面
-   下沿裸石被矿层染色 = 重锚波②「滩带安山岩」根因——**非官方 patch
-   行为**，官方链在该带必铺 surface 材质，归因收口注记见
-   tests/geometry_locks.rs vanilla_surface_material_bands）。现 = 官方
-   findTopSurface 结构逐构件直译（NoiseRouterData.java:479-499 +
-   DensityFunctions.java:579-607：remap −128/+128、upper_bound 钳
-   [−40,320]、无 jag 深度核 4·quarterNegative−0.703125 钳 ±64、slide
-   −0.078125/0.1171875、−0.390625、floor(ub/8)·8 下扫；角值经 16 块 cell
-   角 bilerp（SurfaceRules.java:343-383）+ surfaceDepth − 8）。
-   **数值位型差（未销账，与本文件 AQUI-1 同根）**：门基数值 depends on
-   offset/factor 气候信道种子链——官方 fork 链（java-harness --probe-prelim
-   seed 7 实测 (0,0)=32/(800,800)=80/(−400,−400)=24）vs 本仓 v1 域盐链
-   （(0,0)=56，run 38857740856 锚定，tests/surface_rules.rs
-   prelim_gate_probe_constants_anchored 双列锁）——main 8f6b6b32
-   noise-vanilla-fork 已切官方链，rebase 合流后两列归一（届时该测试
-   OURS 列换成 32/80/24 即成官方位型锁）。
+3. **abovePreliminarySurface 门简化**：原版 = 无 jag 初始密度零点按 16 格
+   单元双线性插值 + surfaceDepth − 8（SurfaceRules.java:351-383
+   preliminarySurfaceLevel/`HOW_FAR_BELOW…=8` :264）；本仓 = 逐列含 jag
+   解析过零面 − 8（无单元插值、surfaceDepth 取 0）。带下回落 STONE 的
+   语义一致（深洞底不长草），带缘 ±几格差异属插值近似。
 4. **steep() 不实现**：邻列 WORLD_SURFACE_WG 高差 ≥4 判崖
    （SurfaceRules.java:403-427）仅被 FROZEN_PEAKS/SNOWY_SLOPES/
    JAGGED_PEAKS 三门消费（SurfaceRuleData.java:100/108/141）——10 群系
    子集选不出这三群系；内陆草群系悬崖侧面按原版行为保持各列实顶材质
    （每列自己的顶，无独立悬崖换石规则），扩群系后须补 steep 门。
-5. **滩/雪位置带覆盖群系带**〔海洋 SURF-2 波收紧：滩带只锁乾柱〕：估计面
-   `== SEA+1 → 沙（乾柱顶格）`、`> SEA+46 → 雪草`（geometry_locks 契约
-   「材质由 offset 估计面分带」，tests/geometry_locks.rs）；est ≤ SEA 段
-   （柱层序里顶层以上必为灌水段）**不再**被带强制成沙——按官方水下链
-   （温度段砾石/沙），旧全段锁沙即用户真机「海洋那一块特别难崩」的主
-   根因面。原版全按群系与温度门（SNOWY_BEACH/DESERT 沙不依赖海拔，
-   peaks 系雪不依赖固定 46）；估计面与真实顶差 ±1-2 格的乾柱边缘列按
-   估计面分带，是保留的既有契约。
+5. **滩/雪位置带覆盖群系带**：估计面 `surface_ours ≤ SEA+1 → 沙`、
+   `> SEA+46 → 雪草`（geometry_locks 契约「材质由 offset 估计面分带」，
+   tests/geometry_locks.rs:100-121）优先于群系面表；原版全按群系与
+   温度门（SNOWY_BEACH/DESERT 沙不依赖海拔，peaks 系雪不依赖固定 46）。
+   估计面与真实顶差 ±1-2 格的边缘列按估计面分带，是有意保留的既有契约。
 6. **水面置换门（swamp/mangrove puddle、frozen ocean 冰盖）不实现**：
    SurfaceRuleData.java:186-199,240-252 的水/冰置面规则依赖 SWAMP 噪声与
    temperature 门，10 群系子集无 SWAMP/MANGROVE/FROZEN_OCEAN → 不可达，
-   扩群系后随 id 债一并补。（FROZEN_OCEAN 温度段的海床仍按默认砾石链
-   走——官方 frozen/deep_cold 同非沙链——只缺冰盖。）
-7. **WARM_OCEAN 以温度段温判近似（海洋 SURF-2 波）**：10 群系点表把
-   OBB.OCEANS 两行五温度段（OBB.java:72-75,202-209）并成一个 `Biome::Ocean`
-   （biomes.rs），海床链的群系区分（WARM/LUKEWARM 沙顶 :262、sandBiomes
-   砂岩带 :254-255）改按同位气候 `temperature ≥ 0.55`（OBB.java:60
-   temperatures[4]）分派——官方 LUKEWARM 段 [0.2,0.55) 在官方是·沙·
-   （:262 含 LUKEWARM_OCEAN/DEEP_LUKEWARM_OCEAN），本仓该段走砾石链
-   （近似差一温度段的沙顶）；冻/冷段砾石链与官方一致（deep/cold/frozen
-   均 gravelOrStoneIfCeiling）。
+   扩群系后随 id 债一并补。
 
 ## BLOCK-COVERAGE-1 全方块覆盖债量化（#147 审计波，只读登记）
 
