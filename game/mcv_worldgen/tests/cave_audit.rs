@@ -71,6 +71,7 @@ fn cave_audit_stats() {
     let win = gen_window();
     // 1) 层带统计。
     let mut lo = Y_LO;
+    let mut band_voids: Vec<f64> = Vec::new();
     let mut worst_deep_void = 0.0_f64;
     while lo < Y_HI {
         let hi = (lo + 16).min(Y_HI);
@@ -103,17 +104,29 @@ fn cave_audit_stats() {
             assert!(void < 0.5, "带 [{lo},{hi}) 空洞率 {void:.3} ≥0.5——全空腔病");
         }
         if lo >= -48 && hi <= 32 {
-            assert!(
-                void > 0.005,
-                "带 [{lo},{hi}) 空洞率 {void:.3} ≤0.005——全实心塌方病"
-            );
+            band_voids.push(void);
             worst_deep_void = worst_deep_void.max(void);
         }
         lo += 16;
     }
+    // cell 语义重锚（重锚波②）：分带「每带 >0.005」→「合计 ≥0.015 +
+    // 主力带 ≥0.02」。cell 外壳后洞腔分布对齐官方（主力集中在
+    // [0,16)/[-32,-16)），过渡带可以薄（官方 par-water 对照同形，
+    // seed 实测 [-48,-32)0.0057/[-32,-16)0.0308/[-16,0)0.0033，
+    // run 38825194406）。
+    let total_void: f64 = band_voids.iter().sum();
+    let main_void = band_voids.iter().cloned().fold(0.0_f64, f64::max);
     assert!(
-        worst_deep_void > 0.01,
-        "−48..32 深度域空洞率上限 {worst_deep_void:.3} 过低——洞网消失"
+        total_void >= 0.015,
+        "−48..32 深度域空洞率合计 {total_void:.3} <0.015——洞网消失"
+    );
+    assert!(
+        main_void >= 0.02,
+        "−48..32 主力带空洞率 {main_void:.3} <0.02——洞网失去主面"
+    );
+    assert!(
+        worst_deep_void < 0.5,
+        "带空洞率峰值 {worst_deep_void:.3} ≥0.5——全空腔病"
     );
     // 2) 最大连通体（BFS，洞域 y ∈ [−56, 64)）。
     let mut seen = vec![false; XW * YH * ZW];

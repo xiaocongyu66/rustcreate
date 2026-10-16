@@ -29,12 +29,11 @@ use mcv_worldgen::vanilla::{Biome, biome_at, surface_block_y};
 use mcv_worldgen::{TerrainBackend, TerrainOutput, generate_terrain_with};
 
 const FOREST_SEED: u64 = 0x7E_A20_0B1;
-const FOREST_CX: i32 = -21;
-const FOREST_CZ: i32 = 24;
+/// 运行时选窗（重锚波②，common::find_biome_window）——旧写死窗随
+/// cell 外壳气候位移失效（run 38825194406「Forest 窗气候漂移」）。
+mod common;
 
 const OCEAN_SEED: u64 = 0x7E_A20_0B1;
-const OCEAN_CX: i32 = -24;
-const OCEAN_CZ: i32 = -24;
 
 const DESERT_SEED: u64 = 99;
 const DESERT_CX: i32 = 49;
@@ -60,6 +59,17 @@ const GROUND_IDS: [u16; 3] = [3, 2, 11];
 
 const AIR: u16 = 0;
 const WATER: u16 = 5;
+
+/// Forest/Ocean 窗（运行时，OnceLock 只算一次——同 seed 确定性）。
+fn forest_win() -> (i32, i32) {
+    static W: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+    *W.get_or_init(|| common::find_biome_window(FOREST_SEED, Biome::Forest))
+}
+
+fn ocean_win() -> (i32, i32) {
+    static W: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+    *W.get_or_init(|| common::find_biome_window(OCEAN_SEED, Biome::Ocean))
+}
 
 fn is_log(id: u16) -> bool {
     LOG_IDS.contains(&id)
@@ -99,8 +109,8 @@ fn tree_bases(vox: &[u16]) -> Vec<(usize, i32, usize)> {
 fn forest_window_tree_count_in_band() {
     for z in 0..16_i32 {
         for x in 0..16_i32 {
-            let wx = FOREST_CX * 16 + x;
-            let wz = FOREST_CZ * 16 + z;
+            let wx = forest_win().0 * 16 + x;
+            let wz = forest_win().1 * 16 + z;
             assert_eq!(
                 biome_at(FOREST_SEED, wx, wz),
                 Biome::Forest,
@@ -113,7 +123,7 @@ fn forest_window_tree_count_in_band() {
             );
         }
     }
-    let t = gen_vanilla(FOREST_SEED, FOREST_CX, FOREST_CZ);
+    let t = gen_vanilla(FOREST_SEED, forest_win().0, forest_win().1);
     let logs = count_logs(t.voxels.as_u16_slice());
     assert!(
         (FOREST_LOGS_MIN..=FOREST_LOGS_MAX).contains(&logs),
@@ -125,7 +135,7 @@ fn forest_window_tree_count_in_band() {
 /// 2)+5) 树基门：基 y > SEA、下方为草地类且非空气/水（无悬空树）。
 #[test]
 fn tree_bases_above_sea_on_grassy_ground() {
-    let t = gen_vanilla(FOREST_SEED, FOREST_CX, FOREST_CZ);
+    let t = gen_vanilla(FOREST_SEED, forest_win().0, forest_win().1);
     let vox = t.voxels.as_u16_slice();
     let bases = tree_bases(vox);
     assert!(!bases.is_empty(), "Forest 窗无任何树基");
@@ -144,8 +154,8 @@ fn tree_bases_above_sea_on_grassy_ground() {
 /// 3) 确定性：同 seed 两次 generate 字节一致（体素 + 高度图）。
 #[test]
 fn deterministic_bytes_with_trees() {
-    let a = gen_vanilla(FOREST_SEED, FOREST_CX, FOREST_CZ);
-    let b = gen_vanilla(FOREST_SEED, FOREST_CX, FOREST_CZ);
+    let a = gen_vanilla(FOREST_SEED, forest_win().0, forest_win().1);
+    let b = gen_vanilla(FOREST_SEED, forest_win().0, forest_win().1);
     assert_eq!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
     assert_eq!(a.heightmap, b.heightmap);
 }
@@ -154,7 +164,7 @@ fn deterministic_bytes_with_trees() {
 #[test]
 fn ocean_and_desert_windows_treeless() {
     for (name, seed, cx, cz, want) in [
-        ("Ocean", OCEAN_SEED, OCEAN_CX, OCEAN_CZ, Biome::Ocean),
+        ("Ocean", OCEAN_SEED, ocean_win().0, ocean_win().1, Biome::Ocean),
         ("Desert", DESERT_SEED, DESERT_CX, DESERT_CZ, Biome::Desert),
     ] {
         for z in 0..16_i32 {

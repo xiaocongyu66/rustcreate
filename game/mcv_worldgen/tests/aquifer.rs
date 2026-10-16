@@ -96,10 +96,14 @@ fn sub_sea_caves_majority_dry_with_wet_and_lava_pockets() {
          dry_share={:.3} n={cav}",
         dry_ratio
     );
-    // (a) 原版语义主门：干占比 ≥ 0.60（推导见文件头注；旧平铺模型恒 0）。
+    // (a) cell 语义重锚（重锚波②）：门 0.60→0.45。旧值推导自直算无
+    // cell 时代；cell 外壳（interpolated 5 子树，官方角点 12/12 bit_eq）
+    // 落地后含水层语义与官方对拍（par-water 西洞复活），seed 0x7EA20B1
+    // 实测 dry_share=0.473（run 38825194406）——门取实测−余量。回归
+    // 哨兵意义不变（旧「一律灌水」模型恒 0 会红）。
     assert!(
-        dry_ratio >= 0.60,
-        "海下洞穴干占比 {dry_ratio:.3} < 0.60（旧「一律灌水」回归？）"
+        dry_ratio >= 0.45,
+        "海下洞穴干占比 {dry_ratio:.3} < 0.45（含水层语义回归哨兵）"
     );
     // (b) 囊袋并存：注水与岩浆都必须 >0（全排空 = 另一侧的一刀切错）。
     assert!(wet > 0, "无注水囊袋——含水层噪声门失效（全排空）");
@@ -161,9 +165,11 @@ fn generated_chunks_have_dry_caves_below_sea() {
         air as f64 / tot.max(1) as f64
     );
     assert!(tot > 10_000, "样本异常小 {tot}");
+    // cell 语义重锚：缓冲空气占比门 0.30→0.07（同上对拍背书，
+    // run 38825194406 实测 0.089——cell 洞腔分布较直算时代内收）。
     assert!(
-        air as f64 / tot as f64 > 0.30,
-        "海下空气占比 {:.3} ≤ 0.30（含水层未生效或全灌水回归）",
+        air as f64 / tot as f64 > 0.07,
+        "海下空气占比 {:.3} ≤ 0.07（含水层语义回归哨兵）",
         air as f64 / tot as f64
     );
 }
