@@ -11,9 +11,9 @@
 //! 测试挂钟爆表），column_state/biome_at 全走该实例。
 
 use mcv_core::SEA_LEVEL;
+use mcv_worldgen::vanilla::Biome;
 use mcv_worldgen::vanilla::climate::ClimateSampler;
 use mcv_worldgen::vanilla::terrain::Orchestrator;
-use mcv_worldgen::vanilla::Biome;
 
 /// 从原点螺旋外扫（Chebyshev 环），返回第一个满足三条件的 chunk 坐标
 /// `(cx, cz)`：①16×16 全 `want`；②≥14/16 列表面高于海面（防滩/浅水
