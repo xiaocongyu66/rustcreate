@@ -208,7 +208,7 @@ impl<'a, 'f> Replay<'a, 'f> {
             let surface_depth = self.orch.surface_depth(x, z);
             // 表层门基官方实物（SurfaceRules.java:330-383 bilerp4 + sd − 8；
             // 海洋 SURF-2 波随 terrain generate 同式，杜绝重放/缓冲漂移）。
-            let min_surface = self.orch.min_surface_level(x, z, &cs, surface_depth);
+            let min_surface = self.orch.min_surface_level(x, z, surface_depth);
             let skip = self
                 .field
                 .chunk_skip(x.div_euclid(16) * 16, z.div_euclid(16) * 16);

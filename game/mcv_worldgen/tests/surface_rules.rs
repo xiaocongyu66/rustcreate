@@ -26,6 +26,13 @@
 //! `surface_ours = 128+128·offset`（与密度场真实过零面差 ±1-2 格），
 //! `y == surface → GRASS`、`surface-3 ≤ y < surface → DIRT`——真实实顶低于
 //! 估计面时暴露层落在 DIRT/STONE 带 = 用户可见的「整片裸土」。
+//!
+//! 海洋 SURF-2 销账波：海床材质链官方归位（砾石顶/gravelOrStoneIfCeiling、
+//! 暖洋沙殿后、DEEP_UNDER_FLOOR 砂岩带、notUnderDeepWater 深水门）+
+//! abovePreliminarySurface 门基官方 findTopSurface 实物（旧 est−8 锚在
+//! 破面下沿漏石——重锚波②「滩带安山岩」归因＝本仓 SurfaceRules 漏支，
+//! 非官方 patch 行为，证据与收口注记见 geometry_locks
+//! vanilla_surface_material_bands / prelim_gate_matches_official_probe_constants）。
 
 use mcv_core::{ChunkPos, SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
 use mcv_worldgen::trees::ids;
@@ -44,6 +51,10 @@ const SAND: u16 = 4;
 const WATER: u16 = 5;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
+/// 砾石/砂岩（海洋 SURF-2 销账：terrain::GRAVEL/SANDSTONE；GEN_BLOCKS
+/// 431 `minecraft:gravel` / 893 `minecraft:sandstone`）。
+const GRAVEL: u16 = mcv_worldgen::vanilla::terrain::GRAVEL;
+const SANDSTONE: u16 = mcv_worldgen::vanilla::terrain::SANDSTONE;
 
 /// 六树种原木/叶（树基列排除：原版树基把表土换成 dirt，TreeConfiguration
 /// .java:20-26 经 tree_pass ChunkClipper 落地——不计入表层裸土症状）。
@@ -283,14 +294,24 @@ fn beach_window_top_is_sand() {
                     bad_land_top += 1;
                 }
             } else {
+                // 水下沉底：浅水（notUnderDeepWater 门内）沙带 SAND、
+                // 深水（门外）rule3 落回砾石 GRAVEL
+                //（SurfaceRuleData.java:249-265，Beach 不在 :262 暖洋列表）
+                // —— 沙/砾/土均官方合法，只防草/彩石外溢。
                 assert!(
-                    g == SAND || g == DIRT || g == BEDROCK,
-                    "Beach 窗水下沉底 {g} ∉ {{SAND,DIRT,BEDROCK}}（y={gy}）"
+                    g == SAND || g == DIRT || g == GRAVEL || g == BEDROCK,
+                    "Beach 窗水下沉底 {g} ∉ {{SAND,DIRT,GRAVEL,BEDROCK}}（y={gy}）"
                 );
             }
-            let below = vox[vidx(x, gy - 1, z)];
-            if gy - 1 > WORLD_MIN_Y + 5 && below != AIR && below != WATER && below != SAND {
-                bad_subsoil += 1;
+            // 水上乾柱亚表（UNDER_FLOOR 带）= SAND（sandOrSandstoneIfCeiling 的
+            // floor 分支，SurfaceRuleData.java:72,86）；水下沉底亚表走
+            // notUnderDeepWater 门（浅水 SAND/深石砾带，:249-265），上面
+            // 顶格已锁、亚表材质随门出入不单锁。
+            if gy >= SEA_LEVEL {
+                let below = vox[vidx(x, gy - 1, z)];
+                if gy - 1 > WORLD_MIN_Y + 5 && below != AIR && below != WATER && below != SAND {
+                    bad_subsoil += 1;
+                }
             }
         }
     }
@@ -302,13 +323,22 @@ fn beach_window_top_is_sand() {
     );
 }
 
-/// 海窗（Ocean）：水下沉底顶格 ∈ {SAND, DIRT}（原版海洋底为砾石
-/// SurfaceRuleData.java:258-265 gravelOrStoneIfCeiling——本仓无砾石 id，
-/// 沙代之并登记 KNOWN-DIVERGENCE SURF-2；此处只防草/石外溢，不锁死沙/土）。
+/// 海窗（Ocean）：水下沉底顶格 = 官方海床链逐层直译（SURF-2 销账，v1
+/// 全海床锁 SAND 为 id 债近似 + est 带错锁湿柱，均为本波根因面）：
+/// - 冷/中段 Ocean（温度 < 0.55）：rule2 门内（浅水，notUnderDeepWater）
+///   UNDER_FLOOR 恒罩顶格 ⇒ biomeUnder 默认 DIRT（:124,253）；门外（深水）
+///   rule3 gravelOrStoneIfCeiling = GRAVEL（:258-265）；
+/// - 暖段（temperature ≥ 0.55 = OBB.java:60 temperatures[4] WARM_OCEAN，
+///   合并群系的同位温度段近似）全深度 SAND（:262 sandOrSandstoneIfCeiling
+///   的 rule2/rule3 双覆盖）。
 /// 窗条件与草/滩窗不同：深海要求全列 est ≤ SEA−8（Ocean 群系在海岸带
-/// 可为干地——密度场说了算，不属本锁面）。
+/// 可为干地——密度场说了算，不属本锁面）。海波归因收口（重锚波②移交
+/// 项）：旧 gate 锚 `est−8` 而官方门基 prelim+sd−8（seed7 origin 实测
+/// prelim=32 vs 真顶 49-53），破面下沿裸石被矿层染成安山岩 = 我们的
+/// SurfaceRules 漏支，非官方 patch 行为——修复后本窗收紧为按温度段×
+/// 水深的精确材质（不再维护 SAND 代偿豁免与 stone 族松弛）。
 #[test]
-fn ocean_window_underwater_top_is_sand_or_dirt() {
+fn ocean_window_underwater_top_follows_official_chain() {
     let orch = Orchestrator::new(SEED);
     let mut win = None;
     'outer: for cz in -96..96 {
@@ -342,6 +372,7 @@ fn ocean_window_underwater_top_is_sand_or_dirt() {
         .expect("vanilla gen");
     let vox = t.voxels.as_u16_slice();
     let mut checked = 0usize;
+    let mut warm = 0usize;
     for z in 0..16usize {
         for x in 0..16usize {
             let Some((gy, g)) = ground_block(vox, x, z) else {
@@ -351,9 +382,28 @@ fn ocean_window_underwater_top_is_sand_or_dirt() {
                 continue; // 只锁水下沉底
             }
             checked += 1;
-            assert!(
-                g == SAND || g == DIRT || g == BEDROCK,
-                "Ocean 窗 ({cx},{cz}) 列 ({x},{z}) y={gy} 海床 {g} ∉ {{SAND,DIRT,BEDROCK}}"
+            let wx = cx * 16 + x as i32;
+            let wz = cz * 16 + z as i32;
+            let cs = orch.column_state(wx, wz);
+            // 海窗锁面 = 官方链逐层直译（SurfaceRuleData.java:249-265）：
+            // - 暖温度段（≥0.55 = WARM_OCEAN）全深度沙（:262 rule2/rule3）；
+            // - 冷/中段：门内（浅水 ≤6+sd）UNDER_FLOOR 罩顶格 ⇒ biomeUnder
+            //   默认 DIRT（:124,253），门外（深水）rule3 砾石（:258-265）。
+            let sd = orch.surface_depth(wx, wz);
+            let gate = gy + 1 >= SEA_LEVEL - 6 - sd; // y+da（da=1）
+            let want = if cs.temperature >= 0.55 {
+                warm += 1;
+                SAND
+            } else if gate {
+                DIRT
+            } else {
+                GRAVEL
+            };
+            assert_eq!(
+                g, want,
+                "Ocean 窗 ({cx},{cz}) 列 ({x},{z}) y={gy} 海床 {g} ≠ {want}\
+                 （temp={:.3}, gate={gate}；SurfaceRuleData.java:258-265/:262/:124）",
+                cs.temperature
             );
         }
     }
@@ -370,4 +420,30 @@ fn surface_rules_deterministic() {
         generate_terrain_with(TerrainBackend::Vanilla, SEED, ChunkPos::new(5, 9)).expect("gen b");
     assert_eq!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
     assert_eq!(a.heightmap[..], b.heightmap[..]);
+}
+
+/// abovePreliminarySurface 门基常量锁（海洋 SURF-2 波）：官方 26.1
+/// java-harness 探针（`java -cp build:… Main --seed 7 --probe-prelim x,z`
+/// = RandomState 7 router.preliminarySurfaceLevel().compute ——
+/// DensityFunctions.findTopSurface(NoiseRouterData.java:481-499)）实测：
+/// (0,0)=32.000000000000000、(800,800)=80.000000000000000、
+/// (−400,−400)=24.000000000000000（cell 高 8 量化下分）。本测锁本仓
+/// `Orchestrator::prelim_surface_level`（offset/factor 通道 + 无 jag 密度
+/// 核 + slide + 单调 8 格下扫的同构实现）于同 seed 同坐标取同值——
+/// offset/factor 噪声信道的原生链同位型已由 AQUI-1 python 镜像 360/360
+/// 位型证据+quality 密度通道锁背书，此处锁的是**组合式**（remap
+/// −128/+128（NoiseRouterData.java:310-314）、upper_bound 钳 [−40,320]、
+/// quarterNegative 深度核、−0.703125/−0.390625 常数、slide
+/// −0.078125/0.1171875）的逐位一致。
+#[test]
+fn prelim_gate_matches_official_probe_constants() {
+    let orch = Orchestrator::new(7);
+    for (x, z, want) in [(0, 0, 32), (800, 800, 80), (-400, -400, 24)] {
+        let cs = orch.column_state(x, z);
+        let got = orch.prelim_surface_level(x, z, &cs);
+        assert_eq!(
+            got, want,
+            "seed7 prelim 门基 ({x},{z}) = {got} ≠ 官方探针 {want}"
+        );
+    }
 }
