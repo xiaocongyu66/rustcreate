@@ -428,7 +428,7 @@ fn flower_noise_bits_match_independent_mirror() {
     for ((x, y, z), want) in probes {
         let v = flower_noise_probe(x, y, z);
         let bits = v.to_bits();
-        eprintln!("K-FLORA-MIRROR probe=({x},{y},{z}) value_bits=0x{bits:016x} decimal={v!r}");
+        eprintln!("K-FLORA-MIRROR probe=({x},{y},{z}) value_bits=0x{bits:016x} decimal={v}");
         if want != 0 {
             assert_eq!(
                 bits, want,
