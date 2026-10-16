@@ -5,25 +5,35 @@
 //! 空转」。改为运行时按 `biome_at` 扫描找第一个全 16×16=want 的
 //! chunk 窗——对 biome 分布漂移鲁棒，断言语义（窗内树密度/跨界完整）
 //! 不变。
+//!
+//! **性能合同（run 38847295786 卡死教训）**：每个候选窗**只建一次**
+//! [`Orchestrator`]（噪声重初始化毫秒级/次——每列重建=十万次构造=
+//! 测试挂钟爆表），column_state/biome_at 全走该实例。
 
 use mcv_core::SEA_LEVEL;
-use mcv_worldgen::vanilla::{Biome, biome_at, surface_block_y};
+use mcv_worldgen::vanilla::climate::ClimateSampler;
+use mcv_worldgen::vanilla::terrain::Orchestrator;
+use mcv_worldgen::vanilla::Biome;
 
-/// 从原点螺旋外扫（Chebyshev 环），返回第一个 16×16 全 `want` 的
-/// chunk 坐标 `(cx, cz)`；±96 chunk 环内找不到即 panic（气候场崩坏）。
+/// 从原点螺旋外扫（Chebyshev 环），返回第一个满足三条件的 chunk 坐标
+/// `(cx, cz)`：①16×16 全 `want`；②≥14/16 列表面高于海面（防滩/浅水
+/// 立地列——树基弃置→树测试空转）；③窗中心列温 >0.2（#196 列级积雪
+/// 低温上图→表面带雪→同样空转；run 38843693793/38845044818 实证）。
+/// ±160 chunk 环内找不到即 panic（气候场崩坏）。
 #[must_use]
 pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
+    let orch = Orchestrator::new(seed);
+    let climate = ClimateSampler::new(seed);
     for r in 0..=160_i32 {
         for cz in -r..=r {
             for cx in -r..=r {
                 if cx.abs() != r && cz.abs() != r {
                     continue; // 只扫新环
                 }
-                if window_all(seed, cx, cz, want)
-                    && ground_pure(seed, cx, cz)
-                    && mcv_worldgen::vanilla::column_temperature(seed, cx * 16 + 8, cz * 16 + 8)
-                        > 0.2
-                {
+                if !window_biome(&orch, cx, cz, want) || !ground_pure(&orch, cx, cz) {
+                    continue;
+                }
+                if climate.sample(cx * 16 + 8, cz * 16 + 8).temperature > 0.2 {
                     return (cx, cz);
                 }
             }
@@ -32,30 +42,27 @@ pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
     panic!("find_biome_window: ±160 chunk 环内无合格 {want:?} 窗——生物群系气候场崩坏");
 }
 
-/// 立地纯度：≥14/16 列「表面高于海面」（surface_block_y≥SEA_LEVEL）+
-/// 窗中心列温 >0.2（#196 列级积雪按温度上图，biome=Forest 的低温列
-/// 表面带雪→树基立地弃→树测试空转；run 38843693793/38845044818 实证）。
-/// 三重合并后窗=「全 Forest + 高海面 + 暖带」的干净林地。
-#[must_use]
-fn ground_pure(seed: u64, cx: i32, cz: i32) -> bool {
-    let mut ok = 0;
+/// 单窗群系检查（复用同一 Orchestrator——性能合同见模块注）。
+fn window_biome(orch: &Orchestrator, cx: i32, cz: i32, want: Biome) -> bool {
     for z in 0..16_i32 {
         for x in 0..16_i32 {
-            if surface_block_y(seed, cx * 16 + x, cz * 16 + z) >= SEA_LEVEL {
-                ok += 1;
-            }
-        }
-    }
-    ok >= 14
-}
-
-fn window_all(seed: u64, cx: i32, cz: i32, want: Biome) -> bool {
-    for z in 0..16_i32 {
-        for x in 0..16_i32 {
-            if biome_at(seed, cx * 16 + x, cz * 16 + z) != want {
+            if orch.biome_at(cx * 16 + x, cz * 16 + z) != want {
                 return false;
             }
         }
     }
     true
+}
+
+/// 立地纯度：≥14/16 列「表面高于海面」。
+fn ground_pure(orch: &Orchestrator, cx: i32, cz: i32) -> bool {
+    let mut ok = 0;
+    for z in 0..16_i32 {
+        for x in 0..16_i32 {
+            if orch.column_state(cx * 16 + x, cz * 16 + z).surface_ours >= SEA_LEVEL {
+                ok += 1;
+            }
+        }
+    }
+    ok >= 14
 }
