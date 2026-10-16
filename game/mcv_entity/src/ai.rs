@@ -730,11 +730,14 @@ pub fn wrap_angle(a: f32) -> f32 {
 /// BodyRotationControl.clientTick:19-20：移动中 `yBodyRot = getYRot()`）。
 /// 引擎朝向角约定 `f(yaw) = (sin yaw, 0, −cos yaw)`（与 `Camera::dir` 同型），
 /// vanilla 的 atan2(zd,xd)−90° 在引擎空间镜像为 `wish.x.atan2(−wish.z)`（与
-/// passive.rs 有界转身同式，yaw=0 即 −z 正面）。`wish` 近零（站立）返回
-/// None——不转（原版站立时 body 缓跟头 rot，RenderSide 单 yaw 面不建模）。
+/// passive.rs 有界转身同式，yaw=0 即 −z 正面）。`wish` 水平足迹近零（站立/
+/// 纯竖直位移）返回 None——不转（原版站立时 body 缓跟头 rot，RenderSide
+/// 单 yaw 面不建模）。
 /// 返回有界步进后的新 yaw（每 tick 至多 [`BODY_TURN_STEP`]，环回最短角）。
 pub fn walk_body_yaw(current: f32, wish: Vec3, max_step: f32) -> Option<f32> {
-    if wish.length_squared() < 1e-8 {
+    // 航向只看水平投影（vanilla sideDist 只含 xd/zd，LivingEntity.java:2734-2736
+    // ——重力诱导的纯竖直位移不转头，水平足迹近零即视作站立不吃步长）。
+    if wish.x * wish.x + wish.z * wish.z < 1e-8 {
         return None;
     }
     let target = wish.x.atan2(-wish.z);

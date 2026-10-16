@@ -7677,10 +7677,9 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                                     *dir,
                                     mcv_entity::BODY_TURN_STEP,
                                 )
+                                && let Some(y) = yaw.get_mut(e)
                             {
-                                if let Some(y) = yaw.get_mut(e) {
-                                    y.0 = nyaw;
-                                }
+                                y.0 = nyaw;
                             }
                         }
                         AiAction::Look(t) => {
