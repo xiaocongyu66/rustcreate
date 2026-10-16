@@ -4,8 +4,8 @@
 //! MATERIAL_MOTION_BLOCKING 水不计顶）。
 //!
 //! 覆盖：① 固定种子确定性（同 seed 逐条相等、(seed, origin) 纯函数、
-//! 异 seed 异输出、通道域盐隔离）；② OCEAN 行两特征齐全（seagrass 丛
-//! + kelp 柱），柱形 = 连续列 + 顶头体中 + total ≤ 11（h 循环 0..=height
+//! 异 seed 异输出、通道域盐隔离）；② OCEAN 行两特征齐全（seagrass 丛、
+//! kelp 柱），柱形 = 连续列 + 顶头体中 + total ≤ 11（h 循环 0..=height
 //! 的实物柱面；任务单「1..25」系 KelpBlock.AGE 状态域，头注已勘误）+
 //! 洋底/河床实面附着；③ 写域 = 只替换 pass-1 水柱格 + 写入帽 y ≤ 62
 //! （geometry_locks「63 层非水」对偶锁）+ 陆块（全 256 列无 Ocean/River
@@ -141,8 +141,8 @@ fn survey() -> &'static Survey {
     })
 }
 
-/// ① OCEAN 行两特征齐全 + kelp 柱形（连续/顶头体中/total ≤ 11/洋底附着）
-/// + 单锚 48 次重试上限的 count 面。
+/// ① OCEAN 行两特征齐全 + kelp 柱形（连续/顶头体中/total ≤ 11/洋底
+/// 附着）与单锚 48 次重试上限的 count 面。
 #[test]
 fn ocean_rows_seagrass_and_kelp_present_with_column_shape() {
     let orch = Orchestrator::new(SEED);
@@ -377,8 +377,8 @@ fn river_rows_place_seagrass_only_end_to_end() {
     assert!(seen > 0, "河块写全部越界（锚点 jitter 边角退化？）");
 }
 
-/// ④ 固定种子：同 seed 同输出（(seed, origin) 纯函数、两次调用逐条相等）
-/// + 异 seed 异输出 + 通道域盐隔离（树域 0x7BEE_5501/湖域
+/// ④ 固定种子：同 seed 同输出（(seed, origin) 纯函数、两次调用逐条
+/// 相等）、异 seed 异输出、通道域盐隔离（树域 0x7BEE_5501/湖域
 /// 0x0000_1A3E_005E 私有常量，ores.rs::cross_chunk_vein_stitching 硬编码
 /// 哨兵先例）。
 #[test]

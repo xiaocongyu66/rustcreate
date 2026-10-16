@@ -59,7 +59,7 @@
 //!   canAttachTo 否 → 头/体/isFaceSturdy 三选一（GrowingPlantBlock
 //!   .java:47-53）；kelp 的 canAttachTo = 非 CANNOT_SUPPORT_KELP
 //!   （KelpBlock.java:46-48）；seagrass = mayPlaceOn = face-sturdy(UP)
-//!   + 非 CANNOT_SUPPORT_SEAGRASS（SeagrassBlock.java:46-47）。本仓面：
+//!   且非 CANNOT_SUPPORT_SEAGRASS（SeagrassBlock.java:46-47）。本仓面：
 //!   face-sturdy ≈ 生成面实心（`mcv_core::BLOCKS[id].solid`；pass-1 首
 //!   实心恒 solid）；tag 静态表 `mcv_core::tags` 只含 magma_block
 //!   （id 585，TAG_BLOCK_CANNOT_SUPPORT_KELP/SEAGRASS，gen-tags 波骨架
@@ -121,7 +121,7 @@ use std::sync::OnceLock;
 
 /// 水草通道域盐（ORE_DOMAIN/TREE_DOMAIN/LAKE_DOMAIN 先例；每 (origin 区
 /// 块, 行) 流再域内派生，见模块头注随机域段）。
-pub const WATER_FLORA_DOMAIN: u64 = 0x5EA_5EE_0000_0001;
+pub const WATER_FLORA_DOMAIN: u64 = 0x005E_A5EE_0000_0001;
 
 /// 下行 id 引 `mcv_core::BLOCKS`（blocks_gen.inc.rs，注释 = 表行号）：
 ///海带头方块（AGE 0..25 状态面本仓不存，/id 即视觉）。
