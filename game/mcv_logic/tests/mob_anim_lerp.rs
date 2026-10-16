@@ -193,14 +193,17 @@ fn zombie_walk_ledger_advances_and_swings_legs() {
     assert!(moved > 1.0, "60 步内僵尸应向玩家位移，实际 {moved:.3}");
 
     // 账本面：horiz > 0.15 m/s 的步数充分 → amount 收敛上行、phase 推进。
-    let anims = app.world.read::<mcv_entity::AnimState>();
-    let anim = anims.get(z).expect("spawn_mob 应装配 AnimState");
-    assert!(
-        anim.amount > 0.1,
-        "行走幅值应上行（原版满速 0.88），实际 {}",
-        anim.amount
-    );
-    assert!(anim.phase > 0.1, "行走相位应推进，实际 {}", anim.phase);
+    // （读取视图收在本块内：后续 write::<AnimState> 需独占借用。）
+    {
+        let anims = app.world.read::<mcv_entity::AnimState>();
+        let anim = anims.get(z).expect("spawn_mob 应装配 AnimState");
+        assert!(
+            anim.amount > 0.1,
+            "行走幅值应上行（原版满速 0.88），实际 {}",
+            anim.amount
+        );
+        assert!(anim.phase > 0.1, "行走相位应推进，实际 {}", anim.phase);
+    }
 
     // 渲染消费面：摆动写入 MobInstance 矩阵。测试期固定账本值做确定性
     // 断言（AI 跑出的 phase 可能落在 cos→0 的退火点，幅值改动偶发不可见；
