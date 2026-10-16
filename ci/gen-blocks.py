@@ -98,6 +98,17 @@ LEGACY_ATTRS = {
 }
 LEGACY_OFFICIAL = {off for _, off, _ in LEGACY}
 
+# 旧 14 行的 overlay 插层模型（行名 → 官方模型 id）：模型 JSON 实物逐面
+# tintindex 表驱动（ci/model_face_textures 的同一条提取路径），不硬编码层号。
+# - grass：grass_block.json 第 2 元素 4 侧 #overlay（tintindex 0）→ 草裙
+#   侧面插层贴图（BaseMapLayer 灰度 × 群系色，BlockTintSources.grassBlock()）。
+# - snow_grass：覆雪态走 grass_block_snow.json——无 overlay 元素 → 恒空
+#   （雪覆草面无草裙，与原版一致；也借此锁「不从 grass_block 借 overlay」）。
+LEGACY_OVERLAY_MODELS = {
+    "grass": "minecraft:block/grass_block",
+    "snow_grass": "minecraft:block/grass_block_snow",
+}
+
 # missing 哨兵贴图名（tiles_manifest.json 最后一层，无对应文件）。模型无贴图
 # 解析的方块（air/barrier/light/structure_void 等）全部指向该层，运行时由
 # mcv_core::atlas 固定为原版 missingno 品红标记（MissingTextureAtlasSprite）。
@@ -266,7 +277,16 @@ def normalize_tex(path):
 
 
 def model_face_textures(model_id):
-    """→ (faces: face→'block/x' 或 None, kind, cross)  kind: 0=纯立方, 1=非立方。"""
+    """→ (faces: face→'block/x' 或 None, kind, cross, overlays)  kind: 0=纯立方, 1=非立方。
+
+    overlays（26.1 模型 JSON 逐面 tintindex 表驱动，从本仓 assets 实物读取，
+    不硬编码层号）：同一面被**后绘制元素**再次覆盖、且该面 JSON 带
+    `tintindex` 字段时 → 该面 overlay = 后元素贴图、base 保留首元素贴图
+    （原版逐元素烘焙：grass_block.json 第 2 元素 4 侧 #overlay tintindex 0
+    叠在第 1 元素 #side 之上——26.1 ModelBlockRenderer.java:212-214 按
+    quad tintIndex 查 BlockColors 色源乘顶点色，首元素无 tintindex 不染）。
+    无 tintindex 的后绘制覆盖仍走「后者替换 base」旧规（贴图引用归一，
+    非插层）。"""
     chain, parents = load_model_chain(model_id)
     if not chain:
         stats["model_missing"] += 1
@@ -277,7 +297,7 @@ def model_face_textures(model_id):
         merged.update(j.get("textures", {}))
     particle = normalize_tex(resolve_ref(chain, merged.get("particle")))
 
-    face_tex, full_box, has_elements, side_only = {}, True, False, True
+    face_tex, face_ovl, full_box, has_elements, side_only = {}, {}, True, False, True
     for j in chain:
         for el in j.get("elements", []):
             has_elements = True
@@ -291,7 +311,12 @@ def model_face_textures(model_id):
             for face, f in faces.items():
                 t = normalize_tex(resolve_ref(chain, f.get("texture")))
                 if t:
-                    face_tex[face] = t  # 后绘制元素（grass overlay 等）覆盖同面
+                    if "tintindex" in f and face in face_tex and face_tex[face] != t:
+                        # 后绘制元素带 tintindex 重覆同面 = overlay 插层
+                        # （grass_block 草裙实物）；base 保留首元素贴图。
+                        face_ovl[face] = t
+                    else:
+                        face_tex[face] = t  # 后绘制元素替换同面（旧规）
 
     cross = any(p in ("cross", "cross_emissive") for p in parents)
     cube = (not has_elements) or (full_box and not side_only)
@@ -322,7 +347,10 @@ def model_face_textures(model_id):
                    or face_tex.get("north") or face_tex.get("east") or particle)
             for face in FACE_ORDER:
                 out[face] = out.get(face) or face_tex.get(face) or rep
-    return out, (0 if cube else 1), cross
+    # overlay 插层仅对「纯立方且全盒 elements」模型有意义（网格器双 quad
+    # 贴在 base 面之上；kind=1 占位/十字模型 overlay 面不渲染，置空防将来
+    # 误接线——炼药锅水层等 tintindex 面属 kind=1）。
+    return out, (0 if cube else 1), cross, (face_ovl if cube else {})
 
 
 # ---------------------------------------------------------------------------
@@ -600,9 +628,11 @@ def main():
         model, is_mp = default_model_of(json.loads(p.read_text()))
         if model is None:
             faces, kind, cross = {f: None for f in FACE_ORDER}, 1, False
+            overlays = {}
         else:
-            faces, kind, cross = model_face_textures(model)
-        blocks[name] = {"faces": faces, "kind": kind, "cross": cross, "mp": is_mp}
+            faces, kind, cross, overlays = model_face_textures(model)
+        blocks[name] = {"faces": faces, "kind": kind, "cross": cross,
+                        "mp": is_mp, "overlays": overlays}
         stats["cube" if kind == 0 else "noncube"] += 1
         if kind:
             stats["noncube_cross" if cross else
@@ -616,6 +646,14 @@ def main():
     wanted = set()
     for b in blocks.values():
         wanted.update(t for t in b["faces"].values() if t)
+        wanted.update(t for t in b["overlays"].values() if t)
+    # 旧 14 行的 overlay 插层模型 JSON 实物提取（在贴图收集前，让 overlay
+    # 贴图进 manifest 层表——grass_block_side_overlay 灰度草裙）。
+    legacy_overlays = {}
+    for lname, model in LEGACY_OVERLAY_MODELS.items():
+        _, _, _, ov = model_face_textures(model)
+        legacy_overlays[lname] = ov
+        wanted.update(t for t in ov.values() if t)
     for _, _, tiles in LEGACY:
         if tiles:
             wanted.update(tiles)
@@ -687,6 +725,15 @@ def main():
         # 无贴图解析（tex 为空）或贴图不在素材树 → missing 哨兵层。
         return tile_index.get(renamed[tex], sentinel_index) if tex else sentinel_index
 
+    def overlay_id(tex):
+        # overlay 插层缺失（该面无 tintindex 后元素）= 0（无第二层）。解析到
+        # 缺贴图/missingno 同样 0——overlay 贴在 base 之上，哨兵品红会盖住
+        # 底图（宁缺不染）：tint 消费方按 0 = 白（TINT_NONE），渲染退化为
+        # 「无草裙插层」的旧样子，绝不闪品红。
+        if not tex or tex not in wanted:
+            return 0
+        return tile_index.get(renamed[tex], 0)
+
     # --- 官方注册表名字清单（覆盖率测试用；名字是事实，可入仓） ---
     vanilla_sorted = sorted(entries)
     OUT_VANILLA.write_text(
@@ -705,7 +752,7 @@ def main():
     lines = [
         "// @generated by ci/gen-blocks.py — DO NOT EDIT.",
         "// DEVELOP_ONLY：官方 26.1 blockstates/models/Blocks.java 生成（同 assets/ 素材政策）。",
-        "// 元组: (name, solid, opaque, liquid, light_emit, tiles [+X,-X,+Y,-Y,+Z,-Z], hardness, model_kind, requires_tool)",
+        "// 元组: (name, solid, opaque, liquid, light_emit, tiles [+X,-X,+Y,-Y,+Z,-Z], hardness, model_kind, requires_tool, overlays [+X,-X,+Y,-Y,+Z,-Z])",
         "// requires_tool: 掉落门 Properties.requiresCorrectToolForDrops()（#178 刀2a，",
         "// BlockBehaviour.java:1213 置位 + ofLegacyCopy/ofFullCopy :1054 继承闭包；",
         "// 旧 14 行按官方对应名（LEGACY 第 2 字段）查 Java 表，无对应= false）。",
@@ -719,17 +766,22 @@ def main():
         "// snow_grass(id 11): 官方是 grass_block 的 snowy 状态；本引擎单方块模型，独立 id，取 snow 模型贴图。",
         "// tintindex 生物群系染色（草顶/羊齿/树叶三族）已实现：渲染侧按 tile 层查",
         "// mcv_core::tint 注册表乘生物群系色（26.1 BlockColors 等价）。",
+        "// overlays（第 10 列）：模型 JSON 后绘制元素带 tintindex 重覆同面的插层",
+        "// 贴图（grass_block 草裙实物；26.1 ModelBlockRenderer.java:212-214 按",
+        "// tintIndex 乘 BlockColors 色源）——0 = 无插层。网格器在 base 面之上",
+        "// 逐面再发一条同几何 overlay quad（mcv_mesher build_pass），tint 按",
+        "// overlay 层号查注册表（草裙侧面经 grass_block_side_overlay 层染群系色）。",
         "// cross/torch/fence/slab/stairs 由网格器 shape 模板路径按 state 出几何",
         "// （网格器 shape 模板路径，Rust 侧 mcv_mesher）；其余 kind=1 仍整盒占位、六面给代表贴图。",
         "// carpet/trapdoor/pane/wall（shape 6..9）渲染暂全盒占位，模板待 Rust",
         "// 网格器 #77；碰撞/拾取几何已在 engine/mcv_game/src/blockshapes.rs 按",
         "// 原版数值落地。",
-        "// rustfmt::skip：9 列元组单行 >100 列时 rustfmt 会把整个数组竖排",
+        "// rustfmt::skip：10 列元组单行 >100 列时 rustfmt 会把整个数组竖排",
         "// （1171 行炸成 1.4 万行，可读性归零）；skip 后单行版即 rustfmt",
         "// 稳定态，cargo fmt --check 绿。先例：mcv_worldgen os2s smooth.rs。",
         "#[allow(clippy::type_complexity)]",
         "#[rustfmt::skip]",
-        f"static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8, bool); {total}] = [",
+        f"static GEN_BLOCKS: [(&str, bool, bool, bool, u8, [u16; 6], f32, u8, bool, [u16; 6]); {total}] = [",
     ]
     idx = 0
     for lname, off, tiles in LEGACY:
@@ -741,6 +793,8 @@ def main():
             stats.setdefault("legacy_requires_miss", []).append(lname)
         requires = bool(java and java["requires"])
         t = [tile_id(x) for x in tiles] if tiles else [sentinel_index] * 6
+        ov = legacy_overlays.get(lname, {})
+        o = [overlay_id(ov.get(f)) for f in FACE_ORDER]
         cmt = ""
         if lname == "snow_grass":
             cmt = "  // = grass_block[snowy=true]，独立 id（单方块模型）"
@@ -748,7 +802,8 @@ def main():
             cmt = "  // cross 占位：旧表 6 面同贴图，保持不变"
         lines.append(f"    /* {idx:4} */ ({json.dumps(lname)}, {rb(solid)}, {rb(opaque)}, "
                      f"{rb(liquid)}, {light}, [{', '.join(map(str, t))}], "
-                     f"{rust_f32(hard)}, {kind}, {rb(requires)}),{cmt}")
+                     f"{rust_f32(hard)}, {kind}, {rb(requires)}, "
+                     f"[{', '.join(map(str, o))}]),{cmt}")
         idx += 1
 
     for name in sorted(blocks):
@@ -770,9 +825,11 @@ def main():
                 or any(w in name for w in NONOPAQUE_NAME_WORDS) \
                 or b["kind"] == 1:
             opaque = False
+        o = [overlay_id(b["overlays"].get(f)) for f in FACE_ORDER]
         lines.append(f"    /* {idx:4} */ ({json.dumps(name)}, {rb(solid)}, {rb(opaque)}, "
                      f"{rb(liquid)}, {attrs['light']}, [{', '.join(map(str, t))}], "
-                     f"{rust_f32(attrs['hardness'])}, {b['kind']}, {rb(attrs['requires'])}),")
+                     f"{rust_f32(attrs['hardness'])}, {b['kind']}, {rb(attrs['requires'])}, "
+                     f"[{', '.join(map(str, o))}]),")
         idx += 1
     lines.append("];")
     OUT_RS.write_text("\n".join(lines) + "\n")
@@ -804,15 +861,27 @@ def main():
                      for f, x in zip(FACE_ORDER, tiles)} if tiles else {}
             kind = LEGACY_ATTRS[next(n for n, o, _ in LEGACY
                                      if o == s and n != "snow_grass")][5]
+            # 行名（grass_block 样本 → legacy 行 grass）；overlay 显示仅对
+            # 配了插层模型的行有意义（snow_grass 走 grass_block_snow → 恒空）。
+            row = "grass" if s == "grass_block" else None
+            ovs = legacy_overlays.get(row, {}) if row else {}
+            over = {f: (renamed.get(ovs[f], "∅") if ovs.get(f) else None)
+                    for f in FACE_ORDER}
         else:
             src = "gen"
             b = blocks[s]
             faces = {f: (renamed.get(b["faces"][f], "∅") if b["faces"][f] else None)
                      for f in FACE_ORDER}
             kind = b["kind"]
+            ovs = b["overlays"]
+            over = {f: (renamed.get(ovs[f], "∅") if ovs.get(f) else None)
+                    for f in FACE_ORDER}
         print(f"{s:20s} kind={kind} src={src}")
         for f in FACE_ORDER:
-            print(f"   {f:6s} -> {faces.get(f)}")
+            base = faces.get(f)
+            ovl = over.get(f)
+            suffix = f"  (+overlay: {ovl})" if ovl else ""
+            print(f"   {f:6s} -> {base}{suffix}")
     return 0
 
 

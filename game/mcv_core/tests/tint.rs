@@ -75,6 +75,50 @@ fn tint_kinds_match_blockcolors_registry() {
     assert_eq!(tint::tint_kind(u16::MAX), tint::TINT_NONE);
 }
 
+/// 草方块侧 overlay 逐面 tint 接线（26.1 grass_block.json 实值表驱动，
+/// ci/gen-blocks.py LEGACY_OVERLAY_MODELS 提取）：grass 行 4 侧 overlay =
+/// grass_block_side_overlay 层（GRASS 族，tintindex 0 实物），顶/底恒 0；
+/// snow_grass 走 grass_block_snow.json（无 overlay 元素）→ 恒 0；base 侧面
+/// 贴图（grass_block_side）本身不注册——草裙绿色只来自 overlay 插层。
+#[test]
+fn grass_side_overlay_wiring_matches_model_json() {
+    let names = mcv_core::atlas::tile_file_names();
+    let layer =
+        |name: &str| u16::try_from(names.iter().position(|n| *n == name).expect(name)).unwrap();
+    let overlay = layer("grass_block_side_overlay");
+    let side = layer("grass_block_side");
+    let mut grass = None;
+    let mut snow = None;
+    for b in mcv_core::BLOCKS.iter() {
+        match b.name {
+            "grass" => grass = Some(b),
+            "snow_grass" => snow = Some(b),
+            _ => {}
+        }
+    }
+    let grass = grass.expect("grass 行");
+    let snow = snow.expect("snow_grass 行");
+    // FACE_ORDER [+X,-X,+Y,-Y,+Z,-Z]：4 侧插层、顶/底无。
+    assert_eq!(
+        grass.overlays,
+        [overlay, overlay, 0, 0, overlay, overlay],
+        "grass 侧面 overlay 应为 grass_block_side_overlay 层"
+    );
+    assert_eq!(snow.overlays, [0; 6], "覆雪面无草裙（无插层）");
+    // 全表唯一插层行 = grass（其它模型即便有多元素 tintindex（叶/cross/
+    // 炼药锅）也走 tile 层 kind 或 kind=1 路径，不进插层列）。
+    assert!(
+        mcv_core::BLOCKS
+            .iter()
+            .all(|b| b.name == "grass" || b.overlays == [0; 6]),
+        "插层列只允许 grass 行非零"
+    );
+    // tint 消费口径：overlay 层 = GRASS 族，base 侧面层不注册（原版
+    // tintindex 只在 overlay 元素上）。
+    assert_eq!(tint::tint_kind(overlay), tint::TINT_GRASS);
+    assert_eq!(tint::tint_kind(side), tint::TINT_NONE);
+}
+
 /// ChunkTint：plains 全域时草/叶色来自真实 colormap（#91BD59/#77AB2F），
 /// 混合窗内同质 → 恒等；box 均值语义（calculateBlockTint 实物：先解色
 /// 后整数平均）。
