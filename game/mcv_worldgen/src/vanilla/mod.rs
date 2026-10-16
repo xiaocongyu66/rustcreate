@@ -28,6 +28,7 @@ pub mod spline;
 pub mod structure;
 pub mod terrain;
 pub mod tree_pass;
+pub mod water_flora;
 pub mod xoroshiro;
 
 pub use biomes::Biome;

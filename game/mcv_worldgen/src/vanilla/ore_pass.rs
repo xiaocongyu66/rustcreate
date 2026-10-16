@@ -187,10 +187,19 @@ impl<'a, 'f> Replay<'a, 'f> {
     }
 
     /// OCEAN_FLOOR_WG 高度图值（探针用；water 计顶 = max(fs, SEA)+1，
-    /// lake_pass::Replay::top_floor 引注同口径）。
-    fn top_floor(&mut self, x: i32, z: i32) -> i32 {
+    /// lake_pass::Replay::top_floor 引注同口径）。水草 pass 消费同口径
+    /// （water_flora 头注 getHeight(OCEAN_FLOOR) 对位）。
+    #[must_use]
+    pub fn top_floor(&mut self, x: i32, z: i32) -> i32 {
         let c = self.col(x, z);
         c.first_solid.max(mcv_core::SEA_LEVEL) + 1
+    }
+
+    /// 群系查点（BiomeFilter.java:24-28 零随机对位；水草 pass 复用
+    /// 重放面，不另开 Orchestrator 通道）。
+    #[must_use]
+    pub fn biome_at(&self, x: i32, z: i32) -> crate::vanilla::biomes::Biome {
+        self.orch.biome_at(x, z)
     }
 
     fn col(&mut self, x: i32, z: i32) -> &mut Col {
