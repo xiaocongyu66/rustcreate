@@ -38,8 +38,8 @@ pub use items::{
 pub use passive::{
     AnimState, EAT_GRASS_INTERVAL, EAT_GRASS_TICKS, PANIC_MAX_TICKS, PANIC_RADIUS,
     PLAYER_WALK_SPEED, PassiveMode, PassiveServices, STROLL_INTERVAL, WanderState,
-    panic_speed_mult, passive_ai_system, register_passive_components, spawn_passive_mob,
-    update_wing,
+    advance_walk_anim, panic_speed_mult, passive_ai_system, register_passive_components,
+    spawn_passive_mob, update_wing,
 };
 pub use pathfinding::{BASE_FALL_DISTANCE, Path, PathParams, find_path, max_fall_distance};
 pub use spawner::{SPAWN_CAPS, SpawnCategory, SpawnConfig, SpawnRule, SpawnWorld, Spawned};

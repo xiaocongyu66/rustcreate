@@ -3163,9 +3163,16 @@ impl AppState {
         // 生物实例收集（审计 D P0 接线）：mobs ECS 逻辑早已在固定步运转，
         // 但场景装配恒喂 None → 渲染端从未画过怪。此处只读 World 拼装
         // MobInstance，视距裁剪 = 渲染距离（与区块流同界）。
+        // partialTick（26.1 LivingEntity 渲染插值 lerp(xOld, x, partialTick)
+        // 的残差面）：喂步累加器余量归一化——本帧已喂 0..n 个 60 Hz 步，
+        // 余量 ∈ [0, 1/60) 即"距上一完成步的墙钟占比"；怪渲染位置取
+        // pos_old→pos 的该占比插值，消除步边界瞬移（与粒子 tick_frac 插值
+        // 同思路，粒子在 20 Hz tick 域、mob 在 60 Hz 物理步域）。
+        let mob_partial = (self.step_accum * 60.0).clamp(0.0, 1.0);
         let mob_instances = mcv_logic::mob_render::collect_mob_instances_in(
             &runtime.mobs_app.world,
             Some((camera.pos, runtime.render_dist as f32 * 16.0)),
+            mob_partial,
         );
         // 掉落物渲染快照（#150 刀 1）：ECS ItemDrop → billboard 批
         // （图标解析/光照/相位换算在 game 层 item_drops 内聚）。
