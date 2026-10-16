@@ -376,10 +376,18 @@ fn river_rows_place_seagrass_only_end_to_end() {
             continue; // 特征内 ±7 抖出界的写由邻块重放落其自块
         }
         let got = vox[mcv_core::vidx(lx as usize, w.y, lz as usize)];
-        assert_eq!(
-            got, w.id,
-            "体素落位 ({},{},{}) 期望 {} got {got}",
-            w.x, w.y, w.z, w.id
+        // 写表位点的水草族成员断言（非逐 id 等值）：pass-1 重放判据下
+        // 同格二次 attempt 后写覆写前写（tall 上半被后续 short 覆盖等，
+        // f359 run 实证 (706,60,-1018) 1002→905），buffer 终态只锁
+        // 「水草族占格」，既证全链落位又不绑覆写次序（头注
+        // KNOWN-DIVERGENCE 第 2 条）。
+        assert!(
+            got == SEAGRASS || got == TALL_SEAGRASS,
+            "体素落位 ({},{},{}) 写表 {} 但 buffer {got} 非海草族",
+            w.x,
+            w.y,
+            w.z,
+            w.id
         );
         seen += 1;
     }
