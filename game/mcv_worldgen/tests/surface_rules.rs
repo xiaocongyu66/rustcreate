@@ -452,7 +452,8 @@ fn prelim_gate_probe_constants_anchored() {
     for (i, &(x, z, official, ours)) in PROBES.iter().enumerate() {
         let cs = orch.column_state(x, z);
         let got = orch.prelim_surface_level(&cs);
-        if ours != 0 && got != ours {
+        // 0 = 首锚通道（ore_v7 同款语义）：强制打印实测值回填。
+        if ours == 0 || got != ours {
             fails += 1;
             report.push_str(&format!(
                 "\n  case{i} ({x},{z}) got={got} ours锚={ours} 官方={official}"
