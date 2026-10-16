@@ -35,10 +35,19 @@ use std::collections::HashMap;
 /// chunk (-21, 24) 256 列全 Forest，气候漂移先在该文件红，本文件不重复
 /// 锁窗，只扫这片有树的区域）。
 const SEED: u64 = 0x7E_A20_0B1;
-const AREA_CX0: i32 = -22;
-const AREA_CX1: i32 = -20;
-const AREA_CZ0: i32 = 23;
-const AREA_CZ1: i32 = 25;
+
+/// 运行时选窗（重锚波②，与 trees_wiring 同源语义）：旧写死 AREA_*=
+/// Forest 窗邻域 ±1，cell 外壳气候位移后失效；改为 find_biome_window
+/// 返回窗的 ±1 区间（3×3 块=跨块重放域）。
+mod common;
+
+fn area3() -> (i32, i32, i32, i32) {
+    static A: std::sync::OnceLock<(i32, i32, i32, i32)> = std::sync::OnceLock::new();
+    *A.get_or_init(|| {
+        let (cx, cz) = common::find_biome_window(SEED, mcv_worldgen::vanilla::Biome::Forest);
+        (cx - 1, cx + 1, cz - 1, cz + 1)
+    })
+}
 
 const AIR: u16 = 0;
 const WATER: u16 = 5;
@@ -122,8 +131,8 @@ fn boundary_trees_complete_on_both_sides() {
     };
     let mut crossing_trees = 0usize;
     let mut hit_blocks = 0usize;
-    for cz in AREA_CZ0..=AREA_CZ1 {
-        for cx in AREA_CX0..=AREA_CX1 {
+    for cz in area3().2..=area3().3 {
+        for cx in area3().0..=area3().1 {
             // 树干在本块的 spot（跨界冠的源头）。tree_spots 的环带扫描
             // 已保证：伸入邻块的树必同时出现在邻块的 spot 视图（锁 2）。
             let spots = tree_spots(SEED, cx, cz, &orch)
@@ -180,7 +189,11 @@ fn boundary_trees_complete_on_both_sides() {
     }
     assert!(
         crossing_trees > 0,
-        "Forest 区域 {AREA_CX0}..={AREA_CX1}×{AREA_CZ0}..={AREA_CZ1} 无跨界树——测试空转"
+        "Forest 区域 {:?}..={:?}×{:?}..={:?} 无跨界树——测试空转",
+        area3().0,
+        area3().1,
+        area3().2,
+        area3().3
     );
     assert!(
         hit_blocks > 0,
@@ -195,8 +208,8 @@ fn boundary_trees_complete_on_both_sides() {
 fn tree_spots_agree_across_chunk_views() {
     let orch = Orchestrator::new(SEED);
     let mut shared = 0usize;
-    for cz in AREA_CZ0..=AREA_CZ1 {
-        for cx in AREA_CX0..=AREA_CX1 {
+    for cz in area3().2..=area3().3 {
+        for cx in area3().0..=area3().1 {
             let own = tree_spots(SEED, cx, cz, &orch);
             for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1), (1, 1), (-1, -1)] {
                 let view = tree_spots(SEED, cx + dx, cz + dz, &orch);
@@ -228,8 +241,8 @@ fn tree_spots_agree_across_chunk_views() {
 fn trunk_bases_land_on_real_surface() {
     let orch = Orchestrator::new(SEED);
     let mut checked = 0usize;
-    for cz in AREA_CZ0..=AREA_CZ1 {
-        for cx in AREA_CX0..=AREA_CX1 {
+    for cz in area3().2..=area3().3 {
+        for cx in area3().0..=area3().1 {
             let vox = generate_terrain_with(TerrainBackend::Vanilla, SEED, ChunkPos::new(cx, cz))
                 .expect("vanilla gen")
                 .voxels

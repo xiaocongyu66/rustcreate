@@ -5,13 +5,19 @@
 **/build/
 **/libs/
 dumps/
-**/logs/*.gz
-**/logs/*.log
-**/logs/*.log.gz
-dumps/
-**/logs/*.gz
-**/logs/*.log
-**/logs/*.log.gz
 logs/*.log
 logs/*.gz
 __pycache__/
+# 全量原版音效树:构建时 ci/fetch-sounds.sh 从 Mojang CDN 现拉,不入 git。
+assets/minecraft/sounds/
+assets/minecraft/sounds.json
+# 全量原版结构模板 .nbt:构建时 ci/fetch-structures.sh 从版本 JAR 解包,不入 git。
+assets/minecraft/structure/
+# 官方 jar dump 与 job 队列：可再生验证产物（前代理遗留资产），不入仓
+tools/fork-reanchor-dumps/
+tools/fork-reanchor/jobs/
+tools/fork-reanchor/done/
+tools/fork-reanchor/logs/
+
+# rust dump 产物目录（CI artifact 已上云，本地可再生）
+rust-dumpout/

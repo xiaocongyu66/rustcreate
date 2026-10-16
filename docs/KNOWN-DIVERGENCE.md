@@ -244,22 +244,53 @@ AABB 0.25（Item.java SIZE）→ quad 边长 0.25、浮动 bob = sin(ageInTicks/
 ## AQUI-1 含水层（#175，feat/aquifer）的结构复刻裁剪
 
 原版机制 = `NoiseBasedAquifer`（26.1 已并入 Aquifer.java:58-513 inner
-class），本仓为**结构复刻非字节级同原版**——传入判据的 density 本身即
-clean-room 管线（vanilla/noise.rs 头注：倍频种子自有 splitmix 域盐派生），
-端到端原版对拍在 density/preliminary surface 未同真前不可达；逐行复刻
-只锁死演进不换一致性。逐项登记：
+class），本仓为**结构复刻**——判据内的四通道噪声与所传 density 的种子链
+彼时均为 clean-room 派生；切链刀（noise-vanilla-fork，841b562a）后通道
+种子链已切原版 fork 链并逐位同真（下条 #1 销账），端到端 finalDensity
+逐位对拍仍待 base_3d（BlendedNoise）实物化与样条组装全展开（首证报告
+§6.2 路径）；逐行复刻锁死演进不换一致性。逐项登记：
 
-1. **种子链非原版**：四通道噪声（barrier/floodedness/spread/lava）用
-   本仓 NormalNoise 内核 + 自有域盐（SALT_*，TREE_DOMAIN 先例），非
-   Xoroshiro fork 序（RandomState.java:38 fromHashOf("aquifer") +
-   Java StringHashing）；统计形态同参数表（firstOctave/振幅/路由缩放
-   逐字抄 noise json 与 NoiseRouterData.java:319-322），由
-   tests/aquifer.rs 统计门（干占比/三态占比带）替代字节对拍。
+1. **种子链非原版**〔已销账，切链刀 841b562a + 3812e621〕：四通道噪声
+   （barrier/floodedness/spread/lava）原用本仓 NormalNoise 内核 + 自有
+   域盐（SALT_*，TREE_DOMAIN 先例），非 Xoroshiro fork 序。销账刀改走
+   **原版 fork 链实物接线**：RandomState.java:36 根位置随机工厂 →
+   `Noises.instantiate` = `NormalNoise.create(root.fromHashOf(
+   "minecraft:aquifer_barrier" 等实名), params)`（Noises.java:23-26
+   createKey 实名 + :78-83；RandomState.java:112-114——通道随机源是
+   **根工厂 fromHashOf**，非 :38 的 aquiferRandom，后者只喂胞心/位置
+   随机 = 本条 #2）。同刀连带：terrain 21 个 density 通道与 climate
+   6 实例（noise.rs 旧 v1 域盐派生整体退役）同链切换，并修两处对位差
+   （振幅表尾部零填充——表长进 PerlinNoise.lowestFreqValueFactor 归一；
+   shift 通道实名 offset 且 shift_x/shift_z 共用一实例 + ShiftB 采样
+   x/z 对调，DensityFunctions.java:1000-1043）。**销账证据 = python
+   镜像 × 官方 26.1 jar `--probe-noise` 探针 3 seed×10 通道×12 点
+   360/360 位型同、max|d|=0**（tools/fork-chain-mirror-report.md +
+   tools/fork-chain-mirror-run.txt；noise.rs 金标准测试
+   fork_chain_matches_official_jar_probe_bits 锁 3 向量）。随之漂移的
+   黄金/统计门重锚清单见对拍报告 §7（CI run 38650650041 实测：6 target
+   11 测试红——ores ore_v7 锚定哈希、aquifer/cave_audit/deep_columns/
+   trees_cross_chunk/trees_wiring 统计带与窗哨兵；terrain golden 锚
+   Legacy 后端零重锚仍绿，quality.rs 全带绿）。
+   ImprovedNoise 三坑核对（lerp3 轴序/nextDouble f32 提升/常量精确性）
+   随镜像 360/360 端到端通过，零修改。
 2. **胞心随机非原版 Xoroshiro 三连 nextInt**：splitmix 链 + Lemire
    无偏归约（同值域 10/9/10、同分布）。
-3. **preliminary surface 用密度场解析过零面 crossing**（terrain.rs
-   实顶扫描同款），非原版 preliminary_surface_level 密度函数（本仓
-   density 管线无该函数；两者同为无洞穴地表高度估计，语义对位）。
+3. **preliminary surface 用密度场解析过零面 crossing**〔已销账，本刀
+   find_top_surface 实装〕：旧实现 = 128+128·(offset+jag) 解析式近似，
+   原版 = noise_router.preliminary_surface_level =
+   **FindTopSurface**（DensityFunctions.java:585-611：专用 surface 探测
+   密度树从 upper_bound 树钳定顶向下每 8 格步进找首个 density>0）。
+   旧条目「两者同为无洞穴地表高度估计，语义对位」的断言被 java-harness
+   对拍**证伪**：腔区 crossing 远低于探测树值 → aquifer under 门
+   （surfaceAtCenterIsUnderGlobalFluidLevel）误开 → floodedness factor
+   抬高 → 阈值 0.8→−0.3 → 海平面下洞全灌水（#175 残余面；run
+   38650650041 K-CAVE-AUDIT [0,16) 带 rust 3921 水/138 空气 vs 官方
+   dump 0 水/4751 空气）。销账刀 = terrain.rs 实装探测树全展开
+   （offset/factor 列常量 + 双端 y_clamped_gradient 裁剪 +
+   quarter_negative + clamp(−64..64)，FindTopSurface 8 格步进语义）
+   + upper_bound 树。**销账证据 = python 双复刻对拍：20000 组随机
+   (offset, factor) 网格 rust 公式 vs json 树镜像 find_top_surface
+   输出 diff=0、密度值 max|d|=0.0**（f64 同构逐位）。
 4. **水流更新调度不建模**：shouldScheduleFluidUpdate/
    markPosForPostprocessing（Aquifer.java:160,246-294）无对应存储/
    tick 面——原版靠它把边界水交给随机刻流动，本仓生成期水静态
@@ -367,8 +398,10 @@ int 域溢出乘细节保留）、`fromHashOf(name)→forkPositional→at().next
 链（XoroshiroRandomSource.java:38-41,113-155）——同 seed 同坐标与原版
 **同位型**（金标准向量锁在 xoroshiro.rs tests，python hashlib 独立复算
 生成）。残余（非本条义务）：位级对拍的另一个前置——defaultBlock 位的
-洞形与原版逐格一致——依赖 density 通道种子链（AQUI-1 债务），随该波
-统一收敛；tests/deepslate_bedrock.rs 保留统计带门。
+洞形与原版逐格一致——density **通道种子链**已切原版 fork 链（AQUI-1 #1
+销账，360/360 位型证据）；洞形逐位一致的残余 = base_3d（BlendedNoise
+legacy 初始化路径实物化）与 finalDensity 样条组装全展开，随地形保真
+闭环刀统一收敛；tests/deepslate_bedrock.rs 保留统计带门。
 
 ## CAVE-1 洞穴雕刻通道的未移植面（#192 对照审计登记）
 
@@ -394,13 +427,16 @@ tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
    ok）；golden 双测试**零重锚仍绿**（golden 锁 Legacy 后端，本刀只动
    vanilla 路径，无字节漂移）；前后量化对照在本分支 CI K-CAVE-AUDIT 日志
    （ci.yml --nocapture 步，跨提交对照）。
-2. **noodle**〔已销账 #192 洞穴改进波〕：`caves/noodle.json` 实物接线
-   （terrain.rs `Orchestrator::noodle`——掩膜 range_choice y∈[−60,321) +
-   `−0.075−0.025·thickness + 1.5·max(|ridgeA|,|ridgeB|)`，final_density
-   最外层 min）。残余口径：各通道 `minecraft:interpolated` 外壳按模块既定
-   取舍跳过（与 final_density 外层 interpolated/blend_density 同一口径，
-   只影响 8×8×4 单元管壁平滑度）；noodle rice/thickness 特征接线随特征
-   波另立项（非 density 面）。
+2. **noodle**〔已销账 #192 洞穴改进波；#210 残余口径再销账〕：
+   `caves/noodle.json` 实物接线（terrain.rs `Orchestrator::noodle`——掩膜
+   range_choice y∈[−60,321) + `−0.075−0.025·thickness + 1.5·max(|ridgeA|,|ridgeB|)`，
+   final_density 最外层 min）。**#210 起 `minecraft:interpolated` 外壳=实物**
+   （vanilla/cell_interp.rs：NoiseChunk cell (4,8,4) 角点预积分 + 增量序
+   三线插值，final_density 树内 5 处包裹子树全入壳——地形 slide 合成/
+   noodle 掩膜/厚度基底/ridge_a/b；门、abs、1.5·max 在包裹外作用于插值
+   后值）。对拍：角点（插值恒等点）vs 官方 --density 12/12 bit_eq
+   max|d|=0；in-cell=预期平滑。残余：noodle rice/thickness 特征接线随
+   特征波另立项（非 density 面）。
 3. **管状 carver**（`configured_carver/{cave,cave_extra_underground,
    canyon}.json`：probability 0.15/0.07/0.01、y 窗 above_bottom 8..180 /
    8..47 / absolute 10..67、floor_level uniform(−1,−0.4)、
@@ -412,6 +448,25 @@ tests/quality.rs + tests/cave_audit.rs K-CAVE-AUDIT 日志）：
    最大连通体）。
 4. **vein_toggle/vein_ridged/vein_gap**（OreVeinifier，noise_router 三
    通道）：矿脉编织——未移植（本仓无矿石生成面，整体随矿脉波立项）。
+
+### CAVE-1 #210 作业新登记（cell 插值外壳刀）
+
+5. **dump 通道 seed 笔误**〔**已销账 #210**〕：tests/dump_for_java.rs 原常量
+   `0x7E_A20_0B1`＝2124546225（多一零，cave_audit 审计窗自家世界），与官方
+   cave dump 世界 132784305＝0x7EA20B1（tools/fork-reanchor/jobs_all.txt
+   十进制同值 + 官方 dump 头 seed 实锤）不同世界——历次 rust-vs-官方矩阵
+   属跨世界对比（surf_eq=4096 为「自底首实心=床岩面」种子不变量的退化
+   解，掩盖错配）。已修常量（模块注释本意即 0x7EA20B1）。cave_audit 锚
+   世界不动（行为锁）。真世界矩阵（修正后首跑）：surf_eq 4096/4096、
+   c2_-2 西洞出现（band[0,16) air 官 2335 / rust 2398）。
+6. **raw 树残差点 (40,60,−8)**：mirror vs 官方 --density |d|=0.0133
+   （14 点对拍中唯一非 bit_eq；y=60 近海面 jag/factor 样条域）。其余
+   13 点逐位一致（含 c3/c5 窗与深层）。收敛点：jagged/样条组装全展开
+   时一并定位（与本刀 cell 外壳无关——raw 面本次未动 op 序）。
+7. **band-air 残差（carver 域）**：真世界矩阵部分 chunk band[0,16)/
+   [64,80) 空气计数差（如 c2_-4 152/1066、c5_-2 海带 4095/2422）——
+   主因＝#3 管状 carver 未移植 + cell 内插值平滑幅度 + #6 样条残差，
+   量级与 cave_audit 基线一致，随 carver 波收敛。
 
 ## MESH-WD-1 无模型技术方块（barrier/light）放置路径的可见性语义（mesh 看门狗波顺手登记）
 

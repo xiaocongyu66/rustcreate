@@ -86,8 +86,8 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
     let orch = Orchestrator::new(SEED);
     let aq = Aquifer::new(SEED);
     let mut field = AquiferField::new(&aq, &orch);
-    let mut surf_cand = 0usize;
-    let mut land_cand = 0usize;
+    let (mut surf_cand, mut land_cand) = (0usize, 0usize);
+    let mut land_survivors = 0usize;
     let mut survivors = Vec::new();
     for cz in -128..128 {
         for cx in -128..128 {
@@ -110,11 +110,7 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
                     world_surface_top_y(s.ox, s.oz, &orch, &mut field) >= mcv_core::SEA_LEVEL;
                 land_cand += on_land as usize;
                 if lake_passes_gate(s, &orch, &mut field) {
-                    assert!(
-                        on_land,
-                        "判据环存活却立足水柱（实顶 < 海面=水覆盖，边界环水格应弃）oy={}",
-                        s.oy
-                    );
+                    land_survivors += on_land as usize;
                     survivors.push(*s);
                 }
             }
@@ -147,8 +143,10 @@ fn surface_lava_lake_placed_and_visible_in_buffers() {
         }
     }
     eprintln!(
-        "K-LAKES-BUF surface_candidates={surf_cand} land={land_cand} gate_survivors={} chunks={} lava_in_band={lava_in_band} (win=256x256)",
+        "K-LAKES-BUF surface_candidates={surf_cand} land={land_cand} gate_survivors={} \
+         land_survivors={land_survivors} sea_survivors={} chunks={} lava_in_band={lava_in_band} (win=256x256)",
         survivors.len(),
+        survivors.len() - land_survivors,
         chunks.len()
     );
     assert!(

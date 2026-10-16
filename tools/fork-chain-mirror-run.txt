@@ -1,0 +1,33 @@
+[0] rust 常量表 ↔ noise json：10 通道，不一致 0 项
+  seed          1 temperature                      OK  same=12/12
+  seed          1 vegetation                       OK  same=12/12
+  seed          1 continentalness                  OK  same=12/12
+  seed          1 erosion                          OK  same=12/12
+  seed          1 ridge                            OK  same=12/12
+  seed          1 offset                           OK  same=12/12
+  seed          1 aquifer_barrier                  OK  same=12/12
+  seed          1 aquifer_fluid_level_floodedness  OK  same=12/12
+  seed          1 aquifer_fluid_level_spread       OK  same=12/12
+  seed          1 aquifer_lava                     OK  same=12/12
+  seed        123 temperature                      OK  same=12/12
+  seed        123 vegetation                       OK  same=12/12
+  seed        123 continentalness                  OK  same=12/12
+  seed        123 erosion                          OK  same=12/12
+  seed        123 ridge                            OK  same=12/12
+  seed        123 offset                           OK  same=12/12
+  seed        123 aquifer_barrier                  OK  same=12/12
+  seed        123 aquifer_fluid_level_floodedness  OK  same=12/12
+  seed        123 aquifer_fluid_level_spread       OK  same=12/12
+  seed        123 aquifer_lava                     OK  same=12/12
+  seed   20260114 temperature                      OK  same=12/12
+  seed   20260114 vegetation                       OK  same=12/12
+  seed   20260114 continentalness                  OK  same=12/12
+  seed   20260114 erosion                          OK  same=12/12
+  seed   20260114 ridge                            OK  same=12/12
+  seed   20260114 offset                           OK  same=12/12
+  seed   20260114 aquifer_barrier                  OK  same=12/12
+  seed   20260114 aquifer_fluid_level_floodedness  OK  same=12/12
+  seed   20260114 aquifer_fluid_level_spread       OK  same=12/12
+  seed   20260114 aquifer_lava                     OK  same=12/12
+
+TOTAL bit-exact 360/360  max|d|=0

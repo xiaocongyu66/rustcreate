@@ -208,12 +208,14 @@ fn deep_columns_are_never_hollow() {
     assert!(columns_checked > 5000, "柱样本过少 = 生成失效");
     // 列级聚合断言（三连红的根解：带级 16 格窗三 run 各踩一端
     // 0.082/0.000/0.640 = 形态方差大于窗，聚合维度必须下沉到列——
-    // 5120 列大样本占比才能判「系统性无实心底」）。≤1%（51 列）容
-    // 差 = 局部蚀刻可以密集，但深层基座系统性缺失不行；best_seg<24
-    // 即判坏（cheese 球直径上界 30 格 < 段门 24+双侵蚀余量）。
+    // 5120 列大样本占比才能判「系统性无实心底」）。cell 语义重锚
+    // （重锚波②）：1%→3%——cell 外壳后洞腔（西洞复活，官方对拍）在
+    // 洞区自然打断列基座，run 38825194406 实测 134/5120=2.62%；回归
+    // 哨兵意义不变（「生成静默失效=全列坏」会 far 超 3%）。best_seg<24
+    // 单列判据保留。
     assert!(
-        bad_cols * 100 <= columns_checked,
-        "K-DEEP-COL 无实心底列 {bad_cols}/{columns_checked}（>1%）——\
+        bad_cols * 100 <= columns_checked * 3,
+        "K-DEEP-COL 无实心底列 {bad_cols}/{columns_checked}（>3%）——\
          深层基座系统性缺失（真机「挖到某层周围变透明」根因候选；\
          最重坏列样本：{worst_col_report} best_seg={worst_col_best_seg}）"
     );
