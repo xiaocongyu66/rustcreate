@@ -27,45 +27,54 @@
 //!   v1，无 Swamp/深海变体）选不出 → 不登记、路径不可达（tree_pass
 //!   profile 对 Jungle/DarkForest 同款处理），群系表扩 v2 时补行。
 //!
-//! - **SeagrassFeature.place（SeagrassFeature.java:31-70）**：feature 内
-//!   抖动 `x = nextInt(8) − nextInt(8)`、z 同式（:41-43，水位门前 4 抽全
-//!   消耗）；`y = getHeight(OCEAN_FLOOR)`（:46，heightmap 值 = 洋底实顶
-//!   首空位）；grassPos 水位门（:48，零随机）；`isTall = nextDouble <
-//!   probability`（:49，**水位门失败则不消耗**该抽）；canSurvive（:50）；
-//!   tall 先 roll 后查、半格写法：双格需上格水（:55-58，HALF=UPPER），
-//!   上格非水则整投放弃（:58 不写任何格）；短格单格（:61-62）。
+//! - **SeagrassFeature.place（SeagrassFeature.java:20-51）**：feature 内
+//!   抖动 `x = nextInt(8) − nextInt(8)`、z 同式（:26-27，水位门前 4 抽全
+//!   消耗）；`y = getHeight(OCEAN_FLOOR)`（:28，heightmap 值 = 洋底/河床
+//!   实顶首空位，Heightmap.java:149-150 MATERIAL_MOTION_BLOCKING——水
+//!   不计顶）；grassPos 水位门（:30，零随机）；`isTall = nextDouble <
+//!   probability`（:31，**水位门失败则不消耗**该抽）；canSurvive（:33）；
+//!   tall 先 roll 后查、半格写法：双格需上格水（:34-40，HALF=UPPER
+//!   :35，上格门 :37），上格非水则整投放弃（不写任何格）；短格单格
+//!   （:41-43）。
 //!
-//! - **KelpFeature.place（KelpFeature.java:24-63）**：无 feature 内水平
-//!   抖动（:25 直接用放置链 origin）；kelpPos = OCEAN_FLOOR heightmap 值
-//!   位（:26-27）水位门（:28）；柱高 `height = 1 + nextInt(10) ∈ 1..10`
-//!   （:40，任务单「1..25」与反编译树不符——25 是 KelpBlock.AGE 方块状态
-//!   域上限（KelpBlock.java AGE(0,25)），非特征柱高，柱面以实物为准）；
-//!   每层双水位门（本层 + 上层 WATER，:42）+ canSurvive 附着门（:42）；
-//!   `h == height` 落**头**（KELP age 20-23，:44-46，age 抽 nextInt(4) 在
-//!   落头时消耗）否则落**体**（KELP_PLANT，:49）；上层非水截断（h>0）：
-//!   取 `below = kelpPos.below()`（= 最上一节体）`canSurvive(below)` +
-//!   `below.below() 非 KELP` 才把该节换头（:53-58）后 break——**浅水
-//!   单格水位不出海带**（h=0 失败且 h=1 失败时 below 无体挂头门出一并
-//!   拦）；h=0 失败仅空转前进（:42-59 if/else-if 链，`kelpPos =
-//!   kelpPos.above()` 逐层）。
+//! - **KelpFeature.place（KelpFeature.java:19-54）**：无 feature 内水平
+//!   抖动（:25 直接用放置链 origin）；`y = getHeight(OCEAN_FLOOR)`（:24
+//!   同水不计顶口径）kelpPos = 值位，水位门（:26）；柱高
+//!   `height = 1 + nextInt(10) ∈ 1..10`（:29，任务单「1..25」与反编译
+//!   树不符——25 是 KelpBlock.AGE 方块状态域上限，非特征柱高，柱面以
+//!   实物为准）；h 循环 `for h in 0..=height`（:31），每层三联门（本层
+//!   水 + 上层 WATER + canSurvive，:32）；`h == height` 落**头**（KELP
+//!   age nextInt(4)+20，:34）否则落**体**（KELP_PLANT，:37）；门败且
+//!   h>0 截断（:39-46）：`below = kelpPos.below()`（:40，= 最上一节
+//!   体——头仅在 h==height 落，柱中恒体）`stateTop.canSurvive(below)`
+//!   （读位 = below.below()，GrowingPlantBlock.java:47-53
+//!   attachedToPos）+ `below.below() 非 KELP 头`（:41）才把该节换头
+//!   （:42，age 同抽）后 break（:45）；kelpPos.above() 逐层（:48，成
+//!   功/失败同进——h==0 失败仅空转前进）。h=0 失败的合法解（浅水单
+//!   格：y0 水但 y0+1 非水）由 h=1 截断分支补：under = below.below =
+//!   洋底/河床 y0−1（重放实块），门过则单点头。
 //!
-//! - **附着门（GrowingPlantBlock.java:47-55 + KelpBlock.java:46-48 +
-//!   SeagrassBlock.java:46-47）**：kelp = 下方 `canAttachTo`（非
-//!   CANNOT_SUPPORT_KELP）且（头/体/face-sturdy 三选一）；seagrass =
-//!   下方 face-sturdy + 非 CANNOT_SUPPORT_SEAGRASS。本仓面：
+//! - **附着门（GrowingPlantBlock.java:47-56 + KelpBlock.java:46-48 +
+//!   SeagrassBlock.java:46-47）**：canSurvive = attachedTo（below）非
+//!   canAttachTo 否 → 头/体/isFaceSturdy 三选一（GrowingPlantBlock
+//!   .java:47-53）；kelp 的 canAttachTo = 非 CANNOT_SUPPORT_KELP
+//!   （KelpBlock.java:46-48）；seagrass = mayPlaceOn = face-sturdy(UP)
+//!   + 非 CANNOT_SUPPORT_SEAGRASS（SeagrassBlock.java:46-47）。本仓面：
 //!   face-sturdy ≈ 生成面实心（`mcv_core::BLOCKS[id].solid`；pass-1 首
 //!   实心恒 solid）；tag 静态表 `mcv_core::tags` 只含 magma_block
 //!   （id 585，TAG_BLOCK_CANNOT_SUPPORT_KELP/SEAGRASS，gen-tags 波骨架
 //!   产物）。kelp 体（509）/头（508）solid=false → 头/体成员显式名单。
 //!
-//! - **放置链（placed JSON 修饰序，PlacedFeature.java:48-57 lazy
+//! - **放置链（placed JSON 修饰序，PlacedFeature.java:47 lazy
 //!   flatMap 逐修饰串行；origin = 区块角，ChunkGenerator.java:314-318
 //!   `SectionPos.origin()`）**：seagrass 链 = in_square（
-//!   InSquarePlacement.java:17-18，2×nextInt(16)，单复制位置）→
+//!   InSquarePlacement.java:17-19，2×nextInt(16)，单复制位置）→
 //!   heightmap(OCEAN_FLOOR_WG) → count 48（ConstantInt 零随机）→ biome
-//!   （BiomeFilter.java:24-28 零随机，判Placement 位群系）→ feature 48
-//!   次**同锚点**重试（每次特征内 ±7 抖动 → 原味「丛簇」分布ukkit）；
-//!   kelp 链 = noise_based_count（NoiseBasedCountPlacement.java:38-42：
+//!   （BiomeFilter.java:20-26 零随机，判 Placement 位群系）→ feature 48
+//!   次**同锚点**执行（count 先产 48 份同 pos 复制，biome 门对同点位零
+//!   随机判 1 次；每次特征内 ±7 抖动 → 48 次重试的「锚点丛」分布，
+//!   与 placed JSON 修饰序逐位同构）；kelp 链 = noise_based_count（
+//!   NoiseBasedCountPlacement.java:34-36：
 //!   `BIOME_INFO_NOISE.getValue(x/factor, z/factor, false)` 的
 //!   `ceil((n + offset) · ratio)`，在 origin（区块角）一次评估、负数 =
 //!   IntStream.range 空域零尝试）→ in_square 每复制 2 抽 → heightmap →
@@ -126,22 +135,22 @@ fn biome_info_noise() -> &'static PerlinSimplexNoise {
     })
 }
 
-/// kelp 附着门（GrowingPlantBlock.java:47-55 + KelpBlock.java:46-48）：
+/// kelp 附着门（GrowingPlantBlock.java:47-56 + KelpBlock.java:46-48）：
 /// 下方非 CANNOT_SUPPORT_KELP 且（头/体 || face-sturdy）。本仓
 /// face-sturdy ≈ `BLOCKS[id].solid`；tag 静态表当前只含 magma_block。
 fn kelp_supports(below: u16) -> bool {
-    !crate::tags::TAG_BLOCK_CANNOT_SUPPORT_KELP
+    !mcv_core::tags::TAG_BLOCK_CANNOT_SUPPORT_KELP
         .set
-        .contains(&below)
+        .contains(below)
         && (below == KELP || below == KELP_PLANT || mcv_core::BLOCKS[usize::from(below)].solid)
 }
 
 /// seagrass 附着门（SeagrassBlock.java:46-47）：下方 face-sturdy 且非
 /// CANNOT_SUPPORT_SEAGRASS。
 fn seagrass_supports(below: u16) -> bool {
-    !crate::tags::TAG_BLOCK_CANNOT_SUPPORT_SEAGRASS
+    !mcv_core::tags::TAG_BLOCK_CANNOT_SUPPORT_SEAGRASS
         .set
-        .contains(&below)
+        .contains(below)
         && mcv_core::BLOCKS[usize::from(below)].solid
 }
 
@@ -156,7 +165,11 @@ enum FloraKind {
     /// configured_feature/seagrass_*.json（`probability` → tall roll）。
     Seagrass { probability: f64 },
     /// configured_feature/kelp.json（noise_based_count 参数）。
-    Kelp { ratio: i32, factor: f64, offset: f64 },
+    Kelp {
+        ratio: i32,
+        factor: f64,
+        offset: f64,
+    },
 }
 
 /// 26.1 数据行（引注见模块头注数据行段）。10 群系点表选不出的群系
@@ -222,7 +235,7 @@ pub struct FloraWrite {
     pub id: u16,
 }
 
-/// SeagrassFeature.java:31-70 逐段对位（单次尝试）。
+/// SeagrassFeature.java:20-51 逐段对位（单次尝试）。
 fn place_seagrass(
     rp: &mut Replay<'_, '_>,
     rng: &mut FloraRng,
@@ -231,35 +244,51 @@ fn place_seagrass(
     az: i32,
     writes: &mut Vec<FloraWrite>,
 ) {
-    // :41-43——4 抽先于水位门全消耗。
+    // :26-27——4 抽先于水位门全消耗。
     let x = ax + rng.next_int(8) as i32 - rng.next_int(8) as i32;
     let z = az + rng.next_int(8) as i32 - rng.next_int(8) as i32;
-    // :46 getHeight(OCEAN_FLOOR) = 洋底实顶首空位（Replay::top_floor 同
-    // 口径：ore_pass::top_floor 引注 Heightmap.java:149,31，water 计顶）。
-    let y = rp.top_floor(x, z);
-    // :48 水位门（零随机）。
+    // :28 getHeight(OCEAN_FLOOR) = 实顶首空位（Replay::top_ocean_floor
+    // 口径：ore_pass::top_ocean_floor 引注 Heightmap.java:149-150
+    // MATERIAL_MOTION_BLOCKING，水不计顶——洋底/河床顶 = fs+1）。
+    let y = rp.top_ocean_floor(x, z);
+    // :30 水位门（零随机）。
     if rp.block_at(x, y, z) != WATER {
         return;
     }
-    // :49 tall roll（水位门后；门败不消耗）。
+    // :31 tall roll（水位门后；门败不消耗）。
     let tall = rng.next_double() < probability;
-    // :50 canSurvive（附着门在 roll 之后、写之前）。
+    // :33 canSurvive（附着门在 roll 之后、写之前）。
     if !seagrass_supports(rp.block_at(x, y - 1, z)) {
         return;
     }
     if tall {
-        // :55-58 上格必须仍是水，否则整投放弃。
+        // :34-40 上格必须仍是水，否则整投放弃（不写任何格）。
         if rp.block_at(x, y + 1, z) == WATER {
-            writes.push(FloraWrite { x, y, z, id: TALL_SEAGRASS });
-            writes.push(FloraWrite { x, y: y + 1, z, id: TALL_SEAGRASS });
+            writes.push(FloraWrite {
+                x,
+                y,
+                z,
+                id: TALL_SEAGRASS,
+            });
+            writes.push(FloraWrite {
+                x,
+                y: y + 1,
+                z,
+                id: TALL_SEAGRASS,
+            });
         }
     } else {
-        // :61-62
-        writes.push(FloraWrite { x, y, z, id: SEAGRASS });
+        // :41-43
+        writes.push(FloraWrite {
+            x,
+            y,
+            z,
+            id: SEAGRASS,
+        });
     }
 }
 
-/// KelpFeature.java:24-63 逐段对位（单次尝试）。
+/// KelpFeature.java:19-54 逐段对位（单次尝试）。
 fn place_kelp(
     rp: &mut Replay<'_, '_>,
     rng: &mut FloraRng,
@@ -267,16 +296,16 @@ fn place_kelp(
     wz: i32,
     writes: &mut Vec<FloraWrite>,
 ) {
-    // :26-27 getHeight(OCEAN_FLOOR)。
-    let y0 = rp.top_floor(wx, wz);
-    // :28 kelpPos 水位门（零随机）。
+    // :24-25 getHeight(OCEAN_FLOOR)（无特征内水平抖动，直接用放置链位）。
+    let y0 = rp.top_ocean_floor(wx, wz);
+    // :26 水位门（零随机）。
     if rp.block_at(wx, y0, wz) != WATER {
         return;
     }
-    // :40 柱高 1 + nextInt(10) ∈ 1..10。
+    // :29 柱高 1 + nextInt(10) ∈ 1..10。
     let height = 1 + rng.next_int(10) as i32;
     let mut y = y0;
-    // h 循环 :42-59。判据读重放态（replay 不见本柱写入）——柱内下方
+    // h 循环 :31-49。判据读重放态（replay 不见本柱写入）——柱内下方
     // 格按「上一轮已落体」显式换算，逐位等价缓冲读。
     for h in 0..=height {
         let below = if h == 0 {
@@ -284,25 +313,36 @@ fn place_kelp(
         } else {
             KELP_PLANT
         };
-        // :42 本层水 + 上层水 + canSurvive（附着门）。
+        // :32 本层水 + 上层水 + canSurvive（附着门）。
         let ok = rp.block_at(wx, y, wz) == WATER
             && rp.block_at(wx, y + 1, wz) == WATER
             && kelp_supports(below);
         if ok {
             if h == height {
-                // :44-46 落头（age = nextInt(4)+20 抽消耗；状态面不存）。
+                // :34 落头（age = nextInt(4)+20 抽消耗；状态面不存）。
                 let _age = rng.next_int(4);
-                writes.push(FloraWrite { x: wx, y, z: wz, id: KELP });
+                writes.push(FloraWrite {
+                    x: wx,
+                    y,
+                    z: wz,
+                    id: KELP,
+                });
             } else {
-                // :49 落体。
-                writes.push(FloraWrite { x: wx, y, z: wz, id: KELP_PLANT });
+                // :37 落体。
+                writes.push(FloraWrite {
+                    x: wx,
+                    y,
+                    z: wz,
+                    id: KELP_PLANT,
+                });
             }
-            y += 1; // :60 kelpPos = kelpPos.above()（无条件）
+            y += 1; // :48 kelpPos = kelpPos.above()（无条件）
         } else if h > 0 {
-            // :53-58 截断：below = 当层失败位之下一格（= 最上一节体）；
-            // canSurvive(below)（under 非 magma 且头/体/实面）+
-            // below.below() 非 KELP 头。under：h=1 时 below 的下一位 =
-            // 洋底（y0−1，重放实块）；h≥2 = 更下一节体。
+            // :39-46 截断：below = kelpPos.below()（:40，= 最上一节体，
+            // 头仅在最后落——柱中恒体）；canSurvive 读位 = below.below()
+            // （GrowingPlantBlock.java:47-50 attachedToPos）+ 该位非 KELP
+            // 头（:41）。under：h=1 时 = 洋底/河床（y0−1，重放实块）；
+            // h≥2 = 更下一节体。
             let below_y = y - 1;
             let under = if h == 1 {
                 rp.block_at(wx, y0 - 1, wz)
@@ -314,16 +354,19 @@ fn place_kelp(
             } else {
                 true
             };
-            if kelp_supports(if h == 1 { under } else { KELP_PLANT })
-                && under_non_head
-            {
-                let _age = rng.next_int(4); // :55 age 抽（截断路径同样消耗）
-                writes.push(FloraWrite { x: wx, y: below_y, z: wz, id: KELP });
+            if kelp_supports(if h == 1 { under } else { KELP_PLANT }) && under_non_head {
+                let _age = rng.next_int(4); // :42 age 抽（截断路径同样消耗）
+                writes.push(FloraWrite {
+                    x: wx,
+                    y: below_y,
+                    z: wz,
+                    id: KELP,
+                });
             }
-            break; // :59
+            break; // :45
         } else {
             // h == 0 失败：Java else-if 链无分支 → 空转前进（下一层重判）。
-            y += 1; // :60
+            y += 1; // :48
         }
     }
 }
@@ -360,7 +403,11 @@ pub fn origin_flora_writes(
                     place_seagrass(rp, &mut rng, probability, ax, az, &mut writes);
                 }
             }
-            FloraKind::Kelp { ratio, factor, offset } => {
+            FloraKind::Kelp {
+                ratio,
+                factor,
+                offset,
+            } => {
                 // 链：noise_based_count（NoiseBasedCountPlacement.java:
                 // 38-42，origin=区块角一次评估，负数零尝试，零随机）→
                 // 每复制 in_square 2 抽 → heightmap → biome 门 → feature。

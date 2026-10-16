@@ -1217,12 +1217,7 @@ pub fn generate(
     // ocean.json:92-93 / river.json:93 —— 故置树后；freeze 次阶在其后，
     // 调度引注与执行器/重放模型见 water_flora 模块头注）。
     crate::vanilla::water_flora::project_water_flora(
-        seed,
-        chunk_x,
-        chunk_z,
-        &orch,
-        &mut field,
-        out_voxels,
+        seed, chunk_x, chunk_z, &orch, &mut field, out_voxels,
     );
     // Pass 2.5（#191 积雪）：freeze_top_layer 特征（原版特征阶 10
     // 「freeze」在植被阶后——snowy_plains.json features[10]；
