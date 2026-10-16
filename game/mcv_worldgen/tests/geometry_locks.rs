@@ -19,6 +19,20 @@ const SAND: u16 = 4;
 const WATER: u16 = 5;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
+/// pass 2.3 水草执行器（ocean-flora2）的四个产出 id（water_flora 头注
+/// blocks_gen.inc.rs 行号锚）。它们只出现在海下/河下「水内容域」格
+///（pass-1 水 + 附着 solid 下方 + 写入帽 y ≤ SEA−1——海面行 63 由本文件
+/// 「海下柱 63 层非水」锁钉住不写），系水柱的内容替代格而非空洞：
+/// 水柱连续性断言按「水 ∪ 水草」计。
+const KELP: u16 = 508;
+const KELP_PLANT: u16 = 509;
+const SEAGRASS: u16 = 905;
+const TALL_SEAGRASS: u16 = 1002;
+
+/// 水柱内容格（水或水草植被）。
+fn is_water_column_content(v: u16) -> bool {
+    v == WATER || v == KELP || v == KELP_PLANT || v == SEAGRASS || v == TALL_SEAGRASS
+}
 
 fn gen_vanilla(seed: u64, pos: ChunkPos) -> mcv_worldgen::TerrainOutput {
     generate_terrain_with(TerrainBackend::Vanilla, seed, pos).expect("vanilla gen")
@@ -60,7 +74,9 @@ fn vanilla_surface_bounds_and_sea_fill() {
                             "seed {seed} 海平面 {SEA_LEVEL} 上方出现水 (x={x},y={y},z={z})"
                         );
                     }
-                    // 海下柱：63 层必须是水、水柱从地表上方连续到 63。
+                    // 海下柱：63 层必须是水、水柱从地表上方连续到 63
+                    //（水草 pass 后：水体格可被水草 id 替代——写帽 y ≤ 62
+                    // 使 63 行恒水；is_water_column_content 计内容替代）。
                     if surface < SEA_LEVEL {
                         assert_eq!(
                             vox[vidx(x, SEA_LEVEL, z)],
@@ -68,10 +84,10 @@ fn vanilla_surface_bounds_and_sea_fill() {
                             "seed {seed} 海下柱 63 层非水 (x={x},z={z})"
                         );
                         for y in surface + 1..=SEA_LEVEL {
-                            assert_eq!(
-                                vox[vidx(x, y, z)],
-                                WATER,
-                                "seed {seed} 水柱断裂 (x={x},y={y},z={z})"
+                            let v = vox[vidx(x, y, z)];
+                            assert!(
+                                is_water_column_content(v),
+                                "seed {seed} 水柱断裂/未知格 {v} (x={x},y={y},z={z})"
                             );
                         }
                     }

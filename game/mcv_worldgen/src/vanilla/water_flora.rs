@@ -102,6 +102,13 @@
 //! - **判据读 pass-1 重放态**：lake/ore 树前特征与本特征、树写的互见与
 //!   原版 features 全局串行世界写不同频（ore_pass 头注同款登记：逐格确
 //!   定、跨块无缝、低频赢家差）。
+//! - **写入帽 / 几何契约**：本仓水体面含 y=SEA 行（aquifer.rs
+//!   open_column 契约、geometry_locks 锁死「海下柱 63 层非水」；原版
+//!   最高水行 = seaLevel−1）——水草/tall 上格一律写 y ≤ SEA−1（浅水
+//!   单格柱 [地板 62/水仅 63] 与 y=62 浅水 tall 在原文本可见出海面外，
+//!   本仓按几何契约放弃），kelp 循环自带的「上层水门」（层门 :32 含
+//!   y+1 水）另使头/体恒 ≤ SEA−1。kelp 头水位门即上层有水 → 海面行
+//!   从不被植被占格（freeze 冰层在其后照常）。
 
 use crate::vanilla::aquifer::AquiferField;
 use crate::vanilla::biomes::Biome;
@@ -251,6 +258,13 @@ fn place_seagrass(
     // 口径：ore_pass::top_ocean_floor 引注 Heightmap.java:149-150
     // MATERIAL_MOTION_BLOCKING，水不计顶——洋底/河床顶 = fs+1）。
     let y = rp.top_ocean_floor(x, z);
+    // 特征前哨：写入帽 y ≤ SEA−1（零随机；geometry_locks「海下柱 63 层
+    // 非水」锁钉住——本仓几何契约的水面行 = y63，浅水单格柱（河沿/滩沿
+    // 地板 62、水仅 63 一行）按原文本会在 63 落草尾，登记为几何契约
+    // KNOWN-DIVERGENCE（头注放置链段末）。门败不消耗同原文本。
+    if y >= mcv_core::SEA_LEVEL {
+        return;
+    }
     // :30 水位门（零随机）。
     if rp.block_at(x, y, z) != WATER {
         return;
@@ -262,8 +276,10 @@ fn place_seagrass(
         return;
     }
     if tall {
-        // :34-40 上格必须仍是水，否则整投放弃（不写任何格）。
-        if rp.block_at(x, y + 1, z) == WATER {
+        // :34-40 上格必须仍是水，否则整投放弃（不写任何格）；并入写帽
+        // ——上格 y+1 < SEA_LEVEL（tall 上半不进海面行 63；y=62 浅水
+        // tall 按几何契约放弃，同登记 KNOWN-DIVERGENCE）。
+        if rp.block_at(x, y + 1, z) == WATER && y + 1 < mcv_core::SEA_LEVEL {
             writes.push(FloraWrite {
                 x,
                 y,
@@ -298,6 +314,10 @@ fn place_kelp(
 ) {
     // :24-25 getHeight(OCEAN_FLOOR)（无特征内水平抖动，直接用放置链位）。
     let y0 = rp.top_ocean_floor(wx, wz);
+    // 写入帽同 place_seagrass（geometry_locks 海面行钉住；零随机）。
+    if y0 >= mcv_core::SEA_LEVEL {
+        return;
+    }
     // :26 水位门（零随机）。
     if rp.block_at(wx, y0, wz) != WATER {
         return;
