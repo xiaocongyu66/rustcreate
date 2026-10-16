@@ -346,14 +346,24 @@ fn river_rows_place_seagrass_only_end_to_end() {
             anchor = Some((*ocx, *ocz, ws.clone()));
         }
         for w in &ws {
-            assert!(
-                w.id == SEAGRASS || w.id == TALL_SEAGRASS,
-                "river 行出水草族外 id {} ({},{},{})",
-                w.id,
-                w.x,
-                w.y,
-                w.z
-            );
+            // 判据按 rp.biome_at 口径过滤调查列：kelp 行（Biome::Ocean）
+            // 与 river 行在同一 replay 里并存，气候边界列（jiang 气候离
+            // Ocean 更近）归 Ocean 管辖——那里放 kelp 是 26.1 合法路径
+            // （26.1 各 feature 仅受本 biome 数据行）。仅锁「River 判定
+            // 列」只出水草族（真机语义：河里没有海带）。fork 链合并后
+            // 气候位移使窗外 Ocean 列首次显形（run 38861799012 id509）。
+            if w.id != SEAGRASS && w.id != TALL_SEAGRASS {
+                assert_eq!(
+                    rp_biome_of(SEED, w.x, w.z),
+                    mcv_worldgen::vanilla::Biome::Ocean,
+                    "river 判定列出非水草 id {} ({},{},{})",
+                    w.id,
+                    w.x,
+                    w.y,
+                    w.z
+                );
+                continue;
+            }
             assert!(w.y < mcv_core::SEA_LEVEL, "river 写越海面行 y={}", w.y);
         }
     }
@@ -436,4 +446,9 @@ fn fixed_seed_determinism_and_channels() {
     assert_ne!(WATER_FLORA_DOMAIN, ORE_DOMAIN);
     assert_ne!(WATER_FLORA_DOMAIN, 0x0000_1A3E_005E);
     assert_ne!(WATER_FLORA_DOMAIN, 0x7BEE_5501);
+}
+
+/// rp.biome_at 独立重构点（replay-free 版本，直接气候采样）。
+fn rp_biome_of(seed: u64, x: i32, z: i32) -> mcv_worldgen::vanilla::Biome {
+    mcv_worldgen::vanilla::biome_at(seed, x, z)
 }
