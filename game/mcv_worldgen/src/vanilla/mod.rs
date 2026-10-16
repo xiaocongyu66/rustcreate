@@ -134,6 +134,13 @@ pub fn biome_from_sample(sample: &climate::ClimateSample) -> biomes::Biome {
     biomes::pick_biome(table, &t)
 }
 
+/// 列温度（测试工具面）：tree 测试选窗的低温过滤护栏（#196 列级
+/// 积雪上图，biome=Forest 但列温过低 → 表面带雪 → 树基立地全弃）。
+#[must_use]
+pub fn column_temperature(world_seed: u64, block_x: i32, block_z: i32) -> f64 {
+    climate::ClimateSampler::new(world_seed).sample(block_x, block_z).temperature
+}
+
 /// 群系点表（缓存包装）。
 #[must_use]
 pub fn biome_point_list() -> Vec<(biomes::ParameterPoint, biomes::Biome)> {

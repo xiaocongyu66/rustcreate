@@ -19,7 +19,10 @@ pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
                 if cx.abs() != r && cz.abs() != r {
                     continue; // 只扫新环
                 }
-                if window_all(seed, cx, cz, want) && ground_pure(seed, cx, cz) {
+                if window_all(seed, cx, cz, want)
+                    && ground_pure(seed, cx, cz)
+                    && mcv_worldgen::vanilla::column_temperature(seed, cx * 16 + 8, cz * 16 + 8) > 0.2
+                {
                     return (cx, cz);
                 }
             }
@@ -28,9 +31,10 @@ pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
     panic!("find_biome_window: ±160 chunk 环内无合格 {want:?} 窗——生物群系气候场崩坏");
 }
 
-/// 立地纯度：≥14/16 列「表面高于海面」（surface_block_y≥SEA_LEVEL）——
-/// 防止选到含滩/浅水列的窗（树基立地在滩列全弃→树测试空转，
-/// run 38843693793 实证「Forest 窗地表 64 落入滩/雪带」）。
+/// 立地纯度：≥14/16 列「表面高于海面」（surface_block_y≥SEA_LEVEL）+
+/// 窗中心列温 >0.2（#196 列级积雪按温度上图，biome=Forest 的低温列
+/// 表面带雪→树基立地弃→树测试空转；run 38843693793/38845044818 实证）。
+/// 三重合并后窗=「全 Forest + 高海面 + 暖带」的干净林地。
 #[must_use]
 fn ground_pure(seed: u64, cx: i32, cz: i32) -> bool {
     let mut ok = 0;
