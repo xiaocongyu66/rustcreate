@@ -53,10 +53,10 @@ const SAND: u16 = 4;
 const WATER: u16 = 5;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
-/// 砾石/砂岩（海洋 SURF-2 销账：terrain::GRAVEL/SANDSTONE；GEN_BLOCKS
-/// 431 `minecraft:gravel` / 893 `minecraft:sandstone`）。
+/// 砾石（海洋 SURF-2 销账：terrain::GRAVEL；GEN_BLOCKS 431
+/// `minecraft:gravel`）。〔SANDSTONE 锚随地形 golden 锁在 ores_data/
+/// geometry 面——本文件锁面只触海床顶格，未消费，故不引（dead_code）。〕
 const GRAVEL: u16 = mcv_worldgen::vanilla::terrain::GRAVEL;
-const SANDSTONE: u16 = mcv_worldgen::vanilla::terrain::SANDSTONE;
 
 /// 六树种原木/叶（树基列排除：原版树基把表土换成 dirt，TreeConfiguration
 /// .java:20-26 经 tree_pass ChunkClipper 落地——不计入表层裸土症状）。
@@ -333,10 +333,10 @@ fn beach_window_top_is_sand() {
 /// - 暖段（temperature ≥ 0.55 = OBB.java:60 temperatures[4] WARM_OCEAN，
 ///   合并群系的同位温度段近似）全深度 SAND（:262 sandOrSandstoneIfCeiling
 ///   的 rule2/rule3 双覆盖）。
+///
 /// 窗条件与草/滩窗不同：深海要求全列 est ≤ SEA−8（Ocean 群系在海岸带
 /// 可为干地——密度场说了算，不属本锁面）。海波归因收口（重锚波②移交
-/// 项）：旧 gate 锚 `est−8` 而官方门基 prelim+sd−8（seed7 origin 实测
-/// prelim=32 vs 真顶 49-53），破面下沿裸石被矿层染成安山岩 = 我们的
+/// 项）：旧 gate 锚 `est−8`，破面下沿裸石被矿层染成安山岩 = 我们的
 /// SurfaceRules 漏支，非官方 patch 行为——修复后本窗收紧为按温度段×
 /// 水深的精确材质（不再维护 SAND 代偿豁免与 stone 族松弛）。
 #[test]
@@ -409,7 +409,7 @@ fn ocean_window_underwater_top_follows_official_chain() {
             );
         }
     }
-    assert!(checked > 128, "海窗可查列过少（{checked}）");
+    assert!(checked > 128, "海窗可查列过少（{checked}，warm={warm}）");
 }
 
 /// 确定性：同 seed 两 generate 字节一致（含新表层路径；quality.rs 全局
