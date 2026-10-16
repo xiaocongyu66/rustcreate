@@ -1358,6 +1358,15 @@ pub fn generate(
     // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
     // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
     crate::vanilla::tree_pass::project_trees(seed, chunk_x, chunk_z, &orch, out_voxels);
+    // Pass 2.2（陆地植被执行器）：草原系三族（patch_grass_* 草丛 5 行 +
+    // patch_tall_grass_* 高草 2 行 + flower_* 花族 3 行；26.1
+    // SimpleBlockFeature + placed 链逐修饰对位——RIVER 槽序
+    // flower_default/patch_grass_badlands < seagrass_river（river.json
+    // features[9] 行序）故必须置水草 pass 前；执行器/重放模型与
+    // KNOWN-DIVERGENCE 登记见 flora 模块头注）。
+    crate::vanilla::flora::project_land_flora(
+        seed, chunk_x, chunk_z, &orch, &mut field, out_voxels,
+    );
     // Pass 2.3（水草执行器）：海草/海带（26.1 SeagrassFeature/KelpFeature；
     // 与树同 VEGETAL_DECORATION 槽、群系行序 trees→seagrass→kelp，
     // ocean.json:92-93 / river.json:93 —— 故置树后；freeze 次阶在其后，

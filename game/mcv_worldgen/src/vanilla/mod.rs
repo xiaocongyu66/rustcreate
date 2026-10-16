@@ -18,6 +18,7 @@ pub mod biomes;
 pub mod blended;
 pub mod cell_interp;
 pub mod climate;
+pub mod flora;
 pub mod freeze_pass;
 pub mod lake_pass;
 pub mod noise;

@@ -70,7 +70,7 @@ impl LegacyRandom {
     /// `nextInt(bound)`（BitRandomSource.java:18-37）：2 幂 bound 走
     /// `(bound * next(31)) >> 31` 乘法折叠，否则拒绝采样
     /// `sample - modulo + bound - 1 >= 0`。
-    fn next_int_bound(&mut self, bound: i32) -> i32 {
+    pub(crate) fn next_int_bound(&mut self, bound: i32) -> i32 {
         debug_assert!(bound > 0, "Bound must be positive");
         if bound & (bound - 1) == 0 {
             return (((bound as i64) * (self.next(31) as i64)) >> 31) as i32;
@@ -89,11 +89,20 @@ impl LegacyRandom {
     /// **float 域乘法**（combined 先量化为 float 再乘 float 字面量），
     /// 结果再宽化回 double。与 java.util.Random 的 double 域乘 2⁻⁵³
     /// **不**逐位等价（见模块头注）。
-    fn next_double(&mut self) -> f64 {
+    pub(crate) fn next_double(&mut self) -> f64 {
         let upper = self.next(26) as i64;
         let lower = self.next(27) as i64;
         let combined = (upper << 27) + lower;
         (combined as f32 * 1.110223e-16_f32) as f64
+    }
+
+    /// `nextLong()`（BitRandomSource.java:37-41）：双 `next(32)` 合成
+    /// （ upper 左移 32 + lower，有符号宽化——LegacyRandomSource 透传
+    /// BitRandomSource 默认实现；flora 花域链 forkPositional 消费）。
+    pub fn next_long(&mut self) -> i64 {
+        let upper = i64::from(self.next(32));
+        let lower = i64::from(self.next(32));
+        (upper << 32) + lower
     }
 
     /// `consumeCount(count)`：`nextInt()` ×count（多倍频空洞占位；

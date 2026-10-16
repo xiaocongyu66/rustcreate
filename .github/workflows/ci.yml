@@ -115,6 +115,10 @@ jobs:
       # 原文，不能只在红跑回显时可见）。
       - name: Lava lake audit (K-LAKES lines into log)
         run: cargo test -p mcv_worldgen --test lakes --locked -- --nocapture
+      # 草原植被量化面：K-FLORA per-biome chunks/写数/id 直方图常态入
+      # 日志（同 cave_audit/lakes 先例；期望收紧值以本打印为据回填）。
+      - name: Land flora audit (K-FLORA lines into log)
+        run: cargo test -p mcv_worldgen --test flora --locked -- --nocapture
   render-headless:
     runs-on: ubuntu-24.04
     steps:
