@@ -1,9 +1,12 @@
-//! 音效接线判据：步距门纯函数（26.1 Entity.java 步行音状态机）+ 千块表全名
-//! SoundType 覆盖。数值引注：
+//! 音效接线判据：步距门纯函数（26.1 Entity.java 步行音状态机）+ 游泳行进音量
+//! 纯函数 + 千块表全名 SoundType 覆盖。数值引注：
 //! - 步距累计：`moveDist += 水平位移 × 0.6`（Entity.java:812-813）；
 //! - 触发门：`moveDist > nextStep && !supportingState.isAir()`（Entity.java:820）；
-//! - 阈值更新：`nextStep = (int)moveDist + 1`（Entity.java:1188-1190），初值 1.0（:246）。
-use mcv_logic::game::step_gate;
+//! - 阈值更新：`nextStep = (int)moveDist + 1`（Entity.java:1188-1190），初值 1.0（:246）；
+//! - 游泳音量：`min(1, √(vx²·0.2+vy²+vz²·0.2)) × 0.35`
+//!   （waterSwimSound Entity.java:1360-1370，自身 volumeModifier=0.35）。
+use glam::Vec3;
+use mcv_logic::game::{step_gate, swim_volume};
 
 #[test]
 fn below_threshold_does_not_fire() {
@@ -58,4 +61,21 @@ fn scale_0_6_maps_horizontal_to_move_dist() {
     assert!(step_gate(moved_h * 0.6, 1.0).is_some());
     // 不足一步（1.6 水平）不触发。
     assert_eq!(step_gate(1.6f32 * 0.6, 1.0), None);
+}
+
+#[test]
+fn swim_volume_matches_water_swim_sound_formula() {
+    // Entity.waterSwimSound（Entity.java:1360-1370）：speed =
+    // min(1, √(vx²·0.2 + vy² + vz²·0.2)) × 0.35（自身控制 volumeModifier
+    // = 0.35，:1362；本仓无骑乘恒自身）。静水零速 → 零增益。
+    assert_eq!(swim_volume(Vec3::ZERO), 0.0);
+    // 缓行 0.2 格/tick：√(0.04·0.2)=0.08944… × 0.35 ≈ 0.03130。
+    assert!((swim_volume(Vec3::new(0.2, 0.0, 0.0)) - 0.031305).abs() < 1e-4);
+    // 垂直分量权重 1.0·0.35 满算：下潜 0.4 → 0.14。
+    assert!((swim_volume(Vec3::new(0.0, 0.4, 0.0)) - 0.14).abs() < 1e-6);
+    // 高速封顶 min(1, …)：超速侧滑 → 0.35 上限（× volumeModifier 后）。
+    assert_eq!(swim_volume(Vec3::new(0.0, 0.0, 5.0)), 0.35);
+    // 横向权重 0.2 的对照：5 只在 y 向才顶满——x 向 5 → √(25·0.2)=2.236 → 仍 1.0
+    // 封顶（同上限），但中速区 y 权重 5 倍于 x：
+    assert!(swim_volume(Vec3::new(0.5, 0.0, 0.0)) < swim_volume(Vec3::new(0.0, 0.5, 0.0)));
 }

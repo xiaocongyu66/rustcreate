@@ -16,6 +16,7 @@ const MAPPING: &[(&str, &str)] = &[
     ("player_hurt", events::PLAYER_HURT),
     ("player_splash", events::PLAYER_SPLASH),
     ("player_splash_high_speed", events::PLAYER_SPLASH_HIGH_SPEED),
+    ("player_swim", events::PLAYER_SWIM),
     ("player_fall_big", events::PLAYER_FALL_BIG),
     ("player_fall_small", events::PLAYER_FALL_SMALL),
     ("item_break", events::ITEM_BREAK),

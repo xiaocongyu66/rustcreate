@@ -4639,14 +4639,18 @@ impl GameRuntime {
             } else if self.player.on_ground {
                 self.fall_y = None;
             }
-            // 走路脚步：步距门（Entity.java:820 moveDist > nextStep）触发后
-            // 阈值 = (int)moveDist + 1（:1188-1190）；支撑格非空才发声（同
-            // :820 !supportingState.isAir()）。on_ground 门为本仓姿态位
-            // （原版无显式落地判定，支撑格判定近似）。
-            if self.player.on_ground
-                && let Some(ns) = step_gate(self.step_dist, self.next_step)
-            {
-                self.next_step = ns;
+            // 走路脚步：步距门（Entity.java:820 moveDist > nextStep ∧
+            // :supportingState 非空）触发后阈值 = (int)moveDist + 1（:1188-1190）。
+            // 过门后按发声面分派（本波 sfx-audit M2/M3 补齐，对照原版
+            // :829-840 producedSideEffects else-链）：
+            // - 水中 → 游泳行进音 waterSwimSound（:831-835 else-分支；自由
+            //   泳支撑格=水非空，同样过门）；on_ground（:936 onGround 分支
+            //   的仓内姿态位）再叠闷步（Player.java:1468-1471 水分支 →
+            //   playMuffledStepSound Entity.java:1384-1387）。
+            // - 陆上 → 步行音，仍以 on_ground 为仓内发声门（同 :936）。
+            // 水中/陆上都没发声（悬空、支撑空）时阈值不重置——同原版
+            // producedSideEffects=false 分支 :829（keeps gate armed）。
+            if let Some(ns) = step_gate(self.step_dist, self.next_step) {
                 let p = self.player.pos;
                 let under = WorldView {
                     chunks: &self.chunks,
@@ -4661,18 +4665,53 @@ impl GameRuntime {
                 .0;
                 if under != 0 {
                     let st = sound_type_of(under);
-                    // 步音 volume = SoundType.volume × 0.15（Entity.java:1391
-                    // getVolume() * 0.15F）；音高 = SoundType.pitch × [0.8,1.2)
-                    // 随机（派单规格；26.1 同型随机式 Entity.java:1408 /
-                    // LocalPlayer.java:954）。
-                    let jitter = 0.8 + (fast_rand() % 1024) as f32 / 1024.0 * 0.4;
-                    self.audio.play_event_pitched(
-                        st.step,
-                        [p.x, p.y, p.z],
-                        [p.x, p.y, p.z],
-                        st.volume * 0.15,
-                        st.pitch * jitter,
-                    );
+                    if in_water {
+                        // 游泳行进音 PLAYER_SWIM（SoundEvents.java:1295）：
+                        // 音量 = min(1, √(vx²·0.2+vy²+vz²·0.2))×0.35
+                        // （waterSwimSound Entity.java:1360-1370，自身控制
+                        // volumeModifier=0.35；纯函数 swim_volume 落在
+                        // swimming_tick 旁）；音高 = 1.0+(rand−rand)×0.4
+                        // （playSwimSound :1407-1409， fast_rand 1024 档
+                        // 近似，同溅落音 jitter 惯例）。
+                        self.next_step = ns;
+                        let r1 = (fast_rand() % 1024) as f32 / 1024.0;
+                        let r2 = (fast_rand() % 1024) as f32 / 1024.0;
+                        self.audio.play_event_pitched(
+                            mcv_audio::events::PLAYER_SWIM,
+                            [p.x, p.y, p.z],
+                            [p.x, p.y, p.z],
+                            swim_volume(self.player.vel),
+                            1.0 + (r1 - r2) * 0.4,
+                        );
+                        if self.player.on_ground {
+                            // 趟水闷步（Player.java:1468-1471 水分支第二个音）：
+                            // vol = SoundType.volume × 0.05、pitch =
+                            // SoundType.pitch × 0.8（Entity.java:1384-1387，
+                            // 无随机——音高变化由 sounds.json 变体承担）。
+                            self.audio.play_event_pitched(
+                                st.step,
+                                [p.x, p.y, p.z],
+                                [p.x, p.y, p.z],
+                                st.volume * 0.05,
+                                st.pitch * 0.8,
+                            );
+                        }
+                    } else if self.player.on_ground {
+                        self.next_step = ns;
+                        // 步音 volume = SoundType.volume × 0.15（Entity.java:1391
+                        // getVolume() * 0.15F）；音高 = SoundType.pitch × [0.8,1.2)
+                        // 随机（派单规格；26.1 同型随机式 Entity.java:1408 /
+                        // LocalPlayer.java:954；call 点直传无随机——额外 jitter
+                        // 为登记偏差 J1，见 docs/sfx-audit.md）。
+                        let jitter = 0.8 + (fast_rand() % 1024) as f32 / 1024.0 * 0.4;
+                        self.audio.play_event_pitched(
+                            st.step,
+                            [p.x, p.y, p.z],
+                            [p.x, p.y, p.z],
+                            st.volume * 0.15,
+                            st.pitch * jitter,
+                        );
+                    }
                 }
             }
             // ---- 生存统计（26.1 LivingEntity/ServerPlayer/FoodData）----
@@ -8303,6 +8342,17 @@ pub fn swimming_tick(
     } else {
         sprinting && under_water && feet_water
     }
+}
+
+/// 水中行进游泳音的行进音量（26.1 `Entity.waterSwimSound`
+/// Entity.java:1360-1370）：min(1, √(vx²·0.2 + vy² + vz²·0.2)) ×
+/// volumeModifier。自身控制（controllingPassenger == this）时
+/// volumeModifier = **0.35**（:1362，本仓无骑乘恒此值）。
+pub fn swim_volume(vel: Vec3) -> f32 {
+    (vel.x * vel.x * 0.2 + vel.y * vel.y + vel.z * vel.z * 0.2)
+        .sqrt()
+        .min(1.0)
+        * 0.35
 }
 
 /// 雨粒子半径（26.1 客户端设置 `weatherRadius` 默认 **10**、范围 3..10，
