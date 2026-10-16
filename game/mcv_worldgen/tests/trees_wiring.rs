@@ -164,7 +164,13 @@ fn deterministic_bytes_with_trees() {
 #[test]
 fn ocean_and_desert_windows_treeless() {
     for (name, seed, cx, cz, want) in [
-        ("Ocean", OCEAN_SEED, ocean_win().0, ocean_win().1, Biome::Ocean),
+        (
+            "Ocean",
+            OCEAN_SEED,
+            ocean_win().0,
+            ocean_win().1,
+            Biome::Ocean,
+        ),
         ("Desert", DESERT_SEED, DESERT_CX, DESERT_CZ, Biome::Desert),
     ] {
         for z in 0..16_i32 {
