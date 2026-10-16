@@ -68,12 +68,15 @@ fn ore_v7_byte_golden() {
     // = 矿石输出零漂移，仅地形基线变更（深板岩/基岩维度入面）。
     // registry 期首锚（0cf9…六值，run 38439382386/38458062994）见
     // docs 历史；实现定稿于 4a5ac2f2。
+    // v8（ocean-flora2，pass 2.3 水草入面）重锚：case0/1/4 为海/河块，
+    // 水草写改体素哈希（ore 仍只写 pass-1 石头，纯字节基线变更）；
+    // case2/3/5 干块零漂移。重锚证据 run 38857002691（4debe71e）。
     const WANT: [u64; 6] = [
-        0x36B6_86F4_5A7C_7A4D,
-        0x024E_2997_0850_4E8B,
+        0x2C1C_E0E2_6301_A610,
+        0xD569_176D_C5EF_C497,
         0xD4FE_9BAC_5CC4_BA8E,
         0xF4BC_2400_5638_487E,
-        0x199C_6B16_8BF4_6A1A,
+        0xF0E7_3572_C7CD_9DE2,
         0x9E5C_1009_0DE0_39B6,
     ];
     let mut report = String::new();

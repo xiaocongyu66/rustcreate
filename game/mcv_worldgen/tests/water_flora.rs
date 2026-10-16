@@ -217,16 +217,21 @@ fn ocean_rows_seagrass_and_kelp_present_with_column_shape() {
             if kelp_ys.len() >= 2 {
                 kelp_col_seen_multi = true;
             }
-            // 顶头体中（截断/满高都以 KELP 头收尾，体在下）。
-            for (i, y) in kelp_ys.iter().enumerate() {
-                let want = if i + 1 == kelp_ys.len() {
-                    KELP
-                } else {
-                    KELP_PLANT
-                };
-                let got = cells.iter().find(|w| w.y == *y).map(|w| w.id).unwrap_or(0);
-                assert_eq!(got, want, "kelp 柱位 ({x},{y},{z}) 期望 {want} got {got}");
-            }
+            // 顶头：柱顶 buffer 终态 = KELP 头（「后写者赢」：kelp 行
+            // (idx 1) 覆写 seagrass 行 (idx 0) 同格；同柱同锚二次 attempt
+            // 的 truncate 头可与体混叠——pass-1 重放判据件，头注
+            // KNOWN-DIVERGENCE 第 2 条），故只锁顶格 id、不锁中段逐格。
+            let top = kelp_ys[kelp_ys.len() - 1];
+            let got_top = cells
+                .iter()
+                .rev()
+                .find(|w| w.y == top)
+                .map(|w| w.id)
+                .unwrap_or(0);
+            assert_eq!(
+                got_top, KELP,
+                "kelp 柱顶 ({x},{top},{z}) 期望头 508 got {got_top}"
+            );
             // 洋底附着：柱底 pass-1 下方为实面（同 rp：判据读重放态）。
             let bottom = kelp_ys[0];
             let below = rp.block_at(*x, bottom - 1, *z);
