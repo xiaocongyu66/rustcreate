@@ -28,7 +28,7 @@ use std::sync::OnceLock;
 use mcv_core::ChunkPos;
 use mcv_worldgen::vanilla::aquifer::{Aquifer, AquiferField};
 use mcv_worldgen::vanilla::biomes::Biome;
-use mcv_worldgen::vanilla::ore_pass::ORE_DOMAIN;
+use mcv_worldgen::vanilla::ore_pass::{ORE_DOMAIN, Replay};
 use mcv_worldgen::vanilla::terrain::Orchestrator;
 use mcv_worldgen::vanilla::water_flora::{
     FloraWrite, WATER_FLORA_DOMAIN, flora_writes, origin_flora_writes,
@@ -334,7 +334,8 @@ fn river_rows_place_seagrass_only_end_to_end() {
         }
         with_writes += 1;
         if anchor.is_none() {
-            anchor = Some((*ocx, *ocz, ws));
+            // 只锚一份（clone），ws 本身留给本轮 id/写帽断言。
+            anchor = Some((*ocx, *ocz, ws.clone()));
         }
         for w in &ws {
             assert!(
