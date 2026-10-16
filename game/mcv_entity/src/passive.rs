@@ -56,6 +56,26 @@ pub fn update_wing(flap: f32, flap_speed: f32, on_ground: bool) -> (f32, f32) {
     (flap + flapping * 2.0, fs)
 }
 
+/// 行走摆动账本推进（`player_mesh::update_walk_animation` 同款换算；60 Hz
+/// 物理步语义，`dt` = 步长秒）。`horiz` = 水平速度 m/s。供被动系统与
+/// game.rs `mob_ai_system`（Brain 路线，含敌对怪）共用——移动速度不同只按
+/// [`PLAYER_WALK_SPEED`] 比值缩放相位/幅值（原版 LivingEntity.walkAnimation
+/// 账本：满速腿摆 ≈ ±1.4 rad，见 mob_mesh 模块头）。
+pub fn advance_walk_anim(anim: &mut AnimState, horiz: f32, dt: f32) {
+    // 玩家 0.1 速度属性 = 4.317 m/s；怪属性不同，直接按比值缩放。
+    let ratio = (horiz / PLAYER_WALK_SPEED).min(1.0);
+    let target = ratio * 0.88;
+    anim.amount = if horiz > 0.15 {
+        anim.amount + (target - anim.amount) * (dt * 10.0).min(1.0)
+    } else {
+        anim.amount * (-dt * 12.0).exp()
+    };
+    if horiz <= 0.15 && anim.amount < 0.005 {
+        anim.amount = 0.0;
+    }
+    anim.phase = (anim.phase + ratio * 1.2 * (dt * 20.0)) % std::f32::consts::TAU;
+}
+
 // ---- 组件 -------------------------------------------------------------------
 
 /// 游荡/逃离 AI 运行时（每只被动怪一份，20 Hz 语义）。
@@ -402,6 +422,9 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             gravity_scale: 1.0,
         };
         let mut eng = body.body();
+        // 渲染插值基准：每个物理步开头拍 pos_old（MobInstance 拼装帧的
+        // pos_old→pos partialTick 插值面，26.1 xOld/yOld/zOld 等价）。
+        body.pos_old = body.pos;
         if on_tick && def.kind == MobKind::Chicken && !body.on_ground && eng.vel.y < 0.0 {
             // Chicken.aiStep（Chicken.java:124-127）——空中下落 y 速度 ×0.6
             // （扑翼缓降）。原版在 aiStep 每 **tick**（20 Hz）施加一次；
@@ -419,19 +442,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         if let Some(anim) = anims.get_mut(e) {
             const DT: f32 = 1.0 / 60.0;
             let horiz = (eng.vel.x * eng.vel.x + eng.vel.z * eng.vel.z).sqrt();
-            // 与 player_mesh::update_walk_animation 同款（玩家 0.1 属性 =
-            // 4.317 m/s；被动怪属性不同，直接按比值缩放相位与幅值）。
-            let ratio = (horiz / PLAYER_WALK_SPEED).min(1.0);
-            let target = ratio * 0.88;
-            anim.amount = if horiz > 0.15 {
-                anim.amount + (target - anim.amount) * (DT * 10.0).min(1.0)
-            } else {
-                anim.amount * (-DT * 12.0).exp()
-            };
-            if horiz <= 0.15 && anim.amount < 0.005 {
-                anim.amount = 0.0;
-            }
-            anim.phase = (anim.phase + ratio * 1.2 * (DT * 20.0)) % std::f32::consts::TAU;
+            advance_walk_anim(anim, horiz, DT);
             // 鸡扑翼：Chicken.java:117-119（tick 语义，在 on_tick 内推进）。
             if on_tick {
                 let on_ground = body.on_ground;

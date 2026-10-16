@@ -13,8 +13,8 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath,
-    MobTicks, PhysBody, PickupReq, Yaw, spawn_mob,
+    AiAction, AnimState, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind,
+    MobPath, MobTicks, PhysBody, PickupReq, Yaw, advance_walk_anim, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
@@ -1804,10 +1804,11 @@ impl GameRuntime {
         mcv_entity::register_drop_components(&mut rt.mobs_app.world);
         // 经验球组件（#128-3，与掉落物同 World 分区：xp 系统按 XpOrb 过滤）。
         mcv_entity::register_xp_components(&mut rt.mobs_app.world);
-        // 被动组件（WanderState/AnimState）也要注册：mob 渲染收集器
-        // （mob_render::collect_mob_instances_in）read 全部五类组件，未注册
-        // 类型 read 会 panic。游戏内被动怪经 spawn_mob 装配（无这两组件，
-        // 视图为空表不 panic）——注册仅为收集器的读面兜底。
+        // 被动组件（WanderState）注册兜底：mob 渲染收集器
+        // （mob_render::collect_mob_instances_in）read 组件视图，未注册类型
+        // read 会 panic。AnimState 已随 register_mob_components 统一注册并
+        // 由 spawn_mob 装配（mob_ai_system 每 60 Hz 步推进——行走摆动面）；
+        // WanderState 仅测试侧 passive 路线消费，游戏内不插（空表视图）。
         mcv_entity::register_passive_components(&mut rt.mobs_app.world);
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
@@ -7370,7 +7371,17 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
     let events = &mut *ctx.events;
-    let (mut phys, kind, mut ticks, mut yaw, mut health, mut brains, mut intents, mut paths) = (
+    let (
+        mut phys,
+        kind,
+        mut ticks,
+        mut yaw,
+        mut health,
+        mut brains,
+        mut intents,
+        mut paths,
+        mut anims,
+    ) = (
         world.write::<PhysBody>(),
         world.read::<MobKind>(),
         world.write::<MobTicks>(),
@@ -7379,6 +7390,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         world.write::<MobBrain>(),
         world.write::<MobIntent>(),
         world.write::<MobPath>(),
+        world.write::<AnimState>(),
     );
     let view = WorldView {
         chunks: &svc.chunks,
@@ -7386,6 +7398,10 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let p_eye = svc.player_pos + Vec3::new(0.0, mcv_game::Player::EYE, 0.0);
     let mut rng = || fast_rand();
     phys.for_each(|e, body| {
+        // 渲染插值基准拍点（26.1 xOld/yOld/zOld 等价：每物理步进前快照）——
+        // 放在模拟环门**之前**：环外冻结实体的 pos_old 随 pos 冻结（渲染
+        // 插值不回退），环内实体则始终持有上一步位置。
+        body.pos_old = body.pos;
         // 实体 tick 双门（26.1 ServerLevel.java:418-419 逐条镜像）：
         // 1) 模拟环：`inEntityTickingRange`（DistanceManager.java:136-138）
         //    = PLAYER_SIMULATION 票级别视图 ≤ ENTITY_TICKING（谓词收口到
@@ -7721,6 +7737,16 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         step_entity(&view, &mut eng, def.half_size, &input);
         body.set_body(&eng);
         pos = body.pos;
+        // ---- 行走摆动账本（每物理步推进；LivingEntity.walkAnimation）----
+        // 此前 AnimState 只在测试侧 passive 路线出现，游戏内 spawn_mob 不插
+        // 不推 → collect_mob_instances_in 恒读 (0,0) 零相位 → mob（僵尸最
+        // 显眼）走路腿不摆（子案①根因）。与 passive.rs advance_walk_anim
+        // 共用同一公式（速度比缩放相位/幅值）。
+        if let Some(anim) = anims.get_mut(e) {
+            const DT: f32 = 1.0 / 60.0;
+            let horiz = (body.vel.x * body.vel.x + body.vel.z * body.vel.z).sqrt();
+            advance_walk_anim(anim, horiz, DT);
+        }
         // 死亡清理：Health<=0 → 排队 despawn（阶段末生效，等价原循环后
         // retain）+ 环境死亡掉落（非玩家击杀，spider_eye 不掉；玩家击杀
         // 在 try_attack 即时结算，不会走到这里）。近战冷却/命中已由
