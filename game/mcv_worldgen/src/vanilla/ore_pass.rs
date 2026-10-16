@@ -64,8 +64,8 @@ use crate::vanilla::channel_seed;
 use crate::vanilla::ores_data::{HeightDist, ORE_ROWS, OreCount, OreRow, biome_allowed};
 use crate::vanilla::splitmix64;
 use crate::vanilla::terrain::{
-    AIR, BEDROCK, ColumnState, LAVA, Orchestrator, PRELIM_SURFACE_BAND, REAL_TOP_SCAN_MARGIN,
-    STONE, WATER, bedrock_noise, half_negative, solid_material,
+    AIR, BEDROCK, ColumnState, LAVA, Orchestrator, REAL_TOP_SCAN_MARGIN, STONE, SurfaceMats, WATER,
+    bedrock_noise, half_negative, solid_material,
 };
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -163,8 +163,12 @@ struct Col {
     cs: ColumnState,
     fill_top: i32,
     min_surface: i32,
-    surface_id: u16,
-    subsoil_id: u16,
+    /// 三层材质栈（海洋 SURF-2 波：`column_surface_mats` 群系/水情面，
+    /// 与 terrain 缓冲侧共用同一函数）。
+    mats: SurfaceMats,
+    /// 实物亚表带宽（getSurfaceDepth 逐列值，terrain 同式——随本波一并
+    /// 替换旧块级常数 3，消与缓冲侧的带深漂移）。
+    surface_depth: i32,
     skip: i32,
     /// 自 fill_top 向下首个 density>0 位（无则 MIN_Y 基岩）。
     first_solid: i32,
@@ -220,16 +224,20 @@ impl<'a, 'f> Replay<'a, 'f> {
             let crossing = (128.0_f64 + 128.0 * (cs.offset + jag)).round() as i32;
             let scan_top = (crossing + REAL_TOP_SCAN_MARGIN)
                 .clamp(mcv_core::WORLD_MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
-            let (surface_id, subsoil_id) = self.orch.column_surface_ids(x, z, &cs);
+            let mats = self.orch.column_surface_mats(x, z, &cs);
+            let surface_depth = self.orch.surface_depth(x, z);
+            // 表层门基官方实物（SurfaceRules.java:330-383 bilerp4 + sd − 8；
+            // 海洋 SURF-2 波随 terrain generate 同式，杜绝重放/缓冲漂移）。
+            let min_surface = self.orch.min_surface_level(x, z, surface_depth);
             let skip = self
                 .field
                 .chunk_skip(x.div_euclid(16) * 16, z.div_euclid(16) * 16);
             let mut c = Col {
                 cs,
                 fill_top: scan_top.max(mcv_core::SEA_LEVEL),
-                min_surface: crossing - PRELIM_SURFACE_BAND,
-                surface_id,
-                subsoil_id,
+                min_surface,
+                mats,
+                surface_depth,
                 skip,
                 first_solid: mcv_core::WORLD_MIN_Y,
                 blocks: HashMap::new(),
@@ -311,14 +319,14 @@ impl<'a, 'f> Replay<'a, 'f> {
         {
             return BEDROCK;
         }
-        let (fill_top, fs, min_surface, surface_id, subsoil_id, skip) = {
+        let (fill_top, fs, min_surface, mats, surface_depth, skip) = {
             let c = self.col(x, z);
             (
                 c.fill_top,
                 c.first_solid,
                 c.min_surface,
-                c.surface_id,
-                c.subsoil_id,
+                c.mats,
+                c.surface_depth,
                 c.skip,
             )
         };
@@ -346,7 +354,7 @@ impl<'a, 'f> Replay<'a, 'f> {
             return STONE; // solid_material 带下兜底（terrain.rs:972-973）
         }
         let depth = self.depth_above(x, z, fs, y, skip);
-        solid_material(y, min_surface, depth, surface_id, subsoil_id)
+        solid_material(y, min_surface, depth, mats, surface_depth)
     }
 
     fn is_adjacent_to_air(&mut self, x: i32, y: i32, z: i32) -> bool {

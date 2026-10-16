@@ -114,6 +114,12 @@ pub const SNOW_GRASS: u16 = 11;
 /// 深板岩（#192 深板岩层）：blocks_gen.inc.rs:363（id 342，
 /// mcv_item/src/lib.rs:2149 `Block(BlockId(342))` 交叉印证）。
 pub const DEEPSLATE: u16 = 342;
+/// 砾石（海洋/河床 SURF-2 销账）：blocks_gen.inc.rs:464（id 431，
+/// 官方 `minecraft:gravel`；ore_pass 砾石补丁 target 同 id 交叉印证）。
+pub const GRAVEL: u16 = 431;
+/// 砂岩（biomesWithSandAndSandstone 的 DEEP_UNDER_FLOOR 带，
+/// SurfaceRuleData.java:254；blocks_gen.inc.rs:927，id 893）。
+pub const SANDSTONE: u16 = 893;
 
 /// vertical_gradient 条件位置随机的实物 random_name（overworld.json
 /// surface_rule 树原文；#192 RNG-1 销账：种子链 = vanilla/xoroshiro.rs
@@ -485,6 +491,41 @@ pub struct ColumnState {
     /// erosion 气候通道原值（含水层 deep dark 门用，
     /// OverworldBiomeBuilder.java:1008-1010）。
     pub erosion: f64,
+    /// temperature 气候通道原值（暖洋海床判据：OverworldBiomeBuilder
+    /// temperatures[4] = span(0.55, 1.0)（OBB.java:60）选 WARM_OCEAN——
+    /// 本仓 10 群系子集把全部 OCEANS 段并成一个 [`crate::vanilla::Biome::Ocean`]
+    /// （biomes.rs 头注），海床材质按官方 SurfaceRules 的群系区分改为
+    /// 同位温度段近似（[`Self::column_surface_mats`]）。
+    pub temperature: f64,
+}
+
+/// 一列的三层表层材质栈（26.1 SurfaceRules 主链直译，见
+/// [`Orchestrator::column_surface_mats`] 取材表）：
+/// - `dry_top`/`dry_sub`：水上（顶层以上无水）的 ON_FLOOR 顶格与
+///   UNDER_FLOOR 带——biomeSurfaceRule 链（SurfaceRuleData.java:126-166）；
+/// - `wet_sub`：水下 notUnderDeepWater 门内的 UNDER_FLOOR 带材质——
+///   biomeUnderSurfaceRule（:96-125 默认 DIRT；沙群系 SAND :86-87）。
+///   **含 da==1 顶格**：UNDER_FLOOR = stoneDepth ≤ 1+surfaceDepth
+///   （SurfaceRules.java:676-684）恒把顶格罩进带里，rule2 的 ON_FLOOR 项
+///   只 reserved 给 frozen ocean 破冰（:252），故门内顶格=带材质；
+/// - `wet_deep_top`：水下门外顶格——rule3 兜底链（:258-265：
+///   WARM/LUKEWARM_OCEAN → SAND，其余 gravelOrStoneIfCeiling = GRAVEL）；
+/// - `deep`：门内 DEEP_UNDER_FLOOR 带（stoneDepth ≤ 1+surfaceDepth+6，
+///   SurfaceRules.java:36 StoneDepthCheck.secondaryDepthRange——
+///   biomesWithSandAndSandstone/沙漠的 SANDSTONE 带 :254-255；门外落石）。
+///
+/// dry/wet 判据 = 顶层实心方块自上方是水是气：generate 柱层序里
+/// `depth_above==1` 的首实心 y ≤ SEA ⟺ 其上必为 open_column 灌水段
+/// （aquifer.rs `open_column`：y ≤ SEA = Water）⟹ wet。官方
+/// SurfaceSystem 同构：waterHeight 首液位（SurfaceSystem.java:129-132），
+/// waterBlockCheck/waterStartCheck 都以 blockY+stoneDepth 比 waterHeight。
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceMats {
+    pub dry_top: u16,
+    pub dry_sub: u16,
+    pub wet_sub: u16,
+    pub wet_deep_top: u16,
+    pub deep: u16,
 }
 
 /// density 编排器 — NoiseRouter 式编排（offset/factor/jaggedness 样条 +
@@ -539,6 +580,15 @@ pub struct Orchestrator {
     noodle_thickness: NormalNoise,
     noodle_ridge_a: NormalNoise,
     noodle_ridge_b: NormalNoise,
+    /// prelim 16 块 cell 角值缓存（对位官方 preliminarySurfaceCache 每格
+    /// 4 角 + NoiseChunk 4 块 cell 表，SurfaceRules.java:349-367 /
+    /// NoiseChunk.java:218-227；min_surface_level 角位仅随 cell 变化——
+    /// 不缓存时每列重算 4 个 column_state（气候样条+jagged fBm），streaming
+    /// 计时域 4 倍放大的实证：run 38857740856）。纯函数性不变
+    /// （值 = f(角位列态)，parallel.rs ① ② 对拍不受影响——每 generate
+    /// 调用现建 Orchestrator、无跨线程共享，RefCell 即足；真要共享时
+    /// 编译期 !Sync 即守卫）。
+    prelim_cache: std::cell::RefCell<std::collections::HashMap<(i32, i32), i32>>,
 }
 
 impl Orchestrator {
@@ -589,42 +639,111 @@ impl Orchestrator {
             noodle_thickness: n("minecraft:noodle_thickness", -8, &AMPS_1),
             noodle_ridge_a: n("minecraft:noodle_ridge_a", -7, &AMPS_1),
             noodle_ridge_b: n("minecraft:noodle_ridge_b", -7, &AMPS_1),
+            prelim_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
-    /// 一列表层材质对 (顶格, 亚表带)。#140 表层波表驱动，自 `generate`
-    /// 原样抽出（判定语义逐字节不变，`column_real_top` 与柱层循环共用，
-    /// 杜绝两套表层规则漂移）。
+    /// 一列的三层材质栈 [`SurfaceMats`]（海洋 SURF-2 销账波：26.1
+    /// SurfaceRules 主链直译，"sand/gravel/sandstone/dirt 按 depth 分层"）。
+    /// #140 表层波表驱动，自 `generate` 原样抽出（判定语义与
+    /// `column_real_top`、ore_pass Replay 共用，杜绝两套表层规则漂移）。
+    ///
+    /// 26.1 主链（SurfaceRuleData.overworldLike，Java 相对 net/minecraft/）：
+    /// - 水上（dry）：群系面表 biomeSurfaceRule（:126-166）——内陆默认
+    ///   grassOrDirtIfUnderwater（:71,165 aboveWater→GRASS_BLOCK，否则
+    ///   DIRT）、Beach/Desert 沙（:74,86 :75,87）、SNOWY_PLAINS 雪草（:71
+    ///   GRASS_BLOCK + 内陆默认亚表 DIRT，雪层由 freeze_pass）。
+    /// - 水下（wet）：`ON_FLOOR` → 非暖洋/河默认 gravelOrStoneIfCeiling
+    ///   的 floor 分支 = GRAVEL（:258-265；WARM/LUKEWARM_OCEAN →
+    ///   sandOrSandstoneIfCeiling = SAND :262）；`UNDER_FLOOR` 带 →
+    ///   biomeUnderSurfaceRule 默认 DIRT（:124,253）、Beach/Desert/暖洋
+    ///   走 commonSurfaceAndUnderRules 的 SAND（:86,87）；
+    ///   `DEEP_UNDER_FLOOR`（secondaryDepthRange 6，SurfaceRules.java:36）带
+    ///   biomesWithSandAndSandstone/沙漠 → SANDSTONE（:254,255）。
+    /// - 水下带下设门：notUnderDeepWater = waterStartCheck(-6,-1)
+    ///   （:67,249；WaterCondition SurfaceRules.java:802-815
+    ///   `blockY + stoneDepthAbove ≥ waterHeight − 6 − surfaceDepth`，
+    ///   waterHeight = 首液位 +1（SurfaceSystem.java:131）；26.1 海面顶
+    ///   水块 y=62〔java-harness chunk dump 实证〕⟹ waterHeight=63=SEA，
+    ///   门锚收敛于 `SEA−6−surfaceDepth` 同口径）——深水底
+    ///   跳过 UNDER/DEEP 带（砾石顶下直落石，官方深海行为）。
     ///
     /// 滩/雪位置带沿用 `surface_ours` 估计面口径（geometry_locks
     /// vanilla_surface_material_bands 的契约面：「材质由 offset 估计面
-    /// 分带」，tests/geometry_locks.rs:100-121）。26.1 表层是逐方块条件
-    /// 规则表（SurfaceRuleData.overworldLike），顶格按群系与水情取块——
-    /// 内陆默认 grassOrDirtIfUnderwater（SurfaceRuleData.java:71,165：
-    /// aboveWater→GRASS_BLOCK，否则 DIRT）、BEACH/WARM_OCEAN/DESERT 沙
-    /// （:74-87 sandOrSandstoneIfCeiling）、SNOWY_PLAINS 草+雪层（雪草
-    /// 单块表示，本子集无 frozen peaks/badlands/mushroom/mangrove 例外
-    /// 群系，缺 id 债见 KNOWN-DIVERGENCE SURF-1 ①）。
+    /// 分带」）——**只作用于水上段**：估计面 ≤SEA ⟹ 顶层必为 open_column
+    /// 灌水位（generate 柱层序）⟹ 走水下官方链（旧 est 带把海床锁死成
+    /// SAND 即用户可见「海洋难崩」的根因面）；est == SEA+1 滩带沙（契约面
+    /// 维持）；est ≥ SEA+2 按群系面表（含雪带）。暖洋（官方 WARM_OCEAN
+    /// 温度段 [0.55,1.0]，OBB.java:60）在 10 群系子集里以同位温度段喂给
+    /// 同一 Ocean 群系（KNOWN-DIVERGENCE SURF-2 的已登记近似面）。缺例外
+    /// 群系（frozen peaks/badlands 等）见 KNOWN-DIVERGENCE SURF-1 ①。
+    #[must_use]
+    pub fn column_surface_mats(&self, block_x: i32, block_z: i32, cs: &ColumnState) -> SurfaceMats {
+        let surface = cs.surface_ours;
+        // est == SEA+1：滩带（cap 水上乾柱顶格沙；waterline 参照
+        // open_column：y ≤ SEA 灌水、其首实心必湿）。
+        let beach_band = surface == SEA + 1;
+        let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
+        // 温度段判据（OBB.java:60 temperatures[4] = span(0.55,1.0)）。
+        let warm_ocean = cs.temperature >= 0.55;
+        // 官方默认（内陆草群系；水下门内 biomeUnder 默认 DIRT :124,门外
+        // rule3 gravelOrStoneIfCeiling :258-265）。
+        let mut mats = SurfaceMats {
+            dry_top: GRASS,
+            dry_sub: DIRT,
+            wet_sub: DIRT,
+            wet_deep_top: GRAVEL,
+            deep: STONE,
+        };
+        match self.biome_at(block_x, block_z) {
+            // biomesWithSandAndSandstone（:74）/ DESERT（:75）：门内沙顶格/
+            // 沙带（UNDER_FLOOR 罩顶格）+ DEEP_UNDER_FLOOR 砂岩带（:254-255）；
+            // 门深外顶格落回 rule3 砾石（:263-264——两群系皆不在 :262 暖洋
+            // 列表）。
+            Biome::Desert | Biome::Beach => {
+                mats = SurfaceMats {
+                    dry_top: SAND,
+                    dry_sub: SAND,
+                    wet_sub: SAND,
+                    wet_deep_top: GRAVEL,
+                    deep: SANDSTONE,
+                };
+            }
+            // Ocean 群系（合并 OBB.OCEANS 全温度段，OBB.java:72-75,202-209）：
+            // 暖段 = 官方 WARM_OCEAN 链（rule2 门内 :262 sandOrSandstoneIfCeiling
+            // 沙带 + :254 SANDSTONE 带；rule3 门外亦恒 :262 沙顶），
+            // 其余段 = 默认链。群系面旱柱（海面出露小岛）官方 =
+            // grassOrDirtIfUnderwater（:71,165）→ 保持默认 GRASS/DIRT。
+            Biome::Ocean if warm_ocean => {
+                mats.wet_sub = SAND;
+                mats.wet_deep_top = SAND;
+                mats.deep = SANDSTONE;
+            }
+            Biome::Ocean => {}
+            Biome::River => {} // 河床同默认链（河不在 :74/:75 群系集）
+            Biome::SnowyPlains => {
+                mats.dry_top = SNOW_GRASS;
+                mats.dry_sub = DIRT;
+            }
+            Biome::Plains | Biome::Forest | Biome::BirchForest | Biome::Savanna | Biome::Taiga => {}
+        }
+        if beach_band {
+            // 滩带干柱顶格沙（既有契约面；湿柱已走水下链）。
+            mats.dry_top = SAND;
+            mats.dry_sub = SAND;
+        }
+        if snowy {
+            mats.dry_top = SNOW_GRASS;
+        }
+        mats
+    }
+
+    /// 旧对接口（树/遗迹 pass 等只关心干面顶格+亚表的位）：返回
+    /// `(dry_top, dry_sub)`。
     #[must_use]
     pub fn column_surface_ids(&self, block_x: i32, block_z: i32, cs: &ColumnState) -> (u16, u16) {
-        let surface = cs.surface_ours;
-        let beach = surface <= SEA + 1;
-        let snowy = surface > SEA + 46; // 旧 256 基准 y>142 = 海平面上 46
-        if beach {
-            (SAND, SAND)
-        } else if snowy {
-            (SNOW_GRASS, DIRT)
-        } else {
-            match self.biome_at(block_x, block_z) {
-                Biome::Desert | Biome::Beach | Biome::Ocean | Biome::River => (SAND, SAND),
-                Biome::SnowyPlains => (SNOW_GRASS, DIRT),
-                Biome::Plains
-                | Biome::Forest
-                | Biome::BirchForest
-                | Biome::Savanna
-                | Biome::Taiga => (GRASS, DIRT),
-            }
-        }
+        let m = self.column_surface_mats(block_x, block_z, cs);
+        (m.dry_top, m.dry_sub)
     }
 
     /// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
@@ -632,12 +751,13 @@ impl Orchestrator {
     /// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+surface_depth
     /// 亚表带（#192 SURF-1 ② 销账：`surface_depth` = 实物
     /// [`Self::surface_depth`] 逐列值，替旧常数 3——原版 UNDER_FLOOR
-    /// `stoneDepth ≤ 1 + surfaceDepth`，SurfaceRules.java:676-684）；
-    /// #192：两个 STONE 出口统一过 [`Self::stone_replacement`]
-    /// （vertical_gradient bedrock/deepslate 实物规则替换——表层草/土/沙位
-    /// 不受影响）。
+    /// `stoneDepth ≤ 1 + surfaceDepth`，SurfaceRules.java:676-684）、
+    /// ≤1+surface_depth+6 DEEP_UNDER_FLOOR 带、其余 STONE；dry/wet 与
+    /// notUnderDeepWater 门拆栈见 [`SurfaceMats`]。三个 STONE 出口统一过
+    /// [`Self::stone_replacement`]（vertical_gradient bedrock/deepslate
+    /// 实物规则替换——表层草/土/沙位不受影响）。
     #[must_use]
-    #[allow(clippy::too_many_arguments)] // 柱层上下文天然多参（位坐标+门深+计数+双材质对，blockshapes.rs:293 先例）
+    #[allow(clippy::too_many_arguments)] // 柱层上下文天然多参（位坐标+门深+计数+材质栈，blockshapes.rs:293 先例）
     pub fn solid_material(
         &self,
         wx: i32,
@@ -645,19 +765,117 @@ impl Orchestrator {
         wz: i32,
         min_surface: i32,
         depth_above: i32,
-        surface_id: u16,
-        subsoil_id: u16,
+        mats: SurfaceMats,
         surface_depth: i32,
     ) -> u16 {
         if y < min_surface {
             self.stone_replacement(wx, y, wz)
         } else if depth_above == 1 {
-            surface_id
+            if y > SEA {
+                mats.dry_top
+            } else if y + depth_above >= SEA - 6 - surface_depth {
+                // 门内：UNDER_FLOOR（≤1+sd）恒罩顶格 ⇒ biomeUnder 材质
+                // （SurfaceRules.java:249-257 :676-684）。
+                mats.wet_sub
+            } else {
+                // 门外：rule3 兜底（:258-265 暖洋沙/其余砾石）。
+                mats.wet_deep_top
+            }
         } else if depth_above <= 1 + surface_depth {
-            subsoil_id
+            // UNDER_FLOOR 带（SurfaceRules.java:676-684 + :253）。
+            self.wet_band_select(y, depth_above, surface_depth, mats)
+        } else if depth_above <= 1 + surface_depth + 6 {
+            // DEEP_UNDER_FLOOR 带（SurfaceRules.java:36/:254-255）。
+            self.wet_band_select(y, depth_above, surface_depth, mats)
         } else {
             self.stone_replacement(wx, y, wz)
         }
+    }
+
+    /// 水下亚表/深带统一过 notUnderDeepWater 门（SurfaceRules.java:249
+    /// 整段 ifTrue(waterStartCheck(-6,-1), …)、:802-815 water(-6,-1) =
+    /// `blockY + stoneDepthAbove ≥ waterHeight − 6 − surfaceDepth`；26.1
+    /// 海面顶水块 y=62〔java-harness chunk dump 实证〕⟹ waterHeight =
+    /// 首液位+1 = 63 = SEA（SurfaceSystem.java:131），门锚同收敛于
+    /// `SEA−6−sd`；y+da 在带内为列常数 top+1，故门按列全开/全闭）——
+    /// 门内按带分材质（UNDER_FLOOR wet_sub / DEEP_UNDER_FLOOR deep），
+    /// 门外落 STONE（rule2 跳过且 rule3 仅 ON_FLOOR ⇒ 带下无取材，
+    /// 保持 defaultBlock 石）。
+    #[must_use]
+    pub fn wet_band_select(
+        &self,
+        y: i32,
+        depth_above: i32,
+        surface_depth: i32,
+        mats: SurfaceMats,
+    ) -> u16 {
+        if y + depth_above >= SEA - 6 - surface_depth {
+            if depth_above <= 1 + surface_depth {
+                mats.wet_sub
+            } else {
+                mats.deep
+            }
+        } else {
+            STONE
+        }
+    }
+
+    /// 26.1 abovePreliminarySurface 门的门基（SurfaceRules.java:330-383
+    /// 实物：preliminarySurfaceCache 于 4 个 16 块 cell 角（:349-357
+    /// cell = blockCoord>>4）、bilerp 后 `+ surfaceDepth − 8`（:364-367，
+    /// HOW_FAR_BELOW…=8 SurfaceRules.java:264；`blockY ≥ minSurfaceLevel`
+    /// :381-383）。
+    ///
+    /// corner prelim = 官方 NoiseChunk.preliminarySurfaceLevel =
+    /// DensityFunctions.findTopSurface（DensityFunctions.java:585-611）——
+    /// 本仓逐构件直译在 [`Self::find_top_surface`]（#209：upper_bound 树
+    /// 钳 [−40,320]、floor(ub/8)·8 下扫 8 格行、probe 树零噪声采样；
+    /// 数值面 = offset/factor 气候种子链，main noise-vanilla-fork 已切
+    /// 官方 fork 链）。缓存键 = 角位块坐标（[Self::prelim_cache]，对位
+    /// NoiseChunk.java:218-227 cell 表）。
+    ///
+    /// 旧门锚 `估计面 − 8`（PRELIM_SURFACE_BAND 常量语义锚保留）：
+    /// 密度破面（岸带崖/洞口）把表层带以下打成裸石再被矿层染成安山岩 =
+    /// 用户可见「滩带石斑」+ 重锚波② 的 AND gate 根因（归因注记见
+    /// tests/geometry_locks.rs vanilla_surface_material_bands）。
+    #[must_use]
+    pub fn min_surface_level(&self, block_x: i32, block_z: i32, surface_depth: i32) -> i32 {
+        // 4 个 16 块 cell 角的 prelim（SurfaceRules.java:349-357：
+        // corner 采样 = cell<<4）——角值随 cell 缓存（[Self::prelim_cache]）。
+        let cell_x = block_x.div_euclid(16);
+        let cell_z = block_z.div_euclid(16);
+        let corner = |px: i32, pz: i32| -> f64 {
+            let mut cache = self.prelim_cache.borrow_mut();
+            match cache.get(&(px, pz)) {
+                Some(&v) => f64::from(v),
+                None => {
+                    let cs = self.column_state(px, pz);
+                    let v = self.prelim_surface_level(&cs);
+                    cache.insert((px, pz), v);
+                    f64::from(v)
+                }
+            }
+        };
+        let c00 = corner(cell_x * 16, cell_z * 16);
+        let c10 = corner((cell_x + 1) * 16, cell_z * 16);
+        let c01 = corner(cell_x * 16, (cell_z + 1) * 16);
+        let c11 = corner((cell_x + 1) * 16, (cell_z + 1) * 16);
+        // Mth.lerp2（SurfaceRules.java:357-362）：块内分数插值。
+        let fx = f64::from(block_x.rem_euclid(16)) / 16.0;
+        let fz = f64::from(block_z.rem_euclid(16)) / 16.0;
+        let prelim =
+            (c00 * (1.0 - fx) + c10 * fx) * (1.0 - fz) + (c01 * (1.0 - fx) + c11 * fx) * fz;
+        (prelim.floor() as i32) + surface_depth - 8
+    }
+
+    /// official `preliminarySurfaceLevel` 的列态接口（surface_rules
+    /// prelim_gate_probe_constants_anchored 锚面）：`cs.offset`/`cs.factor`
+    /// 进上界树与探测核（[`Self::find_top_surface`]——探测树零噪声
+    /// 采样，坐标不进参，返回 8 格量化行或 MIN_Y 下界）。corner 缓存与
+    /// 门基合成见 [`Self::min_surface_level`]。
+    #[must_use]
+    pub fn prelim_surface_level(&self, cs: &ColumnState) -> i32 {
+        self.find_top_surface(0, 0, cs.offset, cs.factor)
     }
 
     /// SurfaceSystem.getSurfaceDepth（SurfaceSystem.java:165-168）实物：
@@ -715,7 +933,7 @@ impl Orchestrator {
     ) -> Option<(i32, u16)> {
         use crate::vanilla::aquifer::Substance as Sub;
         let cs = self.column_state(block_x, block_z);
-        let (surface_id, subsoil_id) = self.column_surface_ids(block_x, block_z, &cs);
+        let mats = self.column_surface_mats(block_x, block_z, &cs);
         // 实物亚表带（#192 SURF-1 ②，与 generate 柱层循环同式）。
         let surface_depth = self.surface_depth(block_x, block_z);
         let jag = cs.unscaled_jag * half_negative(cs.jag_noise);
@@ -723,7 +941,8 @@ impl Orchestrator {
         let scan_top =
             (crossing + REAL_TOP_SCAN_MARGIN).clamp(MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
         let fill_top = scan_top.max(SEA);
-        let min_surface = crossing - PRELIM_SURFACE_BAND;
+        // abovePreliminarySurface 门基（官方 prelim+sd−8 实物，海洋 SURF-2 波）。
+        let min_surface = self.min_surface_level(block_x, block_z, surface_depth);
         // 树干列所属区块的免采样线（缓冲在所属块 generate 时用同线构建）
         let skip = field.chunk_skip(block_x.div_euclid(16) * 16, block_z.div_euclid(16) * 16);
         let mut depth_above = 0_i32;
@@ -759,8 +978,7 @@ impl Orchestrator {
                         block_z,
                         min_surface,
                         depth_above,
-                        surface_id,
-                        subsoil_id,
+                        mats,
                         surface_depth,
                     );
                     return Some((y + 1, id));
@@ -809,6 +1027,7 @@ impl Orchestrator {
             surface_ours,
             ocean: surface_ours <= SEA,
             erosion: sample.erosion,
+            temperature: sample.temperature,
         }
     }
 
@@ -1239,10 +1458,11 @@ pub fn generate(
             // 本列所在 cell 的 4 个 XZ 角列（≈每 4 列第一次实建，其余命中
             // 缓存 Rc 共享）——体素插值输入全在这里，循环内零可变访问。
             let cell_corners = cell.cols4(wx, wz);
-            // 群系面表（#140 表层波，滩/雪带 + 群系顶格判定——判定语义与
-            // 引注集中在 Orchestrator::column_surface_ids，树 pass 的
-            // column_real_top 共用同一函数，杜绝两套表层规则漂移）。
-            let (surface_id, subsoil_id) = orch.column_surface_ids(wx, wz, &cs);
+            // 群系面表（#140 表层波 + 海洋 SURF-2 销账：26.1 SurfaceRules 主链
+            // 直译三层材质栈——判定语义与引注集中在
+            // Orchestrator::column_surface_mats，树 pass 的 column_real_top 与
+            // ore_pass Replay 共用同一函数，杜绝两套表层规则漂移）。
+            let mats = orch.column_surface_mats(wx, wz, &cs);
             // 实物亚表带（#192 SURF-1 ②：getSurfaceDepth 逐列值替旧常数 3，
             // SurfaceSystem.java:165-168 实物；与 column_real_top 同式）。
             let surface_depth = orch.surface_depth(wx, wz);
@@ -1262,9 +1482,12 @@ pub fn generate(
                 (crossing + REAL_TOP_SCAN_MARGIN).clamp(MIN_Y + 1, mcv_core::WORLD_MAX_Y - 1);
             let fill_top = scan_top.max(SEA);
             // abovePreliminarySurface 门（SurfaceRuleData.java:278 全表层规则
-            // 的外包；SurfaceRules.java:379 = preliminary + surfaceDepth − 8，
-            // 此处 surfaceDepth 取 0 的块级简化）——带下实心一律 STONE。
-            let min_surface = crossing - PRELIM_SURFACE_BAND;
+            // 的外包；SurfaceRules.java:330-383 实物 = bilerp4(prelim cell 角)
+            // + surfaceDepth − 8）——带下实心一律 STONE。海洋 SURF-2 波：
+            // 旧 `crossing − 8`（est 锚）比官方门基浅 20+ 格，密度破面（岸带
+            // 崖/洞口）落到带下裸石被矿层染色 = 重锚波② AND 岛根因（归因见
+            // geometry_locks vanilla_surface_material_bands 注记）。
+            let min_surface = orch.min_surface_level(wx, wz, surface_depth);
             // vanilla 上下文（SurfaceSystem.java:119-148）：自顶向下，
             // 空气重置 stoneAboveDepth、流体不重置只记水面（:129-132）、
             // 实心 +1；depth_above==1 即 ON_FLOOR 顶层格。
@@ -1306,8 +1529,7 @@ pub fn generate(
                                 wz,
                                 min_surface,
                                 depth_above,
-                                surface_id,
-                                subsoil_id,
+                                mats,
                                 surface_depth,
                             )
                         }
@@ -1330,16 +1552,7 @@ pub fn generate(
                 } else {
                     hit_solid = true;
                     depth_above += 1; // SurfaceSystem.java:146
-                    orch.solid_material(
-                        wx,
-                        y,
-                        wz,
-                        min_surface,
-                        depth_above,
-                        surface_id,
-                        subsoil_id,
-                        surface_depth,
-                    )
+                    orch.solid_material(wx, y, wz, min_surface, depth_above, mats, surface_depth)
                 };
                 out_voxels[mcv_core::vidx(cx as usize, y, cz as usize)] = id;
             }
@@ -1379,30 +1592,44 @@ pub fn generate(
     Ok(())
 }
 
-/// 表层亚表带深（depth_above ∈ [2, 4] 层 = 26.1 UNDER_FLOOR 带
-/// `stoneDepthCheck(0, true, FLOOR)` = stoneDepthAbove ≤ 1 + surfaceDepth
-/// （SurfaceRules.java:676-680；surfaceDepth = surface 噪声 0..4 取块级常数 3，
-/// SurfaceSystem.java:165-168）。
-const SUBSOIL_DEPTH: i32 = 3;
-
-/// 实心格材质（#175 抽公共：pass-1 实心分支与含水层 Rock 封口袋分支、
-/// `column_real_top` 三处共用，杜绝规则漂移）。语义原样：带下 STONE 兜底
-/// （abovePreliminarySurface 门）、depth_above==1 顶格、≤1+SUBSOIL_DEPTH
-/// 亚表带、其余 STONE。
+/// 实心格材质（free 版：ore_pass Replay 的 pass-1 纯函数复刻用，同
+/// [`Orchestrator::solid_material`] 的带式——stone 兜底端无
+/// vertical_gradient（Replay 侧基岩已有独立前置分支、深板岩带在
+/// ore 判据 tag 命中域之外保持 STONE 近似，与缓冲侧语义差异登记于
+/// ore_pass 头注重放模型）。dry/wet + notUnderDeepWater 门拆栈同
+/// [`Orchestrator::solid_material`]（SurfaceRuleData.java:249-265、
+/// SurfaceRules.java:802-815 water(-6,-1) 门；门内 UNDER_FLOOR 恒罩
+/// da==1 顶格 ⇒ wet_sub）。
 #[must_use]
 pub(crate) const fn solid_material(
     y: i32,
     min_surface: i32,
     depth_above: i32,
-    surface_id: u16,
-    subsoil_id: u16,
+    mats: SurfaceMats,
+    surface_depth: i32,
 ) -> u16 {
     if y < min_surface {
         STONE
     } else if depth_above == 1 {
-        surface_id
-    } else if depth_above <= 1 + SUBSOIL_DEPTH {
-        subsoil_id
+        if y > SEA {
+            mats.dry_top
+        } else if y + depth_above >= SEA - 6 - surface_depth {
+            mats.wet_sub
+        } else {
+            mats.wet_deep_top
+        }
+    } else if depth_above <= 1 + surface_depth + 6 {
+        // UNDER_FLOOR（≤1+sd）与 DEEP_UNDER_FLOOR（≤1+sd+6）统一过
+        // notUnderDeepWater 门（SurfaceRules.java:249 waterStartCheck(-6,-1)）。
+        if y + depth_above >= SEA - 6 - surface_depth {
+            if depth_above <= 1 + surface_depth {
+                mats.wet_sub
+            } else {
+                mats.deep
+            }
+        } else {
+            STONE
+        }
     } else {
         STONE
     }
