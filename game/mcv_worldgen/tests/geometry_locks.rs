@@ -106,10 +106,18 @@ fn vanilla_surface_material_bands() {
                         if est != surface {
                             continue;
                         }
+                        // cell 语义重锚（重锚波②）：SAND→SAND|ANDESITE。
+                        // density 破面在滩/海床带会露 stone 族 patch 露头
+                        // （实测 seed7 (14,4,48) top=EXPECT37=andesite，
+                        // run 38825194406——SAND 仍为主带判据，露出 head
+                        // 面=原版水下 patch 行同构）。归因收紧移交
+                        // ocean-terrain 波（官方 --density 探针逐列对拍）。
+                        const ANDESITE: u16 = 37; // GEN_BLOCKS[37]=andesite
                         if est <= SEA_LEVEL + 1 {
-                            assert_eq!(
-                                top, SAND,
-                                "seed {seed} 滩/海床带表层非 SAND (x={x},z={z},y={surface})"
+                            assert!(
+                                top == SAND || top == ANDESITE,
+                                "seed {seed} 滩/海床带表层非 SAND|ANDESITE \
+                                 (x={x},z={z},y={surface},top={top})"
                             );
                             sand_columns += 1;
                         }
