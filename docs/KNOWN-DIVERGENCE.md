@@ -144,20 +144,25 @@ vanilla 后端 pass 1 表层按 26.1 SurfaceRules 语义重写：逐列密度场
    上界 6（secondaryDepthRange，SurfaceRules.java:36/:697-703 的
    map(surfaceSecondary,−1,1,0,6) 的固定段宽近似——mirror 通道
    surface_secondary 未单独接线），subsoil 带外即落石。〕
-3. **abovePreliminarySurface 门简化**〔已销账，海洋 SURF-2 波官方实物化〕：
-   原 = 无 jag 初始密度零点按 16 格单元双线性插值 + surfaceDepth − 8
-   （SurfaceRules.java:351-383 preliminarySurfaceLevel/
-   `HOW_FAR_BELOW…=8` :264）；旧实现 = 逐列含 jag 解析过零面 − 8（比官方
-   门基浅 20+ 格——seed7 (0,0) 实测官方 prelim=32 vs 真顶 49-53，破面下沿
-   裸石被矿层染色 = 重锚波②「滩带安山岩」根因，归因见
-   tests/geometry_locks.rs vanilla_surface_material_bands 注记）。现 = 官方
-   findTopSurface 实物（NoiseRouterData.java:481-499：remap −128/+128
-   upper_bound 钳 [−40,320]、无 jag 深度核 4·quarterNegative−0.703125
-   钳 ±64、slide −0.078125/0.1171875、−0.390625、cell 高 8 下扫；角值经
-   4 块 cell 量化（NoiseChunk.java:227-233）+ 16 块 cell 角 bilerp
-   （SurfaceRules.java:330-383）+ surfaceDepth − 8）；常量错探针锁
-   prelim_gate_matches_official_probe_constants（java-harness
-   --probe-prelim 实测 (0,0)=32/(800,800)=80/(−400,−400)=24，seed 7）。
+3. **abovePreliminarySurface 门简化**〔已销账，海洋 SURF-2 波官方结构
+   实物化〕：原 = 无 jag 初始密度零点按 16 格单元双线性插值 + surfaceDepth
+   − 8（SurfaceRules.java:343-383 preliminarySurfaceLevel/
+   `HOW_FAR_BELOW…=8` :379）；旧实现 = 逐列含 jag 解析过零面 − 8（破面
+   下沿裸石被矿层染色 = 重锚波②「滩带安山岩」根因——**非官方 patch
+   行为**，官方链在该带必铺 surface 材质，归因收口注记见
+   tests/geometry_locks.rs vanilla_surface_material_bands）。现 = 官方
+   findTopSurface 结构逐构件直译（NoiseRouterData.java:479-499 +
+   DensityFunctions.java:579-607：remap −128/+128、upper_bound 钳
+   [−40,320]、无 jag 深度核 4·quarterNegative−0.703125 钳 ±64、slide
+   −0.078125/0.1171875、−0.390625、floor(ub/8)·8 下扫；角值经 16 块 cell
+   角 bilerp（SurfaceRules.java:343-383）+ surfaceDepth − 8）。
+   **数值位型差（未销账，与本文件 AQUI-1 同根）**：门基数值 depends on
+   offset/factor 气候信道种子链——官方 fork 链（java-harness --probe-prelim
+   seed 7 实测 (0,0)=32/(800,800)=80/(−400,−400)=24）vs 本仓 v1 域盐链
+   （(0,0)=56，run 38857740856 锚定，tests/surface_rules.rs
+   prelim_gate_probe_constants_anchored 双列锁）——main 8f6b6b32
+   noise-vanilla-fork 已切官方链，rebase 合流后两列归一（届时该测试
+   OURS 列换成 32/80/24 即成官方位型锁）。
 4. **steep() 不实现**：邻列 WORLD_SURFACE_WG 高差 ≥4 判崖
    （SurfaceRules.java:403-427）仅被 FROZEN_PEAKS/SNOWY_SLOPES/
    JAGGED_PEAKS 三门消费（SurfaceRuleData.java:100/108/141）——10 群系

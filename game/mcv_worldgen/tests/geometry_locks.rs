@@ -111,23 +111,47 @@ fn vanilla_surface_material_bands() {
                         }
                         if est <= SEA_LEVEL {
                             // 海床带（湿柱，gen 柱层序里顶层以上必 open_column
-                            // 灌水）：官方 gravelOrStoneIfCeiling floor 分支 =
-                            // GRAVEL（SurfaceRuleData.java:258-265），暖温度段
-                            // （OBB.java:60 [0.55,1.0] = WARM_OCEAN）:262 沙。
+                            // 灌水）：官方链按 notUnderDeepWater 门拆两支——
+                            // - 门外（深水，y+1 < 63−6−sd）：rule3 ON_FLOOR 兜底
+                            //   gravelOrStoneIfCeiling = GRAVEL（SurfaceRuleData
+                            //   .java:258-265）；
+                            // - 门内（浅水）：UNDER_FLOOR（stoneDepth ≤ 1+sd，
+                            //   SurfaceRules.java:35/:684）恒罩 da==1 顶格 ⇒
+                            //   biomeUnder 默认 DIRT（:124,253；暖/滩段经
+                            //   commonSurfaceAndUnderRules :86 沙）；
+                            // - 暖温度段（OBB.java:60 [0.55,1.0] = WARM_OCEAN）
+                            //   rule2 :86 / rule3 :262 双覆盖恒沙。
+                            // 门公式 blockY+stoneDepthAbove ≥ waterHeight−6−sd
+                            // （SurfaceRules.java:802-815 waterStartCheck(-6,-1)
+                            // addStoneDepth=true；waterHeight=首液位+1
+                            // SurfaceSystem.java:131，26.1 海面顶水块 y=62
+                            // 〔java-harness chunk dump 实证〕⇒ waterHeight=63
+                            // = SEA——本仓灌水面 63 与若以 63 为顶水读数差一，
+                            // 门锚同收敛于 SEA−6−sd）。
                             // —— 海波归因收口（重锚波②移交项）：旧 gate 锚
-                            // est−8 ≈ 真顶−0..2 而官方门基 prelim+sd−8（seed7
-                            // origin 实测 prelim=32 vs 真顶 49-53，官方
-                            // --probe-prelim），表层带在破面下沿裸石再被矿层
-                            // 染和碟岩（重锚波② 实证 top=37 安山岩）= 我们的
+                            // est−8 ≈ 真顶−0..2，密度破面下沿裸石再被矿层
+                            // 染色/碟岩（重锚波② 实证 top=37 安山岩）= 我们的
                             // SurfaceRules 漏支（门基错锚），**非官方 patch
                             // 行为**——官方在带内必铺 surface 材质。修复 =
                             // terrain.rs min_surface_level 官方 findTopSurface
-                            // 门基 + 本海窗收紧为 {GRAVEL, 暖段 SAND}。
+                            // 结构实物 + 本海窗按官方链收紧（本波归因验收：
+                            // stone 族 37 安山岩确证非法，期望值=官方链材质）。
+                            // （诚实注记：本链气候近似下门基位型与官方差一
+                            // 量级，见 KNOWN-DIVERGENCE ③/surface_rules
+                            // prelim_gate_probe_constants_anchored。）
                             let cs = orch.column_state(cx * 16 + x as i32, cz * 16 + z as i32);
-                            let want = if cs.temperature >= 0.55 { SAND } else { GRAVEL };
+                            let sd = orch.surface_depth(cx * 16 + x as i32, cz * 16 + z as i32);
+                            let gate = surface + 1 >= SEA_LEVEL - 6 - sd;
+                            let want = if cs.temperature >= 0.55 {
+                                SAND
+                            } else if gate {
+                                DIRT
+                            } else {
+                                GRAVEL
+                            };
                             assert_eq!(
                                 top, want,
-                                "seed {seed} 海床带表层非 {want}（temp={:.3}）(x={x},z={z},y={surface})",
+                                "seed {seed} 海床带表层非 {want}（temp={:.3},gate={gate}）(x={x},z={z},y={surface},sd={sd})",
                                 cs.temperature
                             );
                             band_columns += 1;

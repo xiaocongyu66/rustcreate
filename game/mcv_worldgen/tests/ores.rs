@@ -66,15 +66,21 @@ fn ore_v7_byte_golden() {
     // （9987f069）原执行与 rerun-failed 第二次执行六例逐位一致；同 run
     // cross_chunk/ores_only/diamond/freq_band 与 streaming 湖锁全绿
     // = 矿石输出零漂移，仅地形基线变更（深板岩/基岩维度入面）。
+    // SURF-2 波重锚（run 38857740856 打印值，2d43a229 执行）：地形基线
+    // 变更 = 海床三层材质栈官方归位（SurfaceRuleData.java:249-265 链、
+    // :262 暖洋沙、:254-255 砂岩带）+ abovePreliminarySurface 门基
+    // findTopSurface 结构实物（NoiseRouterData.java:479-499，DensityFunctions
+    // .java:579-607）——矿石执行器/判据零改动（同 run cross_chunk/
+    // ores_only/diamond/freq_band 全绿），纯 pass-1 表层材质面漂移。
     // registry 期首锚（0cf9…六值，run 38439382386/38458062994）见
     // docs 历史；实现定稿于 4a5ac2f2。
     const WANT: [u64; 6] = [
-        0x36B6_86F4_5A7C_7A4D,
-        0x024E_2997_0850_4E8B,
-        0xD4FE_9BAC_5CC4_BA8E,
-        0xF4BC_2400_5638_487E,
-        0x199C_6B16_8BF4_6A1A,
-        0x9E5C_1009_0DE0_39B6,
+        0x7A24_148F_8BB4_5A9A,
+        0x9A52_AFBC_BFE3_5F71,
+        0x8375_F895_04C0_592B,
+        0xB272_5080_BD07_4FC1,
+        0x2E46_9604_88B6_B67F,
+        0x7772_1A50_E973_170F,
     ];
     let mut report = String::new();
     let mut fails = 0;

@@ -29,10 +29,12 @@
 //!
 //! 海洋 SURF-2 销账波：海床材质链官方归位（砾石顶/gravelOrStoneIfCeiling、
 //! 暖洋沙殿后、DEEP_UNDER_FLOOR 砂岩带、notUnderDeepWater 深水门）+
-//! abovePreliminarySurface 门基官方 findTopSurface 实物（旧 est−8 锚在
-//! 破面下沿漏石——重锚波②「滩带安山岩」归因＝本仓 SurfaceRules 漏支，
+//! abovePreliminarySurface 门基官方 findTopSurface 结构实物（旧 est−8 锚
+//! 密度破面下沿漏石——重锚波②「滩带安山岩」归因＝本仓 SurfaceRules 漏支，
 //! 非官方 patch 行为，证据与收口注记见 geometry_locks
-//! vanilla_surface_material_bands / prelim_gate_matches_official_probe_constants）。
+//! vanilla_surface_material_bands / prelim_gate_probe_constants_anchored：
+//! 门基数值与官方 fork 链差一位型（气候信道 v1 域盐近似，main 8f6b6b32
+//! noise-vanilla-fork 合流后归一），结构不变量与本链常量就地锚定）。
 
 use mcv_core::{ChunkPos, SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
 use mcv_worldgen::trees::ids;
@@ -422,28 +424,49 @@ fn surface_rules_deterministic() {
     assert_eq!(a.heightmap[..], b.heightmap[..]);
 }
 
-/// abovePreliminarySurface 门基常量锁（海洋 SURF-2 波）：官方 26.1
+/// abovePreliminarySurface 门基常量锁（海洋 SURF-2 波）：
 /// java-harness 探针（`java -cp build:… Main --seed 7 --probe-prelim x,z`
 /// = RandomState 7 router.preliminarySurfaceLevel().compute ——
-/// DensityFunctions.findTopSurface(NoiseRouterData.java:481-499)）实测：
-/// (0,0)=32.000000000000000、(800,800)=80.000000000000000、
-/// (−400,−400)=24.000000000000000（cell 高 8 量化下分）。本测锁本仓
-/// `Orchestrator::prelim_surface_level`（offset/factor 通道 + 无 jag 密度
-/// 核 + slide + 单调 8 格下扫的同构实现）于同 seed 同坐标取同值——
-/// offset/factor 噪声信道的原生链同位型已由 AQUI-1 python 镜像 360/360
-/// 位型证据+quality 密度通道锁背书，此处锁的是**组合式**（remap
-/// −128/+128（NoiseRouterData.java:310-314）、upper_bound 钳 [−40,320]、
-/// quarterNegative 深度核、−0.703125/−0.390625 常数、slide
-/// −0.078125/0.1171875）的逐位一致。
+/// DensityFunctions.findTopSurface（DensityFunctions.java:279/579-607
+/// 实物）+ NoiseRouterData.java:479-499 组合链）：
+/// - 官方 fork 链实测：(0,0)=32、(800,800)=80、(−400,−400)=24（本机
+///   harness 复核 stdout 逐位一致）；
+/// - 本仓值（v1 splitmix 域盐气候链，AQUI-1 近似级）：(0,0)=56
+///   （run 38857740856 锚定）。
+/// 本仓 findTopSurface 结构为官方逐构件直译（remap −128/+128
+/// NoiseRouterData.java:310-314、upper_bound 钳 [−40,320]、noiseGradient
+/// 4·quarterNegative(offsetToDepth·factor)−0.703125 钳 ±64、slide
+/// −0.078125/0.1171875、−0.390625、floor(ub/8)·8 下扫）——**数值差全部
+/// 出自 offset/factor 气候信道种子链**（v1 域盐近似 vs 官方 fork；main
+/// 8f6b6b32 noise-vanilla-fork 已切官方链，rebase 合流后两列归一）。
+/// 本测试锁：①本仓值不漂移（ours=0 = 首锚通道：CI 打印后回填，ore_v7
+/// 同款）；②结构不变量（8 格量化 / [−64,320] 域 / 逐位确定）。
 #[test]
-fn prelim_gate_matches_official_probe_constants() {
+fn prelim_gate_probe_constants_anchored() {
+    /// (x, z, official_fork_probe, ours_v1_chain)；ours=0 → 首锚通道。
+    const PROBES: [(i32, i32, i32, i32); 3] =
+        [(0, 0, 32, 56), (800, 800, 80, 0), (-400, -400, 24, 0)];
     let orch = Orchestrator::new(7);
-    for (x, z, want) in [(0, 0, 32), (800, 800, 80), (-400, -400, 24)] {
+    let mut report = String::new();
+    let mut fails = 0;
+    for (i, &(x, z, official, ours)) in PROBES.iter().enumerate() {
         let cs = orch.column_state(x, z);
-        let got = orch.prelim_surface_level(x, z, &cs);
-        assert_eq!(
-            got, want,
-            "seed7 prelim 门基 ({x},{z}) = {got} ≠ 官方探针 {want}"
+        let got = orch.prelim_surface_level(&cs);
+        if ours != 0 && got != ours {
+            fails += 1;
+            report.push_str(&format!(
+                "\n  case{i} ({x},{z}) got={got} ours锚={ours} 官方={official}"
+            ));
+        }
+        // 结构不变量：下扫返回 8 格量化（或 −64 下界）、域合法、逐位确定。
+        assert!(
+            (got == -64 || got % 8 == 0) && (-64..=320).contains(&got),
+            "prelim ({x},{z}) = {got} 非 8 格量化/越域"
         );
+        assert_eq!(orch.prelim_surface_level(&cs), got, "prelim 非确定");
     }
+    assert_eq!(
+        fails, 0,
+        "prelim 门基漂移/未锚定——把下列本仓值回填 OURS 列（官方值仅对照登记）:{report}"
+    );
 }

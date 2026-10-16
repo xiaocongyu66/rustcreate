@@ -573,6 +573,15 @@ pub struct Orchestrator {
     noodle_thickness: NormalNoise,
     noodle_ridge_a: NormalNoise,
     noodle_ridge_b: NormalNoise,
+    /// prelim 16 块 cell 角值缓存（对位官方 preliminarySurfaceCache 每格
+    /// 4 角 + NoiseChunk 4 块 cell 表，SurfaceRules.java:349-367 /
+    /// NoiseChunk.java:218-227；min_surface_level 角位仅随 cell 变化——
+    /// 不缓存时每列重算 4 个 column_state（气候样条+jagged fBm），streaming
+    /// 计时域 4 倍放大的实证：run 38857740856）。纯函数性不变
+    /// （值 = f(角位列态)，parallel.rs ① ② 对拍不受影响——每 generate
+    /// 调用现建 Orchestrator、无跨线程共享，RefCell 即足；真要共享时
+    /// 编译期 !Sync 即守卫）。
+    prelim_cache: std::cell::RefCell<std::collections::HashMap<(i32, i32), i32>>,
 }
 
 impl Orchestrator {
@@ -620,6 +629,7 @@ impl Orchestrator {
             noodle_thickness: n(0x0000_0DE0_1E00 ^ 0x62, -8, &AMPS_1),
             noodle_ridge_a: n(0x0000_0DE0_1E00 ^ 0x63, -7, &AMPS_1),
             noodle_ridge_b: n(0x0000_0DE0_1E00 ^ 0x64, -7, &AMPS_1),
+            prelim_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         }
     }
 
@@ -643,7 +653,9 @@ impl Orchestrator {
     /// - 水下带下设门：notUnderDeepWater = waterStartCheck(-6,-1)
     ///   （:67,249；WaterCondition SurfaceRules.java:802-815
     ///   `blockY + stoneDepthAbove ≥ waterHeight − 6 − surfaceDepth`，
-    ///   本仓顶层水块 = SEA ⟹ waterHeight = SEA+1 同口径）——深水底
+    ///   waterHeight = 首液位 +1（SurfaceSystem.java:131）；26.1 海面顶
+    ///   水块 y=62〔java-harness chunk dump 实证〕⟹ waterHeight=63=SEA，
+    ///   门锚收敛于 `SEA−6−surfaceDepth` 同口径）——深水底
     ///   跳过 UNDER/DEEP 带（砾石顶下直落石，官方深海行为）。
     ///
     /// 滩/雪位置带沿用 `surface_ours` 估计面口径（geometry_locks
@@ -742,20 +754,24 @@ impl Orchestrator {
     ///   1.5, −1.5, −64, 320) 钳 [−40, 320]（NoiseRouterData.java:483-489；
     ///   remap 系数 = −128/+128，NoiseRouterData.java:310-314）。
     ///
-    /// 原实现（± 旧缺陷面）：门锚 `估计面 − 8`（est−8 ≈ 真顶−0..2）——官方
-    /// 门基 ≈ 真顶下 20+ 格（实测 seed7 (0,0) prelim=32 vs 真顶 49-53），
-    /// 密度破面（岸带崖/洞口）把表层带以下打成裸石再被矿层染成安山岩
-    /// =用户可见「滩带石斑」+ 重锚波② 的 AND gate 根因（归因注记见
-    /// tests/geometry_locks.rs vanilla_surface_material_bands）。
+    /// 原实现（± 旧缺陷面）：门锚 `估计面 − 8`（est−8 ≈ 真顶−0..2）——
+    /// 密度破面（岸带崖/洞口）把表层带以下打成裸石再被矿层染成安山岩 =
+    /// 用户可见「滩带石斑」+ 重锚波② 的 AND gate 根因（归因注记见
+    /// tests/geometry_locks.rs vanilla_surface_material_bands；官方 fork 链
+    /// 的门基显著低于无 jag 实顶——seed7 (0,0) 官方 prelim=32 vs 真顶
+    /// 49-53；本仓 v1 域盐链 prelim=56，位型差登记 KNOWN-DIVERGENCE ③，
+    /// main 8f6b6b32 fork 链合流后归一）。
     ///
     /// 坐标系换算：scan 走本仓 block_y 域、`ours_y_to_mc` 后与
     /// [`Self::density`] 同式（y_grad/y_clamp/quarter_negative/lerp1）。
+    ///
+    /// 官方 NoiseChunk.preliminarySurfaceLevel 把缓存键量化到 4 块 cell
+    /// （NoiseChunk.java:218-227 QuartPos.toBlock(fromBlock(x))）；本仓密度
+    /// 核 spatial-free（[`Self::prelim_density`]：核只吃 y，offset/factor
+    /// 这些空间项经 `cs` 进入），故签名只收 `cs`、块坐标不进参——调用方
+    /// （bilerp 角位）按官方语义传 **角位自己的** 列态即可对位。
     #[must_use]
-    pub fn prelim_surface_level(&self, block_x: i32, block_z: i32, cs: &ColumnState) -> i32 {
-        // NoiseChunk.preliminarySurfaceLevel 的 4 块 cell 量化缓存
-        // （NoiseChunk.java:227-233 QuartPos.toBlock(fromBlock(x))）。
-        let qx = block_x.div_euclid(4) * 4;
-        let qz = block_z.div_euclid(4) * 4;
+    pub fn prelim_surface_level(&self, cs: &ColumnState) -> i32 {
         // upper_bound（NoiseRouterData.java:483-492）。
         let w = 0.2734375_f64 / cs.factor - cs.offset;
         // remap(v, 1.5, -1.5, -64, 320)：factor=(320−(−64))/(−1.5−1.5)=−128、
@@ -773,7 +789,7 @@ impl Orchestrator {
         // （DensityFunctions.java:604-608）。
         let mut y = top_y;
         while y >= lower {
-            if self.prelim_density(cs, qx, y, qz) > 0.0 {
+            if self.prelim_density(cs, y) > 0.0 {
                 return y;
             }
             y -= 8;
@@ -782,10 +798,11 @@ impl Orchestrator {
     }
 
     /// findTopSurface 的密度核（NoiseRouterData.java:494-499 直译；
-    /// 无 jag/base_3d/洞穴/needle——[`Self::density`] 的粗面前身）。
-    /// y 走本仓 block_y 域（ours_y_to_mc 同 [`Self::density`]）。
+    /// 无 jag/base_3d/洞穴/needle——[`Self::density`] 的粗面前身；
+    /// 空间项全在 offset/factor（经 `cs`），核本体只吃 y，故不收
+    /// 坐标参）。y 走本仓 block_y 域（ours_y_to_mc 同 [`Self::density`]）。
     #[must_use]
-    fn prelim_density(&self, cs: &ColumnState, block_x: i32, block_y: i32, block_z: i32) -> f64 {
+    fn prelim_density(&self, cs: &ColumnState, block_y: i32) -> f64 {
         let y_mc = crate::vanilla::ours_y_to_mc(f64::from(block_y));
         // noiseGradientDensity = 4 · quarterNegative(depth · factor)
         // （NoiseRouterData.java:474-478），depth 无 jag
@@ -813,12 +830,20 @@ impl Orchestrator {
     #[must_use]
     pub fn min_surface_level(&self, block_x: i32, block_z: i32, surface_depth: i32) -> i32 {
         // 4 个 16 块 cell 角的 prelim（SurfaceRules.java:349-357：
-        // cornerCellX = blockX>>4、corner 采样 = cell<<4）。
+        // cornerCellX = blockX>>4、corner 采样 = cell<<4）——角值随 cell
+        // 缓存（[Self::prelim_cache]）。
         let cell_x = block_x.div_euclid(16);
         let cell_z = block_z.div_euclid(16);
-        let corner = |px: i32, pz: i32| {
-            let ics = self.column_state(px, pz);
-            self.prelim_surface_level(px, pz, &ics) as f64
+        let corner = |px: i32, pz: i32| -> f64 {
+            let mut cache = self.prelim_cache.borrow_mut();
+            match cache.get(&(px, pz)) {
+                Some(&v) => f64::from(v),
+                None => {
+                    let v = self.prelim_surface_level(&self.column_state(px, pz));
+                    cache.insert((px, pz), v);
+                    f64::from(v)
+                }
+            }
         };
         let c00 = corner(cell_x * 16, cell_z * 16);
         let c10 = corner((cell_x + 1) * 16, cell_z * 16);
@@ -880,11 +905,13 @@ impl Orchestrator {
 
     /// 水下亚表/深带统一过 notUnderDeepWater 门（SurfaceRules.java:249
     /// 整段 ifTrue(waterStartCheck(-6,-1), …)、:802-815 water(-6,-1) =
-    /// `blockY + stoneDepthAbove ≥ waterHeight − 6 − surfaceDepth`，
-    /// 本仓顶层水块 SEA ⟹ waterHeight = SEA+1 同口径；y+da 在带内为列
-    /// 常数 top+1，故门按列全开/全闭）——门内按带分材质（UNDER_FLOOR
-    /// wet_sub / DEEP_UNDER_FLOOR deep），门外落 STONE（rule2 跳过且
-    /// rule3 仅 ON_FLOOR ⇒ 带下无取材，保持 defaultBlock 石）。
+    /// `blockY + stoneDepthAbove ≥ waterHeight − 6 − surfaceDepth`；26.1
+    /// 海面顶水块 y=62〔java-harness chunk dump 实证〕⟹ waterHeight =
+    /// 首液位+1 = 63 = SEA（SurfaceSystem.java:131），门锚同收敛于
+    /// `SEA−6−sd`；y+da 在带内为列常数 top+1，故门按列全开/全闭）——
+    /// 门内按带分材质（UNDER_FLOOR wet_sub / DEEP_UNDER_FLOOR deep），
+    /// 门外落 STONE（rule2 跳过且 rule3 仅 ON_FLOOR ⇒ 带下无取材，
+    /// 保持 defaultBlock 石）。
     #[must_use]
     pub fn wet_band_select(
         &self,
