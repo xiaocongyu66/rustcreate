@@ -14,8 +14,8 @@ use mcv_item::ItemStack;
 use mcv_logic::difficulty::Difficulty;
 use mcv_logic::game::{
     ENTITY_ATTACK_RANGE, EXHAUSTION_MAX, MAX_AIR_SUPPLY, RAIN_PARTICLE_RADIUS, WorldView,
-    air_supply_tick, block_hit_t, food_data_tick, move_exhaustion, pick_attack_target,
-    rain_particle_count, ray_aabb_t, swimming_tick,
+    air_supply_tick, attack_pick_pos, block_hit_t, food_data_tick, move_exhaustion,
+    pick_attack_target, rain_particle_count, ray_aabb_t, swimming_tick,
 };
 use mcv_render::{day_factor, sun_state};
 
@@ -567,4 +567,45 @@ fn sneak_edge_guard_blocks_falling() {
     let (xn, yn) = mk(false);
     assert!(yn < 9.5, "不潜行走出边缘应下坠，got y={yn}");
     assert!(xn > xs, "对照组走得更远");
+}
+
+// ---------------------------------------------------------------------------
+// 攻击拾取位姿（「打不到」命链回归）：判定侧读渲染同款插值位姿
+// lerp(pos_old, pos, partialTick)——26.1 的实体选择在客户端（GameRenderer
+// .pick → EntityHitResult 用**客户端插值盒**），一体进程下读者=屏幕所见。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn attack_pick_reads_render_interpolated_pose_not_sim_endpoint() {
+    // 猪盒 0.9×0.9（EntityType.java:789-790 .sized(0.9F, 0.9F)）。
+    let half = [0.45f32, 0.45, 0.45];
+    let eye = Vec3::new(0.0, 65.62, 0.0);
+    // 疾走样本：上一步 pos_old=(2.0,64,0)、本步 pos=(3.5,64,0)——1.5 格
+    // 的渲染/判定盒差 = 真机卡帧一帧连跑多个 60 Hz 步（猪 10.79 m/s 意图
+    // 速度 × ~0.14 s）时的实感量级。partial=0.5 → 屏上猪心 x=2.75。
+    let pos_old = Vec3::new(2.0, 64.0, 0.0);
+    let pos = Vec3::new(3.5, 64.0, 0.0);
+    let render_pos = attack_pick_pos(pos_old, pos, 0.5);
+    assert!((render_pos.x - 2.75).abs() < 1e-5, "{render_pos}");
+
+    // 准星打屏上猪的躯干（中心高 +0.6 ∈ [64, 64.9]，已归一化）。
+    let aim = (Vec3::new(render_pos.x, 64.6, 0.0) - eye).normalize();
+    // 旧读法（固定步端点 body.pos）：整只猪已被步进甩出 3.0 拾取窗 →
+    // pick 落空——准星明明指在屏幕上的猪身（真实 miss 机制，非阈值问题）。
+    let mobs_sim = [(pos, half)];
+    assert!(
+        pick_attack_target(eye, aim, &mobs_sim, None).is_none(),
+        "判定读 sim 端点：屏幕上的猪落出 3.0 窗（回归面：不得再读 body.pos）"
+    );
+    // 新读法（渲染插值位姿）：同一准星在 3.0 窗内命中。
+    let mobs_render = [(render_pos, half)];
+    let hit = pick_attack_target(eye, aim, &mobs_render, None);
+    // 入射距 t：渲染盒 Entry x=2.3 / |dir.x|=0.9376 → t≈2.453（余量 0.55）。
+    assert_eq!(hit.map(|(i, t)| (i, (t * 100.0).round())), Some((0, 245.0)));
+    // clamp 语义：partial>1 收敛本步端点（渲染帧久未喂步不外推）。
+    let clamped = attack_pick_pos(pos_old, pos, 7.0);
+    assert!((clamped - pos).length() < 1e-5, "{clamped}");
+    // 双端点端值：partial=0 → pos_old、=1 → pos（与 collect 的插值面逐字一致）。
+    assert!((attack_pick_pos(pos_old, pos, 0.0) - pos_old).length() < 1e-5);
+    assert!((attack_pick_pos(pos_old, pos, 1.0) - pos).length() < 1e-5);
 }
