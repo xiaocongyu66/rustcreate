@@ -1358,6 +1358,13 @@ pub fn generate(
     // 密度门/树种门走群系分类（原版 per-chunk 尝试数换算，见 tree_pass
     // 模块头注），树基 = pass-1 体素实顶+1，替换门对位原版 validTreePos。
     crate::vanilla::tree_pass::project_trees(seed, chunk_x, chunk_z, &orch, out_voxels);
+    // Pass 2.3（水草执行器）：海草/海带（26.1 SeagrassFeature/KelpFeature；
+    // 与树同 VEGETAL_DECORATION 槽、群系行序 trees→seagrass→kelp，
+    // ocean.json:92-93 / river.json:93 —— 故置树后；freeze 次阶在其后，
+    // 调度引注与执行器/重放模型见 water_flora 模块头注）。
+    crate::vanilla::water_flora::project_water_flora(
+        seed, chunk_x, chunk_z, &orch, &mut field, out_voxels,
+    );
     // Pass 2.5（#191 积雪）：freeze_top_layer 特征（原版特征阶 10
     // 「freeze」在植被阶后——snowy_plains.json features[10]；
     // SnowAndFreezeFeature 实物逐条见 freeze_pass 头注）。雪层计入

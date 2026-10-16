@@ -26,6 +26,15 @@
 //! `surface_ours = 128+128·offset`（与密度场真实过零面差 ±1-2 格），
 //! `y == surface → GRASS`、`surface-3 ≤ y < surface → DIRT`——真实实顶低于
 //! 估计面时暴露层落在 DIRT/STONE 带 = 用户可见的「整片裸土」。
+//!
+//! 海洋 SURF-2 销账波：海床材质链官方归位（砾石顶/gravelOrStoneIfCeiling、
+//! 暖洋沙殿后、DEEP_UNDER_FLOOR 砂岩带、notUnderDeepWater 深水门）+
+//! abovePreliminarySurface 门基官方 findTopSurface 结构实物（旧 est−8 锚
+//! 密度破面下沿漏石——重锚波②「滩带安山岩」归因＝本仓 SurfaceRules 漏支，
+//! 非官方 patch 行为，证据与收口注记见 geometry_locks
+//! vanilla_surface_material_bands / prelim_gate_probe_constants_anchored：
+//! 门基数值与官方 fork 链差一位型（气候信道 v1 域盐近似，main 8f6b6b32
+//! noise-vanilla-fork 合流后归一），结构不变量与本链常量就地锚定）。
 
 use mcv_core::{ChunkPos, SEA_LEVEL, WORLD_MAX_Y, WORLD_MIN_Y};
 use mcv_worldgen::trees::ids;
@@ -44,6 +53,10 @@ const SAND: u16 = 4;
 const WATER: u16 = 5;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
+/// 砾石（海洋 SURF-2 销账：terrain::GRAVEL；GEN_BLOCKS 431
+/// `minecraft:gravel`）。〔SANDSTONE 锚随地形 golden 锁在 ores_data/
+/// geometry 面——本文件锁面只触海床顶格，未消费，故不引（dead_code）。〕
+const GRAVEL: u16 = mcv_worldgen::vanilla::terrain::GRAVEL;
 
 /// 六树种原木/叶（树基列排除：原版树基把表土换成 dirt，TreeConfiguration
 /// .java:20-26 经 tree_pass ChunkClipper 落地——不计入表层裸土症状）。
@@ -64,6 +77,16 @@ const LEAF_IDS: [u16; 6] = [
     ids::SPRUCE_LEAVES,
 ];
 
+/// pass 2.3 水草四 id（ocean-flora2；water_flora.rs 头注 blocks_gen.inc.rs
+/// 行号锚）。植被非 terrain——ground_block 的跳过集与树同列（ pass-1 水
+/// 柱内容格：海窗测试的 ground_block 扫描自顶向下，先撞水草再撞海床，
+/// 不跳过会让海床断言拿到 905/1002/508/509 假红）。
+const FLORA_IDS: [u16; 4] = [508, 509, 905, 1002];
+
+fn is_flora(id: u16) -> bool {
+    FLORA_IDS.contains(&id)
+}
+
 fn vidx(x: usize, y: i32, z: usize) -> usize {
     mcv_core::vidx(x, y, z)
 }
@@ -77,7 +100,7 @@ fn is_tree(id: u16) -> bool {
 fn ground_block(vox: &[u16], x: usize, z: usize) -> Option<(i32, u16)> {
     for y in ((WORLD_MIN_Y + 1)..(WORLD_MAX_Y - 1)).rev() {
         let id = vox[vidx(x, y, z)];
-        if id == AIR || id == WATER || is_tree(id) {
+        if id == AIR || id == WATER || is_tree(id) || is_flora(id) {
             continue;
         }
         return Some((y, id));
@@ -287,14 +310,24 @@ fn beach_window_top_is_sand() {
                     bad_land_top += 1;
                 }
             } else {
+                // 水下沉底：浅水（notUnderDeepWater 门内）沙带 SAND、
+                // 深水（门外）rule3 落回砾石 GRAVEL
+                //（SurfaceRuleData.java:249-265，Beach 不在 :262 暖洋列表）
+                // —— 沙/砾/土均官方合法，只防草/彩石外溢。
                 assert!(
-                    g == SAND || g == DIRT || g == BEDROCK,
-                    "Beach 窗水下沉底 {g} ∉ {{SAND,DIRT,BEDROCK}}（y={gy}）"
+                    g == SAND || g == DIRT || g == GRAVEL || g == BEDROCK,
+                    "Beach 窗水下沉底 {g} ∉ {{SAND,DIRT,GRAVEL,BEDROCK}}（y={gy}）"
                 );
             }
-            let below = vox[vidx(x, gy - 1, z)];
-            if gy - 1 > WORLD_MIN_Y + 5 && below != AIR && below != WATER && below != SAND {
-                bad_subsoil += 1;
+            // 水上乾柱亚表（UNDER_FLOOR 带）= SAND（sandOrSandstoneIfCeiling 的
+            // floor 分支，SurfaceRuleData.java:72,86）；水下沉底亚表走
+            // notUnderDeepWater 门（浅水 SAND/深石砾带，:249-265），上面
+            // 顶格已锁、亚表材质随门出入不单锁。
+            if gy >= SEA_LEVEL {
+                let below = vox[vidx(x, gy - 1, z)];
+                if gy - 1 > WORLD_MIN_Y + 5 && below != AIR && below != WATER && below != SAND {
+                    bad_subsoil += 1;
+                }
             }
         }
     }
@@ -306,13 +339,22 @@ fn beach_window_top_is_sand() {
     );
 }
 
-/// 海窗（Ocean）：水下沉底顶格 ∈ {SAND, DIRT}（原版海洋底为砾石
-/// SurfaceRuleData.java:258-265 gravelOrStoneIfCeiling——本仓无砾石 id，
-/// 沙代之并登记 KNOWN-DIVERGENCE SURF-2；此处只防草/石外溢，不锁死沙/土）。
+/// 海窗（Ocean）：水下沉底顶格 = 官方海床链逐层直译（SURF-2 销账，v1
+/// 全海床锁 SAND 为 id 债近似 + est 带错锁湿柱，均为本波根因面）：
+/// - 冷/中段 Ocean（温度 < 0.55）：rule2 门内（浅水，notUnderDeepWater）
+///   UNDER_FLOOR 恒罩顶格 ⇒ biomeUnder 默认 DIRT（:124,253）；门外（深水）
+///   rule3 gravelOrStoneIfCeiling = GRAVEL（:258-265）；
+/// - 暖段（temperature ≥ 0.55 = OBB.java:60 temperatures[4] WARM_OCEAN，
+///   合并群系的同位温度段近似）全深度 SAND（:262 sandOrSandstoneIfCeiling
+///   的 rule2/rule3 双覆盖）。
+///
 /// 窗条件与草/滩窗不同：深海要求全列 est ≤ SEA−8（Ocean 群系在海岸带
-/// 可为干地——密度场说了算，不属本锁面）。
+/// 可为干地——密度场说了算，不属本锁面）。海波归因收口（重锚波②移交
+/// 项）：旧 gate 锚 `est−8`，破面下沿裸石被矿层染成安山岩 = 我们的
+/// SurfaceRules 漏支，非官方 patch 行为——修复后本窗收紧为按温度段×
+/// 水深的精确材质（不再维护 SAND 代偿豁免与 stone 族松弛）。
 #[test]
-fn ocean_window_underwater_top_is_sand_or_dirt() {
+fn ocean_window_underwater_top_follows_official_chain() {
     let orch = Orchestrator::new(SEED);
     let mut win = None;
     'outer: for cz in -96..96 {
@@ -346,6 +388,7 @@ fn ocean_window_underwater_top_is_sand_or_dirt() {
         .expect("vanilla gen");
     let vox = t.voxels.as_u16_slice();
     let mut checked = 0usize;
+    let mut warm = 0usize;
     for z in 0..16usize {
         for x in 0..16usize {
             let Some((gy, g)) = ground_block(vox, x, z) else {
@@ -355,13 +398,32 @@ fn ocean_window_underwater_top_is_sand_or_dirt() {
                 continue; // 只锁水下沉底
             }
             checked += 1;
-            assert!(
-                g == SAND || g == DIRT || g == BEDROCK,
-                "Ocean 窗 ({cx},{cz}) 列 ({x},{z}) y={gy} 海床 {g} ∉ {{SAND,DIRT,BEDROCK}}"
+            let wx = cx * 16 + x as i32;
+            let wz = cz * 16 + z as i32;
+            let cs = orch.column_state(wx, wz);
+            // 海窗锁面 = 官方链逐层直译（SurfaceRuleData.java:249-265）：
+            // - 暖温度段（≥0.55 = WARM_OCEAN）全深度沙（:262 rule2/rule3）；
+            // - 冷/中段：门内（浅水 ≤6+sd）UNDER_FLOOR 罩顶格 ⇒ biomeUnder
+            //   默认 DIRT（:124,253），门外（深水）rule3 砾石（:258-265）。
+            let sd = orch.surface_depth(wx, wz);
+            let gate = gy + 1 >= SEA_LEVEL - 6 - sd; // y+da（da=1）
+            let want = if cs.temperature >= 0.55 {
+                warm += 1;
+                SAND
+            } else if gate {
+                DIRT
+            } else {
+                GRAVEL
+            };
+            assert_eq!(
+                g, want,
+                "Ocean 窗 ({cx},{cz}) 列 ({x},{z}) y={gy} 海床 {g} ≠ {want}\
+                 （temp={:.3}, gate={gate}；SurfaceRuleData.java:258-265/:262/:124）",
+                cs.temperature
             );
         }
     }
-    assert!(checked > 128, "海窗可查列过少（{checked}）");
+    assert!(checked > 128, "海窗可查列过少（{checked}，warm={warm}）");
 }
 
 /// 确定性：同 seed 两 generate 字节一致（含新表层路径；quality.rs 全局
@@ -374,4 +436,55 @@ fn surface_rules_deterministic() {
         generate_terrain_with(TerrainBackend::Vanilla, SEED, ChunkPos::new(5, 9)).expect("gen b");
     assert_eq!(a.voxels.as_u16_slice(), b.voxels.as_u16_slice());
     assert_eq!(a.heightmap[..], b.heightmap[..]);
+}
+
+/// abovePreliminarySurface 门基常量锁（海洋 SURF-2 波）：
+/// java-harness 探针（`java -cp build:… Main --seed 7 --probe-prelim x,z`
+/// = RandomState 7 router.preliminarySurfaceLevel().compute ——
+/// DensityFunctions.findTopSurface（DensityFunctions.java:279/579-607
+/// 实物）+ NoiseRouterData.java:479-499 组合链）：
+/// - 官方 fork 链实测：(0,0)=32、(800,800)=80、(−400,−400)=24（本机
+///   harness 复核 stdout 逐位一致）；
+/// - 本仓值（v1 splitmix 域盐气候链，AQUI-1 近似级）：56/48/48（runs
+///   38857740856 + 38861487832 锚定）。
+///
+/// 本仓 findTopSurface 结构为官方逐构件直译（remap −128/+128
+/// NoiseRouterData.java:310-314、upper_bound 钳 [−40,320]、noiseGradient
+/// 4·quarterNegative(offsetToDepth·factor)−0.703125 钳 ±64、slide
+/// −0.078125/0.1171875、−0.390625、floor(ub/8)·8 下扫）——**数值差全部
+/// 出自 offset/factor 气候信道种子链**（v1 域盐近似 vs 官方 fork；main
+/// 8f6b6b32 noise-vanilla-fork 已切官方链，rebase 合流后两列归一）。
+/// 本测试锁：①本仓值不漂移（ours=0 = 首锚通道：CI 打印后回填，ore_v7
+/// 同款）；②结构不变量（8 格量化 / [−64,320] 域 / 逐位确定）。
+#[test]
+fn prelim_gate_probe_constants_anchored() {
+    /// (x, z, official_fork_probe, ours_v1_chain)；ours=0 → 首锚通道。
+    /// 官方列=java-harness --probe-prelim seed7 实测；ours 列=本链
+    /// （(0,0)/(800,800) run 38857740856 锚、(−400,−400) run 38861487832 锚）。
+    const PROBES: [(i32, i32, i32, i32); 3] =
+        [(0, 0, 32, 56), (800, 800, 80, 48), (-400, -400, 24, 48)];
+    let orch = Orchestrator::new(7);
+    let mut report = String::new();
+    let mut fails = 0;
+    for (i, &(x, z, official, ours)) in PROBES.iter().enumerate() {
+        let cs = orch.column_state(x, z);
+        let got = orch.prelim_surface_level(&cs);
+        // 0 = 首锚通道（ore_v7 同款语义）：强制打印实测值回填。
+        if ours == 0 || got != ours {
+            fails += 1;
+            report.push_str(&format!(
+                "\n  case{i} ({x},{z}) got={got} ours锚={ours} 官方={official}"
+            ));
+        }
+        // 结构不变量：下扫返回 8 格量化（或 −64 下界）、域合法、逐位确定。
+        assert!(
+            (got == -64 || got % 8 == 0) && (-64..=320).contains(&got),
+            "prelim ({x},{z}) = {got} 非 8 格量化/越域"
+        );
+        assert_eq!(orch.prelim_surface_level(&cs), got, "prelim 非确定");
+    }
+    assert_eq!(
+        fails, 0,
+        "prelim 门基漂移/未锚定——把下列本仓值回填 OURS 列（官方值仅对照登记）:{report}"
+    );
 }
