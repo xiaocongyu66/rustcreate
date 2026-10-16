@@ -21,7 +21,8 @@ pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
                 }
                 if window_all(seed, cx, cz, want)
                     && ground_pure(seed, cx, cz)
-                    && mcv_worldgen::vanilla::column_temperature(seed, cx * 16 + 8, cz * 16 + 8) > 0.2
+                    && mcv_worldgen::vanilla::column_temperature(seed, cx * 16 + 8, cz * 16 + 8)
+                        > 0.2
                 {
                     return (cx, cz);
                 }
