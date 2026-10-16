@@ -1,12 +1,15 @@
 #![cfg(feature = "gpu-tests")]
 
-//! 掉落物渲染离屏验证（lavapipe / CI render-headless job，#150 刀 1）。
+//! 掉落物渲染离屏验证（lavapipe / CI render-headless job，#150 刀 1 +
+//! item-3d：方块物品 3D 化）。
 //!
 //! 断言策略与 particles.rs 一致：像素统计 + 同场景 diff，不做黄金像素，
 //! 阈值宽松防驱动 flake。窗内投掷掉落物 → 帧差出图标像素样本：
 //! - 材料物品（diamond）→ GUI 精灵表 billboard 上屏；
-//! - 方块物品（stone）→ 方块图集侧面 tile billboard 上屏；
-//! - bob/spin 相位（ageInTicks）驱动画面变化（原版 :48/:431-32 消费链）；
+//! - 方块物品（stone，Shape::Cube）→ 1/4 微缩 3D 立方体（26.1 block item
+//!   走 baked block model + ground display 0.25）上屏；
+//! - bob/spin 相位（ageInTicks）驱动画面变化（原版 :48/:431-433 消费链）；
+//! - 3D 自转：bob 等相、spin 相差 ~60° 的两帧可辨（立方绕 Y + 面亮度）；
 //! - 地面以下被深度剔除；
 //! - 覆盖建缓冲到绘制全链 validation 无错误。
 
@@ -184,10 +187,10 @@ fn render(
     target.read_pixels(device)
 }
 
-/// 材料物品（diamond sprite）与方块物品（stone tile）billboard 都上屏；
-/// bob/spin 相位驱动画面变化；地面以下深度剔除。
+/// 材料物品（diamond sprite billboard）与方块物品（stone 3D 微缩立方体，
+/// Shape::Cube 分流）都上屏；bob/spin 相位驱动画面变化；地面下深度剔除。
 #[test]
-fn item_drops_paint_billboard_icons() {
+fn item_drops_paint_icons_cube_and_sprite() {
     let (device, queue, mut renderer) = setup();
     let extent = wgpu::Extent3d {
         width: 320,
@@ -214,7 +217,7 @@ fn item_drops_paint_billboard_icons() {
         &chunk,
         Some(&sprite_drops),
     );
-    // 方块物品：石头 tile（方块图集，tex_set=1 路径）。
+    // 方块物品：stone（Shape::Cube → 3D 微缩立方体路径，六面 tiles[]）。
     let block_drops = [drop(mcv_render::HandItem::Block(1), [8.0, 100.0, 8.0], 0.0)];
     let with_block = render(
         &device,
@@ -260,7 +263,7 @@ fn item_drops_paint_billboard_icons() {
     }
 
     // bob/spin 相位消费链：ageInTicks 驱动画面变化（原版浮动 :48 + 自转
-    // :431-432——age=π/2·10 时 bob 峰值 +0.1、spin 45°）。快照字段停在
+    // :431-433——age=π/2·10 时 bob 峰值 +0.1、spin 45°）。快照字段停在
     // CPU 而未进顶点时本断言 diff=0 即红。
     let aged_drops = [drop(
         mcv_render::HandItem::Sprite("diamond"),
@@ -308,8 +311,87 @@ fn item_drops_paint_billboard_icons() {
     );
 }
 
+/// 方块物品 3D 化锁（item-3d）：Shape::Cube 分流走微缩立方体——
+/// 1. 立方体上屏（spin A 帧与空场 diff）；
+/// 2. **bob 等相、spin 相差 60°** 的两帧可辨（sin(a/10) 对称点
+///    a=5π/6·10 与 a=π/6·10：bob≈0.15 同值、spin 15° vs 75°——差异只能
+///    来自立方体绕 Y 自转 + 六面亮度/取面变化，billboard 卡片无此语义锁）；
+/// 3. 非立方（acacia_slab id=26，Shape::Slab）维持 billboard 侧面 tile
+///    （方块图集 tex_set=1 的 billboard 路径保有 GPU 覆盖）。
+#[test]
+fn item_drops_block_cube_spins_as_3d_body() {
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let guard = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let chunk = ground_chunk(&device);
+    let base = render(&device, &queue, &mut renderer, &target, &chunk, None);
+
+    // sin(π/6)=sin(5π/6)=0.5 → bob 同值 0.15；spin=age/20 → 15°/75°。
+    let spin_lo = [drop(
+        mcv_render::HandItem::Block(1),
+        [8.0, 100.0, 8.0],
+        10.0 * std::f32::consts::FRAC_PI_6,
+    )];
+    let spin_hi = [drop(
+        mcv_render::HandItem::Block(1),
+        [8.0, 100.0, 8.0],
+        50.0 * std::f32::consts::FRAC_PI_6,
+    )];
+    let slab = [drop(
+        mcv_render::HandItem::Block(26),
+        [8.0, 100.0, 8.0],
+        0.0,
+    )];
+
+    let lo = render(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk,
+        Some(&spin_lo),
+    );
+    let hi = render(
+        &device,
+        &queue,
+        &mut renderer,
+        &target,
+        &chunk,
+        Some(&spin_hi),
+    );
+    let slab_frame = render(&device, &queue, &mut renderer, &target, &chunk, Some(&slab));
+
+    let (lo_diff, lo_bb) = diff_pixels(&base, &lo);
+    assert!(
+        lo_diff > 40,
+        "3D 立方体掉落物应上屏（diff={lo_diff}，bbox {lo_bb:?}）"
+    );
+    let (spin_diff, _) = diff_pixels(&lo, &hi);
+    assert!(
+        spin_diff > 40,
+        "bob 等相 + spin 相差 60° 必须产生可辨画面（3D 自转语义，diff={spin_diff}）"
+    );
+    let (slab_diff, slab_bb) = diff_pixels(&base, &slab_frame);
+    assert!(
+        slab_diff > 40,
+        "非立方方块维持 billboard tile 上屏（diff={slab_diff}，bbox {slab_bb:?}）"
+    );
+
+    let scope_err = pollster::block_on(guard.pop());
+    assert!(
+        scope_err.is_none(),
+        "3D 立方体批 validation error: {scope_err:?}"
+    );
+}
+
 /// 超上限截断：MAX_DROPS+1 枚同点掉落物 → 截断到上限绘制，不越界、
-/// 不产生 validation error（索引缓冲按 MAX_DROPS 预生成的契约锁）。
+/// 不产生 validation error（vbuf/ibuf 按 MAX_DROPS 最坏批（全立方 24 顶点
+/// /36 索引）预留 + 每帧索引重建的契约锁）。
 #[test]
 fn item_drops_cap_truncates_without_validation_error() {
     let (device, queue, mut renderer) = setup();

@@ -3465,8 +3465,9 @@ impl Renderer {
             }
 
             // 掉落物（#150 通用物品渲染通路）：entity 相（mob 后、overlay/水
-            // 前），billboard 图标 cutout 写深度——26.1 ItemEntityRenderer 的
-            // 实体相语义（浮动 bob / 自转 spin 原式见 item_render.rs）。
+            // 前），cutout 写深度——26.1 ItemEntityRenderer 的实体相语义；
+            // 方块物品走 3D 微缩立方体、其余 billboard（浮动 bob / 自转
+            // spin 原式见 item_render.rs）。
             if let Some(drops) = scene.drops {
                 self.items.draw(
                     &mut pass,
