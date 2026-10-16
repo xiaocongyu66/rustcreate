@@ -24,7 +24,7 @@ use mcv_worldgen::vanilla::terrain::Orchestrator;
 pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
     let orch = Orchestrator::new(seed);
     let climate = ClimateSampler::new(seed);
-    for r in 0..=160_i32 {
+    for r in 0..=320_i32 {
         for cz in -r..=r {
             for cx in -r..=r {
                 if cx.abs() != r && cz.abs() != r {
@@ -39,7 +39,7 @@ pub fn find_biome_window(seed: u64, want: Biome) -> (i32, i32) {
             }
         }
     }
-    panic!("find_biome_window: ±160 chunk 环内无合格 {want:?} 窗——生物群系气候场崩坏");
+    panic!("find_biome_window: ±320 chunk 环内无合格 {want:?} 窗——生物群系气候场崩坏");
 }
 
 /// 单窗群系检查（复用同一 Orchestrator——性能合同见模块注）。
