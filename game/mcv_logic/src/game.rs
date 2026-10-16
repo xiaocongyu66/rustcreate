@@ -992,6 +992,15 @@ pub struct GameRuntime {
     /// mcv_entity::components，装配走 spawn_mob，行为走 `mob_ai` 系统）。
     pub mobs_app: mcv_ecs::App,
     pub attack_ticker: f32,
+    /// 攻击拾取的 partialTick（0..1）：上一渲染帧装配 `Scene.mobs` 时的喂步
+    /// 残差（app.rs `step_accum×60`，与 `collect_mob_instances_in` 同源）。
+    /// 26.1 的实体选择在客户端（GameRenderer.pick → EntityHitResult 用
+    /// **客户端插值盒**）；一体进程里"玩家所见" = `lerp(pos_old, pos, pt)`
+    /// 渲染位姿（mob_render 同款），准星拾取必须读同一 pos——判定侧读
+    /// 固定步端点 body.pos 而屏幕显示的是插值位姿，真机低帧（卡帧一帧
+    /// 连跑多个 60 Hz 步）的渲染/判定盒差会把准星内的怪打成落空（默认
+    /// 1.0 = 取本步端点，与旧读法一致，容 app 未喂值）。
+    pub attack_partial: f32,
     /// FoodData.tickTimer（26.1 FoodData.java:17）：回血快线 10 tick、慢线与
     /// 饥饿掉血 80 tick 的共享节拍（每 on_tick 走一格）。
     food_tick_timer: u32,
@@ -1745,6 +1754,9 @@ impl GameRuntime {
             // 攻击冷却 ticker，单位 tick（Player.attackStrengthTicker）；
             // 20 tick 起步 = 全武器满蓄力（attackSpeed≥1.0 → delay≤20 tick）。
             attack_ticker: 20.0, // ready
+            // 攻击拾取 partialTick：默认 1.0 = 固定步端点（app 每帧覆写，
+            // 见 attack_partial 字段注释）。
+            attack_partial: 1.0,
             food_tick_timer: 0,
             mine: MineMachine::default(),
             swinging: false,
@@ -5615,10 +5627,16 @@ impl GameRuntime {
         {
             let bodies = self.mobs_app.world.read::<PhysBody>();
             let kinds = self.mobs_app.world.read::<MobKind>();
+            // 拾取位姿 = 渲染同款插值（26.1 客户端 pick 用插值盒；见
+            // attack_partial 字段注释）。partial≤0 收敛 pos_old、≥1 收敛 pos。
+            let part = self.attack_partial;
             for (e, body) in bodies.iter() {
                 if let Some(k) = kinds.get(e) {
                     ents.push(e);
-                    targets.push((body.pos, k.0.def().half_size));
+                    targets.push((
+                        attack_pick_pos(body.pos_old, body.pos, part),
+                        k.0.def().half_size,
+                    ));
                 }
             }
         }
@@ -7643,6 +7661,27 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                             if waypoint.is_some_and(|w| w.y > pos.y + 0.5) {
                                 next.jump = true;
                             }
+                            // body yaw 与移动方向接（26.1 LivingEntity.java
+                            // :2734-2746 位移推导 walkDirection + BodyRotationControl
+                            // .clientTick:19-20 移动中 yBodyRot=yRot）：本 tick 无
+                            // Look（被动游走/逃离——猪牛羊鸡的唯一移动面，Brain
+                            // wander_only/chat 只发 Walk）→ body 朝向随航向有界
+                            // 转身。Look 同 tick 出现（敌对索敌/横移）则保留
+                            // yRot=look 的原版语义（RangedBowAttackGoal 横移时
+                            // 面向目标，MoveControl STRAFE 不写 yRot）。此前
+                            // Walk 分支从不写 Yaw → 被动怪生成起恒 yaw=0，
+                            // 模型朝向不随移动方向（「横着往前面走不转头」）。
+                            if !acts.iter().any(|x| matches!(x, AiAction::Look(_)))
+                                && let Some(nyaw) = mcv_entity::walk_body_yaw(
+                                    yaw.get(e).map(|v| v.0).unwrap_or(0.0),
+                                    *dir,
+                                    mcv_entity::BODY_TURN_STEP,
+                                )
+                            {
+                                if let Some(y) = yaw.get_mut(e) {
+                                    y.0 = nyaw;
+                                }
+                            }
                         }
                         AiAction::Look(t) => {
                             if let Some(y) = yaw.get_mut(e) {
@@ -8497,6 +8536,15 @@ pub fn block_hit_t(view: &WorldView, eye: Vec3, dir: Vec3, max_dist: f32) -> Opt
     } else {
         None
     }
+}
+
+/// 攻击拾取位姿：`lerp(pos_old, pos, partialTick)`，partial 越界 clamp 到
+/// 两端点（26.1 客户端 entity pick 用渲染插值盒的等价面，与
+/// `mob_render::collect_mob_instances_in` 的渲染读法逐字同式——判定侧与
+/// 渲染读同一 pos）。`partial=1` 收敛本步端点（与旧读法一致）。
+pub fn attack_pick_pos(pos_old: Vec3, pos: Vec3, partial: f32) -> Vec3 {
+    let t = partial.clamp(0.0, 1.0);
+    pos_old + (pos - pos_old) * t
 }
 
 /// 实体攻击目标选取（try_attack 的等价纯函数，供集成测试）：`mobs` =

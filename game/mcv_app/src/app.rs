@@ -3169,6 +3169,11 @@ impl AppState {
         // pos_old→pos 的该占比插值，消除步边界瞬移（与粒子 tick_frac 插值
         // 同思路，粒子在 20 Hz tick 域、mob 在 60 Hz 物理步域）。
         let mob_partial = (self.step_accum * 60.0).clamp(0.0, 1.0);
+        // 攻击拾取同源（26.1 客户端 pick 用插值盒）：准星打的是什么，判定
+        // 就得读什么——喂给本帧攻击按沿 try_attack 的 partial 与此处渲染的
+        // 完全同值（事件在帧间到达时最多滞后一帧，残差 ∈ [0,1] 仍与屏幕
+        // 位姿同界，见 GameRuntime::attack_partial 注释）。
+        runtime.attack_partial = mob_partial;
         let mob_instances = mcv_logic::mob_render::collect_mob_instances_in(
             &runtime.mobs_app.world,
             Some((camera.pos, runtime.render_dist as f32 * 16.0)),
