@@ -203,3 +203,59 @@ fn two_runs_bitwise_identical_both_backends() {
         }
     }
 }
+
+/// ③ rayon par_iter 逐 index 回填（rayon 收口波红线①）：并行调度器
+/// （无论自研池还是 rayon 全局池/工作窃取）完成序不确定，**输出序必须
+/// 按 index 原位回填钉死**——黄金对拍与下游消费的输出序 bit 级不变。
+/// 提交序打乱（SUBMIT_ORDER 置换）喂 par_iter，收集 (slot, out) 完成对
+/// 后按原格位 index 回填，对拍按格位序逐位比对（legacy + vanilla）。
+#[test]
+fn rayon_par_iter_index_backfill_bitwise_both_backends() {
+    use rayon::prelude::*;
+    for backend in [TerrainBackend::Legacy, TerrainBackend::Vanilla] {
+        let positions = grid3x3();
+        // 串行参照：单线程纯函数逐块。
+        let serial: HashMap<ChunkPos, TerrainOutput> = positions
+            .iter()
+            .map(|&p| {
+                let out = generate_terrain_with(backend, SEED, p).expect("serial gen");
+                (p, out)
+            })
+            .collect();
+        // 乱序提交 + 完成对收集：par_iter 内部顺序不确定（调度即序），
+        // 完成对 (slot, out) 只带格位 index，不带到达承诺。
+        let done: Vec<(usize, TerrainOutput)> = SUBMIT_ORDER
+            .par_iter()
+            .map(|&slot| {
+                let out = generate_terrain_with(backend, SEED, positions[slot]).expect("par gen");
+                (slot, out)
+            })
+            .collect();
+        // 逐 index 回填：输出序 = 网格序，与完成/到达序解耦。
+        let mut backfilled: Vec<Option<TerrainOutput>> =
+            (0..positions.len()).map(|_| None).collect();
+        for (slot, out) in done {
+            assert!(
+                backfilled[slot].is_none(),
+                "同格位重复回填 slot={slot}（提交面 bug）"
+            );
+            backfilled[slot] = Some(out);
+        }
+        for (slot, out) in backfilled.iter().enumerate() {
+            let p = positions[slot];
+            let q = out.as_ref().unwrap_or_else(|| {
+                panic!("index 回填缺格 slot={slot} pos={p:?} backend={backend:?}")
+            });
+            let s = &serial[&p];
+            assert_eq!(
+                voxels_bits(s),
+                voxels_bits(q),
+                "voxels 逐位不符 backend={backend:?} pos={p:?}（输出序回填面）"
+            );
+            assert_eq!(
+                s.heightmap, q.heightmap,
+                "heightmap 不符 backend={backend:?} pos={p:?}"
+            );
+        }
+    }
+}

@@ -119,6 +119,16 @@ jobs:
       # 日志（同 cave_audit/lakes 先例；期望收紧值以本打印为据回填）。
       - name: Land flora audit (K-FLORA lines into log)
         run: cargo test -p mcv_worldgen --test flora --locked -- --nocapture
+      # rayon 收口（用户拍板 2026-10-17）：K-RAYON-GEN / K-RAYON-MESH 分段
+      # 计时数值行常态入日志（同 K-CAVE-AUDIT「数据两用」先例——绿跑也
+      # 可回帖数字，不能只在红跑回显）。量的是「串行直呼 vs 生产池装配
+      # （TaskPool::shared = rayon 全局池 + 配额门）」两组，供分支
+      # docs/rayon-switch.md 收账与 E0 分段计时（#155 观测面）交叉对照；
+      # 产物一致性断言照常执行（不当纯 bench 跑）。
+      - name: Rayon pool stage timings (K-RAYON lines into log)
+        run: |
+          cargo test -p mcv_worldgen --test rayon_perf_probe --locked -- --nocapture
+          cargo test -p mcv_mesher --test rayon_perf_probe --locked -- --nocapture
   render-headless:
     runs-on: ubuntu-24.04
     steps:

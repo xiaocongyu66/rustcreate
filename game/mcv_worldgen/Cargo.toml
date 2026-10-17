@@ -10,3 +10,7 @@ mcv_core.workspace = true
 mcv_nbt.workspace = true
 log = { workspace = true }
 mcv_registry.workspace = true
+
+[dev-dependencies]
+# rayon 收口测试面：par_iter 逐 index 回填（红线①，输出序 bit 级不变）+ 性能探针。
+rayon.workspace = true
