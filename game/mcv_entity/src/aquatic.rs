@@ -190,7 +190,7 @@ pub mod tropical {
     /// 体由 group data 复制——引擎刷怪组直接复用同一 packed），10% 全随机
     /// （pattern 12 × baseColor 16 × patternColor 16）。
     pub fn finalize_variant(rng: &mut impl FnMut() -> u32) -> u32 {
-        if rng() % 100 < TROPICAL_COMMON_PCT {
+        if rng() % 100 < super::TROPICAL_COMMON_PCT {
             COMMON_PACKED[(rng() as usize) % COMMON_PACKED.len()]
         } else {
             let index = (rng() % 6) as u8;

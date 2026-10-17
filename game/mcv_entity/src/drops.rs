@@ -157,12 +157,12 @@ mod tests {
             crate::aquatic::tropical::COMMON_PACKED[0],
             crate::aquatic::tropical::pack(5, true, 14, 11),
         ] {
-            let ev = death_drops(MobKind::TropicalFish, v, false, pos, &mut never);
+            let ev = death_drops_variant(MobKind::TropicalFish, v, false, pos, &mut never);
             assert_eq!(names(&ev), ["tropical_fish"]);
             assert_eq!(ev[0].count, 1, "set_count 1.0（tropical_fish.json）");
             assert_eq!(ev[0].variant, v, "packed variant 原样透传");
         }
-        let cod = death_drops(MobKind::Cod, 7, false, pos, &mut never);
+        let cod = death_drops_variant(MobKind::Cod, 7, false, pos, &mut never);
         assert_eq!(cod[0].variant, 0, "无变体种恒 0");
     }
 
@@ -172,6 +172,6 @@ mod tests {
     fn axolotl_drops_nothing() {
         let pos = Vec3::ZERO;
         let mut always = || 0u32;
-        assert!(death_drops(MobKind::Axolotl, 0, true, pos, &mut always).is_empty());
+        assert!(death_drops_variant(MobKind::Axolotl, 0, true, pos, &mut always).is_empty());
     }
 }

@@ -76,11 +76,10 @@ pub fn surface_water_ok(y: i32, below_is_water: bool, above_is_water: bool) -> b
         && above_is_water
 }
 
-/// 热带鱼（TropicalFish::checkTropicalFishSpawnRules :259-268）在水面门上
-/// 额外带 `ALLOWS_TROPICAL_FISH_SPAWNS_AT_ANY_HEIGHT` 旗的 any-height
-/// 分支——生物群系图未接（worldgen 红线禁触），旗以 false 代理，落回
-/// [`surface_water_ok`] 同一水面门（随 cod/salmon 同 gate 分支，KNOWN-
-/// DIVERGENCE：繁茂洞穴任意高度热带鱼暂缺，待 biome 接线）。
+// 热带鱼（TropicalFish::checkTropicalFishSpawnRules :259-268）：在
+// surface_water_ok 之上另有 ALLOWS_TROPICAL_FISH_SPAWNS_AT_ANY_HEIGHT
+// any-height 分支——生物群系图未接（worldgen 红线禁触），旗以 false 代理
+// 落回水面门（KNOWN-DIVERGENCE：繁茂洞穴任意高度热带鱼暂缺，待 biome 接线）。
 
 /// Axolotl::checkAxolotlSpawnRules（Axolotl.java:562-564）：下方方块 ∈
 /// AXOLOTLS_SPAWNABLE_ON（BlockTags 成员唯一 = clay，tags_gen.inc.rs 锚定）

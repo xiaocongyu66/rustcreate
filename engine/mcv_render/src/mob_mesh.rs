@@ -486,35 +486,35 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::Head,
-            boxes: &[AXOLOTL_HEAD],
+            boxes: &AXOLOTL_HEAD_B,
         },
         PartDef {
             pivot: [0.0, 16.5, -5.0],
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::Fixed,
-            boxes: &[AXOLOTL_TOP_GILLS],
+            boxes: &AXOLOTL_TOP_GILLS_B,
         },
         PartDef {
             pivot: [-4.0, 19.5, -5.0],
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::Fixed,
-            boxes: &[AXOLOTL_LEFT_GILLS],
+            boxes: &AXOLOTL_LEFT_GILLS_B,
         },
         PartDef {
             pivot: [4.0, 19.5, -5.0],
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::Fixed,
-            boxes: &[AXOLOTL_RIGHT_GILLS],
+            boxes: &AXOLOTL_RIGHT_GILLS_B,
         },
         PartDef {
             pivot: [-3.5, 20.5, 4.0],
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::WalkLeg { shift: 0.0 },
-            boxes: &[AXOLOTL_LEG_R],
+            boxes: &AXOLOTL_LEG_R_B,
         },
         PartDef {
             pivot: [3.5, 20.5, 4.0],
@@ -523,7 +523,7 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
             anim: PartAnim::WalkLeg {
                 shift: std::f32::consts::PI,
             },
-            boxes: &[AXOLOTL_LEG_L],
+            boxes: &AXOLOTL_LEG_L_B,
         },
         PartDef {
             pivot: [-3.5, 20.5, -3.0],
@@ -532,14 +532,14 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
             anim: PartAnim::WalkLeg {
                 shift: std::f32::consts::PI,
             },
-            boxes: &[AXOLOTL_LEG_R],
+            boxes: &AXOLOTL_LEG_R_B,
         },
         PartDef {
             pivot: [3.5, 20.5, -3.0],
             rot_x: 0.0,
             tex_layer: layer,
             anim: PartAnim::WalkLeg { shift: 0.0 },
-            boxes: &[AXOLOTL_LEG_L],
+            boxes: &AXOLOTL_LEG_L_B,
         },
         PartDef {
             pivot: [0.0, 19.5, 6.0],
@@ -550,7 +550,7 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
                 dry_scale: 1.0,
                 dry_freq: 1.0,
             },
-            boxes: &[AXOLOTL_TAIL],
+            boxes: &AXOLOTL_TAIL_B,
         },
     ]
 }
@@ -572,7 +572,7 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
             rot_x: 0.0,
             tex_layer: 16,
             anim: PartAnim::Fixed,
-            boxes: &[TF_S_BODY],
+            boxes: &TF_S_BODY_B,
         },
         PartDef {
             pivot: [0.0, 22.0, 3.0],
@@ -583,7 +583,7 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
                 dry_scale: 1.5,
                 dry_freq: 1.0,
             },
-            boxes: &[TF_S_TAIL],
+            boxes: &TF_S_TAIL_B,
         },
         PartDef {
             pivot: [-1.0, 22.5, 0.0],
@@ -594,7 +594,7 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
                 y: std::f32::consts::FRAC_PI_4,
                 z: 0.0,
             },
-            boxes: &[TF_S_FIN_R],
+            boxes: &TF_S_FIN_R_B,
         },
         PartDef {
             pivot: [1.0, 22.5, 0.0],
@@ -605,14 +605,14 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
                 y: -std::f32::consts::FRAC_PI_4,
                 z: 0.0,
             },
-            boxes: &[TF_S_FIN_L],
+            boxes: &TF_S_FIN_L_B,
         },
         PartDef {
             pivot: [0.0, 20.5, -3.0],
             rot_x: 0.0,
             tex_layer: 16,
             anim: PartAnim::Fixed,
-            boxes: &[TF_S_TOP_FIN],
+            boxes: &TF_S_TOP_FIN_B,
         },
         // 花纹叠层：同几何 + grow 0.008（FISH_PATTERN_DEFORMATION），贴图
         // = pattern 层（TropicalFishPatternLayer.submit 的第二 pass）。
@@ -675,7 +675,7 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
             rot_x: 0.0,
             tex_layer: 23,
             anim: PartAnim::Fixed,
-            boxes: &[TF_L_BODY],
+            boxes: &TF_L_BODY_B,
         },
         PartDef {
             pivot: [0.0, 19.0, 3.0],
@@ -686,7 +686,7 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
                 dry_scale: 1.5,
                 dry_freq: 1.0,
             },
-            boxes: &[TF_L_TAIL],
+            boxes: &TF_L_TAIL_B,
         },
         PartDef {
             pivot: [-1.0, 20.0, 0.0],
@@ -697,7 +697,7 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
                 y: std::f32::consts::FRAC_PI_4,
                 z: 0.0,
             },
-            boxes: &[TF_L_FIN_R],
+            boxes: &TF_L_FIN_R_B,
         },
         PartDef {
             pivot: [1.0, 20.0, 0.0],
@@ -708,21 +708,21 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
                 y: -std::f32::consts::FRAC_PI_4,
                 z: 0.0,
             },
-            boxes: &[TF_L_FIN_L],
+            boxes: &TF_L_FIN_L_B,
         },
         PartDef {
             pivot: [0.0, 16.0, -3.0],
             rot_x: 0.0,
             tex_layer: 23,
             anim: PartAnim::Fixed,
-            boxes: &[TF_L_TOP_FIN],
+            boxes: &TF_L_TOP_FIN_B,
         },
         PartDef {
             pivot: [0.0, 22.0, -3.0],
             rot_x: 0.0,
             tex_layer: 23,
             anim: PartAnim::Fixed,
-            boxes: &[TF_L_BOTTOM_FIN],
+            boxes: &TF_L_BOTTOM_FIN_B,
         },
         // 花纹叠层（grow 0.008）。
         PartDef {
