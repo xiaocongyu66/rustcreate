@@ -1482,6 +1482,9 @@ impl AppState {
             // E4：退出安全落盘 = 全量投递 + 阻塞排空在途 IO（delete 时
             // remove_dir_all 前必须保证写盘收尾）。
             runtime.flush_save_blocking();
+            // #222 批 A：实体块随退出拍落盘（EntitiesTag + playerdata，
+            // 与 flush 的方块增量同拍）——重进世界 mob 表回填有源。
+            runtime.save_entities();
             runtime.save_meta();
             // 设备所有权链（本波 #143）：把 AudioManager 收回 App 级菜单
             // 音频（主菜单/设置按钮音续用同一输出设备）；runtime 留
@@ -2254,6 +2257,8 @@ impl ApplicationHandler for AppState {
             // E4：进后台首件事 = 投递 + 阻塞排空（原 save_dirty 同点，语义
             // 升级为等在途写盘收尾——被杀丢档上限 30s → 0 不回退）。
             runtime.flush_save_blocking();
+            // #222 批 A：挂起拍实体块同落（被杀后重进 mob 表回填有源）。
+            runtime.save_entities();
             runtime.save_meta();
         }
         // C-2（波#127-3）：后台音频挂起——cpal 回调线程独立于事件循环，
@@ -2283,6 +2288,8 @@ impl ApplicationHandler for AppState {
                 if let Some(runtime) = self.runtime.as_mut() {
                     // E4：关窗 = 全量投递 + 阻塞排空在途 IO 后再落 meta。
                     runtime.flush_save_blocking();
+                    // #222 批 A：关窗拍实体块同落（同 flush 方块增量拍）。
+                    runtime.save_entities();
                     runtime.save_meta();
                 }
                 self.save_options();
@@ -3063,6 +3070,8 @@ impl AppState {
         if self.save_timer.is_some_and(|t| t.elapsed().as_secs() >= 30) {
             self.save_timer = Some(std::time::Instant::now());
             runtime.save_dirty(None);
+            // #222 批 A：实体块随 30s 拍落盘（与 save_dirty 方块增量同拍）。
+            runtime.save_entities();
             runtime.save_meta();
         }
 

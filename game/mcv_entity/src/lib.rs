@@ -11,6 +11,9 @@ pub mod defs;
 pub mod drops;
 pub mod effect;
 pub mod items;
+/// 实体 ↔ NBT 编解码（#222 批 A）：26.1 官方键名面，落盘编排见
+/// mcv_logic::GameRuntime::save_entities / restore_entities。
+pub mod nbt;
 pub mod passive;
 pub mod pathfinding;
 pub mod spawner;
