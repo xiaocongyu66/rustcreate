@@ -808,6 +808,27 @@ static TROPICAL_L3: [PartDef; 12] = tropical_large_parts(27);
 static TROPICAL_L4: [PartDef; 12] = tropical_large_parts(28);
 static TROPICAL_L5: [PartDef; 12] = tropical_large_parts(29);
 
+// 单盒伴切片：const fn（axolotl_parts/tropical_*_parts）内不允许取
+// &[SINGLE] 数组临时（E0716），改引 static 得 'static。
+static AXOLOTL_HEAD_B: [MobBox; 1] = [AXOLOTL_HEAD];
+static AXOLOTL_TOP_GILLS_B: [MobBox; 1] = [AXOLOTL_TOP_GILLS];
+static AXOLOTL_LEFT_GILLS_B: [MobBox; 1] = [AXOLOTL_LEFT_GILLS];
+static AXOLOTL_RIGHT_GILLS_B: [MobBox; 1] = [AXOLOTL_RIGHT_GILLS];
+static AXOLOTL_LEG_R_B: [MobBox; 1] = [AXOLOTL_LEG_R];
+static AXOLOTL_LEG_L_B: [MobBox; 1] = [AXOLOTL_LEG_L];
+static AXOLOTL_TAIL_B: [MobBox; 1] = [AXOLOTL_TAIL];
+static TF_S_BODY_B: [MobBox; 1] = [TF_S_BODY];
+static TF_S_TAIL_B: [MobBox; 1] = [TF_S_TAIL];
+static TF_S_FIN_R_B: [MobBox; 1] = [TF_S_FIN_R];
+static TF_S_FIN_L_B: [MobBox; 1] = [TF_S_FIN_L];
+static TF_S_TOP_FIN_B: [MobBox; 1] = [TF_S_TOP_FIN];
+static TF_L_BODY_B: [MobBox; 1] = [TF_L_BODY];
+static TF_L_TAIL_B: [MobBox; 1] = [TF_L_TAIL];
+static TF_L_FIN_R_B: [MobBox; 1] = [TF_L_FIN_R];
+static TF_L_FIN_L_B: [MobBox; 1] = [TF_L_FIN_L];
+static TF_L_TOP_FIN_B: [MobBox; 1] = [TF_L_TOP_FIN];
+static TF_L_BOTTOM_FIN_B: [MobBox; 1] = [TF_L_BOTTOM_FIN];
+
 /// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6 / 僵尸 6 / 骷髅 6 /
 /// 苦力怕 6 / 蜘蛛 11，与 [`MOB_PART_COUNTS`] 一致；
 /// 各部位 pivot/UV 全部照 Java 数字，来源行见模块头）。
@@ -1870,7 +1891,7 @@ mod tests {
         pose.swim_phase = (std::f32::consts::PI / 2.0) / 0.6; // sin 峰值
         let m1 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
         assert_ne!(m0[1], m1[1], "尾摆旋转（y 基向量随 yRot）");
-        assert_eq!(m0[12..15], m1[12..15], "尾枢轴平移不变");
+        assert_eq!(&m0[12..15], &m1[12..15], "尾枢轴平移不变");
         // 离水（in_water=false）幅值 1.5 倍 → 峰值偏移更大。
         pose.in_water = false;
         let m2 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();

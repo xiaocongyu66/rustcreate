@@ -103,8 +103,16 @@ pub const AXOLOTL_LAND_WISH: f32 = 0.4;
 pub mod tropical {
     /// Pattern 名（26.1 枚举序）：small（KOB..SPOTTY）在前、large
     /// （FLOPPER..CLAYFISH）在后；`base`/`index` 见源码构造器。
-    pub const SMALL_PATTERNS: [&str; 6] = ["kob", "sunstreak", "snooper", "dasher", "brinely", "spotty"];
-    pub const LARGE_PATTERNS: [&str; 6] = ["flopper", "stripey", "glitter", "blockfish", "betty", "clayfish"];
+    pub const SMALL_PATTERNS: [&str; 6] =
+        ["kob", "sunstreak", "snooper", "dasher", "brinely", "spotty"];
+    pub const LARGE_PATTERNS: [&str; 6] = [
+        "flopper",
+        "stripey",
+        "glitter",
+        "blockfish",
+        "betty",
+        "clayfish",
+    ];
     /// DyeColor.id（white..black 0..15，与 DyeColor.java 枚举序一致）。
     pub const DYE_WHITE: u8 = 0;
     pub const DYE_ORANGE: u8 = 1;
@@ -470,7 +478,18 @@ pub fn aquatic_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         rng_state = 0x9E37_79B9_7F4A_7C15;
     }
 
-    let (mut phys, kinds, mut waters, mut modes, variants, mut yaws, mut intents, mut ticks, mut healths, mut anims) = (
+    let (
+        mut phys,
+        kinds,
+        mut waters,
+        mut modes,
+        variants,
+        mut yaws,
+        mut intents,
+        mut ticks,
+        mut healths,
+        mut anims,
+    ) = (
         world.write::<crate::PhysBody>(),
         world.read::<crate::MobKind>(),
         world.write::<WaterState>(),
@@ -617,7 +636,8 @@ pub fn aquatic_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     yaws.get(e).map(|v| v.0).unwrap_or(0.0),
                     wish,
                     std::f32::consts::FRAC_PI_2,
-                ) && let Some(y) = yaws.get_mut(e)
+                )
+                && let Some(y) = yaws.get_mut(e)
             {
                 y.0 = nyaw;
             }
@@ -689,21 +709,16 @@ pub fn aquatic_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             let pos = body.pos;
             let variant = variants.get(e).map(|v| v.0).unwrap_or(0);
             let mut drop_rng = xorshift(&mut rng_state) as u32; // 种子传承
-            let drops: Vec<(u16, u8)> = crate::drops::death_drops_variant(
-                def.kind,
-                variant,
-                false,
-                pos,
-                &mut || {
+            let drops: Vec<(u16, u8)> =
+                crate::drops::death_drops_variant(def.kind, variant, false, pos, &mut || {
                     drop_rng = drop_rng.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
                     drop_rng
-                },
-            )
-            .into_iter()
-            .filter_map(|ev| {
-                mcv_item::item_by_name(ev.item).map(|i| (i, ev.count.min(u8::MAX as u32) as u8))
-            })
-            .collect();
+                })
+                .into_iter()
+                .filter_map(|ev| {
+                    mcv_item::item_by_name(ev.item).map(|i| (i, ev.count.min(u8::MAX as u32) as u8))
+                })
+                .collect();
             commands.despawn(e);
             if !drops.is_empty() {
                 let at = pos + Vec3::Y * 0.5;
@@ -714,14 +729,7 @@ pub fn aquatic_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                         (r >> 32) as u32
                     };
                     for (item, count) in drops {
-                        crate::spawn_item_drop(
-                            w,
-                            at,
-                            item,
-                            count,
-                            crate::PICKUP_DELAY,
-                            &mut rng32,
-                        );
+                        crate::spawn_item_drop(w, at, item, count, crate::PICKUP_DELAY, &mut rng32);
                     }
                 });
             }
@@ -836,7 +844,10 @@ mod tests {
         assert!(tropical::COMMON_PACKED.iter().all(|&p| p != 0));
         // 贴图槽位：素底 index 0 → layer 0，其余 1..6（渲染侧映射面）。
         assert_eq!(tropical::texture_slot(tropical::DEFAULT), (false, 0));
-        assert_eq!(tropical::texture_slot(tropical::COMMON_PACKED[1]), (true, 0));
+        assert_eq!(
+            tropical::texture_slot(tropical::COMMON_PACKED[1]),
+            (true, 0)
+        );
     }
 
     #[test]

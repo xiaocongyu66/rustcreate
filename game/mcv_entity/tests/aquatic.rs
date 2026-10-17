@@ -136,12 +136,7 @@ fn dry_out_cadence_death_and_drop() {
     let mut first_hit = None;
     for t in 1..=340u32 {
         step(&mut app);
-        let Some(hp) = app
-            .world
-            .read::<mcv_entity::Health>()
-            .get(e)
-            .map(|h| h.0)
-        else {
+        let Some(hp) = app.world.read::<mcv_entity::Health>().get(e).map(|h| h.0) else {
             break; // 已 despawn（第二窒息跳）
         };
         if hp < 3.0 && first_hit.is_none() {
@@ -181,7 +176,12 @@ fn water_refills_air_ledger() {
     // 换水世界（实体放海平面带内）。
     let water = water_chunk();
     let mut app_w = harness(&water, Vec3::new(8.0, 96.0, 32.0), 777);
-    let e_w = spawn_aquatic_mob(&mut app_w.world, MobId::SALMON, Vec3::new(8.0, 63.0, 8.0), 0);
+    let e_w = spawn_aquatic_mob(
+        &mut app_w.world,
+        MobId::SALMON,
+        Vec3::new(8.0, 63.0, 8.0),
+        0,
+    );
     for _ in 0..400 {
         step(&mut app_w);
         let w = app_w.world.read::<WaterState>().get(e_w).unwrap();
@@ -377,7 +377,10 @@ fn variant_tables_runtime() {
         aquatic::tropical::DYE_LIME,
     );
     assert_eq!(aquatic::tropical::unpack_pattern(packed), (false, 5));
-    assert_eq!(aquatic::tropical::base_color(packed), aquatic::tropical::DYE_PINK);
+    assert_eq!(
+        aquatic::tropical::base_color(packed),
+        aquatic::tropical::DYE_PINK
+    );
     assert_eq!(
         aquatic::tropical::pattern_color(packed),
         aquatic::tropical::DYE_LIME
@@ -394,7 +397,11 @@ fn variant_tables_runtime() {
         packed,
     );
     assert_eq!(
-        app.world.read::<mcv_entity::AquaticVariant>().get(e).unwrap().0,
+        app.world
+            .read::<mcv_entity::AquaticVariant>()
+            .get(e)
+            .unwrap()
+            .0,
         packed
     );
 }
