@@ -223,13 +223,15 @@ fn rrt_and_odt_fit(v: [f32; 3]) -> [f32; 3] {
     [a[0] / b[0], a[1] / b[1], a[2] / b[2]]
 }
 
-/// 行向量右乘 3×3 矩阵：out_i = Σⱼ vⱼ·M[j][i]。参数 m 的行 = WGSL
-/// `mat3x3` 字面量的**列**（列主存储），保证与 `v * mat3x3` 同值。
+/// 行向量右乘 3×3 矩阵：out_j = dot(v, col_j) = Σᵢ vᵢ·col_j[i]（WGSL
+/// `v * mat3x3` 同语义：`mat3x3(a,b,c)` 的 a/b/c 为**列**，v×M 对每列
+/// 取点积——bevy tonemapping.wesl:129/134 `fitted *= mat` 逐值锚定）。
+/// 参数 m 的行 = WGSL 字面量的列（列主存储，与 hdr.wgsl 同一字面量）。
 fn mul_mat3_cols(v: [f32; 3], m: [[f32; 3]; 3]) -> [f32; 3] {
     [
-        v[0] * m[0][0] + v[1] * m[1][0] + v[2] * m[2][0],
-        v[0] * m[0][1] + v[1] * m[1][1] + v[2] * m[2][1],
-        v[0] * m[0][2] + v[1] * m[1][2] + v[2] * m[2][2],
+        v[0] * m[0][0] + v[1] * m[0][1] + v[2] * m[0][2],
+        v[0] * m[1][0] + v[1] * m[1][1] + v[2] * m[1][2],
+        v[0] * m[2][0] + v[1] * m[2][1] + v[2] * m[2][2],
     ]
 }
 
@@ -342,9 +344,14 @@ mod tests {
         assert!((d0 - 1.0 / (PI * a * a)).abs() < 1e-3, "clamp α D 峰 {d0}");
         // V 正入射（NdotV=NdotL=1）：λ=1 → v=0.25。
         assert!((v_smith_ggx_correlated(0.5, 1.0, 1.0) - 0.25).abs() < c);
-        // 45° 三角 roughness=1（α=1）：λ=NdotL·√(NdotV²)=0.5 → v=0.5。
+        // 45° 三角 roughness=1（α=1）：λ=NdotL·√((NdotV−1·NdotV)·NdotV+1)
+        // = s·1 = s → v = 0.5/(2s) = √½/2 = 0.353553（1/(2√2)）。
         let s = std::f32::consts::FRAC_1_SQRT_2;
-        assert!((v_smith_ggx_correlated(1.0, s, s) - 0.5).abs() < c);
+        assert!(
+            (v_smith_ggx_correlated(1.0, s, s) - s * 0.5).abs() < c,
+            "45° α=1 可见性 {}",
+            v_smith_ggx_correlated(1.0, s, s)
+        );
         // F0：reflectance 0.5 → 0.04；fresnel 两端点（LdotH=1 → f0；
         // LdotH=0 → f90 饱和 1.0）。
         assert!((calculate_f0_dielectric(0.5) - 0.04).abs() < c);
