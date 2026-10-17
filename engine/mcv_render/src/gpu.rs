@@ -1371,6 +1371,10 @@ pub struct Renderer {
     /// 水下雾迟滞状态 (确认态, 连续反向计数)，见
     /// [`step_underwater_hysteresis`]。
     underwater_state: (bool, u32),
+    /// 帧渲染节点图（#222 批 A 自研 render_graph）：默认 world→hand→hud。
+    frame_graph: crate::render_graph::RenderGraph,
+    /// 上述帧图的拓序计划；frame_graph() 手术后置 None，帧首重编译。
+    frame_plan: Option<crate::render_graph::Plan>,
     pub max_chunks: u32,
     pub max_hud_quads: u32,
 }
@@ -3019,6 +3023,8 @@ impl Renderer {
             hand_terrain_ibuf,
             hand_frame_buf,
             hand_frame_bind,
+            frame_graph: crate::render_graph::default_frame_graph(),
+            frame_plan: None,
             max_chunks,
             max_hud_quads,
             last_stats: FrameStats::default(),
@@ -3395,193 +3401,262 @@ impl Renderer {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("frame"),
             });
+        // —— RenderGraph 执行（#222 批 A 自研 render_graph）——
+        // 三 pass 由节点图拓序驱动：默认图 world→hand→hud 与旧直写序逐节点
+        // 一致，节点体即原三块逐字搬移（见 record_world_pass/draw_hand/
+        // record_hud_pass）——wgpu 指令序不变，离屏 golden 位级对拍保真。
+        // 编译面错误（缺边/环）只可能来自 add_node 后的自定义图：整帧跳过
+        // + error 取证，不 panic（surface 语义不容帧中炸）。
+        if let Err(e) = self.frame_graph_ensure_compiled() {
+            log::error!("render-graph: 编译失败，跳帧：{e}");
+            return;
+        }
+        let plan = self.frame_plan.take().expect("frame plan 已编译");
+        // 节点列表临时迁出图：ctx.renderer 与 self.frame_graph 同根借用，
+        // mem::take 拆环（帧毕原位归还），无 unsafe。
+        let mut nodes = std::mem::take(&mut self.frame_graph.nodes);
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("world"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
-                    }),
-                    stencil_ops: None,
+            let mut ctx = crate::render_graph::FrameCtx {
+                renderer: self,
+                encoder: &mut encoder,
+                color,
+                depth,
+                scene,
+                visible: &visible,
+                stats: &mut stats,
+                cam,
+                vp,
+                eye,
+                tick,
+            };
+            plan.run(&mut nodes, &mut ctx);
+        }
+        self.frame_graph.nodes = nodes;
+        self.frame_plan = Some(plan);
+
+        self.last_stats = stats;
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// 帧图手术口（#222 批 A）：重排/换节点后置脏，下帧帧首重编译——
+    /// 缺边/环在编译面（Result）暴露并整帧跳过（见 draw_frame 前哨）。
+    pub fn frame_graph(&mut self) -> &mut crate::render_graph::RenderGraph {
+        self.frame_plan = None;
+        &mut self.frame_graph
+    }
+
+    /// 预检口：立即编译当前（可能手术过的）帧图，缺边/环当场暴露。
+    pub fn frame_graph_compile(&mut self) -> Result<(), crate::render_graph::GraphError> {
+        self.frame_graph_ensure_compiled()
+    }
+
+    /// 帧首编译（frame_graph() 手术后 frame_plan 置 None，必重算）。
+    fn frame_graph_ensure_compiled(&mut self) -> Result<(), crate::render_graph::GraphError> {
+        if self.frame_plan.is_none() {
+            self.frame_plan = Some(self.frame_graph.compile()?);
+        }
+        Ok(())
+    }
+
+    /// 世界 pass（render_graph#world 节点体，#222 批 A）：天穹→云→不透明
+    /// 地形→实体→裂纹描边→粒子→水。**自 draw_frame 逐字搬移**，wgpu
+    /// 指令序逐位不变（离屏 golden 对拍保真）。
+    #[allow(clippy::too_many_arguments)] // pass 体承接前奏派生量，参数天然多
+    pub(crate) fn record_world_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        depth: &wgpu::TextureView,
+        scene: &Scene,
+        visible: &[&RenderChunk],
+        stats: &mut FrameStats,
+        cam: &Camera,
+        vp: glam::Mat4,
+        eye: Vec3,
+        tick: u64,
+    ) {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: color,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
 
-            // sky first: writes no depth, terrain overdraws it
-            pass.set_pipeline(&self.sky_pipeline);
-            pass.set_bind_group(0, &self.sky_bind, &[]);
-            pass.draw(0..3, 0..1);
+        // sky first: writes no depth, terrain overdraws it
+        pass.set_pipeline(&self.sky_pipeline);
+        pass.set_bind_group(0, &self.sky_bind, &[]);
+        pass.draw(0..3, 0..1);
 
-            // clouds: sky 之后、不透明之前（26.1 RenderPassOrder）。
-            // 云顶点是**相机相对**坐标（offset=(−xInCell, bottomY−eyeY, −zInCell)，
-            // CloudRenderer.java:151/198——26.1 相机相对管线里 ModelViewMat 不含
-            // 平移）。地形走世界空间 vp，云必须换无平移视图（eye 置原点），
-            // 否则平移二次叠加把整片云推出视锥（离屏测试 diff=0 的根因）。
-            if let Some((clouds, settings)) = scene.cloud {
-                let vp_rel = cam.proj() * glam::Mat4::look_at_rh(Vec3::ZERO, cam.dir(), Vec3::Y);
-                clouds.draw(
-                    &mut pass,
-                    &vp_rel.to_cols_array_2d(),
-                    eye,
-                    scene.time,
-                    settings,
-                );
+        // clouds: sky 之后、不透明之前（26.1 RenderPassOrder）。
+        // 云顶点是**相机相对**坐标（offset=(−xInCell, bottomY−eyeY, −zInCell)，
+        // CloudRenderer.java:151/198——26.1 相机相对管线里 ModelViewMat 不含
+        // 平移）。地形走世界空间 vp，云必须换无平移视图（eye 置原点），
+        // 否则平移二次叠加把整片云推出视锥（离屏测试 diff=0 的根因）。
+        if let Some((clouds, settings)) = scene.cloud {
+            let vp_rel = cam.proj() * glam::Mat4::look_at_rh(Vec3::ZERO, cam.dir(), Vec3::Y);
+            clouds.draw(
+                &mut pass,
+                &vp_rel.to_cols_array_2d(),
+                eye,
+                scene.time,
+                settings,
+            );
+        }
+
+        // opaque
+        pass.set_pipeline(&self.terrain_pipeline);
+        for (slot, rc) in visible.iter().enumerate() {
+            let off = slot as u32 * 256;
+            pass.set_bind_group(0, &self.frame_bind, &[off]);
+            pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
+            pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);
+            if !rc.opaque_range.is_empty() {
+                pass.draw_indexed(rc.opaque_range.clone(), 0, 0..1);
+                stats.opaque_draws += 1;
             }
+        }
 
-            // opaque
-            pass.set_pipeline(&self.terrain_pipeline);
-            for (slot, rc) in visible.iter().enumerate() {
-                let off = slot as u32 * 256;
-                pass.set_bind_group(0, &self.frame_bind, &[off]);
-                pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
-                pass.set_index_buffer(rc.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                if !rc.opaque_range.is_empty() {
-                    pass.draw_indexed(rc.opaque_range.clone(), 0, 0..1);
-                    stats.opaque_draws += 1;
+        // player: 不透明地形后、水前（entity 在 translucent 之前渲染）
+        if let Some((models, skin)) = scene.player {
+            self.draw_player(&mut pass, vp.to_cols_array_2d(), models, skin);
+        }
+
+        // mobs: 同序（entity 透不透明阶段，水前）
+        if let Some(mobs) = scene.mobs {
+            self.draw_mobs(&mut pass, vp.to_cols_array_2d(), mobs);
+        }
+
+        // 掉落物（#150 通用物品渲染通路）：entity 相（mob 后、overlay/水
+        // 前），cutout 写深度——26.1 ItemEntityRenderer 的实体相语义；
+        // 方块物品走 3D 微缩立方体、其余 billboard（浮动 bob / 自转
+        // spin 原式见 item_render.rs）。
+        if let Some(drops) = scene.drops {
+            self.items.draw(
+                &mut pass,
+                &self.item_bind,
+                drops,
+                crate::item_render::DropDrawCtx {
+                    cam,
+                    day: scene.day_factor,
+                    light_tint: env_color::sky_light_color(tick),
+                },
+                self.gui.as_ref(),
+                &self.queue,
+            );
+        }
+
+        // 挖掘裂纹 + 选中描边：不透明后、水前（26.1 translucent 序）。
+        if let Some(ov) = scene.overlay {
+            let overlay_off = self.max_chunks * 256;
+            let mut slot = [0.0f32; OVERLAY_ORIGIN_PAD as usize];
+            slot[..3].copy_from_slice(&ov.min);
+            self.queue.write_buffer(
+                &self.origins_buf,
+                overlay_off as u64,
+                bytemuck::cast_slice(&slot),
+            );
+            if ov.crack_stage.is_some() && self.crack_layers_ok {
+                let (verts, idx) = build_crack_overlay(&ov);
+                if !idx.is_empty() {
+                    self.queue
+                        .write_buffer(&self.overlay_vbuf, 0, bytemuck::cast_slice(&verts));
+                    self.queue
+                        .write_buffer(&self.overlay_ibuf, 0, bytemuck::cast_slice(&idx));
+                    pass.set_pipeline(&self.crack_pipeline);
+                    pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
+                    pass.set_vertex_buffer(
+                        0,
+                        self.overlay_vbuf
+                            .slice(..(verts.len() * TERRAIN_STRIDE) as u64),
+                    );
+                    pass.set_index_buffer(
+                        self.overlay_ibuf.slice(..(idx.len() * 4) as u64),
+                        wgpu::IndexFormat::Uint32,
+                    );
+                    pass.draw_indexed(0..idx.len() as u32, 0, 0..1);
                 }
             }
+            pass.set_pipeline(&self.outline_pipeline);
+            pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
+            pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
+            pass.draw(0..24, 0..1);
+        }
 
-            // player: 不透明地形后、水前（entity 在 translucent 之前渲染）
-            if let Some((models, skin)) = scene.player {
-                self.draw_player(&mut pass, vp.to_cols_array_2d(), models, skin);
+        // 粒子：裂纹 overlay 后、水前（26.1 translucent 序；
+        // ParticleEngine.tick 是 20Hz 固定步，提取/绘制在渲染帧）。
+        if let Some((engine, partial_tick)) = scene.particles {
+            self.particles.draw(
+                &mut pass,
+                &self.particle_bind,
+                crate::particle_renderer::DrawCtx {
+                    engine,
+                    cam,
+                    day: scene.day_factor,
+                    light_tint: env_color::sky_light_color(tick),
+                    partial_tick,
+                },
+                &self.queue,
+            );
+        }
+
+        // water: far to near（#80 合批：批次条目的 water_parts 每成员区块
+        // 一段，仍逐段远→近绘制——半透明混合序与逐块绘制逐值同键
+        // （WaterPart.center = 成员 origin+(8,0,8)），只是索引缓冲换批次
+        // 拼接缓冲、origin uniform 用批次槽位（重定基后世界坐标逐位不变）。
+        pass.set_pipeline(&self.water_pipeline);
+        let mut water: Vec<(f32, u32, usize)> = Vec::new();
+        for (slot, rc) in visible.iter().enumerate() {
+            if rc.water_index_buf.is_none() {
+                continue;
             }
-
-            // mobs: 同序（entity 透不透明阶段，水前）
-            if let Some(mobs) = scene.mobs {
-                self.draw_mobs(&mut pass, vp.to_cols_array_2d(), mobs);
-            }
-
-            // 掉落物（#150 通用物品渲染通路）：entity 相（mob 后、overlay/水
-            // 前），cutout 写深度——26.1 ItemEntityRenderer 的实体相语义；
-            // 方块物品走 3D 微缩立方体、其余 billboard（浮动 bob / 自转
-            // spin 原式见 item_render.rs）。
-            if let Some(drops) = scene.drops {
-                self.items.draw(
-                    &mut pass,
-                    &self.item_bind,
-                    drops,
-                    crate::item_render::DropDrawCtx {
-                        cam,
-                        day: scene.day_factor,
-                        light_tint: env_color::sky_light_color(tick),
-                    },
-                    self.gui.as_ref(),
-                    &self.queue,
-                );
-            }
-
-            // 挖掘裂纹 + 选中描边：不透明后、水前（26.1 translucent 序）。
-            if let Some(ov) = scene.overlay {
-                let overlay_off = self.max_chunks * 256;
-                let mut slot = [0.0f32; OVERLAY_ORIGIN_PAD as usize];
-                slot[..3].copy_from_slice(&ov.min);
-                self.queue.write_buffer(
-                    &self.origins_buf,
-                    overlay_off as u64,
-                    bytemuck::cast_slice(&slot),
-                );
-                if ov.crack_stage.is_some() && self.crack_layers_ok {
-                    let (verts, idx) = build_crack_overlay(&ov);
-                    if !idx.is_empty() {
-                        self.queue.write_buffer(
-                            &self.overlay_vbuf,
-                            0,
-                            bytemuck::cast_slice(&verts),
-                        );
-                        self.queue
-                            .write_buffer(&self.overlay_ibuf, 0, bytemuck::cast_slice(&idx));
-                        pass.set_pipeline(&self.crack_pipeline);
-                        pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
-                        pass.set_vertex_buffer(
-                            0,
-                            self.overlay_vbuf
-                                .slice(..(verts.len() * TERRAIN_STRIDE) as u64),
-                        );
-                        pass.set_index_buffer(
-                            self.overlay_ibuf.slice(..(idx.len() * 4) as u64),
-                            wgpu::IndexFormat::Uint32,
-                        );
-                        pass.draw_indexed(0..idx.len() as u32, 0, 0..1);
-                    }
-                }
-                pass.set_pipeline(&self.outline_pipeline);
-                pass.set_bind_group(0, &self.frame_bind, &[overlay_off]);
-                pass.set_vertex_buffer(0, self.outline_vbuf.slice(..));
-                pass.draw(0..24, 0..1);
-            }
-
-            // 粒子：裂纹 overlay 后、水前（26.1 translucent 序；
-            // ParticleEngine.tick 是 20Hz 固定步，提取/绘制在渲染帧）。
-            if let Some((engine, partial_tick)) = scene.particles {
-                self.particles.draw(
-                    &mut pass,
-                    &self.particle_bind,
-                    crate::particle_renderer::DrawCtx {
-                        engine,
-                        cam,
-                        day: scene.day_factor,
-                        light_tint: env_color::sky_light_color(tick),
-                        partial_tick,
-                    },
-                    &self.queue,
-                );
-            }
-
-            // water: far to near（#80 合批：批次条目的 water_parts 每成员区块
-            // 一段，仍逐段远→近绘制——半透明混合序与逐块绘制逐值同键
-            // （WaterPart.center = 成员 origin+(8,0,8)），只是索引缓冲换批次
-            // 拼接缓冲、origin uniform 用批次槽位（重定基后世界坐标逐位不变）。
-            pass.set_pipeline(&self.water_pipeline);
-            let mut water: Vec<(f32, u32, usize)> = Vec::new();
-            for (slot, rc) in visible.iter().enumerate() {
-                if rc.water_index_buf.is_none() {
+            for (pi, part) in rc.water_parts.iter().enumerate() {
+                if part.range.is_empty() {
                     continue;
                 }
-                for (pi, part) in rc.water_parts.iter().enumerate() {
-                    if part.range.is_empty() {
-                        continue;
-                    }
-                    let c = Vec3::from(part.center);
-                    water.push((c.distance_squared(eye), slot as u32, pi));
-                }
-            }
-            water.sort_by(|a, b| b.0.total_cmp(&a.0));
-            for (_, slot, pi) in &water {
-                let rc = &visible[*slot as usize];
-                let part = &rc.water_parts[*pi];
-                pass.set_bind_group(0, &self.frame_bind, &[*slot * 256]);
-                pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
-                pass.set_index_buffer(
-                    rc.water_index_buf.as_ref().unwrap().slice(..),
-                    wgpu::IndexFormat::Uint32,
-                );
-                pass.draw_indexed(part.range.clone(), 0, 0..1);
-                stats.water_draws += 1;
+                let c = Vec3::from(part.center);
+                water.push((c.distance_squared(eye), slot as u32, pi));
             }
         }
-
-        // 第一人称手持 pass：世界之后、HUD 之前，同一次 submit 内**清深度**
-        // 独立 pass（26.1 GameRenderer.java:724-729：clearDepthTexture →
-        // renderItemInHand）。手持不被世界深度裁剪，而 HUD 又画在手持之上
-        // （原版 gui 渲染序在 hand 之后）。
-        if let Some(hand) = scene.hand {
-            self.draw_hand(&mut encoder, color, depth, cam, hand);
+        water.sort_by(|a, b| b.0.total_cmp(&a.0));
+        for (_, slot, pi) in &water {
+            let rc = &visible[*slot as usize];
+            let part = &rc.water_parts[*pi];
+            pass.set_bind_group(0, &self.frame_bind, &[*slot * 256]);
+            pass.set_vertex_buffer(0, rc.vertex_buf.slice(..));
+            pass.set_index_buffer(
+                rc.water_index_buf.as_ref().unwrap().slice(..),
+                wgpu::IndexFormat::Uint32,
+            );
+            pass.draw_indexed(part.range.clone(), 0, 0..1);
+            stats.water_draws += 1;
         }
+    }
 
-        // HUD pass
+    /// HUD pass（render_graph#hud 节点体，#222 批 A）：quad 批上传 +
+    /// 颜色 Load 续画独立 pass。**自 draw_frame 逐字搬移**。
+    pub(crate) fn record_hud_pass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        color: &wgpu::TextureView,
+        scene: &Scene,
+    ) {
         if !scene.hud.is_empty() {
             // 防溢出:菜单铺贴 quad 数量超预期时截断并告警,而不是 panic
             let hud: &[HudQuad] = if scene.hud.len() as u32 > self.max_hud_quads {
@@ -3627,9 +3702,6 @@ impl Renderer {
             );
             pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
         }
-
-        self.last_stats = stats;
-        self.queue.submit([encoder.finish()]);
     }
 
     /// 第一人称手持 pass：右臂盒体（player 管线右臂切片 + 独立 uniform 槽）、
@@ -3637,7 +3709,7 @@ impl Renderer {
     ///
     /// 在 draw_frame 的世界 pass 与 HUD pass 之间被调用，自起清深度的
     /// 独立 render pass（26.1 GameRenderer.java:724-729）。
-    fn draw_hand(
+    pub(crate) fn draw_hand(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         color: &wgpu::TextureView,

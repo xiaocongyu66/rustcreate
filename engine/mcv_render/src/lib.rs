@@ -17,6 +17,7 @@ pub mod offscreen;
 pub mod particle_renderer;
 pub mod particles;
 pub mod player_mesh;
+pub mod render_graph;
 pub mod text;
 pub mod unifont;
 
@@ -39,6 +40,7 @@ pub use particles::ParticleEngine;
 pub use player_mesh::{
     PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };
+pub use render_graph::{FrameCtx, GraphError, PassNode, Plan, RenderGraph};
 
 use glam::Vec3;
 
