@@ -11,7 +11,8 @@
 //!   "注册在启动、运行期冻结");`_physics_process`/`_process` 双阶段;信号
 //!   走帧批次双缓冲而非逐槽直连;结构性变更走 CallQueue 式帧末队列。查询
 //!   仍是普通函数拿 `read`/`write` 表视图写循环——没有编译期 query 推导,
-//!   借用冲突由 RefCell 运行期把关。
+//!   借用冲突由 RefCell 运行期把关;多表 join 场景走 [`query`](crate::query)
+//!   的 `Query2`/`Query3`(锚表 join + miss 跳过,#222 批A)。
 //! - **宿主状态走 [`Resources`](resources::Resources) 快照**:每步宿主
 //!   `insert` 一份所有权快照(如区块表 `Arc` 快照 + 玩家位姿)供系统只读
 //!   ——借用进不了 `TypeId` 键表,所有权快照简单且不逃逸;E6 起区块表外
@@ -55,6 +56,7 @@ pub mod app;
 pub mod commands;
 pub mod events;
 pub mod plugin;
+pub mod query;
 pub mod resources;
 pub mod schedule;
 
@@ -62,6 +64,7 @@ pub use app::App;
 pub use commands::CommandQueue;
 pub use events::{EventBus, Events};
 pub use plugin::{Plugin, plain_plugin};
+pub use query::{Access, Query2, Query3};
 pub use resources::Resources;
 pub use schedule::{DEFAULT_FIXED_DT, MAX_CATCHUP_STEPS, Schedule, Stage, SysCtx, System};
 
