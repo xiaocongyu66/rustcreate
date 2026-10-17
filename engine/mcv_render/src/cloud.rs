@@ -142,7 +142,17 @@ impl Clouds {
     /// 加载内嵌的 26.1 `clouds.png`（编译期嵌入资源根
     /// `assets/minecraft/textures/environment/clouds.png`），
     /// 在 CPU 端二值化为单元占用表（26.1 同样只在 CPU 读像素，不建 GPU 纹理）。
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+    ///
+    /// `color_format`：云管线目标格式——必须与承载云绘制的主渲染目标同
+    /// （默认路 = surface/Offscreen 的 Rgba8UnormSrgb；`hdr` feature 下
+    /// HDR 主纹理 Rgba16Float，与 [`Renderer::new`] 的 color_format 同源
+    /// 下发，旧硬编码 Rgba8UnormSrgb 在非 sRGB surface 下属潜在
+    /// validation 雷，已收编为形参）。
+    pub fn new(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        color_format: wgpu::TextureFormat,
+    ) -> Self {
         let img = image::load_from_memory(include_bytes!(
             "../../../assets/minecraft/textures/environment/clouds.png"
         ))
@@ -236,8 +246,9 @@ impl Clouds {
                 entry_point: Some("fs_clouds"),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
-                    // 与主渲染目标一致（gpu.rs / offscreen.rs 均为 Rgba8UnormSrgb）。
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    // 与主渲染目标一致（调用方传 surface/HDR 主纹理格式；
+                    // gpu.rs / offscreen.rs / hdr.rs 同源下发）。
+                    format: color_format,
                     blend: Some(wgpu::BlendState::ALPHA_BLENDING),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],

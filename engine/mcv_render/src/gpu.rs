@@ -3989,6 +3989,7 @@ mod tests {
             near: 0.1,
             far: 256.0,
             bob: glam::Mat4::IDENTITY,
+            exposure: 1.0,
         };
         let fr = Frustum::from_view_proj(&cam.view_proj());
         // 旧残留域 [0,256]：盒底 y=0 高出视锥上平面（32 格前仅到

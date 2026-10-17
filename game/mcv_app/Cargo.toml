@@ -7,6 +7,10 @@ license.workspace = true
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# HDR 管线（#223 续）：透传 mcv_render/hdr——RGBA16F 主纹理 + ACES
+# tone mapping。默认关；桌面后端门控见 mcv_render::hdr::is_hdr_capable。
+[features]
+hdr = ["mcv_render/hdr"]
 
 [dependencies]
 log.workspace = true

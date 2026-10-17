@@ -228,6 +228,10 @@ struct SurfacePair {
     config: wgpu::SurfaceConfiguration,
     depth: wgpu::TextureView,
     max_extent: u32,
+    /// HDR 中间链（`hdr` feature，默认关；None = 未启用/GLES 回退，
+    /// 直通现状 Rgba8UnormSrgb 路径）。
+    #[cfg(feature = "hdr")]
+    hdr: Option<mcv_render::hdr::HdrStage>,
 }
 
 /// 抓/放鼠标（进游戏 Confined+隐藏，开界面/暂停 None+显示）。
@@ -2169,19 +2173,55 @@ impl ApplicationHandler for AppState {
             }
         };
         match Self::init_gpu(window.clone()) {
-            Ok((surface, config, depth, device, queue, max_extent)) => {
+            Ok((surface, config, depth, device, queue, max_extent, hdr_ok)) => {
                 // 资源根（M8c）：mcv_assets 统一解析（env → Android 解包 →
                 // CWD → exe 同级，含 textures/ 才生效）。缺根 = 硬错误显式 log。
                 let pack = self.assets_dir();
                 self.cached_device = Some(device.clone());
                 self.cached_queue = Some(queue.clone());
+                // HDR 链（#223 续；feature 默认关）：交换链/sRGB 编码仍由
+                // surface 格式承担，仅渲染器管线族 + draw 目标换 Rgba16Float
+                // 主纹理，ACES tone map 收尾到交换链。MCV_HDR=0 运行期强关。
+                #[cfg(feature = "hdr")]
+                let hdr_active = hdr_ok && !std::env::var("MCV_HDR").is_ok_and(|v| v == "0");
+                // 非 hdr 构建：判定位不进参与（默认路编译面 zero-read）。
+                #[cfg(not(feature = "hdr"))]
+                let _hdr_active = {
+                    let _ = hdr_ok;
+                    false
+                };
+                // 颜色目标格式：hdr 特性外恒 = surface 格式（默认路字节级
+                // 不变）；特性内按 hdr_active 判定（Rgba16Float 主纹理）。
+                // 常量本身 cfg-gated（mcv_render::HDR_COLOR_FORMAT 只在
+                // feature = "hdr" 编译面内存在）——引用必须同 gate。
+                let color_format = {
+                    #[cfg(feature = "hdr")]
+                    let fmt = if hdr_active {
+                        log::info!("hdr: RGBA16F 主纹理 + ACES tone mapping 启用");
+                        mcv_render::HDR_COLOR_FORMAT
+                    } else {
+                        config.format
+                    };
+                    #[cfg(not(feature = "hdr"))]
+                    let fmt = config.format;
+                    fmt
+                };
                 self.renderer = Some(mcv_render::Renderer::new(
                     device.clone(),
                     queue.clone(),
-                    config.format,
+                    color_format,
                     pack.as_deref(),
                 ));
-                self.clouds = Some(mcv_render::Clouds::new(&device, &queue));
+                self.clouds = Some(mcv_render::Clouds::new(&device, &queue, color_format));
+                #[cfg(feature = "hdr")]
+                let hdr_stage = hdr_active.then(|| {
+                    mcv_render::hdr::HdrStage::new(
+                        &device,
+                        config.format,
+                        config.width,
+                        config.height,
+                    )
+                });
                 // 玩家皮肤：原版 entity/player/{wide/steve,slim/alex}.png
                 // （M8c 走 AssetManager；缺皮肤/缺音效索引 = 显式 log，
                 // 不再静默跳过。纹理/字体/GUI 等缺失由 Renderer 内部
@@ -2235,6 +2275,8 @@ impl ApplicationHandler for AppState {
                     config,
                     depth,
                     max_extent,
+                    #[cfg(feature = "hdr")]
+                    hdr: hdr_stage,
                 });
                 self.window = Some(window.clone());
                 window.request_redraw();
@@ -2721,6 +2763,8 @@ type GpuInit = (
     wgpu::Device,
     wgpu::Queue,
     u32,
+    // HDR 启用判定（`hdr` feature 下 = 桌面且非 GLES 后端；默认恒 false）。
+    bool,
 );
 
 impl AppState {
@@ -2766,6 +2810,7 @@ impl AppState {
             near: 0.1,
             far: 256.0,
             bob: glam::Mat4::IDENTITY,
+            exposure: 1.0,
         };
         let (sun, day) = mcv_render::sun_state(6_000);
         let scene = mcv_render::Scene {
@@ -2812,8 +2857,36 @@ impl AppState {
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
+        // HDR 分流（#223 续，`hdr` feature 默认关 → 本块编译消除）：
+        // draw 目标 = RGBA16F 主纹理（随 config 尺寸同步重建），曝光取
+        // Camera::exposure（默认 1.0 = 恒等）；None = 未启用/GLES 回退。
+        #[cfg(feature = "hdr")]
+        let hdr_view: Option<wgpu::TextureView> = sp.hdr.as_mut().map(|st| {
+            st.resize(
+                self.cached_device.as_ref().unwrap(),
+                sp.config.width,
+                sp.config.height,
+            );
+            st.set_exposure(self.cached_queue.as_ref().unwrap(), scene.camera.exposure);
+            st.color_view().clone()
+        });
+        // 借域结束（sp.hdr 可变借用已还），渲染器独占 &mut 可用。
         let renderer = self.renderer.as_mut().unwrap();
-        renderer.draw_frame(&view, &sp.depth, &scene);
+        #[cfg(feature = "hdr")]
+        let draw_view: &wgpu::TextureView = hdr_view.as_ref().unwrap_or(&view);
+        #[cfg(not(feature = "hdr"))]
+        let draw_view: &wgpu::TextureView = &view;
+        renderer.draw_frame(draw_view, &sp.depth, &scene);
+        // tone map 收尾（独立 submit，先于 present；bevy tonemapping node
+        // 同序——主纹理读出、渲染到交换链视图）。
+        #[cfg(feature = "hdr")]
+        if let Some(stage) = sp.hdr.as_ref() {
+            stage.tonemap(
+                self.cached_device.as_ref().unwrap(),
+                renderer.queue(),
+                &view,
+            );
+        }
         renderer.queue().present(frame);
     }
 
@@ -2891,7 +2964,15 @@ impl AppState {
         };
         surface.configure(&device, &config);
         let depth = Self::depth_view(&device, config.width, config.height);
-        Ok((surface, config, depth, device, queue, max_extent))
+        // HDR 判定（#223 续）：`hdr` feature（默认关）+ 桌面 + 非 GLES
+        // 后端才启用 RGBA16F 链；GLES/Noop（真机 Mali、Android native
+        // activity）恒 false = 现状 sRGB 链原样。
+        #[cfg(feature = "hdr")]
+        let hdr_ok =
+            !cfg!(target_os = "android") && mcv_render::is_hdr_capable(adapter.get_info().backend);
+        #[cfg(not(feature = "hdr"))]
+        let hdr_ok = false;
+        Ok((surface, config, depth, device, queue, max_extent, hdr_ok))
     }
 
     fn depth_view(device: &wgpu::Device, w: u32, h: u32) -> wgpu::TextureView {
@@ -3219,8 +3300,36 @@ impl AppState {
                 }),
             drops: Some(&drop_draws[..]),
         };
+        // HDR 分流（#223 续，`hdr` feature 默认关 → 本块编译消除）：
+        // draw 目标 = RGBA16F 主纹理（随 config 尺寸同步重建），曝光取
+        // Camera::exposure；None = 未启用/GLES 回退 = 原直达路。
+        #[cfg(feature = "hdr")]
+        let hdr_view: Option<wgpu::TextureView> = sp.hdr.as_mut().map(|st| {
+            st.resize(
+                self.cached_device.as_ref().unwrap(),
+                sp.config.width,
+                sp.config.height,
+            );
+            st.set_exposure(self.cached_queue.as_ref().unwrap(), scene.camera.exposure);
+            st.color_view().clone()
+        });
+        // 借域结束（sp.hdr 可变借用已还），渲染器独占 &mut 可用。
         let renderer = self.renderer.as_mut().unwrap();
-        renderer.draw_frame(&view, &sp.depth, &scene);
+        #[cfg(feature = "hdr")]
+        let draw_view: &wgpu::TextureView = hdr_view.as_ref().unwrap_or(&view);
+        #[cfg(not(feature = "hdr"))]
+        let draw_view: &wgpu::TextureView = &view;
+        renderer.draw_frame(draw_view, &sp.depth, &scene);
+        // tone map 收尾（独立 submit，先于 present；bevy tonemapping node
+        // 同序——主纹理读出、渲染到交换链视图）。
+        #[cfg(feature = "hdr")]
+        if let Some(stage) = sp.hdr.as_ref() {
+            stage.tonemap(
+                self.cached_device.as_ref().unwrap(),
+                renderer.queue(),
+                &view,
+            );
+        }
         // E0：draw 段归账（HUD/Scene 装配 + draw_frame 提交）。
         runtime.timing_frame.draw_us += draw_t0.elapsed().as_micros() as u64;
         // E0：帧界归并——本帧分段窗口并入 1Hz 均值/峰值累计器（取帧失败

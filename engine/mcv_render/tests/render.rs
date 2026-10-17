@@ -141,6 +141,7 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = vec![];
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -220,6 +221,7 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = vec![];
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -368,6 +370,7 @@ fn terrain_sky_and_hud_render() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
 
     // HUD: solid white bar + glyph 'A' (65).
@@ -500,6 +503,7 @@ fn terrain_multi_array_grass_render() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -570,6 +574,7 @@ fn mining_crack_and_outline_darken_target() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -720,6 +725,7 @@ fn water_pass_renders_uploaded_water_vertices() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
 
     // opaque：近岸草地（y=100，z 8..16）+ 塘底泥土（y=99.5，z 0..8）。
@@ -931,7 +937,7 @@ fn gles_fallback_world_frame_smoke() {
         // 让 Mali 截断路径在 CI 永不可见）。
         Some(256),
     );
-    let clouds = mcv_render::Clouds::new(&device, &queue);
+    let clouds = mcv_render::Clouds::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
     // 事故现场复跑：MeshUploader 上传路径（GLES 曾对「映射 buffer 上
     // write_buffer」fatal；#80 起为 staging 环 map_async + copy——同样
     // 需要真机 GL 后端真实走一遍）。
@@ -974,6 +980,7 @@ fn gles_fallback_world_frame_smoke() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -1032,7 +1039,7 @@ fn vec4_identity() {
 #[test]
 fn cloud_pipeline_compiles_and_paints_sky() {
     let (device, queue, mut renderer) = setup();
-    let clouds = mcv_render::Clouds::new(&device, &queue);
+    let clouds = mcv_render::Clouds::new(&device, &queue, wgpu::TextureFormat::Rgba8UnormSrgb);
     let extent = wgpu::Extent3d {
         width: 320,
         height: 240,
@@ -1050,6 +1057,7 @@ fn cloud_pipeline_compiles_and_paints_sky() {
         near: 0.1,
         far: 512.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let empty_hud: &[HudQuad] = &[];
     let mut frame = |cloud_on: bool| -> Vec<u8> {
@@ -1148,6 +1156,7 @@ fn cjk_text_stays_within_line_box() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let scene = Scene {
         camera: &camera,
@@ -1234,6 +1243,7 @@ fn celestial_sun_texture_paints_core() {
         near: 0.1,
         far: 512.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let scene = Scene {
@@ -1310,6 +1320,7 @@ fn missing_assets_never_paint_fake_pixels() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let scene = Scene {
         camera: &camera,
@@ -1375,6 +1386,7 @@ fn missing_assets_never_paint_fake_pixels() {
         near: 0.1,
         far: 512.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud_b = vec![
         HudQuad {
@@ -1506,6 +1518,7 @@ fn four_mobs_paint_with_vanilla_textures() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
 
     // 同一 renderer 渲两帧对比（闭包只管提交与回读）。
@@ -1680,6 +1693,7 @@ fn first_person_hand_paints_bottom_right() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
 
     fn frame(
@@ -1959,6 +1973,7 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000); // noon
@@ -2045,6 +2060,7 @@ fn batch_rebuild_uses_fresh_member_bytes() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -2224,6 +2240,7 @@ fn staging_upload_flush_contract() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     let hud: Vec<HudQuad> = Vec::new();
     let (sun, day) = mcv_render::sun_state(6000);
@@ -2414,6 +2431,7 @@ fn wood_family_samples_render_thin_templates() {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     };
     fn frame(
         device: &wgpu::Device,
