@@ -1576,6 +1576,7 @@ dependencies = [
  "mcv_core",
  "mcv_nbt",
  "mcv_registry",
+ "rayon",
 ]
 
 [[package]]
