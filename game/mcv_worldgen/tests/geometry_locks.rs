@@ -17,6 +17,7 @@ use mcv_worldgen::{TerrainBackend, generate_terrain_with};
 
 const SAND: u16 = 4;
 const WATER: u16 = 5;
+const DIRT: u16 = 2;
 const BEDROCK: u16 = 10;
 const SNOW_GRASS: u16 = 11;
 /// pass 2.3 水草执行器（ocean-flora2）的四个产出 id（water_flora 头注
@@ -97,11 +98,14 @@ fn vanilla_surface_bounds_and_sea_fill() {
     }
 }
 
-/// 3) 地表材质带：滩带 SAND（海床同规则，任一海柱即证）、雪带 SNOW_GRASS。
+/// 3) 地表材质带：滩带（est==SEA+1 乾柱）SAND、海床带（est≤SEA 湿柱）
+///    GRAVEL/SAND、雪带 SNOW_GRASS（海洋 SURF-2 波重锚，见测内注记）。
 #[test]
 fn vanilla_surface_material_bands() {
-    let mut sand_columns = 0usize;
+    use wg::terrain::{GRAVEL, Orchestrator};
+    let mut band_columns = 0usize;
     for seed in [7u64, 42] {
+        let orch = Orchestrator::new(seed);
         for cx in -2..=2 {
             for cz in -2..=2 {
                 let t = gen_vanilla(seed, ChunkPos::new(cx, cz));
@@ -122,20 +126,60 @@ fn vanilla_surface_material_bands() {
                         if est != surface {
                             continue;
                         }
-                        // cell 语义重锚（重锚波②）：SAND→SAND|ANDESITE。
-                        // density 破面在滩/海床带会露 stone 族 patch 露头
-                        // （实测 seed7 (14,4,48) top=EXPECT37=andesite，
-                        // run 38825194406——SAND 仍为主带判据，露出 head
-                        // 面=原版水下 patch 行同构）。归因收紧移交
-                        // ocean-terrain 波（官方 --density 探针逐列对拍）。
-                        const STONE_PATCH: [u16; 3] = [37, 362, 427];
-                        if est <= SEA_LEVEL + 1 {
-                            assert!(
-                                top == SAND || STONE_PATCH.contains(&top),
-                                "seed {seed} 滩/海床带表层非 SAND|stone 族 \
-                                 (x={x},z={z},y={surface},top={top})"
+                        if est <= SEA_LEVEL {
+                            // 海床带（湿柱，gen 柱层序里顶层以上必 open_column
+                            // 灌水）：官方链按 notUnderDeepWater 门拆两支——
+                            // - 门外（深水，y+1 < 63−6−sd）：rule3 ON_FLOOR 兜底
+                            //   gravelOrStoneIfCeiling = GRAVEL（SurfaceRuleData
+                            //   .java:258-265）；
+                            // - 门内（浅水）：UNDER_FLOOR（stoneDepth ≤ 1+sd，
+                            //   SurfaceRules.java:35/:684）恒罩 da==1 顶格 ⇒
+                            //   biomeUnder 默认 DIRT（:124,253；暖/滩段经
+                            //   commonSurfaceAndUnderRules :86 沙）；
+                            // - 暖温度段（OBB.java:60 [0.55,1.0] = WARM_OCEAN）
+                            //   rule2 :86 / rule3 :262 双覆盖恒沙。
+                            // 门公式 blockY+stoneDepthAbove ≥ waterHeight−6−sd
+                            // （SurfaceRules.java:802-815 waterStartCheck(-6,-1)
+                            // addStoneDepth=true；waterHeight=首液位+1
+                            // SurfaceSystem.java:131，26.1 海面顶水块 y=62
+                            // 〔java-harness chunk dump 实证〕⇒ waterHeight=63
+                            // = SEA——本仓灌水面 63 与若以 63 为顶水读数差一，
+                            // 门锚同收敛于 SEA−6−sd）。
+                            // —— 海波归因收口（重锚波②移交项）：旧 gate 锚
+                            // est−8 ≈ 真顶−0..2，密度破面下沿裸石再被矿层
+                            // 染色/碟岩（重锚波② 实证 top=37 安山岩）= 我们的
+                            // SurfaceRules 漏支（门基错锚），**非官方 patch
+                            // 行为**——官方在带内必铺 surface 材质。修复 =
+                            // terrain.rs min_surface_level 官方 findTopSurface
+                            // 结构实物 + 本海窗按官方链收紧（本波归因验收：
+                            // stone 族 37 安山岩确证非法，期望值=官方链材质）。
+                            // （诚实注记：门基气候链 main noise-vanilla-fork
+                            // 已切官方 fork 链，归一面常量见 surface_rules
+                            // prelim_gate_probe_constants_anchored。）
+                            let cs = orch.column_state(cx * 16 + x as i32, cz * 16 + z as i32);
+                            let sd = orch.surface_depth(cx * 16 + x as i32, cz * 16 + z as i32);
+                            let gate = surface + 1 >= SEA_LEVEL - 6 - sd;
+                            let want = if cs.temperature >= 0.55 {
+                                SAND
+                            } else if gate {
+                                DIRT
+                            } else {
+                                GRAVEL
+                            };
+                            assert_eq!(
+                                top, want,
+                                "seed {seed} 海床带表层非 {want}（temp={:.3},gate={gate}）(x={x},z={z},y={surface},sd={sd})",
+                                cs.temperature
                             );
-                            sand_columns += 1;
+                            band_columns += 1;
+                        } else if est == SEA_LEVEL + 1 {
+                            // 滩带（est==水线+1 乾柱）顶格沙（既有契约面，
+                            // SurfaceRuleData.java:74,86 BEACH/WARM_OCEAN 沙）。
+                            assert_eq!(
+                                top, SAND,
+                                "seed {seed} 滩带表层非 SAND (x={x},z={z},y={surface})"
+                            );
+                            band_columns += 1;
                         }
                         if est > SEA_LEVEL + 46 {
                             assert_eq!(
@@ -148,7 +192,7 @@ fn vanilla_surface_material_bands() {
             }
         }
     }
-    assert!(sand_columns > 0, "抽样窗内无任何滩/海床柱（海陆比退化？）");
+    assert!(band_columns > 0, "抽样窗内无任何滩/海床柱（海陆比退化？）");
 }
 
 /// 双后端几何域一致性：legacy 与 vanilla 的 heightmap 都落同一绝对 y 域。
