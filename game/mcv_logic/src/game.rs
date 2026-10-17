@@ -14,9 +14,9 @@ use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
     AiAction, AnimState, AquaticMode, AquaticServices, AquaticVariant, Health, ItemDrop, LastHurt,
-    MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath, MobTicks, PhysBody, PickupReq,
-    WaterState, Yaw, advance_walk_anim, aquatic_ai_system, finalize_variant,
-    register_aquatic_components, spawn_aquatic_mob, spawn_mob,
+    MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath, MobTicks, PhysBody, PickupReq, Yaw,
+    advance_walk_anim, aquatic_ai_system, finalize_variant, register_aquatic_components,
+    spawn_aquatic_mob, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
