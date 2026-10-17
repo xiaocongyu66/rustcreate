@@ -81,10 +81,13 @@ fn v_smith_ggx_correlated(roughness: f32, NdotV: f32, NdotL: f32) -> f32 {
 }
 
 // fresnel（bevy pbr_lighting.wesl:319-324）：f90 由 f0 的亮度饱和推出
-// （Filament occlusion 建议），避免 vec3 分支。
+// （Filament occlusion 建议），避免 vec3 分支。pow 底数负值域保护：
+// 单位向量下 1−LdotH ≥ 0 恒成立（本仓与 bevy 等价）；max 仅在调用方
+// 传入非单位向量时把 NaN 收敛到 f0（spec 无此式，非行为分支）。
 fn fresnel(f0: vec3<f32>, LdotH: f32) -> vec3<f32> {
     let f90 = saturate(dot(f0, vec3<f32>(50.0 * 0.33)));
-    return f0 + (f90 - f0) * pow(1.0 - LdotH, 5.0);
+    let w = max(1.0 - LdotH, 0.0);
+    return f0 + (f90 - f0) * pow(w, 5.0);
 }
 
 // F0 remapping（bevy pbr_functions.wesl:277-286）：
@@ -172,9 +175,10 @@ fn fs_probe(in: ProbeOut) -> @location(0) vec4<f32> {
         return vec4<f32>(1.0, 0.0, 1.0, 1.0);
     }
     let n = vec3<f32>(p.x, p.y, sqrt(1.0 - r2));
-    // V 指向相机（固定 +Z），光取 uniform。
+    // V 指向相机（固定 +Z），光取 uniform——**归一化后传入**（evaluate_pbr
+    // 契约：N/V/L 单位向量；raw |L|>1 时 fresnel 底数为负）。
     let v = vec3<f32>(0.0, 0.0, 1.0);
-    let l = probe_frame.sun_dir_day.xyz;
+    let l = normalize(probe_frame.sun_dir_day.xyz);
     let rgb = evaluate_pbr(n, v, l, probe_material, probe_frame);
     let exposure = probe_material.params.z;
     return vec4<f32>(rgb * exposure, 1.0);

@@ -119,11 +119,13 @@ pub fn v_smith_ggx_correlated(roughness: f32, ndot_v: f32, ndot_l: f32) -> f32 {
 }
 
 /// fresnel（bevy pbr_lighting.wesl:319-324）：f90 = saturate(dot(f0,
-/// 50·0.33))，F = f0 + (f90−f0)(1−LdotH)⁵。
+/// 50·0.33))，F = f0 + (f90−f0)(1−LdotH)⁵。底数加 max(·,0) 防非单位
+/// 向量调用方的 NaN（单位向量下与 bevy 逐值等价）。
 pub fn fresnel(f0: [f32; 3], ldot_h: f32) -> [f32; 3] {
     let dot = f0[0] * 50.0 * 0.33 + f0[1] * 50.0 * 0.33 + f0[2] * 50.0 * 0.33;
     let f90 = dot.clamp(0.0, 1.0);
-    let w = (1.0 - ldot_h).powi(5);
+    let w = (1.0 - ldot_h).max(0.0);
+    let w = w.powi(5);
     [
         f0[0] + (f90 - f0[0]) * w,
         f0[1] + (f90 - f0[1]) * w,
