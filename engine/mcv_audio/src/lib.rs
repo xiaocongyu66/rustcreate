@@ -13,6 +13,9 @@
 //!   覆盖开发期素材(ogg)并兼容 wav / mp3(mp3 可按需加 feature)。
 //! - **混音**:简单 f32 叠加 + 主增益 + 输出限幅;同一变体一次性播放 80ms 节流,
 //!   循环声部按事件名幂等 —— 挖掘持续音不会叠加倍增爆音。
+//! - **总线图**:[`bus::BusMix`] master→music/sfx/ambient 三轨树,按事件名
+//!   自动落轨(方块→sfx/音乐→music/水环境→ambient),每轨增益/低通位
+//!   (水下滤波预留)+ 轨间 send;全默认(gain=1.0)混音输出与无总线逐位相同。
 //! - **线程模型**:游戏线程 [`SoundLoader`] 解析素材(IO/解码/LRU/节流),把
 //!   [`AudioCmd`] 推入 [`mcv_sync::Spsc`] 无锁环;音频回调线程独占 [`Mixer`]
 //!   消费——回调热路径零锁零分配。主增益走 `AtomicU32` 位镜像,音量滑条
@@ -43,6 +46,7 @@
 //! 由 `ci/fetch-sounds.sh` 在构建时从 Mojang CDN 按 sha1 拉取(原版目录树)。
 //! 素材或 `sounds.json` 缺失时所有播放调用都是 no-op
 //! (仅首次告警),不会 panic。
+pub mod bus;
 pub mod decode;
 pub mod events;
 pub mod loader;
@@ -54,6 +58,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+pub use bus::{BusId, BusMix};
 pub use decode::{SoundData, decode_to_stereo};
 pub use loader::{CACHE_MAX, SAME_ID_MIN_INTERVAL, SoundLoader};
 pub use mixer::{MAX_VOICES, Mixer};
@@ -176,7 +181,8 @@ pub fn default_sounds_dir() -> PathBuf {
 #[derive(Debug)]
 pub enum AudioCmd {
     /// 起声部:PCM 已解码;衰减/增益合法性/一次性节流已在游戏线程
-    /// ([`SoundLoader`])判定完毕,循环幂等由音频线程 ([`Mixer::apply`])把关。
+    /// ([`SoundLoader`])判定完毕,循环幂等由音频线程 ([`Mixer::apply`])把关,
+    /// 落轨由游戏线程按事件名分类([`BusId::for_event`],见 [`bus`] 模块)。
     Play {
         /// 变体路径(如 `dig/stone1`):解码缓存与节流键。
         key: String,
@@ -188,6 +194,8 @@ pub enum AudioCmd {
         looping: bool,
         /// 仅循环声部有值:起循环的事件名,音频线程按它做幂等与 StopLoop 匹配。
         loop_event: Option<String>,
+        /// 声部落轨(总线图:增益级联与 send 的路由键)。
+        bus: BusId,
     },
     /// 停止指定事件名的循环声部。
     StopLoop { event: String },
@@ -207,7 +215,11 @@ pub struct AudioManager {
     /// 游戏线程侧素材解析;此锁只在游戏线程内部使用,永不与音频回调竞争。
     loader: Mutex<SoundLoader>,
     /// 主增益 f32 位镜像:`set_master_gain` 直写,回调 `mix` 每帧读。
+    /// 总线图里它是**根节点的增益**(见 [`BusMix`];同一 Arc,单点写)。
     master: Arc<AtomicU32>,
+    /// 总线图共享状态:三轨增益/低通位/出向 send 矩阵。游戏线程直写,
+    /// 音频回调线程读——配置不走命令环,原子位镜像(根增益即上面的 master)。
+    buses: Arc<BusMix>,
     device: Option<tinyaudio::OutputDevice>,
 }
 
@@ -219,7 +231,9 @@ impl AudioManager {
     pub fn open(sounds_dir: impl Into<PathBuf>) -> Result<Self, AudioError> {
         let (cmds, cons) = mcv_sync::Spsc::new(CMD_RING).split();
         let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
-        let mut mixer = Mixer::new(OUTPUT_SAMPLE_RATE as u32, cons, Arc::clone(&master));
+        let buses = Arc::new(BusMix::new(Arc::clone(&master)));
+        let mut mixer = Mixer::new(OUTPUT_SAMPLE_RATE as u32, cons, Arc::clone(&master))
+            .with_buses(Arc::clone(&buses));
         let device = tinyaudio::run_output_device(
             tinyaudio::OutputDeviceParameters {
                 channels_count: OUTPUT_CHANNELS,
@@ -237,19 +251,24 @@ impl AudioManager {
             cmds,
             loader: Mutex::new(SoundLoader::new(sounds_dir.into())),
             master,
+            buses,
             device: Some(device),
         })
     }
 
     /// 静音模式:不建后端设备,播放调用 no-op(素材表仍解析,便于告警可见)。
-    /// 适合无头测试或后端失败后的降级;`master_gain()` 仍可读。
+    /// 适合无头测试或后端失败后的降级;`master_gain()` 与总线读/写
+    /// (`bus_gain`/`set_bus_gain` 等)照常可用(共享原子,配置面不依赖设备)。
     pub fn silent(sounds_dir: impl Into<PathBuf>) -> Self {
         // Consumer 就地丢弃:无消费者,而 silent 的播放方法直接 return,永不入环。
         let (cmds, _unused) = mcv_sync::Spsc::new(CMD_RING).split();
+        let master = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let buses = Arc::new(BusMix::new(Arc::clone(&master)));
         Self {
             cmds,
             loader: Mutex::new(SoundLoader::new(sounds_dir.into())),
-            master: Arc::new(AtomicU32::new(1.0f32.to_bits())),
+            master,
+            buses,
             device: None,
         }
     }
@@ -331,6 +350,46 @@ impl AudioManager {
     /// 当前主音量。
     pub fn master_gain(&self) -> f32 {
         f32::from_bits(self.master.load(Ordering::Relaxed))
+    }
+
+    // ---- 总线图(见 [`bus`] 模块;配置全走共享原子,不经过命令环,
+    //      静音模式下照常生效——配置面与设备面解耦) ----
+
+    /// 总线图共享句柄(高级接线可直接持有;常规用下面的委托方法即可)。
+    pub fn buses(&self) -> &Arc<BusMix> {
+        &self.buses
+    }
+
+    /// 总线增益:`BusId::Master` 即主音量(等价 `set_master_gain`),三轨
+    /// 写各自槽。非有限值 no-op(见 [`BusMix::set_gain`])。
+    pub fn set_bus_gain(&self, bus: BusId, gain: f32) {
+        self.buses.set_gain(bus, gain);
+    }
+
+    /// 读总线增益(根 = 主音量)。
+    pub fn bus_gain(&self, bus: BusId) -> f32 {
+        self.buses.gain(bus)
+    }
+
+    /// 写轨低通效果位(水下滤波预留;本波只存态,不影响输出)。
+    pub fn set_bus_lowpass(&self, bus: BusId, on: bool) {
+        self.buses.set_lowpass(bus, on);
+    }
+
+    /// 读轨低通效果位。
+    pub fn bus_lowpass(&self, bus: BusId) -> bool {
+        self.buses.lowpass(bus)
+    }
+
+    /// 接 send:`from` 轨旁路一份给 `to` 轨(`gain = 0.0` 撤线;
+    /// 幂等覆盖;`from == to`/涉及根/非有限值 no-op)。
+    pub fn set_bus_send(&self, from: BusId, to: BusId, gain: f32) {
+        self.buses.set_send(from, to, gain);
+    }
+
+    /// 撤 `from` 轨的全部出向 send。
+    pub fn clear_bus_sends(&self, from: BusId) {
+        self.buses.clear_sends(from);
     }
 }
 
