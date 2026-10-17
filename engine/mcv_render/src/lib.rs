@@ -25,6 +25,7 @@ pub mod particles;
 pub mod pbr;
 pub mod player_mesh;
 pub mod render_graph;
+pub mod sprite2d;
 pub mod text;
 pub mod unifont;
 
@@ -50,6 +51,7 @@ pub use player_mesh::{
     PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };
 pub use render_graph::{FrameCtx, GraphError, PassNode, Plan, RenderGraph};
+pub use sprite2d::{Anchor, HudBatch, SpriteBatch, SpriteCmd};
 
 use glam::Vec3;
 
