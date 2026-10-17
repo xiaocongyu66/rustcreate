@@ -397,7 +397,8 @@ mod gpu {
                     let got = px[i + ch];
                     assert!(
                         (got as i32 - expect[ch] as i32).abs() <= 1,
-                        "pbr probe px({x},{y})ch{ch}: gpu={got} cpu={expect[ch]}"
+                        "pbr probe px({x},{y})ch{ch}: gpu={} cpu={}",
+                        expect[ch]
                     );
                 }
                 if r2 <= 1.0 {
