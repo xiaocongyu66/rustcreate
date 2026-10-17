@@ -18,6 +18,12 @@ fn lcg(seed: u64) -> impl FnMut() -> u32 {
     }
 }
 
+/// 凝视窗外（dist²>256）谓词——远距测试支（teleportTime 累计）用。
+fn dist_sqr_ok(p: Percept) -> bool {
+    let d = p.target.map_or(0.0, |t| p.pos.distance(t));
+    d * d > 256.0
+}
+
 fn percept(pos: Vec3, target: Option<Vec3>) -> Percept {
     Percept {
         pos,
@@ -205,8 +211,9 @@ fn stared_percept(mob_pos: Vec3, player_pos: Vec3) -> Percept {
 fn enderman_stare_activate_after_5_ticks() {
     let def = MobId::ENDERMAN.def();
     let mut rng = || 121u32;
-    // 距 20 格被凝视（EnderMan.java:203-211 isBeingStaredBy / :508-509 aggroTime）。
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    // 距 12 格被凝视（EnderMan.java:203-211 isBeingStaredBy；canUse 限
+    // dist²≤256=16 格内，20 格窗外永不激活）。
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     for t in 1..=4 {
         brain.tick(def, &p, &mut rng);
@@ -221,7 +228,7 @@ fn enderman_stare_activate_after_5_ticks() {
 fn enderman_stare_pending_resets_when_look_away() {
     let def = MobId::ENDERMAN.def();
     let mut rng = || 121u32;
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     // 3t 凝视 + 移开 1t（plook 归零）→ pending 归零重计。
     brain.tick(def, &p, &mut rng);
@@ -244,7 +251,7 @@ fn enderman_stare_pending_resets_when_look_away() {
 fn enderman_freezes_and_tp_away_when_stared_close() {
     let def = MobId::ENDERMAN.def();
     let mut rng = || 121u32;
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
@@ -275,7 +282,7 @@ fn enderman_freezes_and_tp_away_when_stared_close() {
 fn enderman_chase_teleport_30t_when_far() {
     let def = MobId::ENDERMAN.def();
     let mut rng = || 121u32;
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
@@ -283,6 +290,11 @@ fn enderman_chase_teleport_30t_when_far() {
     // 30 格被凝视 → isBeingStaredBy 支（EnderMan.java:557-562）：无 <16
     // tp、teleportTime=0，**不发 toward**（toward 只属未凝视支）。
     let far = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0));
+    assert!(far.plook.x.is_finite());
+    assert!(
+        dist_sqr_ok(far),
+        "30²>256 → 非凝视支（teleportTime 累计段）"
+    );
     brain.tp_cd = 30;
     let acts = brain.tick(def, &far, &mut rng);
     assert!(
@@ -331,12 +343,14 @@ fn enderman_anger_speed_mult_1_5() {
     assert!((ENDERMAN_ANGER_SPEED_ADDED - 0.15).abs() < 1e-6);
     let def = MobId::ENDERMAN.def();
     let mut rng = || 121u32;
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
     }
-    let acts = brain.tick(def, &p, &mut rng);
+    let mut chase = p;
+    chase.plook = Vec3::Y; // 非凝视（cone 0.025：dot≈0.07 远小于阈值）
+    let acts = brain.tick(def, &chase, &mut rng);
     assert!(acts.iter().any(
         |a| matches!(a, AiAction::Walk { speed_mult, .. } if (*speed_mult - 1.5).abs() < 1e-5)
     ));
@@ -346,7 +360,7 @@ fn enderman_anger_speed_mult_1_5() {
 fn enderman_daylight_escape_at_600_held() {
     let def = MobId::ENDERMAN.def();
     let mut rng = || 0u32; // burn_in_daylight 概率门必过
-    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
+    let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 12.0));
     let mut brain = Brain::new();
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
@@ -355,6 +369,7 @@ fn enderman_daylight_escape_at_600_held() {
     day.day = true;
     day.sky_exposed = true;
     day.br = 1.0;
+    day.plook = Vec3::Y; // 非凝视支（否则对视冻结先 return）
     // target_held 在目标维护段（步序 2）**先自增**再被 enderman_life 门读
     // ——垫 598：本 tick 变 599 < 600 不逃；下轮垫 599 → 600 触发。
     brain.target_held = 598;
@@ -432,7 +447,7 @@ fn creaking_freezes_when_stared_and_40t_interval() {
     assert!(acts.iter().all(|a| matches!(a, AiAction::Look(..))));
     // 移开视线（dot<0.5）→ 近战节拍 40t（ATTACK_INTERVAL，Creaking.java:68）。
     let mut p2 = creaking_stared(Vec3::ZERO, Vec3::new(1.0, 0.0, 0.0));
-    p2.plook = Vec3::Y;
+    p2.plook = Vec3::Z; // 侧看：dot≈0 < 0.5（Y 在贴身处 dot≈0.56 仍被宽锥罩住）
     let mut hits = Vec::new();
     for t in 1..=90 {
         let acts = brain.tick(def, &p2, &mut rng);
@@ -487,14 +502,14 @@ fn looking_at_cone_math() {
 struct TpWorld {
     floor: i32,
     support_liquid: bool,
-    above_gap: Option<i32>, // Some(y) = y 格为固体（卡身用例）
+    above_gap: Option<i32>, // Some(y) = 该格及其上全封（柱顶封死到扫描起点）
 }
 impl TeleportGround for TpWorld {
     fn solid(&self, p: BlockPos) -> bool {
         if self.support_liquid {
             return false;
         }
-        p.y == self.floor - 1 || self.above_gap == Some(p.y)
+        p.y == self.floor - 1 || self.above_gap.is_some_and(|g| p.y >= g)
     }
     fn liquid(&self, p: BlockPos) -> bool {
         self.support_liquid && p.y == self.floor - 1
@@ -518,7 +533,8 @@ fn teleport_landing_finds_support_and_clearance() {
         (land.y - 64.0).abs() < 1e-5,
         "支撑上方一格 y=64，得 {land:?}"
     );
-    // 顶部封 1 格（64 或 65 实心）→ 卡身拒。
+    // 柱顶封死（65 起全实心）→ 扫描起落 70 为支撑、身位 71..73 仍实 →
+    // 卡身拒（单点 65 封格会自成新支撑顶，语义上可落——封须延到腰上）。
     let capped = TpWorld {
         floor: 64,
         support_liquid: false,
