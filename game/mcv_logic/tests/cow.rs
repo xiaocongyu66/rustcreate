@@ -38,17 +38,18 @@ fn rt_with_center_chunk(tag: &str) -> GameRuntime {
     rt
 }
 
-/// 锁 1：快照零拷贝——`MobServices`/`DropWorld` 与主表共享同一 Arc
-/// （E6 前这里是每步两次逐节点整表克隆；指针同一即证明克隆消除，且
-/// 强计数 = 主表 + 两份快照 = 3，多一份/少一份都说明快照语义变了）。
+/// 锁 1：快照零拷贝——`MobServices`/`DropWorld`/`AquaticServices` 与主表
+/// 共享同一 Arc（E6 前这里是每步两次逐节点整表克隆；指针同一即证明克隆
+/// 消除，且强计数 = 主表 + 三份快照 = 4，多一份/少一份都说明快照语义
+/// 变了——M7c 起水生系统同快照注入，AquaticServices.chunks 同主表 Arc）。
 #[test]
 fn resource_snapshots_share_arc_with_main_table() {
     let mut rt = rt_with_center_chunk("share");
     rt.fixed_step(1.0 / 60.0);
     assert_eq!(
         Arc::strong_count(&rt.chunks),
-        3,
-        "主表 + MobServices 快照 + DropWorld 快照 = 恰 3 份 Arc 持有"
+        4,
+        "主表 + MobServices 快照 + DropWorld 快照 + AquaticServices 快照 = 恰 4 份 Arc 持有"
     );
     let ms = rt
         .mobs_app

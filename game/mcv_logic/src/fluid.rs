@@ -779,21 +779,16 @@ mod tests {
         assert_eq!(plan.self_write, SelfWrite::Air);
         assert!(plan.spread.is_empty() && !plan.self_reschedule);
 
-        let read = world(&[(BlockPos::new(0, 63, 0), BlockId(STONE))]);
+        // 世界读 = 真实关卡面：含 tick 本格（宿主 view.block 覆盖全格；
+        // 侧邻格 get_new_liquid 经 at() 读回本格源才有 −dropOff 液位——
+        // 漏本格源时邻格算空、spread 落 AIR，曾红：id=0 decode=None）。
+        let read = world(&[
+            (at, BlockId(WATER)),
+            (BlockPos::new(0, 63, 0), BlockId(STONE)),
+        ]);
         let plan = tick(FluidKind::Water, &read, at, BlockId(WATER));
         assert_eq!(plan.self_write, SelfWrite::Stay);
         assert_eq!(plan.spread.len(), 4);
-        for (p, b) in &plan.spread {
-            println!(
-                "K-SPLAN pos=({},{},{}) id={} state={} decode={:?}",
-                p.x,
-                p.y,
-                p.z,
-                b.id(),
-                b.state(),
-                decode(*b)
-            );
-        }
         assert!(plan.spread.iter().all(|(p, b)| {
             p.y == at.y && p != &at && b.state() == 1 && decode(*b).unwrap().amount == 7
         }));

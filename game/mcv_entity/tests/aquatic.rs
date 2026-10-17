@@ -273,9 +273,16 @@ fn fish_flops_when_stranded() {
     );
     let origin = Vec3::new(8.0, 64.0, 8.0);
     let mut hops = 0;
-    // 跳跃滞空 ≈ 2×8.4/32 s ≈ 32 物理步 ≈ 11 tick → 600 tick ≈ 19±跳。
+    // 跳跃滞空 ≈ 2×8.4/32 s ≈ 32 物理步 ≈ 11 tick（落地即重掷）。离水窒息
+    // 账 300+20（dry_out_cadence_death_and_drop 口径）在 320/340 两跳结清
+    // → 第 340 tick 死亡 despawn，扑腾窗口随之收口；死后句柄被 ItemDrop
+    // 实体槽位复用干扰（掉落同持 PhysBody、不持 MobIntent），死亡即出
+    // 循环不再读句柄。
     for _ in 0..600 {
         step(&mut app);
+        if !app.world.is_alive(e) {
+            break; // 窒息死亡 despawn（340 tick），扑腾期 hops 已计满
+        }
         let bodies = app.world.read::<mcv_entity::PhysBody>();
         let intents = app.world.read::<mcv_entity::MobIntent>();
         let b = bodies.get(e).unwrap();
@@ -290,7 +297,10 @@ fn fish_flops_when_stranded() {
             (b.pos - origin).length()
         );
     }
-    assert!(hops >= 5, "离水扑腾按 jump 通道每次落地前重掷（hops {hops}）");
+    assert!(
+        hops >= 5,
+        "离水扑腾按 jump 通道每次落地前重掷（hops {hops}）"
+    );
 }
 
 // ---------------------------------------------------------------------------

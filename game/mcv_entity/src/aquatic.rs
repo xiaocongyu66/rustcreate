@@ -821,11 +821,16 @@ mod tests {
         let mut air2 = -20;
         assert_eq!(dry_out_step(&mut air2, 300, true), None);
         assert_eq!(air2, 300);
-        // 美西螈：6000 + 20 → 6020 tick 首跳。
+        // 美西螈：6000 + 20 → 6020 tick 首跳。t 记「结算当拍的序数」——
+        // 循环先推进 t 再结算，与 air=300 面首跳序数 320 同口径（系统级
+        // dry_out_cadence_death_and_drop 的 first_hit=320 同一计数法）。
         let mut air3 = 6000i32;
         let mut t = 0;
-        while dry_out_step(&mut air3, 6000, false).is_none() {
+        loop {
             t += 1;
+            if dry_out_step(&mut air3, 6000, false).is_some() {
+                break;
+            }
         }
         assert_eq!(t, 6020);
     }

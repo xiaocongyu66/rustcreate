@@ -89,6 +89,10 @@ fn air_chunk_map() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
 fn harness() -> App {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
+    // 水生组件表（WaterState/AquaticVariant/AquaticMode）：mob_ai_system
+    // 顶部整表读 AquaticMode（双轨实体门，GameRuntime 同注册），未注册
+    // read panic——与 mob_anim_lerp harness 同款注册面。
+    mcv_entity::register_aquatic_components(&mut app.world);
     app.schedule
         .add(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
     app.schedule
