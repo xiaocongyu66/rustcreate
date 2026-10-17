@@ -779,7 +779,13 @@ mod tests {
         assert_eq!(plan.self_write, SelfWrite::Air);
         assert!(plan.spread.is_empty() && !plan.self_reschedule);
 
-        let read = world(&[(BlockPos::new(0, 63, 0), BlockId(STONE))]);
+        // 邻居表需含源块本体（(0,64,0)）：get_spread→get_new_liquid 以
+        // 邻居视角读「最高同族」，cur 参数只承载自格值——缺源时
+        // highest=0 → 侧漫全 None（run 38991360283 K-SPLAN 探针实证）。
+        let read = world(&[
+            (BlockPos::new(0, 64, 0), BlockId(WATER)),
+            (BlockPos::new(0, 63, 0), BlockId(STONE)),
+        ]);
         let plan = tick(FluidKind::Water, &read, at, BlockId(WATER));
         assert_eq!(plan.self_write, SelfWrite::Stay);
         assert_eq!(plan.spread.len(), 4);
