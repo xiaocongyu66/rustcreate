@@ -2186,11 +2186,21 @@ impl ApplicationHandler for AppState {
                 let hdr_active = hdr_ok && !std::env::var("MCV_HDR").is_ok_and(|v| v == "0");
                 #[cfg(not(feature = "hdr"))]
                 let hdr_active = false;
-                let color_format = if hdr_active {
-                    log::info!("hdr: RGBA16F 主纹理 + ACES tone mapping 启用");
-                    mcv_render::HDR_COLOR_FORMAT
-                } else {
-                    config.format
+                // 颜色目标格式：hdr 特性外恒 = surface 格式（默认路字节级
+                // 不变）；特性内按 hdr_active 判定（Rgba16Float 主纹理）。
+                // 常量本身 cfg-gated（mcv_render::HDR_COLOR_FORMAT 只在
+                // feature = "hdr" 编译面内存在）——引用必须同 gate。
+                let color_format = {
+                    #[cfg(feature = "hdr")]
+                    let fmt = if hdr_active {
+                        log::info!("hdr: RGBA16F 主纹理 + ACES tone mapping 启用");
+                        mcv_render::HDR_COLOR_FORMAT
+                    } else {
+                        config.format
+                    };
+                    #[cfg(not(feature = "hdr"))]
+                    let fmt = config.format;
+                    fmt
                 };
                 self.renderer = Some(mcv_render::Renderer::new(
                     device.clone(),
