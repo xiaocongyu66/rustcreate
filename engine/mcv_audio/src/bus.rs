@@ -42,24 +42,19 @@ use std::sync::atomic::{AtomicBool, AtomicU32};
 
 /// 总线标识:根 + 三轨。声部落轨(声音生来只在一个轨上);根只接收,
 /// 不直接挂声部(既有的"无总线"声部等价于落根,见 `Mixer`)。
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum BusId {
     /// 根总线。增益即既有 master 原子(与 [`crate::AudioManager::set_master_gain`]
     /// 同一实例);"无声部直接落根"仅在等价性论证里出现(见 `Mixer` 文档)。
     Master,
     /// 音乐轨:唱片、游戏/菜单音乐。
     Music,
-    /// 音效轨:方块/实体/物品/UI 等行为音的默认落轨。
+    /// 音效轨:方块/实体/物品/UI 等行为音。默认落轨(现有全部调用点都是
+    /// 行为音,兜底语义不变)。
+    #[default]
     Sfx,
     /// 环境轨:水环境(`ambient.underwater.*`)、洞穴氛围等。
     Ambient,
-}
-
-impl Default for BusId {
-    /// 默认落轨 = 音效轨(现有全部调用点都是行为音,兜底语义不变)。
-    fn default() -> Self {
-        Self::Sfx
-    }
 }
 
 impl BusId {
