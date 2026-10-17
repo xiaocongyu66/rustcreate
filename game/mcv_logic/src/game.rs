@@ -19,7 +19,7 @@ use mcv_entity::{
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
-use mcv_render::{Camera, HudQuad, text};
+use mcv_render::{Camera, text};
 
 use crate::fluid::BlockPosExt;
 use crate::ticket::{self, TicketTable, TicketType};
