@@ -3,6 +3,7 @@
 //! 1. dry-out 计时（WaterAnimal.handleAirSupply 300+20 窒息节拍 → 死亡掉落）；
 //! 2. 变体映射（AquaticVariant 持久 + salmon 权重/缩放 + tropical pack 往返）；
 //! 3. 掉落对拍（生鱼 ×1 + 骨粉 5%，variant 透传）。
+//!
 //! 另锁水内随机游（RandomSwimmingGoal 等价）、避玩家（AvoidEntityGoal）、
 //! 离水扑腾（AbstractFish.aiStep jump 通道）。
 
