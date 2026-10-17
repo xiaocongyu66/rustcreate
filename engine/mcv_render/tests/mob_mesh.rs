@@ -7,9 +7,10 @@ use mcv_render::mob_mesh::*;
 fn mesh_counts_and_uv_bounds() {
     let m = build_mob_mesh();
     // 盒数：鸡 8 + 牛 10 + 羊 12 + 猪 7 + 僵尸 6 + 骷髅 6 + 苦力怕 6
-    // + 蜘蛛 11 = 66（部位表见 mob_mesh.rs）
-    assert_eq!(m.verts.len(), 66 * 24);
-    assert_eq!(m.indices.len(), 66 * 36);
+    // + 蜘蛛 11 + 烈焰人 13（头 + 12 杆合一部位）+ 末影人 7 + 嘎吱怪 20
+    // = 106（部位表见 mob_mesh.rs）
+    assert_eq!(m.verts.len(), 106 * 24);
+    assert_eq!(m.indices.len(), 106 * 36);
     for v in &m.verts {
         for c in v.pos {
             assert!(c.is_finite());
@@ -42,19 +43,24 @@ fn kind_slices_are_contiguous() {
 
 #[test]
 fn part_counts_match_table() {
-    assert_eq!(MOB_PART_COUNTS, [8, 6, 12, 6, 6, 6, 6, 11]);
+    assert_eq!(MOB_PART_COUNTS, [8, 6, 12, 6, 6, 6, 6, 11, 2, 7, 7]);
     assert_eq!(MOB_PART_COUNTS.len(), MOB_KIND_COUNT);
-    // 八种贴图路径齐全（缺文件时 load 端降级不渲染，绝不程序化伪造）
+    // 十四层贴图路径齐全（缺文件时 load 端降级不渲染，绝不程序化伪造）
     assert_eq!(MOB_TEX_FILES.len(), MOB_TEX_LAYERS);
     for f in MOB_TEX_FILES.iter() {
         assert!(f.starts_with("entity/"), "贴图必须来自原版 assets 树");
     }
-    // 敌对四怪的贴图路径与仓库 assets 实体树一致（防手滑改名）。
+    // 敌对七怪的贴图路径与仓库 assets 实体树一致（防手滑改名）。
     let expect = [
         "entity/zombie/zombie.png",
         "entity/skeleton/skeleton.png",
         "entity/creeper/creeper.png",
         "entity/spider/spider.png",
+        "entity/blaze/blaze.png",
+        "entity/enderman/enderman.png",
+        "entity/enderman/enderman_eyes.png",
+        "entity/creaking/creaking.png",
+        "entity/creaking/creaking_eyes.png",
     ];
     for e in expect {
         assert!(
@@ -126,6 +132,9 @@ fn pose_matrices_finite_under_extreme() {
         MobModelKind::Skeleton,
         MobModelKind::Creeper,
         MobModelKind::Spider,
+        MobModelKind::Blaze,
+        MobModelKind::EnderMan,
+        MobModelKind::Creaking,
     ] {
         for m in mob_model_matrices(k, &pose) {
             for v in m.to_cols_array() {

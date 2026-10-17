@@ -25,6 +25,7 @@
 //! 此处直线移动 + `blocked` 时跳跃（spider 另有 LeapAtTarget：dist²∈(4,16) 起跳、
 //! 贴墙攀爬由主控据 `wall_climb` 标志处理物理）。复杂地形下不等价（见 NOTES §7）。
 
+use crate::arrow::triangle;
 use crate::defs::{MobDef, MobKind};
 use crate::spawner::burn_in_daylight;
 use glam::Vec3;
@@ -1237,9 +1238,10 @@ impl Brain {
 
 // ---- M7d 三怪公共工具（凝视锥 / 方块候选 / 瞬移落点） -----------------------
 
-/// u32 均匀流 → [0,1) 双精度（原版 nextDouble 近似）。
-fn rnd01(rng: &mut impl FnMut() -> u32) -> f64 {
-    rng() as f64 / (u32::MAX as f64 + 1.0)
+/// u32 均匀流 → [0,1)（原版 nextDouble 近似；f32 面——候选格/落点引擎
+/// 全 f32，双精度会传染 f64 混算，1/2^24 量化对 ±32 抖动面无感）。
+fn rnd01(rng: &mut impl FnMut() -> u32) -> f32 {
+    rng() as f32 / (u32::MAX as f32 + 1.0)
 }
 
 /// `LivingEntity.isLookingAtMe`（LivingEntity.java:1723-1742）镜像：
