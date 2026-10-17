@@ -76,3 +76,9 @@
 ## 4. 建议收口顺序（供编排参考，本审计不动手）
 
 rayon 收口（含 G1a 纪律重建）→ G1b 文档/常量修正（S 级顺手）→ G3a 存档接 NBT 栈 → G2/G2a 等渲染线程重构窗口合并处理 → G1c 维持 E6 搁置条款。
+
+## 5. 补强证据（二次核查）
+
+- **ECS 零序列化面**：`engine/mcv_ecs/` 全 crate 无 `serde` 引用；组件仅 `'static` 约束无 derive（lib.rs:95-98）——G3「无反射」坐实。
+- **RNG 非确定种子**：`spawn_rng()`（game.rs:7994）以 `fast_rand()`（进程熵）作种子逐调用点独立起链——单线程现状下 mob 掉落/自然刷怪/天气本就不可复现；G1c 若开并行需先给确定性 RNG 通道（对比 Bevy 生态惯例：入口注入种子化 Rng 资源），否则 golden 面无法延伸到 mob 域。
+- **确定性锁域窄**：worldgen 的 E2 golden 锁只覆盖地形生成域（tests/os2s_golden 等），调度域（tick 折算/追帧）、资产域（缓存语义）、存档域（v6 解码默认）无同规格对拍——Bevy FixedUpdate 的可测性（Time<Fixed> 直接驱动 headless 运行表）是收口 G1b 时可顺带引入的测试面。
