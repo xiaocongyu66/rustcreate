@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
-use mcv_audio::{AudioCmd, Mixer, decode_to_stereo, default_sounds_dir};
+use mcv_audio::{AudioCmd, BusId, Mixer, decode_to_stereo, default_sounds_dir};
 
 fn mixer() -> Mixer {
     let (_producer, consumer) = mcv_sync::Spsc::<AudioCmd>::new(16).split();
@@ -19,6 +19,7 @@ fn play_cmd(sound: &Arc<mcv_audio::SoundData>, pitch: f32) -> AudioCmd {
         pitch,
         looping: false,
         loop_event: None,
+        bus: BusId::Sfx,
     }
 }
 

@@ -12,12 +12,20 @@
 //! - 混音为 f32 线性叠加,输出前统一限幅到 [-1.0, 1.0];
 //!   tinyaudio 后端按 PCM_Float(IEEE float)直接吃 f32,无需 u16 转换;
 //! - 超出 [`MAX_VOICES`] 时淘汰最早建立的声部(FIFO)。
+//!
+//! **总线图**(见 [`crate::bus`]):每个声部落一轨([`BusId`]),混音时
+//! 有效增益 = `voice.gain × master × path(落轨→根)`(级联),send 再在
+//! 家庭路径之后旁路 `send 增益 × path(目标轨)`;全默认(各轨 1.0、无 send)
+//! 级联是 ×1.0 精确恒等——混音输出与无总线实现**逐位相同**。未挂
+//! [`BusMix`](crate::BusMix) 的混音器(None)连这次乘法都省掉,是旧路径本体。
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use mcv_sync::Consumer;
 
 use crate::AudioCmd;
+use crate::BusId;
+use crate::bus::BusMix;
 use crate::decode::SoundData;
 
 /// 声部数上限:超出时淘汰最早建立的声部。
@@ -36,6 +44,8 @@ struct Voice {
     pitch: f32,
     /// 声部增益(游戏线程已乘衰减与变体音量)。
     gain: f32,
+    /// 声部落轨(总线图路由键;级联/send 都按它取)。
+    bus: BusId,
     /// 是否循环(挖掘持续音)。
     looping: bool,
     alive: bool,
@@ -45,21 +55,33 @@ struct Voice {
 pub struct Mixer {
     voices: Vec<Voice>,
     cmds: Consumer<AudioCmd>,
-    /// 主增益 f32 位镜像(游戏线程 set_master_gain 直写)。
+    /// 主增益 f32 位镜像(游戏线程 set_master_gain 直写)。总线图里即根增益。
     master: Arc<AtomicU32>,
+    /// 总线图共享状态(可选)。`None` = 未挂总线——级联/send 整个旁路,
+    /// 混音公式与历史实现逐语句一致(旧测试/旧用法的原样路径)。
+    buses: Option<Arc<BusMix>>,
     out_rate: u32,
 }
 
 impl Mixer {
     /// 新建混音器。`out_rate` 为输出设备采样率(Hz),素材采样率不同会自动
-    /// 线性重采样;`master` 为主增益原子镜像。
+    /// 线性重采样;`master` 为主增益原子镜像。默认不挂总线图(见
+    /// [`Mixer::with_buses`])——行为与无总线的历史版本一致。
     pub fn new(out_rate: u32, cmds: Consumer<AudioCmd>, master: Arc<AtomicU32>) -> Self {
         Self {
             voices: Vec::new(),
             cmds,
             master,
+            buses: None,
             out_rate: out_rate.max(1),
         }
+    }
+
+    /// 挂总线图(链式)。`buses` 的根增益槽必须与 `Mixer::new` 的 `master`
+    /// 是同一 Arc(`AudioManager` 侧已保证;分离会造成根增益双源)。
+    pub fn with_buses(mut self, buses: Arc<BusMix>) -> Self {
+        self.buses = Some(buses);
+        self
     }
 
     /// 应用一条命令;返回是否真正起了声部(非法增益/循环幂等命中/停止均 false)。
@@ -72,6 +94,7 @@ impl Mixer {
                 pitch,
                 looping,
                 loop_event,
+                bus,
             } => {
                 // 增益在游戏线程已查过,此处是跨环后的最后防线(NaN 防护)。
                 if !gain.is_finite() || gain <= 0.0 {
@@ -100,6 +123,7 @@ impl Mixer {
                     step,
                     pitch,
                     gain,
+                    bus,
                     looping,
                     alive: true,
                 });
@@ -127,7 +151,7 @@ impl Mixer {
         let master = f32::from_bits(self.master.load(Ordering::Relaxed));
         let mut voices = std::mem::take(&mut self.voices);
         for v in voices.iter_mut() {
-            mix_voice(v, out, master);
+            mix_voice(v, out, master, self.buses.as_deref());
         }
         voices.retain(|v| v.alive);
         self.voices = voices;
@@ -144,38 +168,95 @@ impl Mixer {
 
 /// 单声部混入:线性插值重采样(步进乘 pitch)+ 增益叠加;非循环读完即熄灭,
 /// 循环取模续读。
-fn mix_voice(v: &mut Voice, out: &mut [f32], master: f32) {
+///
+/// 增益为**贡献表**(` 家庭路径 1 条 + 出向 send ≤3 条`,固定数组零分配):
+/// - 家庭路径 = `voice.gain × master × path(落轨→根)`(总线级联);
+/// - send 贡献 = 家庭路径 × `send 增益 × path(目标轨)`(后置 aux:随目标
+///   轨增益走,根 master 不二次乘)。
+/// 全默认(各轨 1.0 / 无 send)时贡献表只有一项且等于 `voice.gain × master`
+/// ——与无总线的历史实现**逐位相同**;`buses` 为 None 时连那次 ×1.0 也没有。
+fn mix_voice(v: &mut Voice, out: &mut [f32], master: f32, buses: Option<&BusMix>) {
     let sound = v.sound.clone();
     let total = sound.frames;
     if total == 0 {
         v.alive = false;
         return;
     }
-    let g = v.gain * master;
+    let home = v.gain * master;
+    let mut gains = [0.0f32; BusId::TRACKS.len() + 1];
+    let mut n = 1usize;
+    gains[0] = match buses {
+        // 级联:×1.0(全默认)是 IEEE754 精确恒等,逐位等于 home。
+        Some(b) => home * b.chain(v.bus),
+        // 未挂总线:历史公式本体(v.gain × master)。
+        None => home,
+    };
+    if let Some(b) = buses {
+        for &to in &BusId::TRACKS {
+            if to == v.bus {
+                continue;
+            }
+            let s = b.send_gain(v.bus, to);
+            if s == 0.0 {
+                continue;
+            }
+            gains[n] = gains[0] * s * b.chain(to);
+            n += 1;
+        }
+    }
     let total_f = total as f64;
     let step = v.step * f64::from(v.pitch);
     let mut pos = v.pos;
     let n_out = out.len() / 2;
-    for k in 0..n_out {
-        if pos >= total_f {
-            if !v.looping {
-                v.alive = false;
-                break;
+    if n == 1 {
+        // 单贡献快径:与历史实现同一条乘加序(位级一致的热路径)。
+        let g = gains[0];
+        for k in 0..n_out {
+            if pos >= total_f {
+                if !v.looping {
+                    v.alive = false;
+                    break;
+                }
+                pos %= total_f;
             }
-            pos %= total_f;
+            let i0 = pos as usize;
+            let frac = (pos - i0 as f64) as f32;
+            let mut i1 = i0 + 1;
+            if i1 >= total {
+                i1 = if v.looping { i1 % total } else { total - 1 };
+            }
+            let a = &sound.samples;
+            let l = a[i0 * 2] + (a[i1 * 2] - a[i0 * 2]) * frac;
+            let r = a[i0 * 2 + 1] + (a[i1 * 2 + 1] - a[i0 * 2 + 1]) * frac;
+            out[k * 2] += l * g;
+            out[k * 2 + 1] += r * g;
+            pos += step;
         }
-        let i0 = pos as usize;
-        let frac = (pos - i0 as f64) as f32;
-        let mut i1 = i0 + 1;
-        if i1 >= total {
-            i1 = if v.looping { i1 % total } else { total - 1 };
+    } else {
+        // 多贡献(接了 send):同一解码序,逐条增益叠加。
+        for k in 0..n_out {
+            if pos >= total_f {
+                if !v.looping {
+                    v.alive = false;
+                    break;
+                }
+                pos %= total_f;
+            }
+            let i0 = pos as usize;
+            let frac = (pos - i0 as f64) as f32;
+            let mut i1 = i0 + 1;
+            if i1 >= total {
+                i1 = if v.looping { i1 % total } else { total - 1 };
+            }
+            let a = &sound.samples;
+            let l = a[i0 * 2] + (a[i1 * 2] - a[i0 * 2]) * frac;
+            let r = a[i0 * 2 + 1] + (a[i1 * 2 + 1] - a[i0 * 2 + 1]) * frac;
+            for &g in &gains[..n] {
+                out[k * 2] += l * g;
+                out[k * 2 + 1] += r * g;
+            }
+            pos += step;
         }
-        let a = &sound.samples;
-        let l = a[i0 * 2] + (a[i1 * 2] - a[i0 * 2]) * frac;
-        let r = a[i0 * 2 + 1] + (a[i1 * 2 + 1] - a[i0 * 2 + 1]) * frac;
-        out[k * 2] += l * g;
-        out[k * 2 + 1] += r * g;
-        pos += step;
     }
     v.pos = pos;
 }
