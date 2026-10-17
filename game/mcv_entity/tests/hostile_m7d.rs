@@ -284,16 +284,18 @@ fn enderman_chase_teleport_30t_when_far() {
         "away_from = 玩家位 {back:?}"
     );
     assert_eq!(brain.tp_cd, 0, "发请求即清 teleportTime");
-    // tp_cd 未到点 → 不发请求。
+    // tp_cd（递增先于判）自 0 计 → 本 tick 1 < 30 不发请求。
     let mut brain = Brain::new();
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
     }
-    brain.tp_cd = 29;
-    let acts = brain.tick(def, &far, &mut rng);
+    assert_eq!(brain.tp_cd, 0, "凝视 tick 清账（teleportTime 复位）");
+    let mut away = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0));
+    away.plook = Vec3::Y; // 未被凝视 → teleportTime 累计支
+    let acts = brain.tick(def, &away, &mut rng);
     assert!(
         !acts.iter().any(|a| matches!(a, AiAction::Teleport { .. })),
-        "teleportTime < 30 不瞬移"
+        "teleportTime 1 < 30 不瞬移"
     );
     // 常量复核。
     assert_eq!(ENDERMAN_CHASE_TP_TICKS, 30);
