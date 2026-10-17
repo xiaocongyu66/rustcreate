@@ -126,6 +126,13 @@ glam/log/serde_json/image）。
   work-stealing 的优势场景不成立；手写 Mutex+Condvar 池 + mpsc + 自研 SPSC
   已覆盖三种已并行域，且"无重型框架"是 Cargo.toml 的既定哲学（§1：零第三方
   并发依赖）。需要补的是**确定性纪律与可观测性**，不是调度器换代。
+  **【2026-10-17 失效更新】**本决策已被用户拍板覆盖：「rayon 全量替换自研
+  TaskPool」（分支 rayon-switch）。执行端换代、纪律不动摇：rayon `ThreadPool`
+  出线程（生产三域走 `TaskPool::shared` = 全局池 + 配额门，收口三池分立
+  超订，docs/audit/bevy-sys-asset.md G1 收口），hi/lo 优先队列、三计数、
+  任务级 `catch_unwind`（G1a）与三 sched 失败回执（DC-3）全部保留为记账层
+  语义；`TaskPool::new`（专属池）保留给「名额=线程」强并发契约测试面
+  （worldgen turnstile 乱序注入等）。
 - **文件面**：game/mcv_core/src/pool.rs、mcv_core/tests（新增）。
 - **golden/确定性影响**：无（不改任何生成/渲染语义）。
 - **红测试**：panic 任务后池仍满编（后续 hi/lo 任务正常执行）；hi 先于 lo 排空
@@ -297,7 +304,7 @@ glam/log/serde_json/image）。
 （RT 回调线程 + 无锁 SPSC）。
 
 **伪需求（明确不做，理由如上）**：rayon/work-stealing 换代（任务粒度 10ms，
-手写池够用，依赖哲学不合）；ECS 系统并行调度器（无冲突声明架构 + 无热点
+手写池够用，依赖哲学不合）【2026-10-17 失效更新：用户拍板 rayon 全量替换，见 §3 E1 内注】；ECS 系统并行调度器（无冲突声明架构 + 无热点
 证据，重开条件见 E6）；主循环渲染线程拆分（winit 单线程模型 + #80 已消掉
 主线程 GPU 阻塞，拆线程引入的帧同步复杂度 >> 收益；移动端 GLES 上下文亲和
 另加一票反对）。

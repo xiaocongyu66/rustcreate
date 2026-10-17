@@ -88,9 +88,11 @@ pub struct MeshScheduler {
 
 impl MeshScheduler {
     /// 装配计算端与回传端。`workers` 由上层按 `MCV_MESHER_WORKERS`
-    /// 解析（0 = 同步路径，不进本函数）。
+    /// 解析（0 = 同步路径，不进本函数）。执行端 = rayon 全局池
+    /// （`TaskPool::shared`，三域超订收口——本数 = 配额/回压上限，
+    /// 不再自建 OS 线程组）；hi/lo 优先与回执纪律在本模块原样。
     pub fn new(workers: usize) -> (Self, MeshResults) {
-        let pool = TaskPool::new(workers);
+        let pool = TaskPool::shared(workers);
         let (tx, rx) = std::sync::mpsc::channel();
         let high_water = workers + 2;
         let gate = Arc::new(Gate {

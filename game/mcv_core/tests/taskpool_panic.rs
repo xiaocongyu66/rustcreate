@@ -1,9 +1,11 @@
 //! TaskPool panic 隔离与优先级语义锁（E1 / 蓝图 docs/engine-roadmap.md §3 E1、
-//! §4 不变量 #9：任务 panic ≠ 池缩编）。
+//! §4 不变量 #9：任务 panic ≠ 池缩编；rayon 收口波补 shared 执行端锁）。
 //!
 //! 红相位：worker 裸调用 `job()`（旧 pool.rs:79），任务 panic 炸死 worker
 //! 线程且池永久缩编、无告警（Drop join Err 被忽略，旧 pool.rs:105）。
 //! panic 用例在修复前红（30s recv_timeout 超时失败，不挂死 CI）、修复后全绿。
+//! 执行端换代（自研 Mutex+Condvar → rayon）后本文件原样绿 = 纪律迁移完成的
+//! 证据（dedicated = 名额即线程；shared = 全局池 + 配额门）。
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -135,4 +137,36 @@ fn hi_drains_before_lo() {
         .map(|_| rx.recv_timeout(WAIT).expect("任务未被执行"))
         .collect();
     assert_eq!(got, vec![3, 4, 1, 2], "hi 队列必须先于 lo 队列排空");
+}
+
+/// shared 执行端锁（rayon 收口生产面，G1/G1a）：全局池 + 配额门下
+/// ① panic 任务不阻断后续（run_isolated 任务级隔离，DC-3 的地基）；
+/// ② 同队列 FIFO 出队序原样；③ 配额门三计数归零（backpressure 上界面）。
+/// 配额取 1：执行序 = 出队序（多配额下并行任务的 send 序不构成锁面）。
+#[test]
+fn shared_pool_executes_with_quota_gate_and_panic_isolation() {
+    let pool = TaskPool::shared(1);
+    pool.spawn_hi(Box::new(|| panic!("shared pool panic isolation probe")));
+    let (tx, rx) = mpsc::channel::<u8>();
+    for v in 1..=4u8 {
+        let tx = tx.clone();
+        pool.spawn_lo(Box::new(move || {
+            let _ = tx.send(v);
+        }));
+    }
+    drop(tx);
+    let got: Vec<u8> = (0..4)
+        .map(|_| rx.recv_timeout(WAIT).expect("shared 池任务未被执行"))
+        .collect();
+    // 全 lo 同队列：配额 1 → 执行序 = 出队序（hi 的 panic 任务只占配额
+    // 不产出——run_isolated 接住，后续任务照常）。
+    assert_eq!(got, vec![1, 2, 3, 4], "shared 池 FIFO 出队序漂移");
+    wait_until(
+        &pool,
+        PoolStats {
+            running: 0,
+            queued: 0,
+            workers: 1,
+        },
+    );
 }

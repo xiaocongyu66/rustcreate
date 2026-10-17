@@ -220,7 +220,10 @@ pub struct TerrainScheduler {
 
 impl TerrainScheduler {
     pub fn new(seed: u64, workers: usize) -> Self {
-        let pool = TaskPool::new(workers);
+        // 执行端 = rayon 全局池（TaskPool::shared，三域超订收口），本数
+        // = 配额/回压上限（不再自建 OS 线程组；docs/audit/bevy-sys-asset.md
+        // G1）。回执纪律零改动（下方闭包）。
+        let pool = TaskPool::shared(workers);
         let (tx, rx) = std::sync::mpsc::channel();
         Self {
             seed,
