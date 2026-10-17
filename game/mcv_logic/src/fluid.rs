@@ -677,9 +677,11 @@ mod tests {
     /// 只读小世界（未列格 = 空气，WorldView::block 语义）。键用
     /// (x,y,z) 三元组——mcv_core::BlockPos 未 derive Hash（core 不为
     /// logic 的测试面拉派生），tuple 是同语义零依赖键。
-    /// 拥有权闭包（map move 变换，无输入借用——返回值可超脱 pairs
-    /// 临时存活；E0716 修复，run 38990640360）。
-    fn world(pairs: &[(BlockPos, BlockId)]) -> impl Fn(BlockPos) -> BlockId {
+    /// 拥有权闭包（map move 变换，无输入借用）。`use<>` 空捕获清单：
+    /// Rust 2024 RPIT 隐式捕获全部输入寿命，`&[(..)]` 的寿命会被写进
+    /// opaque 导致 pairs 临时数组被判悬垂（E0716×4，runs 38990640360/
+    /// 38990879544）；空清单=opaque 只依赖返回值自身所有权。
+    fn world(pairs: &[(BlockPos, BlockId)]) -> impl Fn(BlockPos) -> BlockId + use<> {
         let map: HashMap<(i32, i32, i32), BlockId> =
             pairs.iter().map(|(p, b)| ((p.x, p.y, p.z), *b)).collect();
         move |p| map.get(&(p.x, p.y, p.z)).copied().unwrap_or(BlockId(0))
