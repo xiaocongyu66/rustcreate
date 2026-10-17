@@ -396,7 +396,9 @@ mod gpu {
         let mut checked_off_sphere = 0usize;
         for y in 0..16u32 {
             for x in 0..16u32 {
-                let uv = [(x as f32 + 0.5) / 16.0, 1.0 - (y as f32 + 0.5) / 16.0];
+                // 读回行序取证（run gpu_row8 dump）：row0 ↦ uv.y=(y+0.5)/16
+                // ——读回行 0 对应 p.y<0（球下半侧）。
+                let uv = [(x as f32 + 0.5) / 16.0, (y as f32 + 0.5) / 16.0];
                 let p = [uv[0] * 2.0 - 1.0, uv[1] * 2.0 - 1.0];
                 let r2 = p[0] * p[0] + p[1] * p[1];
                 let i = ((y * 16 + x) * 4) as usize;
