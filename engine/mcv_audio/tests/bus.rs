@@ -231,7 +231,7 @@ fn send_zero_and_clear_disconnect_the_route() {
     assert_eq!(mix_n(&mut m), expected, "clear_sends 必须等价未接");
 
     // 跨轨互不影响:clear(Music) 不伤 Sfx→Ambient。
-    let (mut m, buses, _r) = mixer_bused(1.0);
+    let (_m, buses, _r) = mixer_bused(1.0);
     buses.set_send(BusId::Sfx, BusId::Ambient, 0.5);
     buses.set_send(BusId::Music, BusId::Ambient, 0.5);
     buses.clear_sends(BusId::Music);
