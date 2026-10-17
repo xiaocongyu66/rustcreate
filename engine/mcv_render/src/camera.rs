@@ -18,6 +18,11 @@ pub struct Camera {
     /// （:360-362）——本仓统一放进 view_proj 的 view 与 proj 之间
     /// （bob 是视空间刚体变换，P·bob·V ≡ 对视空间先 bob 再投影）。
     pub bob: Mat4,
+    /// 曝光系数（线性乘子，默认 1.0 = 行为不变；#223 续 HDR 面）。
+    /// 仅 HDR tone mapping 路径读取（`hdr` feature 默认关 → 默认构建
+    /// 下零读取零影响）；bevy 的 `2^color_grading.exposure` stops 语义
+    /// 为有意偏差（stops 语义下默认 1.0 会 ×2 提亮，违背「默认不变」）。
+    pub exposure: f32,
 }
 
 impl Camera {
@@ -141,6 +146,7 @@ mod tests {
             near: 0.1,
             far: 256.0,
             bob: Mat4::IDENTITY,
+            exposure: 1.0,
         }
     }
 

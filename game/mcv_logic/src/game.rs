@@ -2942,6 +2942,7 @@ impl GameRuntime {
             near: 0.1,
             far: (self.render_dist * 16) as f32 * 1.6,
             bob: mcv_render::view_bob_matrix(bob, bid),
+            exposure: 1.0,
         };
         if self.cam_type != CameraType::FirstPerson {
             // 视眼 = pos + EYE_HEIGHT；第三人称沿视线平移，遇方块拉近

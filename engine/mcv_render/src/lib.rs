@@ -11,11 +11,18 @@ pub mod frustum;
 pub mod gpu;
 pub mod gui;
 pub mod hand;
+/// HDR 管线（`hdr` feature，默认关）：RGBA16F 主纹理 + ACES tone
+/// mapping（桌面 feature-gate，GLES 运行期强制回退，见 hdr::is_hdr_capable）。
+#[cfg(feature = "hdr")]
+pub mod hdr;
 pub mod item_render;
 pub mod mob_mesh;
 pub mod offscreen;
 pub mod particle_renderer;
 pub mod particles;
+/// PBR 材质域：uniform 打包 + GGX/Lambert/ACES CPU 对照实现（默认不
+/// 接线，现有 8 pass 零改动；tests/pbr.rs 离线对照表锁等价）。
+pub mod pbr;
 pub mod player_mesh;
 pub mod text;
 pub mod unifont;
@@ -27,6 +34,8 @@ pub use gpu::{
     Renderer, Scene, WaterPart,
 };
 pub use hand::{HandItem, HandRender};
+#[cfg(feature = "hdr")]
+pub use hdr::{HDR_COLOR_FORMAT, HdrStage, is_hdr_capable};
 pub use item_render::{ItemDropDraw, ItemDropRenderer};
 pub use mob_mesh::{
     MAX_MOB_PARTS, MOB_KIND_COUNT, MOB_MAX_INSTANCES, MOB_PART_COUNTS, MOB_TEX_FILES,
