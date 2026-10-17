@@ -1486,6 +1486,9 @@ impl AppState {
             // E4：退出安全落盘 = 全量投递 + 阻塞排空在途 IO（delete 时
             // remove_dir_all 前必须保证写盘收尾）。
             runtime.flush_save_blocking();
+            // #222 批 A：实体块随退出拍落盘（EntitiesTag + playerdata，
+            // 与 flush 的方块增量同拍）——重进世界 mob 表回填有源。
+            runtime.save_entities();
             runtime.save_meta();
             // 设备所有权链（本波 #143）：把 AudioManager 收回 App 级菜单
             // 音频（主菜单/设置按钮音续用同一输出设备）；runtime 留
@@ -2296,6 +2299,8 @@ impl ApplicationHandler for AppState {
             // E4：进后台首件事 = 投递 + 阻塞排空（原 save_dirty 同点，语义
             // 升级为等在途写盘收尾——被杀丢档上限 30s → 0 不回退）。
             runtime.flush_save_blocking();
+            // #222 批 A：挂起拍实体块同落（被杀后重进 mob 表回填有源）。
+            runtime.save_entities();
             runtime.save_meta();
         }
         // C-2（波#127-3）：后台音频挂起——cpal 回调线程独立于事件循环，
@@ -2325,6 +2330,8 @@ impl ApplicationHandler for AppState {
                 if let Some(runtime) = self.runtime.as_mut() {
                     // E4：关窗 = 全量投递 + 阻塞排空在途 IO 后再落 meta。
                     runtime.flush_save_blocking();
+                    // #222 批 A：关窗拍实体块同落（同 flush 方块增量拍）。
+                    runtime.save_entities();
                     runtime.save_meta();
                 }
                 self.save_options();
@@ -2831,6 +2838,8 @@ impl AppState {
             height: mh,
             chunks: &[],
             hud: &hud,
+            sprites: &[],
+            sprite_fence: 0,
             cloud: None,
             player: None,
             // 菜单/加载画面无 GameRuntime（无 ECS World 可收集）——恒空，
@@ -3144,6 +3153,8 @@ impl AppState {
         if self.save_timer.is_some_and(|t| t.elapsed().as_secs() >= 30) {
             self.save_timer = Some(std::time::Instant::now());
             runtime.save_dirty(None);
+            // #222 批 A：实体块随 30s 拍落盘（与 save_dirty 方块增量同拍）。
+            runtime.save_entities();
             runtime.save_meta();
         }
 
@@ -3171,7 +3182,8 @@ impl AppState {
         // 进世界加载画面（26.1 LevelLoadingScreen）：盖在游戏画面上的
         // 独立 HUD（不画游戏 HUD/触屏按钮，玩家此刻不应看到血条快捷栏）。
         let loading = runtime.phase == mcv_logic::game::GamePhase::Loading;
-        let mut hud = if loading {
+        // #222 批 A：build_hud 返回 HudBatch（quads + 精灵命令 + 栅栏）。
+        let mut batch = if loading {
             let (grid_radius, grid) = runtime.loading_grid();
             let model = crate::loading_ui::LoadScreenModel {
                 progress: runtime.loading_progress_smoothed(),
@@ -3179,12 +3191,16 @@ impl AppState {
                 grid,
                 title: crate::i18n::t(lang, "multiplayer.downloadingTerrain").to_string(),
             };
-            crate::loading_ui::quads(
-                sp.config.width as f32,
-                sp.config.height as f32,
-                &model,
-                self.renderer.as_ref().and_then(|r| r.gui()),
-            )
+            mcv_render::sprite2d::HudBatch {
+                quads: crate::loading_ui::quads(
+                    sp.config.width as f32,
+                    sp.config.height as f32,
+                    &model,
+                    self.renderer.as_ref().and_then(|r| r.gui()),
+                ),
+                sprites: Vec::new(),
+                sprite_fence: 0,
+            }
         } else {
             runtime.build_hud(
                 sp.config.width as f32,
@@ -3195,6 +3211,9 @@ impl AppState {
                 !matches!(self.screen, Screen::Crafting | Screen::Creative),
             )
         };
+        let sprite_cmds = std::mem::take(&mut batch.sprites);
+        let sprite_fence = batch.sprite_fence;
+        let mut hud = batch.quads;
         if matches!(self.screen, Screen::Paused | Screen::Death) {
             // 暂停/死亡：游戏画面之上叠 MC 风格菜单（按钮贴图 + 阴影字体）
             hud.extend(pause_menu);
@@ -3281,6 +3300,8 @@ impl AppState {
             height: sp.config.height as f32,
             chunks: &chunks,
             hud: &hud,
+            sprites: &sprite_cmds,
+            sprite_fence,
             cloud: clouds.map(|c| (c, cloud_settings)),
             player: has_player.then_some((&models, 0)),
             mobs: Some(&mob_instances[..]),

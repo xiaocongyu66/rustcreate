@@ -1459,6 +1459,7 @@ dependencies = [
  "mcv_ecs",
  "mcv_game",
  "mcv_item",
+ "mcv_nbt",
 ]
 
 [[package]]
@@ -1502,6 +1503,7 @@ dependencies = [
  "mcv_item",
  "mcv_light",
  "mcv_mesher",
+ "mcv_nbt",
  "mcv_platform",
  "mcv_render",
  "mcv_save",

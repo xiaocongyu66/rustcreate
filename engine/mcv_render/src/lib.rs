@@ -24,6 +24,8 @@ pub mod particles;
 /// 接线，现有 8 pass 零改动；tests/pbr.rs 离线对照表锁等价）。
 pub mod pbr;
 pub mod player_mesh;
+pub mod render_graph;
+pub mod sprite2d;
 pub mod text;
 pub mod unifont;
 
@@ -48,6 +50,8 @@ pub use particles::ParticleEngine;
 pub use player_mesh::{
     PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };
+pub use render_graph::{FrameCtx, GraphError, PassNode, Plan, RenderGraph};
+pub use sprite2d::{Anchor, HudBatch, SpriteBatch, SpriteCmd};
 
 use glam::Vec3;
 

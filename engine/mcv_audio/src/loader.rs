@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use crate::decode::{SoundData, decode_to_stereo};
 use crate::table::SoundTable;
-use crate::{AudioCmd, AudioError};
+use crate::{AudioCmd, AudioError, BusId};
 
 /// 常驻解码缓存上限(条)。键为变体路径(如 `dig/stone1`)。
 pub const CACHE_MAX: usize = 32;
@@ -159,6 +159,9 @@ impl SoundLoader {
             pitch,
             looping,
             loop_event,
+            // 落轨唯一接线点:事件名分类方块→sfx / 音乐→music / 水环境→ambient
+            // (纯前缀判定,无 IO;详见 [`crate::bus`] 模块文档)。
+            bus: BusId::for_event(event),
         })
     }
 

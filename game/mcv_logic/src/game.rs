@@ -18,9 +18,11 @@ use mcv_entity::{
     advance_walk_anim, spawn_mob, teleport_away_target, teleport_landing, teleport_random_target,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
+// #222 批 A：实体落盘 NBT 底座（tag 树 + gzip IO，只用不改）。
+use mcv_nbt::{NbtCompound, NbtList, NbtValue};
 use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
-use mcv_render::{Camera, HudQuad, text};
+use mcv_render::{Camera, text};
 
 use crate::fluid::BlockPosExt;
 use crate::ticket::{self, TicketTable, TicketType};
@@ -945,6 +947,10 @@ pub struct GameRuntime {
     /// 线性扫（旧实现每帧 O(loaded×meshed) 次浮点比对），并消除按 origin
     /// 浮点匹配的精度隐患。
     meshed: HashSet<ChunkPos>,
+    /// #222 批 A：本会话已写过实体域档的区块域账（`entities/r.<rx>.<rz>
+    /// .mcrve`）。mob 迁块/死绝后的过期域档由 save_entities 按账删除，防
+    /// 旧副本与新城域双根（restore_entities 从档名回填本账）。
+    entities_written: HashSet<(i32, i32)>,
     spawned: bool,
     border_synced: HashMap<ChunkPos, u8>,
     /// stream() 帧计数（在途请求驻留计时基准；stream 是帧驱动非 tick 驱动）。
@@ -1427,6 +1433,31 @@ fn write_chunk_to_disk(
 /// 单区块 region 读盘（IO 线程侧）。与同步 try_load_saved 同语义同静默：
 /// region 文件不存在/打开失败/记录缺失或版本不符（v1/v2）→ None → 回退
 /// 生成器。exists() 前置避免 open 在 miss 上创建空 region 文件。
+/// 实体域档后缀（#222 批 A）：与方块 region `.mcrv` 同族 + 实体位。
+const ENTITY_EXT: &str = ".mcrve";
+
+/// 实体域档路径：`entities/r.<rx>.<rz>.mcrve`（26.1 实体独立档目录
+/// entities/ 的等价面，域粒度与方块 region 对齐）。
+fn entities_file_path(dir: &std::path::Path, rx: i32, rz: i32) -> std::path::PathBuf {
+    dir.join("entities")
+        .join(format!("r.{rx}.{rz}{ENTITY_EXT}"))
+}
+
+/// 域档名 → (rx, rz)："r.<rx>.<rz>.mcrve"。
+fn parse_entities_region(name: &str) -> Option<(i32, i32)> {
+    let core = name.strip_prefix("r.")?.strip_suffix(ENTITY_EXT)?;
+    let (rx, rz) = core.split_once('.')?;
+    Some((rx.parse().ok()?, rz.parse().ok()?))
+}
+
+/// tmp + rename 原子写（save_meta 同式：进程被杀不留半档）。
+fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> bool {
+    let tmp = path.with_extension("tmp");
+    std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new("."))).is_ok()
+        && std::fs::write(&tmp, bytes).is_ok()
+        && std::fs::rename(&tmp, path).is_ok()
+}
+
 fn load_chunk_from_disk(dir: &std::path::Path, pos: ChunkPos) -> Option<(Vec<u16>, [i16; 256])> {
     let (rx, rz) = mcv_save::chunk_region(pos.x, pos.z);
     let path = dir.join(format!("region/r.{rx}.{rz}.mcrv"));
@@ -1752,6 +1783,7 @@ impl GameRuntime {
             light_writeback_log: Vec::new(),
             save_dir,
             meshed: HashSet::new(),
+            entities_written: HashSet::new(),
             mesh_pending: HashMap::new(),
             mesh_lost_streak: HashMap::new(),
             mesh_sync_fallback: HashSet::new(),
@@ -2520,6 +2552,9 @@ impl GameRuntime {
 
     /// Loads player state + world time from level.meta (if present).
     pub fn load_meta(&mut self) {
+        // #222 批 A：mob 表回填与 meta 恢复同拍（26.1 ServerLevel 构造期
+        // entity manager 从 entities 档回灌实体）。无实体档 = 零怪 no-op。
+        self.restore_entities();
         let path = self.save_dir.join("level.meta");
         let Ok(bytes) = std::fs::read(&path) else {
             return;
@@ -2670,6 +2705,186 @@ impl GameRuntime {
             && std::fs::write(&tmp, meta.encode()).is_ok()
         {
             let _ = std::fs::rename(&tmp, self.save_dir.join("level.meta"));
+        }
+    }
+
+    /// 实体快照 → 存档（#222 批 A，EntitiesTag 写侧，26.1 官方键名）：
+    /// 怪按所在区块域聚合写 `entities/r.<rx>.<rz>.mcrve`（gzip NBT，根
+    /// compound `{"Entities":[…]}`——26.1 实体独立 Anvil 档
+    /// entities/r.x.z.mca，本仓与方块 region 同粒度同拍落盘）；玩家写
+    /// playerdata/player.dat（NBT 镜像，level.meta 仍是恢复权威源）。
+    /// 与方块增量同拍调用（save_dirty/flush_save_blocking 各拍全量快照，
+    /// 幂等覆写无脏标可省——实体量级 O(几十)，无频宽压力）。
+    pub fn save_entities(&mut self) {
+        use mcv_entity::nbt::{EntityNbt, entity_to_nbt, entity_uuid, mob_vanilla_id};
+        let (kinds, bodies, healths, yaws, ticks) = (
+            self.mobs_app.world.read::<MobKind>(),
+            self.mobs_app.world.read::<PhysBody>(),
+            self.mobs_app.world.read::<Health>(),
+            self.mobs_app.world.read::<Yaw>(),
+            self.mobs_app.world.read::<MobTicks>(),
+        );
+        let mut groups: HashMap<(i32, i32), Vec<NbtCompound>> = HashMap::new();
+        for (e, kind) in kinds.iter() {
+            let (Some(body), Some(hp)) = (bodies.get(e), healths.get(e)) else {
+                continue;
+            };
+            // 域键：方块坐标先取区块（div_euclid 16），再 chunk_region——
+            // 与方块 .mcrv 域 256 块粒度对齐（chunk_region 入参是区块坐标，
+            // 直喂方块坐标会把域缩成 16 块一格，迁移/删除账立刻失配）。
+            let (rx, rz) = mcv_save::chunk_region(
+                (body.pos.x.floor() as i32).div_euclid(16),
+                (body.pos.z.floor() as i32).div_euclid(16),
+            );
+            let snap = EntityNbt {
+                vanilla_id: mob_vanilla_id(kind.0),
+                pos: body.pos,
+                motion: body.vel,
+                yaw: yaws.get(e).map(|y| y.0).unwrap_or(0.0),
+                pitch: 0.0,
+                health: hp.0,
+                max_health: kind.0.def().health,
+                on_ground: body.on_ground,
+                fire: ticks
+                    .get(e)
+                    .map(|t| t.fire_ticks.min(i16::MAX as u32) as i32)
+                    .unwrap_or(0),
+                air: MAX_AIR_SUPPLY,
+                uuid: entity_uuid(self.seed, e.idx()),
+            };
+            groups
+                .entry((rx, rz))
+                .or_default()
+                .push(entity_to_nbt(&snap));
+        }
+        // 上次写过、本次无怪驻留的域档 → 删（mob 迁块/死绝不留双根旧副本；
+        // restore_entities 自档名回填本账，重进世界同表成立）。
+        let stale: Vec<(i32, i32)> = self
+            .entities_written
+            .iter()
+            .copied()
+            .filter(|k| !groups.contains_key(k))
+            .collect();
+        for key in stale {
+            let _ = std::fs::remove_file(entities_file_path(&self.save_dir, key.0, key.1));
+            self.entities_written.remove(&key);
+        }
+        for ((rx, rz), list) in groups {
+            let mut entities = NbtList::new();
+            for c in list {
+                let _ = entities.push(NbtValue::Compound(c));
+            }
+            let mut root = NbtCompound::new();
+            root.insert("Entities", NbtValue::List(entities));
+            if let Ok(bytes) = mcv_nbt::write_gzip(&root) {
+                if write_atomic(&entities_file_path(&self.save_dir, rx, rz), &bytes) {
+                    self.entities_written.insert((rx, rz));
+                } else {
+                    log::error!("entities region r.{rx}.{rz} 写盘失败");
+                }
+            }
+        }
+        // 玩家 → playerdata（26.1 playerdata 落盘面；恢复权威仍 level.meta，
+        // 本文件为同帧实体拍下的 NBT 口径镜，读侧测试锁定键名/取值）。
+        let snap = EntityNbt {
+            vanilla_id: mcv_entity::nbt::PLAYER_ID.into(),
+            pos: self.player.pos,
+            motion: self.player.vel,
+            yaw: self.player.yaw,
+            pitch: self.player.pitch,
+            health: self.player.health,
+            max_health: 20.0,
+            on_ground: self.player.on_ground,
+            fire: self.fire_ticks,
+            air: self.air_supply,
+            uuid: [0; 4],
+        };
+        let path = self.save_dir.join("playerdata").join("player.dat");
+        match mcv_nbt::write_gzip(&entity_to_nbt(&snap)) {
+            Ok(bytes) => {
+                if !write_atomic(&path, &bytes) {
+                    log::error!("playerdata/player.dat 写盘失败");
+                }
+            }
+            Err(e) => log::error!("player NBT 编码失败: {e}"),
+        }
+    }
+
+    /// 世界加载 mob 表回填（#222 批 A，NBT → 实体）：实体域档逐文件读入
+    /// spawn（26.1 恢复语义——缺字段走默认、未知 tag 跳过、未知 id 跳过不
+    /// 入表）。幂等：先全清既有 mob 再回填（重复调入不翻倍）。玩家不入
+    /// 实体档（level.meta 权威恢复既有玩家态）。
+    pub fn restore_entities(&mut self) {
+        let stale: Vec<mcv_ecs::Entity> = self
+            .mobs_app
+            .world
+            .read::<MobKind>()
+            .iter()
+            .map(|(e, _)| e)
+            .collect();
+        for e in stale {
+            self.mobs_app.world.despawn(e);
+        }
+        let dir = self.save_dir.join("entities");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            return; // 无实体档（新世界/升级前旧档）= 零怪回填
+        };
+        let mut restored = 0u32;
+        for entry in entries.flatten() {
+            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+                continue;
+            };
+            if !name.starts_with("r.") || !name.ends_with(ENTITY_EXT) {
+                continue;
+            }
+            let Ok(bytes) = std::fs::read(entry.path()) else {
+                continue;
+            };
+            let root = match mcv_nbt::read_gzip(&bytes) {
+                Ok(r) => r,
+                Err(e) => {
+                    log::warn!("实体域档 {name} 不可读，跳过: {e}");
+                    continue;
+                }
+            };
+            let Some(list) = root.get_list("Entities") else {
+                continue;
+            };
+            for item in list.items() {
+                let Some(c) = item.as_compound() else {
+                    continue;
+                };
+                // 未知 id / 坏坐标 → None → 跳过（26.1 实体恢复语义）。
+                let Some(loaded) = mcv_entity::nbt::entity_from_nbt(c) else {
+                    continue;
+                };
+                let Some(id) = loaded.mob else {
+                    continue; // 玩家面不在 mob 表
+                };
+                let e = spawn_mob(&mut self.mobs_app.world, id, loaded.pos);
+                if let Some(b) = self.mobs_app.world.write::<PhysBody>().get_mut(e) {
+                    b.pos = loaded.pos;
+                    b.pos_old = loaded.pos;
+                    b.vel = loaded.motion;
+                    b.on_ground = loaded.on_ground;
+                }
+                if let Some(h) = self.mobs_app.world.write::<Health>().get_mut(e) {
+                    h.0 = loaded.health;
+                }
+                if let Some(y) = self.mobs_app.world.write::<Yaw>().get_mut(e) {
+                    y.0 = loaded.yaw;
+                }
+                if let Some(t) = self.mobs_app.world.write::<MobTicks>().get_mut(e) {
+                    t.fire_ticks = loaded.fire as u32;
+                }
+                restored += 1;
+            }
+            if let Some(key) = parse_entities_region(&name) {
+                self.entities_written.insert(key);
+            }
+        }
+        if restored > 0 {
+            log::info!("实体档回填 {restored} 只 mob");
         }
     }
 
@@ -7201,8 +7416,14 @@ impl GameRuntime {
         gui: Option<&mcv_render::gui::SpriteSheet>,
         show_touch: bool,
         show_hotbar: bool,
-    ) -> Vec<HudQuad> {
+    ) -> mcv_render::sprite2d::HudBatch {
         let mut quads = Vec::new();
+        // #222 批 A 接线（HUD 方块物品图标 → instanced 精灵批）：图标不再
+        // 进 hud quad 流，改由 sprite2d 管线一次 instanced draw；`fence` =
+        // 图标原插入点（快捷栏底/选中框之后），计数文字/耐久条/心/饥饿仍
+        // 画在图标之上——画家序与旧通路逐字节同序。
+        let mut sprites = Vec::new();
+        let mut sprite_fence: u32 = 0;
         let s = mcv_render::gui_scale(height);
         let white = [1.0, 1.0, 1.0, 1.0];
         let sel = self.player.sel_slot % 9;
@@ -7236,6 +7457,9 @@ impl GameRuntime {
                     23.0 * s,
                     white,
                 ));
+                // #222 栅栏：图标画在此处之前收集的 quad 之后、后续（计数/
+                // 耐久/心/饥饿）之前——与旧 push 顺序逐字节同位。
+                sprite_fence = quads.len() as u32;
                 // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
                 // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
                 for (i, stack) in self.hotbar.slots.iter().enumerate() {
@@ -7248,12 +7472,14 @@ impl GameRuntime {
                     // 物同一函数（26.1 Gui.renderSlot 的 Block→方块 tile、
                     // 其余→item sprite 分支）。
                     match item_icon(stack) {
-                        mcv_render::gpu::HandItem::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid as usize].tiles[2],
-                            ix,
-                            iy,
-                            16.0 * s,
-                        )),
+                        mcv_render::gpu::HandItem::Block(bid) => {
+                            sprites.push(mcv_render::sprite2d::SpriteCmd::icon(
+                                mcv_core::BLOCKS[bid as usize].tiles[2],
+                                ix,
+                                iy,
+                                16.0 * s,
+                            ))
+                        }
                         mcv_render::gpu::HandItem::Sprite(name) => {
                             quads.extend(g.sprite_full(name, ix, iy, 16.0 * s, 16.0 * s, white))
                         }
@@ -7565,7 +7791,11 @@ impl GameRuntime {
             self.time_ticks
         );
         quads.extend(text::text_quads(&line, 8.0, 8.0, 1.5, [1.0, 1.0, 1.0, 0.9]));
-        quads
+        mcv_render::sprite2d::HudBatch {
+            quads,
+            sprites,
+            sprite_fence,
+        }
     }
 }
 
@@ -10378,6 +10608,8 @@ mod tests {
     mod spawn_tests;
     // 天气存档往返/旧档回退/雨粒子分层测试见 weather_tests.rs（同上路径）。
     mod weather_tests;
+    // 实体落盘专测（#222 批 A）：EntitiesTag 写侧 + mob 表回填 + 容错。
+    mod entity_tests;
     // ---- 进食整链（26.1 Consumable；板载 #94）----
 
     use mcv_item::ItemStack as ItemSt;

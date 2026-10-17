@@ -19,7 +19,7 @@
 //! 引擎步 1/60 s、原版 tick 1/20 s，计数一律 ×3（`STEPS_PER_TICK` 惯例）。
 
 use glam::Vec3;
-use mcv_ecs::{Entity, World};
+use mcv_ecs::{Entity, Query2, World};
 
 use crate::components::PhysBody;
 use crate::items::{STEPS_PER_TICK, initial_vel, player_pickup_box};
@@ -118,13 +118,15 @@ pub fn xp_orb_physics_system(ctx: &mut mcv_ecs::SysCtx) {
         .expect("xp_orb_physics：DropWorld 快照未注入 Resources");
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
-    let (mut phys, mut orbs) = (world.write::<PhysBody>(), world.write::<XpOrb>());
+    // join 查询（#222 批A）：PhysBody×XpOrb 双写 join——经验球必持物理
+    // 体（表 ⊆），锚=较稀疏的 XpOrb dense 序；环内逐实体独立（无跨实体
+    // 读写、无共享随机流），迭代序变化不影响终态。
+    let mut orbs_phys = Query2::new(world.write::<PhysBody>(), world.write::<XpOrb>());
     let input = mcv_game::StepInput {
         gravity_scale: XP_ORB_GRAVITY_SCALE,
         ..mcv_game::StepInput::default()
     };
-    phys.for_each(|e, body| {
-        let Some(o) = orbs.get_mut(e) else { return };
+    orbs_phys.for_each_mut(|e, body, o| {
         let mut eng = body.body();
         let impact = eng.vel.y;
         mcv_game::step_entity(&VoxelView(dw), &mut eng, XP_ORB_HALF, &input);

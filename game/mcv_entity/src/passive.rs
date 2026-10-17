@@ -19,7 +19,7 @@
 
 use crate::defs::{MobId, MobKind, speed_m_s};
 use glam::Vec3;
-use mcv_ecs::{Entity, World};
+use mcv_ecs::{Entity, Query3, World};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -276,31 +276,35 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
     let world_map = &svc.chunks;
     let view = ChunkWorld { chunks: world_map };
     // 确定性随机源：本轮所有实体共享同一 xorshift 流（顺序固定——
-    // dense 表迭代次序稳定；单怪测试无歧义，多怪时序仍确定）。
+    // Query3 join 锚=最稀疏表（WanderState）dense 迭代序确定；单怪测试
+    // 无歧义，多怪时序仍确定）。
     let mut rng_state = svc.seed;
     if rng_state == 0 {
         rng_state = 0x9E37_79B9_7F4A_7C15;
     }
 
-    let (mut phys, kinds, mut wanders, mut anims, mut yaws, mut intents, mut ticks, healths) = (
+    // join 查询（#222 批A）：PhysBody×WanderState×MobKind 三元 join——
+    // 缺任一组件的实体（空壳槽位/敌对 Brain 路线）在构造期被 join 跳过，
+    // 循环体内不再手写双 get-or-return 门。2W1R：物理与游荡账本可变，
+    // 种类定义只读。
+    let mut passives = Query3::new(
         world.write::<crate::PhysBody>(),
-        world.read::<crate::MobKind>(),
         world.write::<WanderState>(),
+        world.read::<crate::MobKind>(),
+    );
+
+    // 其余每步账本表（AI/物理/动画/清账）保持独立视图——与查询手内三表
+    // 互不相同，RefCell 互斥不冲突。
+    let (mut anims, mut yaws, mut intents, mut ticks, healths) = (
         world.write::<AnimState>(),
         world.write::<crate::Yaw>(),
         world.write::<crate::MobIntent>(),
         world.write::<crate::MobTicks>(),
-        world.write::<crate::Health>(),
+        world.read::<crate::Health>(),
     );
 
-    phys.for_each(|e, body| {
-        let Some(wander) = wanders.get_mut(e) else {
-            return; // 非被动怪（敌对 Brain 路径），跳过
-        };
-        let Some(&crate::MobKind(id)) = kinds.get(e) else {
-            return;
-        };
-        let def = *id.def();
+    passives.for_each_2w1r(|e, body, wander, kind| {
+        let def = *kind.0.def();
         let speed = speed_m_s(def.speed_attr);
         let pos = body.pos;
 
@@ -374,7 +378,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             let wish = match wander.mode {
                 PassiveMode::Wander | PassiveMode::Panic => {
                     let mult = if wander.mode == PassiveMode::Panic {
-                        panic_speed_mult(id)
+                        panic_speed_mult(kind.0)
                     } else {
                         1.0
                     };

@@ -165,6 +165,8 @@ fn render(
         particles: particles.map(|p| (p, 0.0_f32)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
