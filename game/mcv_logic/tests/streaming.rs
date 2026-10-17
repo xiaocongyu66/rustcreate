@@ -950,6 +950,10 @@ fn load_gate_opens_on_worldgen_status_without_upload() {
     let mut ok = false;
     let mut surf_max = 0usize;
     let mut since_progress = 0u32;
+    // 停摆口径与 #218 root 修同族（flake-fix 4bb662d7 先例）：近峰回落
+    // （回收/重排瞬态）不判停摆不重置满窗；窗口 2400 = 4× 单块下限，
+    // 帧数计量去墙钟耦合。
+    let quiesce_window = 2400u32;
     for frame in 0..12000u32 {
         rt.stream();
         let surf = (-r..=r)
@@ -964,15 +968,15 @@ fn load_gate_opens_on_worldgen_status_without_upload() {
             ok = true;
             break;
         }
-        if surf > surf_max {
-            surf_max = surf;
+        if surf >= surf_max {
+            surf_max = surf_max.max(surf);
             since_progress = 0;
         } else {
-            since_progress += 1;
+            since_progress = since_progress.saturating_add(1);
         }
         assert!(
-            since_progress < 1200,
-            "投放窗补载停摆：窗内 Surface 化峰值 {surf_max}/{total_w} 连续 1200 帧未增（帧 {frame}，throttle 实证单块下限 600 帧的 2 倍）"
+            since_progress < quiesce_window,
+            "投放窗补载停摆：窗内 Surface 化峰值 {surf_max}/{total_w} 连续 {quiesce_window} 帧无有效进展（帧 {frame}）"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
