@@ -173,6 +173,7 @@ impl Mixer {
 /// - 家庭路径 = `voice.gain × master × path(落轨→根)`(总线级联);
 /// - send 贡献 = 家庭路径 × `send 增益 × path(目标轨)`(后置 aux:随目标
 ///   轨增益走,根 master 不二次乘)。
+///
 /// 全默认(各轨 1.0 / 无 send)时贡献表只有一项且等于 `voice.gain × master`
 /// ——与无总线的历史实现**逐位相同**;`buses` 为 None 时连那次 ×1.0 也没有。
 fn mix_voice(v: &mut Voice, out: &mut [f32], master: f32, buses: Option<&BusMix>) {

@@ -111,8 +111,8 @@ impl BusId {
     }
 }
 
-/// 总线图共享状态:根增益(既有 master 原子的同一 Arc)+ 三轨增益/低通位
-/// + 出向 send 矩阵。游戏线程写、回调线程读,全原子位镜像(Relaxed:
+/// 总线图共享状态:根增益(既有 master 原子的同一 Arc)与三轨增益/低通位
+/// 及出向 send 矩阵。游戏线程写、回调线程读,全原子位镜像(Relaxed:
 /// 配置是"最终可见即可"的人耳级量,不需要 Acquire/Release 排序)。
 pub struct BusMix {
     /// 根 master 增益 f32 位镜像。与 `AudioManager` 既有 master 原子是
