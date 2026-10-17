@@ -81,7 +81,8 @@ impl SpriteCmd {
     }
 }
 
-/// GPU 实例数据（48 B；tint 偏移 32 = 16B 对齐，pad 8B 填充）。
+/// GPU 实例数据（48 B：pos/size/anchor @0/8/16，rot @24、layer @28、
+/// tint @32（16B 对齐自然落位，无 pad））。
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 #[repr(C)]
 pub struct SpriteInstance {
@@ -90,7 +91,6 @@ pub struct SpriteInstance {
     anchor: [f32; 2],
     rot: f32,
     layer: u32,
-    _pad: [f32; 2],
     tint: [f32; 4],
 }
 
@@ -102,7 +102,6 @@ impl From<&SpriteCmd> for SpriteInstance {
             anchor: c.anchor.0,
             rot: c.rot,
             layer: c.layer,
-            _pad: [0.0; 2],
             tint: c.tint,
         }
     }
@@ -293,11 +292,12 @@ impl SpriteBatch {
         });
 
         // 静态单位 quad（TL,TR,BR,BL + UV）+ 顺序索引（quad 展开同 flatten_hud）。
-        let quads = [
-            ([-0.5f32, -0.5], [0.0f32, 0.0]),
-            ([0.5, -0.5], [1.0, 0.0]),
-            ([0.5, 0.5], [1.0, 1.0]),
-            ([-0.5, 0.5], [0.0, 1.0]),
+        // 打包成 f32x4（corner.xy + uv.xy，stride 16B）——Pod 数组，可 cast_slice。
+        let quads: [[f32; 4]; 4] = [
+            [-0.5, -0.5, 0.0, 0.0],
+            [0.5, -0.5, 1.0, 0.0],
+            [0.5, 0.5, 1.0, 1.0],
+            [-0.5, 0.5, 0.0, 1.0],
         ];
         let quad_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("sprite2d-quad"),
@@ -369,11 +369,11 @@ impl SpriteBatch {
 
     /// 收集 → 合批 → 绘制。组数 = key 游程数（HUD 图标单 key ⇒ 一次 draw）。
     /// 实例数据逐帧 `queue.write_buffer`（未映射 buffer，GLES 合规）。
+    /// screen uniform 由调用方写入（与 hud 复用同一 16B buffer，见 gpu.rs）。
     pub fn draw(
         &mut self,
         pass: &mut wgpu::RenderPass<'_>,
         bind: &wgpu::BindGroup,
-        screen: [f32; 4],
         queue: &wgpu::Queue,
         cmds: &[SpriteCmd],
     ) {

@@ -3669,13 +3669,8 @@ impl Renderer {
             };
             draw_hud_range(&mut pass, 0, fence);
             if !scene.sprites.is_empty() {
-                self.sprites.draw(
-                    &mut pass,
-                    &self.sprite_bind,
-                    [scene.width, scene.height, scene.time, 0.0],
-                    &self.queue,
-                    scene.sprites,
-                );
+                self.sprites
+                    .draw(&mut pass, &self.sprite_bind, &self.queue, scene.sprites);
             }
             draw_hud_range(&mut pass, fence, hud.len());
         }
