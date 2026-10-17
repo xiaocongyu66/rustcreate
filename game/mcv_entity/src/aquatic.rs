@@ -259,7 +259,7 @@ pub mod axolotl {
     /// useRareVariant（:308-310）——繁殖路径（本引擎未接繁殖，函数供
     /// 对拍与未来接线）。
     pub fn use_rare(rng: &mut impl FnMut() -> u32) -> bool {
-        rng() % super::AXOLOTL_RARE_ONE_IN == 0
+        rng().is_multiple_of(super::AXOLOTL_RARE_ONE_IN)
     }
 }
 
@@ -393,6 +393,7 @@ fn rand01(state: &mut u64) -> f32 {
 /// （:487-489）逐步照抄：
 /// - 入水：air 重置上限（Axolotl 覆写 isInWaterOrRain——雨面未接，注记）；
 /// - 离水：air −1/t；`air <= −20` → air 清零并结算一次 [`DRYOUT_DMG`]。
+///
 /// 返回 Some(伤害) 表示本 tick 需扣血（调用方走 Health/受击面）。
 pub fn dry_out_step(air: &mut i32, max_air: i32, in_water: bool) -> Option<f32> {
     if in_water {

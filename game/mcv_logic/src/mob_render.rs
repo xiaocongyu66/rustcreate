@@ -5,7 +5,7 @@
 //!    （视距裁剪 = 渲染距离），结果以 `Some(&instances[..])` 喂
 //!    `scene.mobs`；第三参 `partial` = 60 Hz 步间残差（partialTick），
 //!    怪渲染取 `pos_old→pos` 插值；
-//! 2. 贴图上传由 `Renderer::new` 内建（assets 根存在即自动加载 9 层数组）；
+//! 2. 贴图上传由 `Renderer::new` 内建（assets 根存在即自动加载 MOB_TEX_LAYERS 层数组，M7c 起 30 层含水生）；
 //! 3. 动画面：全部怪经 `spawn_mob` 持有 `AnimState`（行走摆动账本，
 //!    `mob_ai_system` 每 60 Hz 物理步推进 `advance_walk_anim`）——
 //!    此前仅测试侧 passive 路线持有，游戏内恒零相位（僵尸腿不摆根因）。

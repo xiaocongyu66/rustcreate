@@ -1805,7 +1805,7 @@ pub fn update_wing_animation(flap: f32, flap_speed: f32, on_ground: bool) -> (f3
     (f, fs)
 }
 
-/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64x9 RGBA）。
+/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64 ×MOB_TEX_LAYERS RGBA）。
 /// 任一文件缺失/解码失败/尺寸不符 → None（上层按缺素材降级不渲染；
 /// 绝不用程序化占位顶替原版贴图）。M8c：读取经 AssetManager（缺文件
 /// 硬错误显式 log，不再静默 `.ok()?` 吞掉）。
@@ -1890,12 +1890,13 @@ mod tests {
         let m0 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
         pose.swim_phase = (std::f32::consts::PI / 2.0) / 0.6; // sin 峰值
         let m1 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
-        assert_ne!(m0[1], m1[1], "尾摆旋转（y 基向量随 yRot）");
+        // 旋转绕引擎 Y：x/z 基向量进门、y 基向量恒 id（E0277/E0716 面另修）。
+        assert_ne!(m0[0], m1[0], "尾摆旋转（x 基向量随 yRot）");
         assert_eq!(&m0[12..15], &m1[12..15], "尾枢轴平移不变");
         // 离水（in_water=false）幅值 1.5 倍 → 峰值偏移更大。
         pose.in_water = false;
         let m2 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
-        assert_ne!(m1[1], m2[1], "离水幅值 ×1.5（isInWater 分支）");
+        assert_ne!(m1[0], m2[0], "离水幅值 ×1.5（isInWater 分支）");
         // 鲑鱼缩放：枢轴平移随 scale 缩（MeshTransformer.scaling 等价面）。
         let mut small = MobPose::default();
         small.scale = 0.5;

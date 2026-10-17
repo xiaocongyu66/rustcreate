@@ -187,7 +187,8 @@ fn water_refills_air_ledger() {
     );
     for _ in 0..400 {
         step(&mut app_w);
-        let w = app_w.world.read::<WaterState>().get(e_w).unwrap();
+        let waters = app_w.world.read::<WaterState>();
+        let w = waters.get(e_w).unwrap();
         assert!(w.in_water, "浸没态判定");
         assert_eq!(w.air, 300, "入水即回满（handleAirSupply else 分支）");
     }
@@ -272,8 +273,10 @@ fn fish_flops_when_stranded() {
     let mut hops = 0;
     for _ in 0..60 {
         step(&mut app);
-        let b = app.world.read::<mcv_entity::PhysBody>().get(e).unwrap();
-        let i = app.world.read::<mcv_entity::MobIntent>().get(e).unwrap();
+        let bodies = app.world.read::<mcv_entity::PhysBody>();
+        let intents = app.world.read::<mcv_entity::MobIntent>();
+        let b = bodies.get(e).unwrap();
+        let i = intents.get(e).unwrap();
         if i.jump {
             hops += 1;
         }
