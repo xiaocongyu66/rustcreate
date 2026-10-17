@@ -412,6 +412,7 @@ mod gpu {
                     assert!(
                         (got as i32 - expect[ch] as i32).abs() <= 1,
                         "pbr probe px({x},{y})ch{ch}: gpu={} cpu={}",
+                        got,
                         expect[ch]
                     );
                 }
