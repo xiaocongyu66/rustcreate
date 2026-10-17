@@ -276,12 +276,13 @@ pub fn linear_to_srgb_u8(x: f32) -> u8 {
 
 /// screen_space_dither 对照（tonemapping.wesl:305-309；WGSL `fract` =
 /// x − floor(x)，此处同式，d 为负时与 Rust `%` 余元语义不同——必须用
-/// floor 形式，frag_coord 非负下两式等价）。
+/// floor 形式，frag_coord 非负下两式等价；尾段 (fract−0.5)/255 缩放与
+/// bevy 逐值一致）。
 pub fn screen_space_dither(frag_coord: [f32; 2]) -> [f32; 3] {
     let d = 171.0 * frag_coord[0] + 231.0 * frag_coord[1];
     [103.0, 71.0, 97.0].map(|m| {
         let f = d / m;
-        f - f.floor()
+        (f - f.floor() - 0.5) / 255.0
     })
 }
 
