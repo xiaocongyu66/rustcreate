@@ -273,7 +273,8 @@ fn fish_flops_when_stranded() {
     );
     let origin = Vec3::new(8.0, 64.0, 8.0);
     let mut hops = 0;
-    for _ in 0..60 {
+    // 跳跃滞空 ≈ 2×8.4/32 s ≈ 32 物理步 ≈ 11 tick → 600 tick ≈ 19±跳。
+    for _ in 0..600 {
         step(&mut app);
         let bodies = app.world.read::<mcv_entity::PhysBody>();
         let intents = app.world.read::<mcv_entity::MobIntent>();
@@ -289,7 +290,7 @@ fn fish_flops_when_stranded() {
             (b.pos - origin).length()
         );
     }
-    assert!(hops > 30, "每 tick 重掷扑腾意图（hops {hops}）");
+    assert!(hops >= 5, "离水扑腾按 jump 通道每次落地前重掷（hops {hops}）");
 }
 
 // ---------------------------------------------------------------------------
