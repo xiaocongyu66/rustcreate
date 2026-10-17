@@ -677,7 +677,9 @@ mod tests {
     /// 只读小世界（未列格 = 空气，WorldView::block 语义）。键用
     /// (x,y,z) 三元组——mcv_core::BlockPos 未 derive Hash（core 不为
     /// logic 的测试面拉派生），tuple 是同语义零依赖键。
-    fn world(pairs: &[(BlockPos, BlockId)]) -> impl Fn(BlockPos) -> BlockId + '_ {
+    /// 拥有权闭包（map move 变换，无输入借用——返回值可超脱 pairs
+    /// 临时存活；E0716 修复，run 38990640360）。
+    fn world(pairs: &[(BlockPos, BlockId)]) -> impl Fn(BlockPos) -> BlockId {
         let map: HashMap<(i32, i32, i32), BlockId> =
             pairs.iter().map(|(p, b)| ((p.x, p.y, p.z), *b)).collect();
         move |p| map.get(&(p.x, p.y, p.z)).copied().unwrap_or(BlockId(0))
