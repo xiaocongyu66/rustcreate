@@ -423,14 +423,35 @@ static SALMON_FIN_L: MobBox = bx([0.0, 0.0, 0.0], [2.0, 0.0, 2.0], [0.0, 0.0]);
 const AXOLOTL_FUDGE: f32 = 0.001;
 static AXOLOTL_BODY: [MobBox; 2] = [
     bx([-4.0, -2.0, -9.0], [8.0, 4.0, 10.0], [0.0, 11.0]),
-    grown(bx([0.0, -3.0, -8.0], [0.0, 5.0, 9.0], [2.0, 17.0]), AXOLOTL_FUDGE),
+    grown(
+        bx([0.0, -3.0, -8.0], [0.0, 5.0, 9.0], [2.0, 17.0]),
+        AXOLOTL_FUDGE,
+    ),
 ];
-static AXOLOTL_HEAD: MobBox = grown(bx([-4.0, -3.0, -5.0], [8.0, 5.0, 5.0], [0.0, 1.0]), AXOLOTL_FUDGE);
-static AXOLOTL_TOP_GILLS: MobBox = grown(bx([-4.0, -3.0, 0.0], [8.0, 3.0, 0.0], [3.0, 37.0]), AXOLOTL_FUDGE);
-static AXOLOTL_LEFT_GILLS: MobBox = grown(bx([-3.0, -5.0, 0.0], [3.0, 7.0, 0.0], [0.0, 40.0]), AXOLOTL_FUDGE);
-static AXOLOTL_RIGHT_GILLS: MobBox = grown(bx([0.0, -5.0, 0.0], [3.0, 7.0, 0.0], [11.0, 40.0]), AXOLOTL_FUDGE);
-static AXOLOTL_LEG_R: MobBox = grown(bx([-2.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]), AXOLOTL_FUDGE);
-static AXOLOTL_LEG_L: MobBox = grown(bx([-1.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]), AXOLOTL_FUDGE);
+static AXOLOTL_HEAD: MobBox = grown(
+    bx([-4.0, -3.0, -5.0], [8.0, 5.0, 5.0], [0.0, 1.0]),
+    AXOLOTL_FUDGE,
+);
+static AXOLOTL_TOP_GILLS: MobBox = grown(
+    bx([-4.0, -3.0, 0.0], [8.0, 3.0, 0.0], [3.0, 37.0]),
+    AXOLOTL_FUDGE,
+);
+static AXOLOTL_LEFT_GILLS: MobBox = grown(
+    bx([-3.0, -5.0, 0.0], [3.0, 7.0, 0.0], [0.0, 40.0]),
+    AXOLOTL_FUDGE,
+);
+static AXOLOTL_RIGHT_GILLS: MobBox = grown(
+    bx([0.0, -5.0, 0.0], [3.0, 7.0, 0.0], [11.0, 40.0]),
+    AXOLOTL_FUDGE,
+);
+static AXOLOTL_LEG_R: MobBox = grown(
+    bx([-2.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]),
+    AXOLOTL_FUDGE,
+);
+static AXOLOTL_LEG_L: MobBox = grown(
+    bx([-1.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]),
+    AXOLOTL_FUDGE,
+);
 static AXOLOTL_TAIL: MobBox = bx([0.0, -3.0, 0.0], [0.0, 5.0, 12.0], [2.0, 19.0]);
 
 // ---- 热带鱼（TropicalFishSmallModel/LargeModel.createBodyLayer，32x32）------
@@ -499,14 +520,18 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
             pivot: [3.5, 20.5, 4.0],
             rot_x: 0.0,
             tex_layer: layer,
-            anim: PartAnim::WalkLeg { shift: std::f32::consts::PI },
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
             boxes: &[AXOLOTL_LEG_L],
         },
         PartDef {
             pivot: [-3.5, 20.5, -3.0],
             rot_x: 0.0,
             tex_layer: layer,
-            anim: PartAnim::WalkLeg { shift: std::f32::consts::PI },
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
             boxes: &[AXOLOTL_LEG_R],
         },
         PartDef {
@@ -520,7 +545,11 @@ const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
             pivot: [0.0, 19.5, 6.0],
             rot_x: 0.0,
             tex_layer: layer,
-            anim: PartAnim::TailSwim { amp: 0.1, dry_scale: 1.0, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.1,
+                dry_scale: 1.0,
+                dry_freq: 1.0,
+            },
             boxes: &[AXOLOTL_TAIL],
         },
     ]
@@ -549,21 +578,33 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
             pivot: [0.0, 22.0, 3.0],
             rot_x: 0.0,
             tex_layer: 16,
-            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.45,
+                dry_scale: 1.5,
+                dry_freq: 1.0,
+            },
             boxes: &[TF_S_TAIL],
         },
         PartDef {
             pivot: [-1.0, 22.5, 0.0],
             rot_x: 0.0,
             tex_layer: 16,
-            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &[TF_S_FIN_R],
         },
         PartDef {
             pivot: [1.0, 22.5, 0.0],
             rot_x: 0.0,
             tex_layer: 16,
-            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: -std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &[TF_S_FIN_L],
         },
         PartDef {
@@ -586,21 +627,33 @@ const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
             pivot: [0.0, 22.0, 3.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.45,
+                dry_scale: 1.5,
+                dry_freq: 1.0,
+            },
             boxes: &TF_S_TAIL_GROWN,
         },
         PartDef {
             pivot: [-1.0, 22.5, 0.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &TF_S_FIN_R_GROWN,
         },
         PartDef {
             pivot: [1.0, 22.5, 0.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: -std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &TF_S_FIN_L_GROWN,
         },
         PartDef {
@@ -628,21 +681,33 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
             pivot: [0.0, 19.0, 3.0],
             rot_x: 0.0,
             tex_layer: 23,
-            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.45,
+                dry_scale: 1.5,
+                dry_freq: 1.0,
+            },
             boxes: &[TF_L_TAIL],
         },
         PartDef {
             pivot: [-1.0, 20.0, 0.0],
             rot_x: 0.0,
             tex_layer: 23,
-            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &[TF_L_FIN_R],
         },
         PartDef {
             pivot: [1.0, 20.0, 0.0],
             rot_x: 0.0,
             tex_layer: 23,
-            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: -std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &[TF_L_FIN_L],
         },
         PartDef {
@@ -671,21 +736,33 @@ const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
             pivot: [0.0, 19.0, 3.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.45,
+                dry_scale: 1.5,
+                dry_freq: 1.0,
+            },
             boxes: &TF_L_TAIL_GROWN,
         },
         PartDef {
             pivot: [-1.0, 20.0, 0.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &TF_L_FIN_R_GROWN,
         },
         PartDef {
             pivot: [1.0, 20.0, 0.0],
             rot_x: 0.0,
             tex_layer: pattern_layer,
-            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: -std::f32::consts::FRAC_PI_4,
+                z: 0.0,
+            },
             boxes: &TF_L_FIN_L_GROWN,
         },
         PartDef {
@@ -1291,21 +1368,33 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             pivot: [-1.0, 23.0, 0.0],
             rot_x: 0.0,
             tex_layer: 9,
-            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: -std::f32::consts::FRAC_PI_4 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: 0.0,
+                z: -std::f32::consts::FRAC_PI_4,
+            },
             boxes: &[COD_FIN_R],
         },
         PartDef {
             pivot: [1.0, 23.0, 0.0],
             rot_x: 0.0,
             tex_layer: 9,
-            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: std::f32::consts::FRAC_PI_4 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: 0.0,
+                z: std::f32::consts::FRAC_PI_4,
+            },
             boxes: &[COD_FIN_L],
         },
         PartDef {
             pivot: [0.0, 22.0, 7.0],
             rot_x: 0.0,
             tex_layer: 9,
-            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            anim: PartAnim::TailSwim {
+                amp: 0.45,
+                dry_scale: 1.5,
+                dry_freq: 1.0,
+            },
             boxes: &[COD_TAIL],
         },
         PartDef {
@@ -1331,14 +1420,22 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             pivot: [0.0, 20.0, 0.8],
             rot_x: 0.0,
             tex_layer: 10,
-            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            anim: PartAnim::TailSwim {
+                amp: 0.25,
+                dry_scale: 1.3,
+                dry_freq: 1.7,
+            },
             boxes: &[SALMON_BODY_BACK],
         },
         PartDef {
             pivot: [0.0, 20.0, 8.8],
             rot_x: 0.0,
             tex_layer: 10,
-            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            anim: PartAnim::TailSwim {
+                amp: 0.25,
+                dry_scale: 1.3,
+                dry_freq: 1.7,
+            },
             boxes: &[SALMON_BACK_FIN],
         },
         PartDef {
@@ -1359,21 +1456,33 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             pivot: [0.0, 15.5, -0.2],
             rot_x: 0.0,
             tex_layer: 10,
-            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            anim: PartAnim::TailSwim {
+                amp: 0.25,
+                dry_scale: 1.3,
+                dry_freq: 1.7,
+            },
             boxes: &[SALMON_TOP_BACK_FIN],
         },
         PartDef {
             pivot: [-1.5, 21.5, -7.2],
             rot_x: 0.0,
             tex_layer: 10,
-            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: -std::f32::consts::FRAC_PI_4 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: 0.0,
+                z: -std::f32::consts::FRAC_PI_4,
+            },
             boxes: &[SALMON_FIN_R],
         },
         PartDef {
             pivot: [1.5, 21.5, -7.2],
             rot_x: 0.0,
             tex_layer: 10,
-            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: std::f32::consts::FRAC_PI_4 },
+            anim: PartAnim::FinStatic {
+                x: 0.0,
+                y: 0.0,
+                z: std::f32::consts::FRAC_PI_4,
+            },
             boxes: &[SALMON_FIN_L],
         },
     ],
@@ -1771,7 +1880,10 @@ mod tests {
         small.scale = 0.5;
         let off_full = mob_model_matrices(MobModelKind::Salmon, &pose)[0].to_cols_array()[12..15];
         let off_half = mob_model_matrices(MobModelKind::Salmon, &small)[0].to_cols_array()[12..15];
-        assert!((off_full[1] / 2.0 - off_half[1]).abs() < 1e-3, "pivot 随缩放");
+        assert!(
+            (off_full[1] / 2.0 - off_half[1]).abs() < 1e-3,
+            "pivot 随缩放"
+        );
         // 美西螈：五变体同几何（部位数 10）。
         for v in [
             MobModelKind::AxolotlLucy,
