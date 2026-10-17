@@ -4317,6 +4317,9 @@ impl GameRuntime {
         // GameRuntime 统一结算成玩家伤害。
         {
             // E0：ECS Fixed 阶段单列（含两次快照 insert + run_stage）。
+            // 凝视锥的玩家视线快照必须**先**取（Camera 读 self 与下方
+            // mobs_app 可变借用不相交域：E0502）。
+            let player_look = self.camera(1.0).dir();
             let ecs_t0 = std::time::Instant::now();
             let mcv_ecs::App {
                 world,
@@ -4337,7 +4340,7 @@ impl GameRuntime {
                 difficulty: self.difficulty.id(),
                 creative: self.mode == GameMode::Creative,
                 // 凝视锥输入：玩家视线方向快照（Camera::dir 同型）。
-                player_look: self.camera(1.0).dir(),
+                player_look,
                 // 实体门输入：模拟票级别视图快照（DistanceManager.java:
                 // 136-138）。Arc 共享读（计数递增，每步整表克隆已消除）。
                 tickets: Arc::clone(&self.tickets),
@@ -8111,13 +8114,15 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                             // 出生点 = 身中点 +0.5（setPos Y(0.5)+0.5），初速
                             // dir·0.1（assignDirectionalMovement 0.1）；步进
                             // 公式/惯性在 fireball 循环（arrow_system）。
+                            // dir 拷出（spawn_with 闭包 'static，不能借 acts）。
+                            let dir = *dir;
                             let src = pos + Vec3::new(0.0, def.half_size[1] + 0.5, 0.0);
                             commands.spawn_with(move |w, fe| {
                                 w.insert(
                                     fe,
                                     MobFireball {
                                         pos: src,
-                                        vel: *dir * mcv_entity::ai::FIREBALL_INITIAL_SPEED,
+                                        vel: dir * mcv_entity::ai::FIREBALL_INITIAL_SPEED,
                                         ttl_ticks: 100,
                                     },
                                 );

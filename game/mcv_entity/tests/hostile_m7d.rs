@@ -198,11 +198,11 @@ fn enderman_stare_activate_after_5_ticks() {
     // 距 20 格被凝视（EnderMan.java:203-211 isBeingStaredBy / :508-509 aggroTime）。
     let p = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 20.0));
     let mut brain = Brain::new();
-    for t in 1..=5 {
+    for t in 1..=4 {
         brain.tick(def, &p, &mut rng);
-        assert!(!brain.has_target, "t{t} 未满 5t 不激怒");
+        assert!(!brain.has_target, "t{t} < 5t 不激怒");
     }
-    brain.tick(def, &p, &mut rng);
+    brain.tick(def, &p, &mut rng); // t5：pending 达 aggroTime=5 → 激怒。
     assert!(brain.has_target, "凝视 5t 确认 → 仇恨（aggroTime=5）");
     assert_eq!(ENDERMAN_STARE_AGGR_TICKS, 5);
 }

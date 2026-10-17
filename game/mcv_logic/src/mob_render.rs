@@ -32,6 +32,8 @@ pub const fn model_kind(id: mcv_entity::MobId) -> Option<MobModelKind> {
         mcv_entity::MobId::BLAZE => Some(MobModelKind::Blaze),
         mcv_entity::MobId::ENDERMAN => Some(MobModelKind::EnderMan),
         mcv_entity::MobId::CREAKING => Some(MobModelKind::Creaking),
+        // MobId 是 tuple(u8)（0..11 为常量命名面）——无名号段无模型。
+        _ => None,
     }
 }
 
