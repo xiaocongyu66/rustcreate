@@ -48,7 +48,7 @@
 
 - **每 chunk 一个 256B uniform 槽**（origins_buf，gpu.rs:3384-3391 连续打包 + 不变式注释 3368-3370）：`frame_bind` 按 slot 动态偏移，shader 侧 `@group(0) @binding(1) chunk.origin`（terrain.wgsl:123/155）。合批把多块重定基进一个 entry（MeshUploader 批次账本，gpu.rs:270-274），但**绑定粒度仍是"条目=一次 set_bind_group+draw"**。
 - 纹理：单一 838 层 `texture_2d_array` 图集（827 贴图 + missing + 裂纹，lib.rs:1-3/47），按设备层数上限拆多数组 + `if` 链选层（terrain.wgsl:124-131 注释，GLES 256 保底）。
-- 玩家/生物：`PlayerUniforms` 832B（gpu.rs:1384-1389），按 256B 槽位 dynamic offset 切分，**每实例一次 write_buffer + 一次 draw_indexed**（gpu.rs:3162-3163/3188-3208）——即 CPU 侧逐实例 uniform 轮询，无 instancing buffer、无 bindless。
+- 玩家/生物：`PlayerUniforms` 832B（gpu.rs:1384-1389），按 256B 槽位 dynamic offset 切分，**每实例一次 write_buffer + 一次 draw_indexed**（gpu.rs:3162-3163/3188-3208）——即 CPU 侧逐实例 uniform 轮询，无 instancing buffer、无 bindless。生物硬上限 `MOB_MAX_INSTANCES = 64`（mob_mesh.rs:96），超出 `take()` 静默丢弃。
 - 水染色：shader 内常数 `WATER_TINT`（terrain.wgsl:113，群系级色变体登记债 :110-112）；群系染色走顶点色（网格器 CPU 预采样，#191）。
 
 ### 1.4 资源生命周期：手写治理面（三件套）
@@ -102,7 +102,8 @@ Core3d/2d sets: Prepass → MainPass → EarlyPostProcess → PostProcess
 
 ### 2.4 Shader imports / pipeline 特化
 
-- Bevy：`#import` 跨文件片段复用（naga_oil 处理器）、`ShaderRef`、shader_defs 编译期开关、`SpecializedRenderPipeline` + 缓存 key（管线按 key 惰性创建并缓存）。
+- Bevy：`#import` 跨文件片段复用，由预处理库 **naga_oil** 处理；同一 `Handle` 的 shader 按**启用的 shader_defs 组合**分别编译并缓存（一份源码 × defs 笛卡尔积各一份编译产物）；shaders 在 `PipelineCache` 排队建管线时才编译（经 `queue_render_pipeline` 或材质特化请求）（[Bevy Rendering Crates 汇总](https://hackmd.io/@bevy/rendering_summary)）。
+- 特化 API：`SpecializedRenderPipeline` / `SpecializedMeshPipeline`（key + mesh 顶点布局 → `RenderPipelineDescriptor`，0.7 起稳定，[SpecializedMeshPipeline docs](https://docs.rs/bevy/latest/bevy/render/render_resource/trait.SpecializedMeshPipeline.html)、[specialized-mesh-pipeline 示例](https://bevy.org/examples/shaders/specialized-mesh-pipeline)）；取用走 `PipelineCache`（首次惰性、命中缓存）（[Custom Render Phase 示例](https://bevy.org/examples/shaders/custom-render-phase)）。
 - 本仓：`atlas_arrays_wgsl` 字符串 replace 是同一问题的手写解（gpu.rs:1513-1557），无 import、无 defs、无缓存 key——**加一个位移/水波变体 = 复制整条 create_render_pipeline**。
 
 ### 2.5 资产系统
@@ -118,7 +119,8 @@ Core3d/2d sets: Prepass → MainPass → EarlyPostProcess → PostProcess
 ### 2.7 可见性 / 排序 / 剔除
 
 - Bevy：PhaseItem bin（opaque 按 pipeline/material key bin、transparent 按距离 sort，PhaseSort set）；0.19 skinned mesh culling 用逐帧关节位（`Mesh::generate_skinned_mesh_bounds`）；`NoCpuCulling` 逃生门；GPU-driven culling 面。
-- 本仓：仅 CPU frustum-AABB（wall-fade a4cbf366 刚修过 AABB y 域世界带化缺陷）；水排序正确但逐帧 CPU 全量 sort；无遮挡剔除、无 LOD、无 DLOD。**生物/玩家为每实例一 draw**（1.3），与 0.19 batch sets 方向差距最大的就是这里（mob 上限 `MOB_MAX_INSTANCES` 撑不住大怪群）。
+- 本仓：仅 CPU frustum-AABB（wall-fade a4cbf366 刚修过 AABB y 域世界带化缺陷）；水排序正确但逐帧 CPU 全量 sort；无遮挡剔除、无 LOD、无 DLOD。**生物/玩家为每实例一 draw**（1.3），与 0.19 batch sets 方向差距最大的就是这里（mob 上限 64 撑不住大怪群）。
+- 0.20-dev 补充命名：GPU-driven 前处理（GPU 侧批处理/变换，CPU 只交"可能可见"集合）；`NoAutomaticBatching`/`NoIndirectDrawing` 逃生门；`TransparentSortingInfo3d`（透明排序成为数据面，[Custom Render Phase 示例](https://bevy.org/examples/shaders/custom-render-phase)、[Tainted Coders](https://taintedcoders.com/bevy/rendering)）。
 
 ### 2.8 多线程渲染准备
 
@@ -167,4 +169,4 @@ Core3d/2d sets: Prepass → MainPass → EarlyPostProcess → PostProcess
 
 ---
 
-*来源：本仓代码行号见各节；Bevy 面：[Bevy 0.19 Release Notes](https://bevy.org/news/bevy-0-19)、[Bevy 0.18 Release Notes](https://bevy.org/news/bevy-0-18)、[Tainted Coders: Rendering](https://taintedcoders.com/bevy/rendering)、[Tainted Coders: Assets](https://taintedcoders.com/bevy/assets)、[bevy::render::renderer docs](https://docs.rs/bevy/latest/bevy/render/renderer/index.html)、[Bevy Engine 官网](https://bevy.org)。*
+*来源：本仓代码行号见各节；Bevy 面：[Bevy 0.19 Release Notes](https://bevy.org/news/bevy-0-19)、[Bevy 0.18 Release Notes](https://bevy.org/news/bevy-0-18)、[Tainted Coders: Rendering](https://taintedcoders.com/bevy/rendering)、[Tainted Coders: Assets](https://taintedcoders.com/bevy/assets)、[bevy::render::renderer docs](https://docs.rs/bevy/latest/bevy/render/renderer/index.html)、[Bevy Engine 官网](https://bevy.org)、[Bevy's Rendering Crates（HackMD）](https://hackmd.io/@bevy/rendering_summary)、[SpecializedMeshPipeline docs](https://docs.rs/bevy/latest/bevy/render/render_resource/trait.SpecializedMeshPipeline.html)、[Custom Render Phase 示例](https://bevy.org/examples/shaders/custom-render-phase)、[Specialized Mesh Pipeline 示例](https://bevy.org/examples/shaders/specialized-mesh-pipeline)。*
