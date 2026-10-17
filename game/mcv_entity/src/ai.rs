@@ -938,7 +938,9 @@ impl Brain {
             }
             return;
         }
-        if dist < def.follow_range * def.follow_range && p.los {
+        // :213 — `distanceToSqr < 48²`（FollowDistance 平方门；本仓 dist 是
+        // 真距，约掉平方 → dist < 48 = follow_range）。
+        if dist < def.follow_range && p.los {
             // :213-245 — 齐射段：节拍由 attackTime（attack_cd）驱动。
             self.state = MobState::Volley;
             acts.push(AiAction::Look(t));
@@ -956,9 +958,10 @@ impl Brain {
                     if self.volley_step > 1 {
                         let yd = (t.y + def.half_size[1]) - (p.pos.y + def.half_size[1]);
                         let mut dir = Vec3::new(t.x - p.pos.x, yd, t.z - p.pos.z);
-                        // :231-237 — 三角散布：dev = 2.297·d^0.5（distance
-                        // 是平方距，两层开方 → √dist）×0.5。
-                        let sqd = dist.sqrt().sqrt() * 0.5;
+                        // :231-237 — 三角散布：dev = 2.297·√dist ×0.5（原版
+                        // distance 是平方距，两层开方 = √真距；本仓 dist 已
+                        // 是真距，一层 sqrt 对齐）。
+                        let sqd = dist.sqrt() * 0.5;
                         let dev = 2.297 * sqd;
                         dir.x = triangle(dir.x, dev, rng);
                         dir.z = triangle(dir.z, dev, rng);

@@ -92,8 +92,7 @@ pub const MOB_TEX_LAYERS: usize = 14;
 /// ——2D 数组各层必须同尺寸）。
 pub const MOB_TEX_PX: usize = 64;
 /// 每种生物的部位数（下标 = [`MobModelKind`] 序）。
-pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] =
-    [8, 6, 12, 6, 6, 6, 6, 11, 2, 7, 7];
+pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [8, 6, 12, 6, 6, 6, 6, 11, 2, 7, 7];
 /// 离屏/主控一次最多提交的生物实例数（uniform 槽位）。
 pub const MOB_MAX_INSTANCES: usize = 64;
 
@@ -371,12 +370,16 @@ static CREAKING_LEG_R: MobBox = bx([-3.0, -1.5, -1.5], [3.0, 19.0, 3.0], [0.0, 3
 static CREAKING_LEG_R_FOOT: MobBox = bx([-5.0, 17.2, -4.5], [5.0, 0.0, 9.0], [45.0, 46.0]);
 static CREAKING_LEG_R_KNEE: MobBox = bx([-3.0, -4.5, -1.5], [3.0, 3.0, 3.0], [12.0, 34.0]);
 /// 眼层 = 头四盒同位微放大（createEyesLayer retainExactParts("head") 同几何）。
-static CREAKING_EYES_SKULL: MobBox = grown(bx([-3.0, -10.0, -3.0], [6.0, 10.0, 6.0], [0.0, 0.0]), 0.25);
-static CREAKING_EYES_CROWN: MobBox = grown(bx([-3.0, -13.0, -3.0], [6.0, 3.0, 6.0], [28.0, 31.0]), 0.25);
+static CREAKING_EYES_SKULL: MobBox =
+    grown(bx([-3.0, -10.0, -3.0], [6.0, 10.0, 6.0], [0.0, 0.0]), 0.25);
+static CREAKING_EYES_CROWN: MobBox =
+    grown(bx([-3.0, -13.0, -3.0], [6.0, 3.0, 6.0], [28.0, 31.0]), 0.25);
 static CREAKING_EYES_TENDRIL_R: MobBox =
     grown(bx([3.0, -13.0, 0.0], [9.0, 14.0, 0.0], [12.0, 40.0]), 0.25);
-static CREAKING_EYES_TENDRIL_L: MobBox =
-    grown(bx([-12.0, -14.0, 0.0], [9.0, 14.0, 0.0], [34.0, 12.0]), 0.25);
+static CREAKING_EYES_TENDRIL_L: MobBox = grown(
+    bx([-12.0, -14.0, 0.0], [9.0, 14.0, 0.0], [34.0, 12.0]),
+    0.25,
+);
 
 /// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6 / 僵尸 6 / 骷髅 6 /
 /// 苦力怕 6 / 蜘蛛 11，与 [`MOB_PART_COUNTS`] 一致；
@@ -994,7 +997,12 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             rot_x: 0.0,
             tex_layer: 12,
             anim: PartAnim::Head,
-            boxes: &[CREAKING_SKULL, CREAKING_CROWN, CREAKING_TENDRIL_R, CREAKING_TENDRIL_L],
+            boxes: &[
+                CREAKING_SKULL,
+                CREAKING_CROWN,
+                CREAKING_TENDRIL_R,
+                CREAKING_TENDRIL_L,
+            ],
         },
         PartDef {
             pivot: [-4.0, -6.0, 0.0],

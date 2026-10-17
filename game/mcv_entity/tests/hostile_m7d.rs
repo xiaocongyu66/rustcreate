@@ -61,7 +61,10 @@ fn hostile_m7d_stat_table_matches_26_1() {
     assert!((enderman.speed_attr - 0.3).abs() < 1e-6); // :116
     assert!((enderman.attack_damage - 7.0).abs() < 1e-6); // :117
     assert!((enderman.follow_range - 64.0).abs() < 1e-6); // :119
-    assert!((enderman.half_size[1] - 1.45).abs() < 1e-6, "sized(0.6,2.9)/2");
+    assert!(
+        (enderman.half_size[1] - 1.45).abs() < 1e-6,
+        "sized(0.6,2.9)/2"
+    );
     let creaking = MobId::CREAKING.def();
     assert!((creaking.health - 1.0).abs() < 1e-6); // Creaking.java:66
     assert!((creaking.attack_damage - 3.0).abs() < 1e-6); // :67
@@ -88,8 +91,9 @@ fn hostile_m7d_stat_table_matches_26_1() {
 fn blaze_volley_rhythm_charge_burst_cooldown() {
     let def = MobId::BLAZE.def();
     let mut rng = || 121u32; // 121%120≠0 不触发游走
-                             // 距离 8 格（≤48 且 >2 贴身）齐射段。
+    // 距离 8 格（≤48 且 >2 贴身）齐射段。
     let p = percept(Vec3::ZERO, Some(Vec3::new(8.0, 0.0, 0.0)));
+    let mut brain = Brain::new();
     let mut shots = Vec::new();
     let mut charged_at = None;
     let mut uncharged_at = None;
@@ -125,16 +129,6 @@ fn blaze_volley_rhythm_charge_burst_cooldown() {
     assert!((FIREBALL_INERTIA - 0.95).abs() < 1e-6);
     assert!((FIREBALL_DAMAGE - 5.0).abs() < 1e-6); // SmallFireball.java:38-44
     assert_eq!(FIREBALL_FIRE_TICKS, 100); // igniteForSeconds(5)
-}
-
-/// tick 并返回本 tick 动作（测试用薄封装）。
-fn brain_tick_actions(
-    brain: &mut Brain,
-    def: &'static MobDef,
-    p: &Percept,
-    rng: &mut impl FnMut() -> u32,
-) -> Vec<AiAction> {
-    brain.tick(def, p, rng)
 }
 
 /// Blaze 浮空（Blaze.java:113-124 每 100t 换 triangle(0.5, 6.891) 高差 +
@@ -257,7 +251,8 @@ fn enderman_freezes_and_tp_away_when_stared_close() {
     );
     assert!(acts.iter().any(|a| matches!(a, AiAction::Look(..))));
     assert!(
-        acts.iter().any(|a| matches!(a, AiAction::Teleport { away_from: None })),
+        acts.iter()
+            .any(|a| matches!(a, AiAction::Teleport { away_from: None })),
         "dist<4 → 随机瞬移离开"
     );
     assert_eq!(brain.tp_cd, 0, "凝视 tick 清 teleportTime");
@@ -284,7 +279,10 @@ fn enderman_chase_teleport_30t_when_far() {
         _ => None,
     });
     let back = back.expect("30 格 + 30t → teleportTowards 逼近");
-    assert!(back.x.abs() < 1e-5 && (back.z - 30.0).abs() < 1e-5, "away_from = 玩家位 {back:?}");
+    assert!(
+        back.x.abs() < 1e-5 && (back.z - 30.0).abs() < 1e-5,
+        "away_from = 玩家位 {back:?}"
+    );
     assert_eq!(brain.tp_cd, 0, "发请求即清 teleportTime");
     // tp_cd 未到点 → 不发请求。
     let mut brain = Brain::new();
@@ -335,12 +333,15 @@ fn enderman_daylight_escape_at_600_held() {
     day.br = 1.0;
     brain.target_held = 599;
     let acts = brain.tick(def, &day, &mut rng);
-    assert!(!acts.iter().any(|a| matches!(a, AiAction::Teleport { .. })),
-        "targetChangeTime<600 不逃离");
+    assert!(
+        !acts.iter().any(|a| matches!(a, AiAction::Teleport { .. })),
+        "targetChangeTime<600 不逃离"
+    );
     brain.target_held = 600;
     let acts = brain.tick(def, &day, &mut rng);
     assert!(
-        acts.iter().any(|a| matches!(a, AiAction::Teleport { away_from: None })),
+        acts.iter()
+            .any(|a| matches!(a, AiAction::Teleport { away_from: None })),
         "白天高原 600t → teleport 逃离（EnderMan.java:245-251）"
     );
     assert!(!brain.has_target, "逃离 = 丢目标");
@@ -433,7 +434,12 @@ fn looking_at_cone_math() {
     let dir = (Vec3::new(0.0, 0.845, -10.0)).normalize(); // 直指
     assert!(looking_at(dir, eye, mob, 0.845, true, 0.025, true));
     // 视线偏 30°（dot≈0.866）< 阈值 1−0.025/d → 不凝视。
-    let off = Vec3::new(10.0_f32.to_radians().sin(), 0.0, -10.0_f32.to_radians().cos()).normalize();
+    let off = Vec3::new(
+        10.0_f32.to_radians().sin(),
+        0.0,
+        -10.0_f32.to_radians().cos(),
+    )
+    .normalize();
     assert!(!looking_at(off, eye, mob, 0.845, true, 0.025, true));
     // 嘎吱怪 cone 0.5 不衰减：dot 0.866 > 1−0.5 = 0.5 → 凝视。
     assert!(looking_at(off, eye, mob, 0.845, true, 0.5, false));
@@ -465,16 +471,34 @@ impl TeleportGround for TpWorld {
 
 #[test]
 fn teleport_landing_finds_support_and_clearance() {
-    let world = TpWorld { floor: 64, support_liquid: false, above_gap: None };
-    let land = try_teleport(&world, Vec3::new(3.4, 70.0, 5.6), 2.9)
-        .expect("实心面上方 3 净空 → 可落");
-    assert!((land.x - 3.5).abs() < 1e-4 && (land.z - 5.5).abs() < 1e-4, "方块底心 {land:?}");
-    assert!((land.y - 64.0).abs() < 1e-5, "支撑上方一格 y=64，得 {land:?}");
+    let world = TpWorld {
+        floor: 64,
+        support_liquid: false,
+        above_gap: None,
+    };
+    let land =
+        try_teleport(&world, Vec3::new(3.4, 70.0, 5.6), 2.9).expect("实心面上方 3 净空 → 可落");
+    assert!(
+        (land.x - 3.5).abs() < 1e-4 && (land.z - 5.5).abs() < 1e-4,
+        "方块底心 {land:?}"
+    );
+    assert!(
+        (land.y - 64.0).abs() < 1e-5,
+        "支撑上方一格 y=64，得 {land:?}"
+    );
     // 顶部封 1 格（64 或 65 实心）→ 卡身拒。
-    let capped = TpWorld { floor: 64, support_liquid: false, above_gap: Some(65) };
+    let capped = TpWorld {
+        floor: 64,
+        support_liquid: false,
+        above_gap: Some(65),
+    };
     assert!(try_teleport(&capped, Vec3::new(3.4, 70.0, 5.6), 2.9).is_none());
     // 支撑面是水（isWet）→ 拒（EnderMan.teleport:285-287）。
-    let wet = TpWorld { floor: 64, support_liquid: true, above_gap: None };
+    let wet = TpWorld {
+        floor: 64,
+        support_liquid: true,
+        above_gap: None,
+    };
     assert!(try_teleport(&wet, Vec3::new(3.4, 70.0, 5.6), 2.9).is_none());
     // 无支撑（虚空柱直落到底界）→ None。
     let void = VoidWorld;
@@ -544,7 +568,10 @@ fn m7d_loot_matches_vanilla_tables() {
     for seed in 0..300u64 {
         let mut rng = lcg(seed + 17);
         let no_kill = death_drops(MobKind::Blaze, false, pos, &mut rng);
-        assert!(no_kill.is_empty(), "非玩家击杀不掉烈焰棒（killed_by_player）");
+        assert!(
+            no_kill.is_empty(),
+            "非玩家击杀不掉烈焰棒（killed_by_player）"
+        );
         let mut rng = lcg(seed + 17);
         let z = death_drops(MobKind::Blaze, true, pos, &mut rng);
         assert!(z.len() <= 1);

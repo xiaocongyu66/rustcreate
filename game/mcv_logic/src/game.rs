@@ -414,7 +414,8 @@ impl TeleportGround for WorldView<'_> {
     }
 }
 
-impl VoxelAccess for WorldView<'_> {    /// 未加载 / 体素未就位（Empty）→ **空气**，与 26.1 一致：越界列
+impl VoxelAccess for WorldView<'_> {
+    /// 未加载 / 体素未就位（Empty）→ **空气**，与 26.1 一致：越界列
     /// `Level.getBlockState` 返回 VOID_AIR（Level.java:361-363），从无
     /// 「未加载=实心石」代理。旧石安全垫是真机「隐形墙」（撞上看不见
     /// 的实心边界）与「看得见却穿透」错位（石面高度≠地形）的共同根因。
@@ -4388,11 +4389,8 @@ impl GameRuntime {
         }
         // 小火球命中（M7d）：5.0 伤 + 点燃 5s（SmallFireball.java:38-44；
         // 走 hurt_player+fire_ticks.max——lavaIgnite 同款只增不减门 :634-640）。
-        let fireballs: Vec<MobFireballHit> = self
-            .mobs_app
-            .events
-            .channel::<MobFireballHit>()
-            .take();
+        let fireballs: Vec<MobFireballHit> =
+            self.mobs_app.events.channel::<MobFireballHit>().take();
         for fb in fireballs {
             self.hurt_player(fb.damage.max(1.0), Some(fb.src));
             self.fire_ticks = self.fire_ticks.max(fb.fire_ticks as i32);
@@ -4402,10 +4400,7 @@ impl GameRuntime {
         // 编辑路径（MESH/SAVE/重光/流体触发面一致）。
         let edits: Vec<MobBlockEdit> = self.mobs_app.events.channel::<MobBlockEdit>().take();
         for edit in edits {
-            let raw = edit
-                .set
-                .map(BlockId)
-                .unwrap_or(BlockId(0)); // None = 破坏 → 空气
+            let raw = edit.set.map(BlockId).unwrap_or(BlockId(0)); // None = 破坏 → 空气
             if self.write_block_tracked(edit.pos, raw) {
                 self.update_fluid_around(edit.pos);
             }
@@ -8378,8 +8373,8 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
         }
         // AbstractHurtingProjectile 助推步（先加速后限流）：
         let dirn = fb.vel.normalize_or_zero();
-        fb.vel = (fb.vel + dirn * mcv_entity::ai::FIREBALL_ACCEL)
-            * mcv_entity::ai::FIREBALL_INERTIA;
+        fb.vel =
+            (fb.vel + dirn * mcv_entity::ai::FIREBALL_ACCEL) * mcv_entity::ai::FIREBALL_INERTIA;
         let mut dead = false;
         // 子步防隧穿（稳态 1.9 > 1 格，按 0.25 格/步 上限切）。
         let steps = ((fb.vel.length() / 0.25).ceil() as u32).clamp(1, 16);
