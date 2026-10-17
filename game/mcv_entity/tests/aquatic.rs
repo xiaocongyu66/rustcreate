@@ -81,6 +81,9 @@ fn harness(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec3, seed: u64
         player_pos: player,
         on_tick: true,
         seed,
+        // 单区块测试世界：模拟环 = 该区块全量（生产面由 GameRuntime 逐 chunk
+        // is_entity_ticking 快照）。
+        sim_cells: Arc::new([ChunkPos::new(0, 0)].into_iter().collect()),
     });
     app
 }

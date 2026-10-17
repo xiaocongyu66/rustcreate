@@ -318,7 +318,8 @@ pub struct AquaticMode {
 
 // ---- 宿主快照资源 -----------------------------------------------------------
 
-/// 水生怪系统的宿主快照（同 [`crate::passive::PassiveServices`] 的耦合面）。
+/// 水生怪系统的宿主快照（同 [`crate::passive::PassiveServices`] 的耦合面；
+/// ticket 表在 mcv_logic 域内，跨 crate 用模拟环格集快照解耦）。
 pub struct AquaticServices {
     pub chunks: Arc<HashMap<ChunkPos, Arc<ChunkHandle>>>,
     pub player_pos: Vec3,
@@ -326,6 +327,10 @@ pub struct AquaticServices {
     pub on_tick: bool,
     /// xorshift64* 状态；宿主给初值，系统每步推进。
     pub seed: u64,
+    /// 模拟环格集（PLAYER_SIMULATION 级别视图 ≤ ENTITY_TICKING 的 chunk
+    /// 集，ServerLevel 实体门 ServerLevel.java:418-419 等价面）——环外
+    /// 实体冻结（拍 pos_old 后跳过 AI/物理，渲染插值不回退）。
+    pub sim_cells: Arc<std::collections::HashSet<ChunkPos>>,
 }
 
 /// 单区块只读视图（与 passive.rs `ChunkWorld` 同语义：未加载 = 石头保安全）。
@@ -506,6 +511,16 @@ pub fn aquatic_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         let Some(mode) = modes.get_mut(e) else {
             return; // 非水生怪（Brain / passive 路径），跳过
         };
+        // 实体门 1（模拟环）：环外冻结——只拍 pos_old（渲染插值不回退），
+        // AI/物理/消散全跳（消散由 mob_ai_system 环外 checkDespawn 面接管）。
+        let own = ChunkPos::new(
+            (body.pos.x / 16.0).floor() as i32,
+            (body.pos.z / 16.0).floor() as i32,
+        );
+        if !svc.sim_cells.contains(&own) {
+            body.pos_old = body.pos;
+            return;
+        }
         let Some(&crate::MobKind(id)) = kinds.get(e) else {
             return;
         };

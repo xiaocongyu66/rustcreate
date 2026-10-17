@@ -4342,12 +4342,29 @@ impl GameRuntime {
                 player_pos: self.player.pos,
             });
             // 水生系统同快照（AquaticServices——确定性随机源与 passive 同
-            // 约定：种子取 game_ticks，单怪/多怪全程可复现）。
+            // 约定：种子取 game_ticks，单怪/多怪全程可复现）。模拟环格集 =
+            // PLAYER_SIMULATION 级别视图 ≤ ENTITY_TICKING 的 ±8 chunk 环
+            // （ticket::is_entity_ticking 的集化快照，mcv_entity 不反向依赖
+            // mcv_logic 的 TicketTable）。
+            let mut sim_cells = HashSet::new();
+            let cx = (self.player.pos.x / 16.0).floor() as i32;
+            let cz = (self.player.pos.z / 16.0).floor() as i32;
+            for dx in -spawner::SPAWN_RANGE_CHUNKS..=spawner::SPAWN_RANGE_CHUNKS {
+                for dz in -spawner::SPAWN_RANGE_CHUNKS..=spawner::SPAWN_RANGE_CHUNKS {
+                    let cp = ChunkPos::new(cx + dx, cz + dz);
+                    if ticket::is_entity_ticking(
+                        self.tickets.level_of_type(TicketType::PlayerSimulation, cp) as i32,
+                    ) {
+                        sim_cells.insert(cp);
+                    }
+                }
+            }
             resources.insert(AquaticServices {
                 chunks: Arc::clone(&self.chunks),
                 player_pos: self.player.pos,
                 on_tick: self.on_tick,
                 seed: self.game_ticks.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+                sim_cells: Arc::new(sim_cells),
             });
             let mut ctx = mcv_ecs::SysCtx {
                 world,
@@ -5813,9 +5830,9 @@ impl GameRuntime {
                                 // 螈 lush caves 4..6 → 6 上界）。
                                 want = 3 + (rng() as usize) % 6;
                                 want = want.min(match kind.unwrap() {
-                                    MobId::SALMON => mcv_entity::aquatic::SALMON_SCHOOL,
+                                    MobId::SALMON => mcv_entity::aquatic::SALMON_SCHOOL as usize,
                                     MobId::AXOLOTL => 6,
-                                    _ => mcv_entity::aquatic::FISH_CLUSTER,
+                                    _ => mcv_entity::aquatic::FISH_CLUSTER as usize,
                                 });
                             }
                             let wk = kind.unwrap();

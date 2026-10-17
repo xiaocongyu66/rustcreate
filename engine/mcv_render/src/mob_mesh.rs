@@ -1899,8 +1899,8 @@ mod tests {
         // 鲑鱼缩放：枢轴平移随 scale 缩（MeshTransformer.scaling 等价面）。
         let mut small = MobPose::default();
         small.scale = 0.5;
-        let off_full = mob_model_matrices(MobModelKind::Salmon, &pose)[0].to_cols_array()[12..15];
-        let off_half = mob_model_matrices(MobModelKind::Salmon, &small)[0].to_cols_array()[12..15];
+        let off_full = &mob_model_matrices(MobModelKind::Salmon, &pose)[0].to_cols_array()[12..15];
+        let off_half = &mob_model_matrices(MobModelKind::Salmon, &small)[0].to_cols_array()[12..15];
         assert!(
             (off_full[1] / 2.0 - off_half[1]).abs() < 1e-3,
             "pivot 随缩放"
