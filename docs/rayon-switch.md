@@ -50,16 +50,23 @@ std::thread 刻意不入池，game.rs:1350 注释仍准确）。render 快照通
 
 口径：**串行直呼 vs 生产池装配**（同一进程同环境双数字；E0 分段计时 #155
 的 app 层 1Hz 日志仍是真机口径，本节为 CI 侧可比锚）。
-环境：GitHub Actions ubuntu-24.04（run ID 见终报），debug 构建
-（worldgen 挂 dev-O3；mesher 纯 debug）。
+环境：GitHub Actions ubuntu-24.04（4 vCPU，日志 `cpus=4`；配额 workers=3 =
+`clamp(cpu−1,1,255)`），debug 构建（worldgen 挂 dev-O3；mesher 纯 debug）。
 
-- K-RAYON-GEN（vanilla，N=32 块批量）：serial_ms=__ / shared_pool_ms=__
-- K-RAYON-MESH（N=32 块 opaque+water）：serial_ms=__ / shared_pool_ms=__
+- K-RAYON-GEN（vanilla，N=32 块批量）：serial_ms=7018.1 /
+  shared_pool_ms=3498.4（speedup=2.01×）
+- K-RAYON-MESH（N=32 块 opaque+water）：serial_ms=17618.8 /
+  shared_pool_ms=8703.4（speedup=2.02×）
+- 环境/run：run 38995464073（ci @ abc03e42，2026-10-17）——lint ✓ / test ✓ /
+  render-headless ✓ 全绿。
+- 佐证（同 run workspace test job 对照前版基线 main run 38992778108）：
+  memory_budget 单件 90.57s vs 93.86s（持平略快）；test job 总墙钟
+  16m49s vs 15m32s（+7%，含本波新增 3 个测试二进制与探针步）。
 
 > 前账（替换前 TaskPool v2）专项数字未留档（E3/E5 波无 CI 侧探针；本机
 > 禁 cargo 零运行），无法同环境重演——按「纪律语义逐锁等价 + 执行端同为
-> n 线程池」论证等性，以本次 CI 双数字作为 rayon 收口的基准锚，后续波次
-> 直接对 K-RAYON 行对照。
+> n 线程池」论证等性，以本次 CI 双数字（串行 vs rayon 池）作为收口基准
+> 锚，后续波次直接对 K-RAYON 行对照。
 
 ## 5. 回归面（必绿清单）
 
