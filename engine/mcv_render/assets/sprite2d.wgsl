@@ -1,7 +1,7 @@
 // sprite2d：instanced 正交 2D 精灵批次（#222 批 A，bevy_sprite 对等通路）。
 // - 正交像素→NDC 映射与 hud.wgsl vs_hud 逐字同式；
 // - 图块采样走 MANIFEST_LAYERS 方块图集数组（gpu.rs atlas_arrays_wgsl 烘入
-//   @@SPRITE2D_TERRAIN_ARRAYS@@ 占位，与 terrain/hud 同源生成，永不错位）；
+//   SPRITE2D_TERRAIN_ARRAYS 占位行，与 terrain/hud 同源生成，永不错位）；
 // - 半透明混合、a<0.05 discard、输出乘 tint 与 fs_hud 逐字同式 —— 接线面
 //   （HUD 方块物品图标）像素等价；
 // - 本文件为**新增**文件（「新 WGSL 只加不改」红线）；占位行由 gpu.rs 替换，

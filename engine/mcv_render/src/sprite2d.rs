@@ -218,7 +218,7 @@ impl SpriteBatch {
         src: &str,
         array_count: usize,
     ) -> Self {
-        assert!(array_count >= 1 && array_count <= 4, "图集数组 1..=4");
+        assert!((1..=4).contains(&array_count), "图集数组 1..=4");
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("sprite2d"),
             source: wgpu::ShaderSource::Wgsl(src.into()),
