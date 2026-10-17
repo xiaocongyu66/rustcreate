@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use glam::Vec3;
 use mcv_core::{BlockId, BlockPos, ChunkHandle, ChunkPos, Stage};
-use mcv_ecs::{Entity, World};
+use mcv_ecs::{Entity, Query2, World};
 
 use crate::components::PhysBody;
 
@@ -159,7 +159,10 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
         .expect("item_physics：DropWorld 快照未注入 Resources");
     let world: &mcv_ecs::World = ctx.world;
     let commands = &mut *ctx.commands;
-    let (mut phys, mut drops) = (world.write::<PhysBody>(), world.write::<ItemDrop>());
+    // join 查询（#222 批A）：PhysBody×ItemDrop 双写 join——掉落物必持
+    // 物理体（表 ⊆），锚落在较稀疏的 ItemDrop dense 序；环内逐实体独立
+    //（无跨实体读写、无共享随机流），迭代序变化不影响终态。
+    let mut drops_phys = Query2::new(world.write::<PhysBody>(), world.write::<ItemDrop>());
     let view = ChunkVoxels { chunks: &dw.chunks };
     // TODO(审计 M8)：水/岩浆浮力（xz×0.99/0.95、vy<0.06 时 +0.0005 上浮）
     // ——需按位姿查流体方块后置 in_water 分支。
@@ -167,8 +170,7 @@ pub fn item_physics_system(ctx: &mut mcv_ecs::SysCtx) {
         gravity_scale: 0.5,
         ..mcv_game::StepInput::default()
     };
-    phys.for_each(|e, body| {
-        let Some(d) = drops.get_mut(e) else { return };
+    drops_phys.for_each_mut(|e, body, d| {
         let mut eng = body.body();
         let impact = eng.vel.y; // 落地前竖直速度 = 冲击速度
         mcv_game::step_entity(&view, &mut eng, ITEM_HALF, &input);
@@ -222,12 +224,14 @@ pub fn item_pickup_system(ctx: &mut mcv_ecs::SysCtx) {
     let (pmin, pmax) = player_pickup_box(dw.player_pos);
     let world: &mcv_ecs::World = ctx.world;
     let events = &mut *ctx.events;
-    let (phys, drops) = (world.read::<PhysBody>(), world.read::<ItemDrop>());
-    for (e, d) in drops.iter() {
+    // join 查询（#222 批A）：双读 join——掉落物必持物理体（表 ⊆），锚
+    // 落在 ItemDrop dense 序，与旧手写循环（drops.iter + phys.get 缺则跳）
+    // 同序同集，行为全等。
+    let pickup = Query2::new(world.read::<PhysBody>(), world.read::<ItemDrop>());
+    for (e, b, d) in pickup.iter() {
         if d.pickup_delay > 0 {
             continue;
         }
-        let Some(b) = phys.get(e) else { continue };
         // 掉落物 AABB 中心（pos 为脚底）。
         let (cx, cy, cz) = (b.pos.x, b.pos.y + ITEM_HALF[1], b.pos.z);
         let hit = (cx - ITEM_HALF[0] < pmax.x)

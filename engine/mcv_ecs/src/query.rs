@@ -302,8 +302,9 @@ impl<'w, A: Component, B: Component, C: Component> Query3<'w, A, B, C> {
     }
 
     /// 交集只读迭代：`(Entity, &A, &B, &C)`。捕获界同 [`Query2::iter`]。
-    pub fn iter<'s>(&'s self) -> impl Iterator<Item = (Entity, &'s A, &'s B, &'s C)> + use<'s, A, B, C>
-    {
+    pub fn iter<'s>(
+        &'s self,
+    ) -> impl Iterator<Item = (Entity, &'s A, &'s B, &'s C)> + use<'s, A, B, C> {
         self.seq
             .iter()
             .copied()
@@ -409,7 +410,10 @@ mod tests {
         let q = Query2::<Pos, Vel>::new(w.read::<Pos>(), w.read::<Vel>());
         let expected: Vec<_> = hand_join2(&w);
         let got: Vec<(Entity, f32, f32)> = q.iter().map(|(e, p, v)| (e, p.0, v.0)).collect();
-        assert_eq!(got, expected, "Query2 输出必须与手写 join 循环全等（序+值）");
+        assert_eq!(
+            got, expected,
+            "Query2 输出必须与手写 join 循环全等（序+值）"
+        );
         assert_eq!(q.len(), 2); // 0/4 持 P+V（2 已亡）
         assert_eq!(q.ids().len(), q.len());
         // 锚=Vel 表（dense 更短）：交集序 = [es0, es4]。
@@ -549,7 +553,10 @@ mod tests {
         let q = Query3::<Pos, Vel, Kind>::new(w.read::<Pos>(), w.read::<Vel>(), w.read::<Kind>());
         let expected = hand_join3(&w);
         let got: Vec<_> = q.iter().map(|(e, p, v, k)| (e, p.0, v.0, k.0)).collect();
-        assert_eq!(got, expected, "Query3 输出必须与手写 join 循环全等（序+值）");
+        assert_eq!(
+            got, expected,
+            "Query3 输出必须与手写 join 循环全等（序+值）"
+        );
         assert_eq!(q.len(), 1); // 仅 0 号齐三件（2 已亡）
         let (p, v, k) = q.get(es[0]).unwrap();
         assert_eq!((p.0, v.0, k.0), (0.0, 0.0, 0));
