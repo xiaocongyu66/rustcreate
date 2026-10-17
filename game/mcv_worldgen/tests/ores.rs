@@ -80,13 +80,19 @@ fn ore_v7_byte_golden() {
     // 重测，run 38910266568（与 38907640949 同值双证：判据面收敛后
     // 字节稳定；surface_rules 草窗双红转绿、trees_cross_chunk/
     // trees_wiring 树基双红转绿同 run）。
+    // 第五锚（ocean-terrain2 SURF-2 材质栈合流：replay 侧 min_surface
+    // 官方门基（bilerp4 prelim+sd−8，比旧 est−8 锚高 20+ 格）+ Col
+    // 材质栈/getSurfaceDepth 逐列值——带内表层材质按官方链
+    // （SurfaceRuleData.java:249-265）改写而 density/fs 判据面不变
+    // （main CellShell 口径保持），ore 目标判定随带内实块 id 漂移）——
+    // 六值全重测，run 38989966693 实测（本仓漏支收紧后的位型）。
     const WANT: [u64; 6] = [
-        0x2048_EE1C_EB44_A11A,
-        0x7D1C_2D9F_00E8_9359,
-        0xAE72_EC07_0D01_D5CF,
-        0xD30F_3E06_8C7B_2F6A,
-        0xCC00_C3F5_482C_FA49,
-        0xEFCF_FC99_7C7E_01AD,
+        0x1FBC_D9BC_D01F_CB60,
+        0xFF4F_A28A_2ACE_5F00,
+        0x141F_2F40_342F_23AE,
+        0x6B63_3E3F_80C8_4697,
+        0xDF7A_58D6_ABF4_89ED,
+        0xA953_8534_2B04_E636,
     ];
     let mut report = String::new();
     let mut fails = 0;

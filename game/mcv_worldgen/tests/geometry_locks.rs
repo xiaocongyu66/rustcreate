@@ -159,10 +159,20 @@ fn vanilla_surface_material_bands() {
                             let cs = orch.column_state(cx * 16 + x as i32, cz * 16 + z as i32);
                             let sd = orch.surface_depth(cx * 16 + x as i32, cz * 16 + z as i32);
                             let gate = surface + 1 >= SEA_LEVEL - 6 - sd;
+                            // 群系侧（SurfaceRuleData.java 同一路径）：sandBiomes
+                            // /DESERT gate 内 wet_sub=SAND（commonSurfaceAndUnder
+                            // Rules :86）、暖温度段双覆盖恒沙（:262），其余 gate
+                            // 内 biomeUnder 默认 DIRT（:124,253）；gate 外 rule3
+                            // 兜底 gravelOrStoneIfCeiling = GRAVEL（:258-265，
+                            // 暖洋已先行 return 沙顶）。
+                            let wx = cx * 16 + x as i32;
+                            let wz = cz * 16 + z as i32;
+                            let biome = orch.biome_at(wx, wz);
+                            let sand_biome = matches!(biome, wg::Biome::Desert | wg::Biome::Beach);
                             let want = if cs.temperature >= 0.55 {
                                 SAND
                             } else if gate {
-                                DIRT
+                                if sand_biome { SAND } else { DIRT }
                             } else {
                                 GRAVEL
                             };
