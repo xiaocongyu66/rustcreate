@@ -260,9 +260,9 @@ impl Drop for TaskPool {
         // Shared 无池，本就不险，计数观察仍适用）。
         let mut st = self.shared.state.lock().unwrap();
         st.closed = true;
-        // mem::take 需要 Default；PriorityQ 有 Default 而 PoolState 没有——
-        // 用 replace 显式换入空队列。
-        let dropped_q = std::mem::replace(&mut st.queue, PriorityQ::default());
+        // take 可用性：mem::take 只要求被换类型 PriorityQ<T>: Default
+        // （手工实现恒成立），对 PoolState 无要求。
+        let dropped_q = std::mem::take(&mut st.queue);
         drop(dropped_q);
         while st.running > 0 {
             st = self.shared.idle.wait(st).unwrap();
