@@ -73,6 +73,8 @@ fn water_chunk() -> HashMap<ChunkPos, Arc<ChunkHandle>> {
 fn harness(chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec3, seed: u64) -> App {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
+    // 掉落物组件（环境死亡掉落经 spawn_item_drop → ItemDrop 表）。
+    mcv_entity::register_drop_components(&mut app.world);
     register_aquatic_components(&mut app.world);
     app.schedule
         .add(mcv_ecs::Stage::Fixed, "aquatic", aquatic_ai_system);
@@ -155,9 +157,9 @@ fn dry_out_cadence_death_and_drop() {
     }
     assert_eq!(first_hit, Some(320), "首次窒息伤害 = 300 空气 + 20 宽限");
     assert_eq!(
-        app.world.component_count::<mcv_entity::PhysBody>(),
+        app.world.component_count::<mcv_entity::MobKind>(),
         0,
-        "第二跳（340 tick）后 Health≤0 必须 despawn"
+        "第二跳（340 tick）后 Health≤0 必须 despawn（ItemDrop 不持 MobKind）"
     );
     // 环境掉落：恰 1 生鳕鱼（bone_meal 5% 可能件不影响主件）。
     assert_eq!(count_item_drops(&app, "cod"), 1, "cod 环境死亡掉 1 生鳕鱼");

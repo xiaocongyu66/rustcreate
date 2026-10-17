@@ -1783,7 +1783,7 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
         if geo_scale != 1.0 {
             // MeshTransformer.scaling：几何绕 pivot 缩（顶点局域坐标），
             // pivot 距地偏移已在 off 缩放——根缩放的接地等价面。
-            r = r * Mat4::from_scale(Vec3::splat(geo_scale));
+            r *= Mat4::from_scale(Vec3::splat(geo_scale));
         }
         out[p] = Mat4::from_translation(world_piv) * ry * r;
     }
