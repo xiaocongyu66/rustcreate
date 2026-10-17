@@ -97,7 +97,10 @@ fn blaze_volley_rhythm_charge_burst_cooldown() {
     let mut shots = Vec::new();
     let mut charged_at = None;
     let mut uncharged_at = None;
-    for t in 1..=260 {
+    // 窗口取 200：t79 撤充能已内含；t179 起第二循环充能、t239+ 首发在
+    // 窗外——`shots` 断言锁第一循环节拍，不与二循环混叠（260 会截到二循
+    // 环首 发三连，语义仍对但断言需切前缀，取整窗更直读）。
+    for t in 1..=200 {
         for a in brain.tick(def, &p, &mut rng) {
             if let AiAction::ShootFireball { dir } = a {
                 // 散布三角形抖动已并入 dir，归一化后模长必为 1。
@@ -141,6 +144,13 @@ fn blaze_hover_lift_and_fall_drag() {
     let mut p = percept(Vec3::ZERO, Some(Vec3::new(5.0, 30.0, 0.0)));
     p.vel_y = 0.0;
     let mut brain = Brain::new();
+    // t1 垫步：Hover 块在索敌段**前**（Brain::tick 步序 0.5 < 2）——
+    // 首 tick has_target=false → lift=0，自 t2 起才发 (0.3−vel_y)·0.3 泛升。
+    brain.tick(def, &p, &mut rng);
+    assert!(
+        brain.has_target,
+        "t2 起目标已挂（hover 输入依赖索敌先一拍）"
+    );
     for _ in 0..30 {
         let acts = brain.tick(def, &p, &mut rng);
         let Some(AiAction::Hover { lift, fall_drag }) =
@@ -377,7 +387,10 @@ fn creaking_activates_only_when_stared_in_12() {
     brain.tick(def, &p, &mut rng);
     assert!(brain.has_target, "8<12 ∧ stared → activate");
     // 15 格（>12.4）被凝视 → 休眠游走。
+    // 游走门 rng：240 % WANDER_INTERVAL_AVG(120) == 0 → Idle→Wander 触发
+    // （121 落空，Walk 断言失效）；random_point_around(240) 恒定点距 >0.5 → 发 Walk。
     let mut brain = Brain::new();
+    let mut rng = || 240u32;
     let far = creaking_stared(Vec3::ZERO, Vec3::new(15.0, 0.0, 0.0));
     let acts = brain.tick(def, &far, &mut rng);
     assert!(!brain.has_target, "15>12 不激活");
