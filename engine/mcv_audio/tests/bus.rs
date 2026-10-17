@@ -245,6 +245,10 @@ fn send_zero_and_clear_disconnect_the_route() {
 #[test]
 fn send_guards_self_and_root_targets() {
     let buses = BusMix::new(Arc::new(AtomicU32::new(1.0f32.to_bits())));
+    // 合法对照线先行预置（守卫语义=非法被拒、合法存活——此前漏接合法
+    // 线自身，断言却按它已接期望 0.5，测试自相矛盾；run 39052495900/
+    // 39054321447 两度实证）。
+    buses.set_send(BusId::Sfx, BusId::Ambient, 0.5);
     buses.set_send(BusId::Music, BusId::Music, 0.5);
     buses.set_send(BusId::Master, BusId::Ambient, 0.5);
     buses.set_send(BusId::Music, BusId::Master, 0.5);
