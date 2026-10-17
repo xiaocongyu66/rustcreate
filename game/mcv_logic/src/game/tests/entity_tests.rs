@@ -85,15 +85,23 @@ fn mobs_survive_save_reload() {
         .expect("僵尸实体");
     let yaw = rt2.mobs_app.world.read::<Yaw>().get(e).expect("yaw").0;
     assert!((yaw - 1.25).abs() < 1e-4, "弧度朝向随档 {yaw}");
-    // RefMut 是语句级临时——get 的引用必须先落守卫绑定再断言
-    //（E0716：临时值语句末即释放）。
-    let bodies = rt2.mobs_app.world.read::<PhysBody>();
-    let body = bodies.get(e).expect("body");
-    assert!(body.on_ground);
-    assert_eq!(body.vel, Vec3::ZERO, "静止怪 Motion 归零随档");
-    let ticks_guard = rt2.mobs_app.world.read::<MobTicks>();
-    let ticks = ticks_guard.get(e).expect("ticks");
-    assert_eq!(ticks.fire_ticks, 33, "燃烧账随档");
+    // RefMut 是语句级临时、且块后还有 &mut rt2（幂等 load_meta）——守卫
+    // 用块内作用域 + 立即拷值出（躲 E0716 越句引用与 E0502 撞 mutable）。
+    let (on_ground, vel) = {
+        let bodies = rt2.mobs_app.world.read::<PhysBody>();
+        let b = bodies.get(e).expect("body");
+        (b.on_ground, b.vel)
+    };
+    assert!(on_ground);
+    assert_eq!(vel, Vec3::ZERO, "静止怪 Motion 归零随档");
+    let fire_ticks = rt2
+        .mobs_app
+        .world
+        .read::<MobTicks>()
+        .get(e)
+        .expect("ticks")
+        .fire_ticks;
+    assert_eq!(fire_ticks, 33, "燃烧账随档");
     // 幂等：重复 load_meta 不翻倍。
     rt2.load_meta();
     assert_eq!(mob_rows(&rt2).len(), 2, "重复载入不产生副本");
