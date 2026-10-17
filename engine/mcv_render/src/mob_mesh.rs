@@ -1898,8 +1898,10 @@ mod tests {
         let m2 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
         assert_ne!(m1[0], m2[0], "离水幅值 ×1.5（isInWater 分支）");
         // 鲑鱼缩放：枢轴平移随 scale 缩（MeshTransformer.scaling 等价面）。
-        let mut small = MobPose::default();
-        small.scale = 0.5;
+        let small = MobPose {
+            scale: 0.5,
+            ..Default::default()
+        };
         let off_full = &mob_model_matrices(MobModelKind::Salmon, &pose)[0].to_cols_array()[12..15];
         let off_half = &mob_model_matrices(MobModelKind::Salmon, &small)[0].to_cols_array()[12..15];
         assert!(
