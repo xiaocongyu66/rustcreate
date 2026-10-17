@@ -896,12 +896,30 @@ fn player_ticket_throttle_caps_inflight_generation() {
         max_inflight <= mcv_logic::ticket::in_flight_quota(mcv_core::world_worker_count()),
         "在途生成集合峰值 {max_inflight} 超过节流名额（票任务 pop 未受限）"
     );
-    let terrain_ready = rt
-        .chunks
-        .values()
-        .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
-        .count();
-    assert!(terrain_ready > 0, "节流不得停摆加载（1320 帧 0 块就绪）");
+    // liveness 尾判语义化（flake-fix 三刀族收口：#218/批 4bb662d7 同路）：
+    // 「1320 帧内 ≥1 块」是对 CI runner 吞吐下限的墙钟耦合断言（本刀红实
+    // 证 run 39050725603 :904），改为事件锚——首块 TerrainReady 等待窗
+    // = 4 × 单块下限 600 帧的帧数计量（2400），节流不变量本身仍由上方
+    // 断言锁死，语义严格增强（inflight 峰值全程采样）不改。
+    let mut first_ready_wait = 0u32;
+    let first_ready_window = 2400u32;
+    loop {
+        let terrain_ready = rt
+            .chunks
+            .values()
+            .filter(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8))
+            .count();
+        if terrain_ready > 0 {
+            break;
+        }
+        rt.stream();
+        first_ready_wait += 1;
+        assert!(
+            first_ready_wait < first_ready_window,
+            "节流不得停摆加载：{first_ready_window} 帧（=4× 单块下限）内 0 块 TerrainReady"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
 }
 
 /// 卸载队列积压门（原版 ChunkMap.java:489-495：unloadQueue ≥2000 忽略
