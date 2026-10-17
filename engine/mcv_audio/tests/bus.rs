@@ -73,7 +73,10 @@ fn mixer_bused(master: f32) -> (Mixer, Arc<BusMix>, Arc<AtomicU32>) {
 fn mix_n(m: &mut Mixer) -> Vec<f32> {
     let mut buf = vec![0f32; BLOCK * 2];
     let mut acc = Vec::with_capacity(FRAMES * 2);
-    for _ in 0..BLOCKS {
+    // 覆盖 FRAMES = BLOCKS*BLOCK + 16 的完整采样窗（尾缝 16 帧；多混的
+    // 静音段即缓冲自然填充：断言按 FRAMES 索引也不越界——CI run
+    // 39052495900 三测「len 8192 index 8192」的根因即欠 16 帧尾缝）。
+    for _ in 0..(BLOCKS + 2) {
         m.mix(&mut buf);
         acc.extend_from_slice(&buf);
     }
