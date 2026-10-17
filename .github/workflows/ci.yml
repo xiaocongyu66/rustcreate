@@ -19,6 +19,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # HDR/PBR 面编译守卫（#223 续）：`hdr` feature 默认关——调度若无
+      # feature 化编译面，gated 代码会静默烂掉。此步以 opt-in clippy 补洞
+      # （默认三绿不受影响；桌面宿主编译即 GLES 门控的运行期判定不触发）。
+      - name: cargo clippy (hdr opt-in feature compilation guard)
+        run: cargo clippy -p mcv_app --features hdr --all-targets -- -D warnings
       # Android APK 线编译债前置（任务板 #84）：build.yml 的 android job 只在
       # push main 后才跑 cargo apk build（= mcv_app 及其依赖树，
       # aarch64-linux-android），Android-only 代码路径（android-activity 装配、
@@ -144,7 +149,7 @@ jobs:
       - name: Headless render tests
         env:
           MCV_SCREENSHOT_DIR: ${{ github.workspace }}
-        run: cargo test -p mcv_render --features gpu-tests --locked
+        run: cargo test -p mcv_render --features gpu-tests,hdr --locked
       # 真机 Mali 走 wgpu GLES 后端，而 lavapipe 恒 Vulkan——GLES 路径
       # （顶点属性 int→float、纹理数组拆分数组、sRGB 数组采样）过去在 CI
       # 从未执行过（gles_fallback_world_frame_smoke 拿不到 GL adapter 就

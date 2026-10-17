@@ -159,9 +159,15 @@ impl HdrStage {
         &self.hdr_view
     }
 
-    /// 主纹理尺寸（与交换链同，resize 时同步）。
+    /// HDR 主纹理尺寸（与交换链同，resize 时同步）。
     pub fn extent(&self) -> (u32, u32) {
         (self.extent.width, self.extent.height)
+    }
+
+    /// HDR 主纹理（测试 seam：写入已知 HDR 值做端到端离线对拍；
+    /// 生产路径只经 render pass 写入）。
+    pub fn hdr_texture(&self) -> &wgpu::Texture {
+        &self.hdr_color
     }
 
     /// 曝光（线性乘子；取 `Camera::exposure`，默认 1.0 = 恒等不提亮；
@@ -243,7 +249,9 @@ fn make_hdr_texture(device: &wgpu::Device, width: u32, height: u32) -> wgpu::Tex
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: HDR_COLOR_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     })
 }
