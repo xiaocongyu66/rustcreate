@@ -81,17 +81,29 @@
 use crate::player_mesh::{PX, PlayerVertex, quadruped_faces};
 use glam::{Mat4, Vec3};
 
-/// 生物种类数（鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛）。
-pub const MOB_KIND_COUNT: usize = 8;
-/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层；蜘蛛 11 也在限内）。
+/// 生物种类数（鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛 = 8 基础 + 水生：
+/// 鳕鱼 / 鲑鱼 + 美西螈×5 变体 + 热带鱼×12 型（small 6 + large 6——
+/// 部位几何同型，贴图层按 packed variant 选用，见 [`MOB_TEX_FILES`]）。
+pub const MOB_KIND_COUNT: usize = 27;
+/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层；蜘蛛 11；热带鱼 large 基模
+/// 6 + 花纹叠层 6 = 12 也在限内）。
 pub const MAX_MOB_PARTS: usize = 12;
-/// 贴图数组层数（层序见 [`MOB_TEX_FILES`]；chicken/cow/pig 用 temperate 变体）。
-pub const MOB_TEX_LAYERS: usize = 9;
-/// 贴图统一 pad 到 64x64（鸡/羊/骷髅/苦力怕/蜘蛛原生 64x32，上半透明
-/// ——2D 数组各层必须同尺寸）。
+/// 贴图数组层数（层序见 [`MOB_TEX_FILES`]；chicken/cow/pig 用 temperate 变体；
+/// 0..9 基础 8 怪 + 羊毛，9 鱼/美西螈/热带鱼，见各注）。
+pub const MOB_TEX_LAYERS: usize = 30;
+/// 贴图统一 pad 到 64x64（鸡/羊/骷髅/苦力怕/蜘蛛原生 64x32、鱼 32x32，
+/// 上半/右下透明——2D 数组各层必须同尺寸）。
 pub const MOB_TEX_PX: usize = 64;
-/// 每种生物的部位数（下标 = [`MobModelKind`] 序）。
-pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [8, 6, 12, 6, 6, 6, 6, 11];
+/// 每种生物的部位数（下标 = [`MobModelKind`] 序：基础 8 怪 + 鳕鱼 7 +
+/// 鲑鱼 8 + 美西螈 10×5 + 热带鱼 small 10×6 / large 12×6）。
+pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [
+    8, 6, 12, 6, 6, 6, 6, 11, // 基础八怪
+    7,  // 鳕鱼（CodModel：body/head/nose/双鳍/尾鳍/背鳍）
+    8,  // 鲑鱼（SalmonModel：前躯/后躯/背背鳍/头/双鳍/前后背鳍）
+    10, 10, 10, 10, 10, // 美西螈 lucy/wild/gold/cyan/blue
+    10, 10, 10, 10, 10, 10, // 热带鱼 small（kob..spotty，基模+花纹叠层）
+    12, 12, 12, 12, 12, 12, // 热带鱼 large（flopper..clayfish）
+];
 /// 离屏/主控一次最多提交的生物实例数（uniform 槽位）。
 pub const MOB_MAX_INSTANCES: usize = 64;
 
@@ -99,7 +111,8 @@ pub const MOB_MAX_INSTANCES: usize = 64;
 /// `update_walk_animation`），换算系数 = 1.4/0.88。
 pub const WALK_GAIN: f32 = 1.4 / 0.88;
 
-/// 渲染侧生物种类（与 `mcv_entity::MobId` 的映射在游戏层做，引擎不反向依赖）。
+/// 渲染侧生物种类（与 `mcv_entity::MobId` 的映射在游戏层做，引擎不反向依赖；
+/// 美西螈/热带鱼的变体→种类映射传 `[variant]`，见游戏层 `model_kind`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MobModelKind {
     Chicken = 0,
@@ -110,6 +123,27 @@ pub enum MobModelKind {
     Skeleton = 5,
     Creeper = 6,
     Spider = 7,
+    Cod = 8,
+    Salmon = 9,
+    AxolotlLucy = 10,
+    AxolotlWild = 11,
+    AxolotlGold = 12,
+    AxolotlCyan = 13,
+    AxolotlBlue = 14,
+    /// 热带鱼小型 6 型（Pattern KOB..SPOTTY，packed index 0..5）。
+    TropicalSmall0 = 15,
+    TropicalSmall1 = 16,
+    TropicalSmall2 = 17,
+    TropicalSmall3 = 18,
+    TropicalSmall4 = 19,
+    TropicalSmall5 = 20,
+    /// 热带鱼大型 6 型（Pattern FLOPPER..CLAYFISH）。
+    TropicalLarge0 = 21,
+    TropicalLarge1 = 22,
+    TropicalLarge2 = 23,
+    TropicalLarge3 = 24,
+    TropicalLarge4 = 25,
+    TropicalLarge5 = 26,
 }
 
 impl MobModelKind {
@@ -127,6 +161,25 @@ impl MobModelKind {
             5 => Some(MobModelKind::Skeleton),
             6 => Some(MobModelKind::Creeper),
             7 => Some(MobModelKind::Spider),
+            8 => Some(MobModelKind::Cod),
+            9 => Some(MobModelKind::Salmon),
+            10 => Some(MobModelKind::AxolotlLucy),
+            11 => Some(MobModelKind::AxolotlWild),
+            12 => Some(MobModelKind::AxolotlGold),
+            13 => Some(MobModelKind::AxolotlCyan),
+            14 => Some(MobModelKind::AxolotlBlue),
+            15 => Some(MobModelKind::TropicalSmall0),
+            16 => Some(MobModelKind::TropicalSmall1),
+            17 => Some(MobModelKind::TropicalSmall2),
+            18 => Some(MobModelKind::TropicalSmall3),
+            19 => Some(MobModelKind::TropicalSmall4),
+            20 => Some(MobModelKind::TropicalSmall5),
+            21 => Some(MobModelKind::TropicalLarge0),
+            22 => Some(MobModelKind::TropicalLarge1),
+            23 => Some(MobModelKind::TropicalLarge2),
+            24 => Some(MobModelKind::TropicalLarge3),
+            25 => Some(MobModelKind::TropicalLarge4),
+            26 => Some(MobModelKind::TropicalLarge5),
             _ => None,
         }
     }
@@ -134,6 +187,11 @@ impl MobModelKind {
 
 /// mob 贴图相对路径（相对 assets/minecraft/textures/）。全部原版素材，
 /// 程序化占位是事故——缺文件时按缺素材降级（不渲染），绝不伪造。
+/// 层序：0..9 基础八怪 + 羊毛；9 鳕鱼；10 鲑鱼；11..15 美西螈五变体；
+/// 16 tropical_a（KOB 素底）/ 17..22 tropical_a_pattern_1..6（SUNSTREAK..
+/// SPOTTY）；23 tropical_b（FLOPPER 素底）/ 24..29 tropical_b_pattern_1..6
+/// （STRIPEY..CLAYFISH）—— TropicalFishPatternLayer.java:23-34 的贴图选择
+/// 面在此展开为静态层。
 pub const MOB_TEX_FILES: [&str; MOB_TEX_LAYERS] = [
     "entity/chicken/chicken_temperate.png",
     "entity/cow/cow_temperate.png",
@@ -144,6 +202,28 @@ pub const MOB_TEX_FILES: [&str; MOB_TEX_LAYERS] = [
     "entity/skeleton/skeleton.png",
     "entity/creeper/creeper.png",
     "entity/spider/spider.png",
+    // 水生（M7c）。
+    "entity/fish/cod.png",
+    "entity/fish/salmon.png",
+    "entity/axolotl/axolotl_lucy.png",
+    "entity/axolotl/axolotl_wild.png",
+    "entity/axolotl/axolotl_gold.png",
+    "entity/axolotl/axolotl_cyan.png",
+    "entity/axolotl/axolotl_blue.png",
+    "entity/fish/tropical_a.png",
+    "entity/fish/tropical_a_pattern_1.png",
+    "entity/fish/tropical_a_pattern_2.png",
+    "entity/fish/tropical_a_pattern_3.png",
+    "entity/fish/tropical_a_pattern_4.png",
+    "entity/fish/tropical_a_pattern_5.png",
+    "entity/fish/tropical_a_pattern_6.png",
+    "entity/fish/tropical_b.png",
+    "entity/fish/tropical_b_pattern_1.png",
+    "entity/fish/tropical_b_pattern_2.png",
+    "entity/fish/tropical_b_pattern_3.png",
+    "entity/fish/tropical_b_pattern_4.png",
+    "entity/fish/tropical_b_pattern_5.png",
+    "entity/fish/tropical_b_pattern_6.png",
 ];
 
 /// 部位动画角色。
@@ -172,6 +252,17 @@ enum PartAnim {
     },
     /// 鸡翅：zRot = sign·wing_angle（右 + 左 −，ChickenModel.setupAnim:30-31）。
     Wing { sign: f32 },
+    /// 鱼尾/鲑鱼后躯：yRot = −amp·sin(0.6·freq 系 age)（CodModel/SalmonModel
+    /// /TropicalFish*Model.setupAnim——离水幅值 ×dry_scale（鲑鱼干频另乘
+    /// 1.7）。MC yRot 正 = 绕 +y（上轴）逆时针；引擎 y 轴下向 → ay = −θ。
+    TailSwim {
+        amp: f32,
+        dry_scale: f32,
+        dry_freq: f32,
+    },
+    /// 静态三轴角（鱼鳍 Cod/Salmon/TropicalFsh 的 zRot/yRot；ax=−x、
+    /// ay=−y、az=z，共轭映射与 SpiderLeg 同式）。
+    FinStatic { x: f32, y: f32, z: f32 },
 }
 
 /// 盒体（像素，MC 约定：min 相对部位 pivot，y 向下）。Copy 供静态
@@ -301,6 +392,344 @@ static SPIDER_LEG_R: MobBox = bx([-15.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0
 static SPIDER_LEG_L: MobBox = mirrored(bx([-1.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0.0]));
 /// 蜘蛛四对腿静态 zRot（SpiderModel:56-63；0.58119464 = 2π·33/360 原版常数）。
 const SPIDER_LEG_Z_MID: f32 = 0.58119464;
+
+// ---- 鳕鱼（CodModel.createBodyLayer，32x32）----------------------------------
+
+static COD_BODY: MobBox = bx([-1.0, -2.0, 0.0], [2.0, 4.0, 7.0], [0.0, 0.0]);
+static COD_HEAD: MobBox = bx([-1.0, -2.0, -3.0], [2.0, 4.0, 3.0], [11.0, 0.0]);
+static COD_NOSE: MobBox = bx([-1.0, -2.0, -1.0], [2.0, 3.0, 1.0], [0.0, 0.0]);
+static COD_FIN_R: MobBox = bx([-2.0, 0.0, -1.0], [2.0, 0.0, 2.0], [22.0, 1.0]);
+static COD_FIN_L: MobBox = bx([0.0, 0.0, -1.0], [2.0, 0.0, 2.0], [22.0, 4.0]);
+static COD_TAIL: MobBox = bx([0.0, -2.0, 0.0], [0.0, 4.0, 4.0], [22.0, 3.0]);
+// texOffs(20,-6)：v<0 越界（原版按 UV 越界采样边透明），r 坐标钳 0。
+static COD_TOP_FIN: MobBox = bx([0.0, -1.0, -1.0], [0.0, 1.0, 6.0], [20.0, 0.0]);
+
+// ---- 鲑鱼（SalmonModel.createBodyLayer，32x32；变体 0.5/1.5 缩放在
+// MobPose.scale——MeshTransformer.scaling 等价面）--------------------------
+
+static SALMON_BODY_FRONT: MobBox = bx([-1.5, -2.5, 0.0], [3.0, 5.0, 8.0], [0.0, 0.0]);
+static SALMON_BODY_BACK: MobBox = bx([-1.5, -2.5, 0.0], [3.0, 5.0, 8.0], [0.0, 13.0]);
+static SALMON_BACK_FIN: MobBox = bx([0.0, -2.5, 0.0], [0.0, 5.0, 6.0], [20.0, 10.0]);
+static SALMON_HEAD: MobBox = bx([-1.0, -2.0, -3.0], [2.0, 4.0, 3.0], [22.0, 0.0]);
+static SALMON_TOP_FRONT_FIN: MobBox = bx([0.0, 0.0, 0.0], [0.0, 2.0, 3.0], [2.0, 1.0]);
+static SALMON_TOP_BACK_FIN: MobBox = bx([0.0, 0.0, 0.0], [0.0, 2.0, 4.0], [0.0, 2.0]);
+// texOffs(-4,0)：u<0 越界钳 0（同上）。
+static SALMON_FIN_R: MobBox = bx([-2.0, 0.0, 0.0], [2.0, 0.0, 2.0], [0.0, 0.0]);
+static SALMON_FIN_L: MobBox = bx([0.0, 0.0, 0.0], [2.0, 0.0, 2.0], [0.0, 0.0]);
+
+// ---- 美西螈（AdultAxolotlModel.createBodyLayer，64x64）-----------------------
+// 子部位（head 挂 body、gills/legs/tail 挂 body 头）按 pivot 平移扁平化。
+
+const AXOLOTL_FUDGE: f32 = 0.001;
+static AXOLOTL_BODY: [MobBox; 2] = [
+    bx([-4.0, -2.0, -9.0], [8.0, 4.0, 10.0], [0.0, 11.0]),
+    grown(bx([0.0, -3.0, -8.0], [0.0, 5.0, 9.0], [2.0, 17.0]), AXOLOTL_FUDGE),
+];
+static AXOLOTL_HEAD: MobBox = grown(bx([-4.0, -3.0, -5.0], [8.0, 5.0, 5.0], [0.0, 1.0]), AXOLOTL_FUDGE);
+static AXOLOTL_TOP_GILLS: MobBox = grown(bx([-4.0, -3.0, 0.0], [8.0, 3.0, 0.0], [3.0, 37.0]), AXOLOTL_FUDGE);
+static AXOLOTL_LEFT_GILLS: MobBox = grown(bx([-3.0, -5.0, 0.0], [3.0, 7.0, 0.0], [0.0, 40.0]), AXOLOTL_FUDGE);
+static AXOLOTL_RIGHT_GILLS: MobBox = grown(bx([0.0, -5.0, 0.0], [3.0, 7.0, 0.0], [11.0, 40.0]), AXOLOTL_FUDGE);
+static AXOLOTL_LEG_R: MobBox = grown(bx([-2.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]), AXOLOTL_FUDGE);
+static AXOLOTL_LEG_L: MobBox = grown(bx([-1.0, 0.0, 0.0], [3.0, 5.0, 0.0], [2.0, 13.0]), AXOLOTL_FUDGE);
+static AXOLOTL_TAIL: MobBox = bx([0.0, -3.0, 0.0], [0.0, 5.0, 12.0], [2.0, 19.0]);
+
+// ---- 热带鱼（TropicalFishSmallModel/LargeModel.createBodyLayer，32x32）------
+// 渲染 = 基模（tropical_a/b 素底贴图层）+ 花纹叠层（tropical_*_pattern_N，
+// CubeDeformation 0.008 → FISH_PATTERN_DEFORMATION，LayerDefinitions.java:164）
+
+const FISH_PATTERN_GROW: f32 = 0.008;
+static TF_S_BODY: MobBox = bx([-1.0, -1.5, -3.0], [2.0, 3.0, 6.0], [0.0, 0.0]);
+static TF_S_TAIL: MobBox = bx([0.0, -1.5, 0.0], [0.0, 3.0, 6.0], [22.0, 0.0]); // texOffs(22,-6) 钳 0
+static TF_S_FIN_R: MobBox = bx([-2.0, -1.0, 0.0], [2.0, 2.0, 0.0], [2.0, 16.0]);
+static TF_S_FIN_L: MobBox = bx([0.0, -1.0, 0.0], [2.0, 2.0, 0.0], [2.0, 12.0]);
+static TF_S_TOP_FIN: MobBox = bx([0.0, -3.0, 0.0], [0.0, 3.0, 6.0], [10.0, 0.0]); // texOffs(10,-5) 钳 0
+static TF_L_BODY: MobBox = bx([-1.0, -3.0, -3.0], [2.0, 6.0, 6.0], [0.0, 20.0]);
+static TF_L_TAIL: MobBox = bx([0.0, -3.0, 0.0], [0.0, 6.0, 5.0], [21.0, 16.0]);
+static TF_L_FIN_R: MobBox = bx([-2.0, 0.0, 0.0], [2.0, 2.0, 0.0], [2.0, 16.0]);
+static TF_L_FIN_L: MobBox = bx([0.0, 0.0, 0.0], [2.0, 2.0, 0.0], [2.0, 12.0]);
+static TF_L_TOP_FIN: MobBox = bx([0.0, -4.0, 0.0], [0.0, 4.0, 6.0], [20.0, 11.0]);
+static TF_L_BOTTOM_FIN: MobBox = bx([0.0, 0.0, 0.0], [0.0, 4.0, 6.0], [20.0, 21.0]);
+
+/// 美西螈部位表（10 部位；唯一变体差 = tex_layer，5 变体共用此 const fn）。
+const fn axolotl_parts(layer: u32) -> [PartDef; 10] {
+    [
+        PartDef {
+            pivot: [0.0, 19.5, 5.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::Fixed,
+            boxes: &AXOLOTL_BODY,
+        },
+        PartDef {
+            pivot: [0.0, 19.5, -4.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::Head,
+            boxes: &[AXOLOTL_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 16.5, -5.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::Fixed,
+            boxes: &[AXOLOTL_TOP_GILLS],
+        },
+        PartDef {
+            pivot: [-4.0, 19.5, -5.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::Fixed,
+            boxes: &[AXOLOTL_LEFT_GILLS],
+        },
+        PartDef {
+            pivot: [4.0, 19.5, -5.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::Fixed,
+            boxes: &[AXOLOTL_RIGHT_GILLS],
+        },
+        PartDef {
+            pivot: [-3.5, 20.5, 4.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[AXOLOTL_LEG_R],
+        },
+        PartDef {
+            pivot: [3.5, 20.5, 4.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::WalkLeg { shift: std::f32::consts::PI },
+            boxes: &[AXOLOTL_LEG_L],
+        },
+        PartDef {
+            pivot: [-3.5, 20.5, -3.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::WalkLeg { shift: std::f32::consts::PI },
+            boxes: &[AXOLOTL_LEG_R],
+        },
+        PartDef {
+            pivot: [3.5, 20.5, -3.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[AXOLOTL_LEG_L],
+        },
+        PartDef {
+            pivot: [0.0, 19.5, 6.0],
+            rot_x: 0.0,
+            tex_layer: layer,
+            anim: PartAnim::TailSwim { amp: 0.1, dry_scale: 1.0, dry_freq: 1.0 },
+            boxes: &[AXOLOTL_TAIL],
+        },
+    ]
+}
+
+static AXOLOTL_LUCY_PARTS: [PartDef; 10] = axolotl_parts(11);
+static AXOLOTL_WILD_PARTS: [PartDef; 10] = axolotl_parts(12);
+static AXOLOTL_GOLD_PARTS: [PartDef; 10] = axolotl_parts(13);
+static AXOLOTL_CYAN_PARTS: [PartDef; 10] = axolotl_parts(14);
+static AXOLOTL_BLUE_PARTS: [PartDef; 10] = axolotl_parts(15);
+
+/// 热带鱼小型（TropicalFishSmallModel：5 基模 + 5 花纹叠层 = 10 部位）。
+/// 基模层 tex 16（tropical_a 素底）；叠层 pattern_layer = 17+index
+/// （tropical_a_pattern_1..6 —— TropicalFishPatternLayer:23-28：KOB→
+/// pattern_1 … SPOTTY→pattern_6，index 0 也有对应 pattern_1 层）。
+const fn tropical_small_parts(pattern_layer: u32) -> [PartDef; 10] {
+    [
+        PartDef {
+            pivot: [0.0, 22.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 16,
+            anim: PartAnim::Fixed,
+            boxes: &[TF_S_BODY],
+        },
+        PartDef {
+            pivot: [0.0, 22.0, 3.0],
+            rot_x: 0.0,
+            tex_layer: 16,
+            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            boxes: &[TF_S_TAIL],
+        },
+        PartDef {
+            pivot: [-1.0, 22.5, 0.0],
+            rot_x: 0.0,
+            tex_layer: 16,
+            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &[TF_S_FIN_R],
+        },
+        PartDef {
+            pivot: [1.0, 22.5, 0.0],
+            rot_x: 0.0,
+            tex_layer: 16,
+            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &[TF_S_FIN_L],
+        },
+        PartDef {
+            pivot: [0.0, 20.5, -3.0],
+            rot_x: 0.0,
+            tex_layer: 16,
+            anim: PartAnim::Fixed,
+            boxes: &[TF_S_TOP_FIN],
+        },
+        // 花纹叠层：同几何 + grow 0.008（FISH_PATTERN_DEFORMATION），贴图
+        // = pattern 层（TropicalFishPatternLayer.submit 的第二 pass）。
+        PartDef {
+            pivot: [0.0, 22.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::Fixed,
+            boxes: &TF_S_BODY_GROWN,
+        },
+        PartDef {
+            pivot: [0.0, 22.0, 3.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            boxes: &TF_S_TAIL_GROWN,
+        },
+        PartDef {
+            pivot: [-1.0, 22.5, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &TF_S_FIN_R_GROWN,
+        },
+        PartDef {
+            pivot: [1.0, 22.5, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &TF_S_FIN_L_GROWN,
+        },
+        PartDef {
+            pivot: [0.0, 20.5, -3.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::Fixed,
+            boxes: &TF_S_TOP_FIN_GROWN,
+        },
+    ]
+}
+
+/// 热带鱼大型（TropicalFishLargeModel：6 基模 + 6 叠层 = 12 部位；基模层
+/// 23 = tropical_b 素底，叠层 24+index = tropical_b_pattern_1..6）。
+const fn tropical_large_parts(pattern_layer: u32) -> [PartDef; 12] {
+    [
+        PartDef {
+            pivot: [0.0, 19.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::Fixed,
+            boxes: &[TF_L_BODY],
+        },
+        PartDef {
+            pivot: [0.0, 19.0, 3.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            boxes: &[TF_L_TAIL],
+        },
+        PartDef {
+            pivot: [-1.0, 20.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &[TF_L_FIN_R],
+        },
+        PartDef {
+            pivot: [1.0, 20.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &[TF_L_FIN_L],
+        },
+        PartDef {
+            pivot: [0.0, 16.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::Fixed,
+            boxes: &[TF_L_TOP_FIN],
+        },
+        PartDef {
+            pivot: [0.0, 22.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: 23,
+            anim: PartAnim::Fixed,
+            boxes: &[TF_L_BOTTOM_FIN],
+        },
+        // 花纹叠层（grow 0.008）。
+        PartDef {
+            pivot: [0.0, 19.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::Fixed,
+            boxes: &TF_L_BODY_GROWN,
+        },
+        PartDef {
+            pivot: [0.0, 19.0, 3.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            boxes: &TF_L_TAIL_GROWN,
+        },
+        PartDef {
+            pivot: [-1.0, 20.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::FinStatic { x: 0.0, y: std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &TF_L_FIN_R_GROWN,
+        },
+        PartDef {
+            pivot: [1.0, 20.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::FinStatic { x: 0.0, y: -std::f32::consts::FRAC_PI_4, z: 0.0 },
+            boxes: &TF_L_FIN_L_GROWN,
+        },
+        PartDef {
+            pivot: [0.0, 16.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::Fixed,
+            boxes: &TF_L_TOP_FIN_GROWN,
+        },
+        PartDef {
+            pivot: [0.0, 22.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: pattern_layer,
+            anim: PartAnim::Fixed,
+            boxes: &TF_L_BOTTOM_FIN_GROWN,
+        },
+    ]
+}
+
+// grown 变体静态件（const fn 不能返回新建引用 → 逐个 static）。
+static TF_S_BODY_GROWN: [MobBox; 1] = [grown(TF_S_BODY, FISH_PATTERN_GROW)];
+static TF_S_TAIL_GROWN: [MobBox; 1] = [grown(TF_S_TAIL, FISH_PATTERN_GROW)];
+static TF_S_FIN_R_GROWN: [MobBox; 1] = [grown(TF_S_FIN_R, FISH_PATTERN_GROW)];
+static TF_S_FIN_L_GROWN: [MobBox; 1] = [grown(TF_S_FIN_L, FISH_PATTERN_GROW)];
+static TF_S_TOP_FIN_GROWN: [MobBox; 1] = [grown(TF_S_TOP_FIN, FISH_PATTERN_GROW)];
+static TF_L_BODY_GROWN: [MobBox; 1] = [grown(TF_L_BODY, FISH_PATTERN_GROW)];
+static TF_L_TAIL_GROWN: [MobBox; 1] = [grown(TF_L_TAIL, FISH_PATTERN_GROW)];
+static TF_L_FIN_R_GROWN: [MobBox; 1] = [grown(TF_L_FIN_R, FISH_PATTERN_GROW)];
+static TF_L_FIN_L_GROWN: [MobBox; 1] = [grown(TF_L_FIN_L, FISH_PATTERN_GROW)];
+static TF_L_TOP_FIN_GROWN: [MobBox; 1] = [grown(TF_L_TOP_FIN, FISH_PATTERN_GROW)];
+static TF_L_BOTTOM_FIN_GROWN: [MobBox; 1] = [grown(TF_L_BOTTOM_FIN, FISH_PATTERN_GROW)];
+
+static TROPICAL_S0: [PartDef; 10] = tropical_small_parts(17);
+static TROPICAL_S1: [PartDef; 10] = tropical_small_parts(18);
+static TROPICAL_S2: [PartDef; 10] = tropical_small_parts(19);
+static TROPICAL_S3: [PartDef; 10] = tropical_small_parts(20);
+static TROPICAL_S4: [PartDef; 10] = tropical_small_parts(21);
+static TROPICAL_S5: [PartDef; 10] = tropical_small_parts(22);
+static TROPICAL_L0: [PartDef; 12] = tropical_large_parts(24);
+static TROPICAL_L1: [PartDef; 12] = tropical_large_parts(25);
+static TROPICAL_L2: [PartDef; 12] = tropical_large_parts(26);
+static TROPICAL_L3: [PartDef; 12] = tropical_large_parts(27);
+static TROPICAL_L4: [PartDef; 12] = tropical_large_parts(28);
+static TROPICAL_L5: [PartDef; 12] = tropical_large_parts(29);
 
 /// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6 / 僵尸 6 / 骷髅 6 /
 /// 苦力怕 6 / 蜘蛛 11，与 [`MOB_PART_COUNTS`] 一致；
@@ -833,6 +1262,141 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             boxes: &[SPIDER_LEG_L],
         },
     ],
+    // ---- 水生（M7c）----------------------------------------------------------
+    // 鳕鱼（CodModel：body/head/nose/right_fin/left_fin/tail_fin/top_fin；
+    // 尾鳍 yRot 摆 setupAnim:60-63）。
+    &[
+        PartDef {
+            pivot: [0.0, 22.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Fixed,
+            boxes: &[COD_BODY],
+        },
+        PartDef {
+            pivot: [0.0, 22.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Fixed,
+            boxes: &[COD_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 22.0, -3.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Fixed,
+            boxes: &[COD_NOSE],
+        },
+        PartDef {
+            pivot: [-1.0, 23.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: -std::f32::consts::FRAC_PI_4 },
+            boxes: &[COD_FIN_R],
+        },
+        PartDef {
+            pivot: [1.0, 23.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: std::f32::consts::FRAC_PI_4 },
+            boxes: &[COD_FIN_L],
+        },
+        PartDef {
+            pivot: [0.0, 22.0, 7.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::TailSwim { amp: 0.45, dry_scale: 1.5, dry_freq: 1.0 },
+            boxes: &[COD_TAIL],
+        },
+        PartDef {
+            pivot: [0.0, 20.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Fixed,
+            boxes: &[COD_TOP_FIN],
+        },
+    ],
+    // 鲑鱼（SalmonModel：body_front(+top_front_fin 子部位扁平)/body_back(
+    // +back_fin/top_back_fin 子部位扁平，随 body_back yRot)/head/双鳍；
+    // setupAnim:64-72）。
+    &[
+        PartDef {
+            pivot: [0.0, 20.0, -7.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::Fixed,
+            boxes: &[SALMON_BODY_FRONT],
+        },
+        PartDef {
+            pivot: [0.0, 20.0, 0.8],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            boxes: &[SALMON_BODY_BACK],
+        },
+        PartDef {
+            pivot: [0.0, 20.0, 8.8],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            boxes: &[SALMON_BACK_FIN],
+        },
+        PartDef {
+            pivot: [0.0, 20.0, -7.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::Fixed,
+            boxes: &[SALMON_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 15.5, -2.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::Fixed,
+            boxes: &[SALMON_TOP_FRONT_FIN],
+        },
+        PartDef {
+            pivot: [0.0, 15.5, -0.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::TailSwim { amp: 0.25, dry_scale: 1.3, dry_freq: 1.7 },
+            boxes: &[SALMON_TOP_BACK_FIN],
+        },
+        PartDef {
+            pivot: [-1.5, 21.5, -7.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: -std::f32::consts::FRAC_PI_4 },
+            boxes: &[SALMON_FIN_R],
+        },
+        PartDef {
+            pivot: [1.5, 21.5, -7.2],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::FinStatic { x: 0.0, y: 0.0, z: std::f32::consts::FRAC_PI_4 },
+            boxes: &[SALMON_FIN_L],
+        },
+    ],
+    // 美西螈五变体（AdultAxolotlModel：body 2 盒/head/gills×3/legs×4/tail）。
+    &AXOLOTL_LUCY_PARTS,
+    &AXOLOTL_WILD_PARTS,
+    &AXOLOTL_GOLD_PARTS,
+    &AXOLOTL_CYAN_PARTS,
+    &AXOLOTL_BLUE_PARTS,
+    // 热带鱼 small 6 型（pattern 层 17..22）。
+    &TROPICAL_S0,
+    &TROPICAL_S1,
+    &TROPICAL_S2,
+    &TROPICAL_S3,
+    &TROPICAL_S4,
+    &TROPICAL_S5,
+    // 热带鱼 large 6 型（pattern 层 24..29）。
+    &TROPICAL_L0,
+    &TROPICAL_L1,
+    &TROPICAL_L2,
+    &TROPICAL_L3,
+    &TROPICAL_L4,
+    &TROPICAL_L5,
 ];
 
 /// 每帧姿态（由游戏侧计算后传入渲染；与 `PlayerPose` 同约定：脚底原点、
@@ -854,6 +1418,13 @@ pub struct MobPose {
     pub head_drop: f32,
     /// 羊吃草头部 xRot（弧度，MC 语义正 = 低头，getHeadEatAngleScale）。
     pub head_eat_angle: f32,
+    /// 水生：眼在水中（尾摆幅值/频率换挡——CodModel setupAnim isInWater）。
+    pub in_water: bool,
+    /// 水生：tick 年龄（尾摆 sin(0.6·age) 相位源，20 tick/s 语义）。
+    pub swim_phase: f32,
+    /// 实例缩放（鲑鱼 small/medium/large 0.5/1.0/1.5——MeshTransformer
+    /// .scaling 等价：部位 pivot 距地偏移与几何一起缩）。
+    pub scale: f32,
 }
 
 impl Default for MobPose {
@@ -867,6 +1438,9 @@ impl Default for MobPose {
             wing_angle: 0.0,
             head_drop: 0.0,
             head_eat_angle: 0.0,
+            in_water: true,
+            swim_phase: 0.0,
+            scale: 1.0,
         }
     }
 }
@@ -1029,8 +1603,25 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
                 let step = (pose.phase + off).sin().abs() * 0.4 * spd;
                 (0.0, -(y0 + side * swing), z0 + side * step)
             }
-            // 鸡翅绕局部 z（ChickenModel.setupAnim:30-31：右 + 左 −）。
-            // Q 不改变 z 轴 ⇒ 绕 z 的旋转角不变号。
+            // 鱼尾/后躯（CodModel:60-63 / TropicalFish*Model:48-51 /
+            // SalmonModel:64-72）：yRot = −amp·sin(0.6·freq·age)，离水幅值
+            // ×dry_scale（鲑鱼干频另乘 1.7）。MC yRot → 引擎 ay = −θ。
+            PartAnim::TailSwim {
+                amp,
+                dry_scale,
+                dry_freq,
+            } => {
+                let (a, f) = if pose.in_water {
+                    (amp, 1.0)
+                } else {
+                    (amp * dry_scale, dry_freq)
+                };
+                (0.0, -(0.6 * f * pose.swim_phase).sin() * a, 0.0)
+            }
+            // 静态三轴角（鱼鳍 zRot/yRot；共轭映射同 SpiderLeg：ax=−x、
+            // ay=−y、az=z）。
+            PartAnim::FinStatic { x, y, z } => (-x, -y, z),
+            // 鸡翅（保留原注）：ChickenModel.setupAnim:30-31。
             PartAnim::Wing { sign } => (0.0, 0.0, sign * pose.wing_angle),
         };
         // 羊吃草头部下沉（SheepModel.setupAnim：head.y += scale·9 像素）。
@@ -1039,20 +1630,31 @@ pub fn mob_model_matrices(kind: MobModelKind, pose: &MobPose) -> [Mat4; MAX_MOB_
         } else {
             0.0
         };
-        let off = Vec3::new(
+        let mut off = Vec3::new(
             -def.pivot[0] * PX,
             (24.0 - def.pivot[1] - drop) * PX,
             def.pivot[2] * PX, // 四足 z 不取反（正面朝 −z，见模块头）
         );
+        let geo_scale = if pose.scale != 1.0 {
+            off *= pose.scale;
+            pose.scale
+        } else {
+            1.0
+        };
         let world_piv = pose.pos + ry.transform_point3(off);
         // 旋转必须绕**引擎局部轴**构造、再被 ry 左乘：out = T·ry·Rz·Ry·Rx。
         // 旧实现把轴先旋到世界（Rot(ry·x̂, θ)），得 out = T·ry²·R·ry⁻¹——
         // 部位自转被按 2·yaw 共轭，yaw≠0 时腿摆方向侧翻（被动模型在
         // Scene.mobs 常空时代从未以 yaw≠0 上屏，故未暴露；接通 mobs 后
         // 由 mob_gpu 的 yaw 回归测试锁死）。
-        let r = Mat4::from_axis_angle(Vec3::Z, az)
+        let mut r = Mat4::from_axis_angle(Vec3::Z, az)
             * Mat4::from_axis_angle(Vec3::Y, ay)
             * Mat4::from_axis_angle(Vec3::X, ax);
+        if geo_scale != 1.0 {
+            // MeshTransformer.scaling：几何绕 pivot 缩（顶点局域坐标），
+            // pivot 距地偏移已在 off 缩放——根缩放的接地等价面。
+            r = r * Mat4::from_scale(Vec3::splat(geo_scale));
+        }
         out[p] = Mat4::from_translation(world_piv) * ry * r;
     }
     out
@@ -1096,9 +1698,10 @@ pub fn load_mob_payload_via(assets: &mcv_assets::AssetManager) -> Option<Vec<u8>
         };
         let img = img.to_rgba8();
         let (w, h) = (img.width() as usize, img.height() as usize);
-        // 原版尺寸门：鸡/羊 64x32、牛/猪 64x64（LayerDefinition.create 的
-        // (w,h) 参数）。pad 到 64x64 后 v 坐标不变（v=像素/64 归一化）。
-        let ok = matches!((w, h), (64, 32) | (64, 64));
+        // 原版尺寸门：鸡/羊 64x32、牛/猪 64x64、鱼 32x32（LayerDefinition
+        // .create 的 (w,h) 参数）。pad 到 64x64 后 v 坐标不变（v=像素/64
+        // 归一化）。
+        let ok = matches!((w, h), (64, 32) | (64, 64) | (32, 32));
         if !ok {
             log::warn!("mob texture {file}: unexpected {w}x{h}");
             return None;
@@ -1129,15 +1732,60 @@ mod tests {
         }
         // 总盒数：鸡 8 + 牛 10（头 4 含双角 + 躯干 2 含乳房 + 腿 4）
         // + 羊 12 + 猪 7（头 2 含鼻 + 躯干 1 + 腿 4）
-        // + 僵尸 6（humanoid 六部件）+ 骷髅 6 + 苦力怕 6 + 蜘蛛 11
-        // = 66
-        assert_eq!(m.verts.len(), 66 * 24);
-        assert_eq!(m.indices.len(), 66 * 36);
+        // + 僵尸 6（humanoid 六部件）+ 骷髅 6 + 苦力怕 6 + 蜘蛛 11 = 66
+        // + 水生：鳕鱼 7 + 鲑鱼 8 + 美西螈 10 部位 11 盒 ×5 = 55
+        // + 热带鱼 small（5+5 叠层）×6 = 60 + large（6+6）×6 = 72
+        // = 268
+        assert_eq!(m.verts.len(), 268 * 24);
+        assert_eq!(m.indices.len(), 268 * 36);
         // kind 切片连续
         let mut prev = 0u32;
         for r in m.slices.iter() {
             assert_eq!(r.start, prev);
             prev = r.end;
+        }
+    }
+
+    #[test]
+    fn fish_tail_sway_and_axolotl_layout() {
+        // 鱼尾摆：TailSwim 部位在 swim_phase 推进下绕枢轴摆动（基向量随
+        // yRot 旋转、平移列不变），离水幅值 ×dry_scale（CodModel.setupAnim
+        // :60-63 isInWater 分支）。
+        let mut pose = MobPose::default();
+        let tail = PARTS[MobModelKind::Cod.idx()]
+            .iter()
+            .position(|p| matches!(p.anim, PartAnim::TailSwim { .. }))
+            .expect("cod 有尾鳍部位");
+        pose.swim_phase = 0.0;
+        let m0 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
+        pose.swim_phase = (std::f32::consts::PI / 2.0) / 0.6; // sin 峰值
+        let m1 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
+        assert_ne!(m0[1], m1[1], "尾摆旋转（y 基向量随 yRot）");
+        assert_eq!(m0[12..15], m1[12..15], "尾枢轴平移不变");
+        // 离水（in_water=false）幅值 1.5 倍 → 峰值偏移更大。
+        pose.in_water = false;
+        let m2 = mob_model_matrices(MobModelKind::Cod, &pose)[tail].to_cols_array();
+        assert_ne!(m1[1], m2[1], "离水幅值 ×1.5（isInWater 分支）");
+        // 鲑鱼缩放：枢轴平移随 scale 缩（MeshTransformer.scaling 等价面）。
+        let mut small = MobPose::default();
+        small.scale = 0.5;
+        let off_full = mob_model_matrices(MobModelKind::Salmon, &pose)[0].to_cols_array()[12..15];
+        let off_half = mob_model_matrices(MobModelKind::Salmon, &small)[0].to_cols_array()[12..15];
+        assert!((off_full[1] / 2.0 - off_half[1]).abs() < 1e-3, "pivot 随缩放");
+        // 美西螈：五变体同几何（部位数 10）。
+        for v in [
+            MobModelKind::AxolotlLucy,
+            MobModelKind::AxolotlWild,
+            MobModelKind::AxolotlGold,
+            MobModelKind::AxolotlCyan,
+            MobModelKind::AxolotlBlue,
+        ] {
+            assert_eq!(PARTS[v.idx()].len(), 10);
+        }
+        // 热带鱼 12 型部位数（small 10 / large 12）。
+        for i in 0..6 {
+            assert_eq!(PARTS[MobModelKind::TropicalSmall0.idx() + i].len(), 10);
+            assert_eq!(PARTS[MobModelKind::TropicalLarge0.idx() + i].len(), 12);
         }
     }
 

@@ -62,6 +62,33 @@ pub const NO_DESPAWN_DIST: i32 = 32;
 /// Animal.java:118-120 — 被动 `getRawBrightness(pos, 0) > 8` 才可生成。
 pub const ANIMAL_MIN_RAW_BRIGHTNESS: u8 = 8;
 
+/// WaterAnimal.checkSurfaceWaterAnimalSpawnRules（WaterAnimal.java:66-79）
+/// — `minSpawnLevel = seaLevel − 13`（seaLevel = 63，mcv_core::SEA_LEVEL）。
+pub const WATER_SPAWN_BAND: i32 = 13;
+
+/// 水面水生刷怪门（WaterAnimal.checkSurfaceWaterAnimalSpawnRules :66-79
+/// 逐条照抄，cod/salmon 通用）：y ∈ [sea−13, sea] && 下方液态水 &&
+/// 上方为水方块（自身 IN_WATER 由调用方先验——SpawnPlacements.java:83/93）。
+/// 亮度门不存在（IN_WATER 类无 light 检查——fluid state 即门）。
+pub fn surface_water_ok(y: i32, below_is_water: bool, above_is_water: bool) -> bool {
+    (mcv_core::SEA_LEVEL - WATER_SPAWN_BAND..=mcv_core::SEA_LEVEL).contains(&y)
+        && below_is_water
+        && above_is_water
+}
+
+/// 热带鱼（TropicalFish::checkTropicalFishSpawnRules :259-268）在水面门上
+/// 额外带 `ALLOWS_TROPICAL_FISH_SPAWNS_AT_ANY_HEIGHT` 旗的 any-height
+/// 分支——生物群系图未接（worldgen 红线禁触），旗以 false 代理，落回
+/// [`surface_water_ok`] 同一水面门（随 cod/salmon 同 gate 分支，KNOWN-
+/// DIVERGENCE：繁茂洞穴任意高度热带鱼暂缺，待 biome 接线）。
+
+/// Axolotl::checkAxolotlSpawnRules（Axolotl.java:562-564）：下方方块 ∈
+/// AXOLOTLS_SPAWNABLE_ON（BlockTags 成员唯一 = clay，tags_gen.inc.rs 锚定）
+/// ——位置本身 IN_WATER（SpawnPlacements.java:82）由调用方先验。
+pub fn axolotl_ok(below_is_clay: bool) -> bool {
+    below_is_clay
+}
+
 /// 检查一个候选位置能否刷怪（纯函数，便于测试）。
 pub fn light_allows_hostile(sky_light: u8, block_light: u8, rng: &mut impl FnMut() -> u32) -> bool {
     // Monster.java:79-81: if (sky > random.nextInt(32)) return false
@@ -352,4 +379,31 @@ pub fn spawn_round(
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn surface_water_band_matches_vanilla() {
+        // WaterAnimal.checkSurfaceWaterAnimalSpawnRules（:66-79）——
+        // y ∈ [sea−13, sea] = [50, 63]，带端点；带外拒。
+        assert!(surface_water_ok(63, true, true));
+        assert!(surface_water_ok(50, true, true));
+        assert!(!surface_water_ok(49, true, true), "带下界外拒");
+        assert!(!surface_water_ok(64, true, true), "带 > sea 拒");
+        // 下方液态水 / 上方水块是独立条件项。
+        assert!(!surface_water_ok(60, false, true));
+    }
+
+    #[test]
+    fn water_spawn_gates_have_no_light_term() {
+        // IN_WATER 类 SpawnPlacements 无亮度项（SpawnPlacements.java:82-83/
+        // 93）——门值与光照无关（亮度 pacing 门在 game.rs 通道层）。
+        let y = mcv_core::SEA_LEVEL - 13;
+        assert!(surface_water_ok(y, true, true));
+        assert!(axolotl_ok(true));
+        assert!(!axolotl_ok(false), "clay 门外拒（Axolotl.java:562-564）");
+    }
 }

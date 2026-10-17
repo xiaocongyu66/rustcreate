@@ -5756,34 +5756,47 @@ impl GameRuntime {
                         continue;
                     }
                     // 水生通道（SpawnPlacements IN_WATER）：
-                    // - 鱼三族（WaterAnimal.checkSurfaceWaterAnimalSpawnRules
-                    //   :66-79 逐式：y∈[sea−13, sea] + 下方水 + 上方水；本格
-                    //   水由 IN_WATER 语义补上）；亮度门取经典 WaterAnimal 规
+                    // - 鱼三族：spawner::surface_water_ok =
+                    //   WaterAnimal.checkSurfaceWaterAnimalSpawnRules
+                    //   （y∈[sea−13, sea] + 下方水 + 上方水）+ 本格水
+                    //   （IN_WATER 语义）；亮度门取经典 WaterAnimal 规
                     //   （raw>8，任务 pacing 要求——26.1 check 已删该段，
-                    //   KNOWN-DIVERGENCE 挂账）；
-                    // - 美西螈（Axolotl.checkAxolotlSpawnRules：下方 ∈
-                    //   AXOLOTLS_SPAWNABLE_ON = clay，id 214；无 y 带）。
+                    //   KNOWN-DIVERGENCE 挂账，门在本通道内不进纯函数）；
+                    // - 美西螈：spawner::axolotl_ok = checkAxolotlSpawnRules
+                    //   （下方 ∈ AXOLOTLS_SPAWNABLE_ON = clay，id 214；
+                    //   无 y 带）。
                     // 群内同种（原版 spawn group + SchoolSpawnGroupData）。
                     let water_cell = self.block_at(cell).0 == 5; // water
                     let above = BlockPos::new(cell.x, cell.y + 1, cell.z);
                     let below = BlockPos::new(cell.x, cell.y - 1, cell.z);
-                    if water_cell && self.block_at(above).0 == 5 && self.block_at(below).0 == 5 {
+                    let head_water = self.block_at(above).0 == 5;
+                    let below_water = self.block_at(below).0 == 5;
+                    // 鱼：IN_WATER + 水面带（下方也是水）；美西螈：IN_WATER +
+                    // clay 底（clay 为实体，与鱼门互斥独立判——vanilla 两套
+                    // SpawnPlacements 通道同构）。
+                    let fish_ok = water_cell
+                        && head_water
+                        && below_water
+                        && spawner::surface_water_ok(cell.y, below_water, true);
+                    let axolotl_ok = water_cell
+                        && head_water
+                        && spawner::axolotl_ok(self.block_at(below).0 == 214);
+                    if fish_ok || axolotl_ok {
                         let (sky, blk) = chunk_light(&self.chunks, cell);
                         let lit = spawner::raw_brightness(sky, blk, 0)
                             > spawner::ANIMAL_MIN_RAW_BRIGHTNESS;
-                        let in_band =
-                            (mcv_core::SEA_LEVEL - mcv_entity::aquatic::WATER_SPAWN_BAND
-                                ..=mcv_core::SEA_LEVEL)
-                                .contains(&cell.y);
-                        let is_fish_group = want == 0 && water_ambient < water_cap && lit && in_band
-                            || want != 0
-                                && kind.is_some_and(|k| matches!(k, MobId::COD | MobId::SALMON | MobId::TROPICAL_FISH));
-                        let is_axolotl_group = want == 0
-                            && axolotls < axolotl_cap
-                            && self.block_at(below).0 == 214
-                                // clay（AXOLOTLS_SPAWNABLE_ON，表序 214）
-                            && lit
-                            || want != 0 && kind == Some(MobId::AXOLOTL);
+                        let is_fish_group = fish_ok
+                            && (want == 0 && water_ambient < water_cap && lit
+                                || want != 0
+                                    && kind.is_some_and(|k| {
+                                        matches!(
+                                            k,
+                                            MobId::COD | MobId::SALMON | MobId::TROPICAL_FISH
+                                        )
+                                    }));
+                        let is_axolotl_group = axolotl_ok
+                            && (want == 0 && axolotls < axolotl_cap && lit
+                                || want != 0 && kind == Some(MobId::AXOLOTL));
                         if is_fish_group || is_axolotl_group {
                             if kind.is_none() {
                                 kind = Some(if is_fish_group {
@@ -5792,7 +5805,18 @@ impl GameRuntime {
                                 } else {
                                     MobId::AXOLOTL
                                 });
-                                want = 3 + (rng() as usize) % 6; // 鱼群 3..8（FISH_CLUSTER 上限）
+                                // 群量：原版 `max = minCount + rand(maxCount−minCount+1)`
+                                // （NaturalSpawner.java:193；SpawnerData min/maxCount
+                                // 来自 biome json——未提取，取经典 3..6 域扩展
+                                // 3..8），再按 getMaxSpawnClusterSize 钳顶
+                                // （Salmon.getMaxSchoolSize=5 覆写、基类 8、美西
+                                // 螈 lush caves 4..6 → 6 上界）。
+                                want = 3 + (rng() as usize) % 6;
+                                want = want.min(match kind.unwrap() {
+                                    MobId::SALMON => mcv_entity::aquatic::SALMON_SCHOOL,
+                                    MobId::AXOLOTL => 6,
+                                    _ => mcv_entity::aquatic::FISH_CLUSTER,
+                                });
                             }
                             let wk = kind.unwrap();
                             let variant = finalize_variant(wk, &mut rng);

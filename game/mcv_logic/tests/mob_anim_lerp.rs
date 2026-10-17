@@ -80,6 +80,8 @@ fn harness() -> App {
     // collect_mob_instances_in 读 WanderState（零怪空表即契约形态，与
     // GameRuntime 装配一致：只注册不插组件）——漏注册 read 会 panic。
     mcv_entity::register_passive_components(&mut app.world);
+    //AquaticVariant/WaterState 读取注册（collect 面自 M7c 起必读，未注册 read panic）。
+    mcv_entity::register_aquatic_components(&mut app.world);
     app.schedule
         .add(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
     app
@@ -129,6 +131,8 @@ fn render_pos_lerps_between_prev_and_current_step() {
     mcv_entity::register_mob_components(&mut app.world);
     // collect 读面契约（WanderState 空表注册，见 harness 注释）。
     mcv_entity::register_passive_components(&mut app.world);
+    //AquaticVariant/WaterState 读取注册（collect 面自 M7c 起必读，未注册 read panic）。
+    mcv_entity::register_aquatic_components(&mut app.world);
     // 手搓一只僵尸：pos_old = 上一步位置、pos = 本步位置（每固定步开头
     // mob_ai_system 会重拍 pos_old；这里直接摆值免跑系统，插值语义隔离）。
     let e = app.world.spawn();

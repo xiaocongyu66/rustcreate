@@ -107,3 +107,71 @@ pub fn death_drops_variant(
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(events: &[DropEvent]) -> Vec<&'static str> {
+        events.iter().map(|e| e.item).collect()
+    }
+
+    /// 对拍（data/minecraft/loot_table/entities/{cod,salmon}.json）：
+    /// 池 1 = 本种生鱼 ×1（rolls 1.0，furnace_smelt 仅燃烧/火焰附加——
+    /// 引擎无死亡燃烧面，不挂）；池 2 = bone_meal（random_chance 0.05）。
+    #[test]
+    fn cod_salmon_loot_parity() {
+        let pos = Vec3::ZERO;
+        // rng 恒 ≥5 → 骨粉 5% 池不中：只有本种 ×1。
+        let mut never = || 42u32;
+        assert_eq!(
+            names(&death_drops(MobKind::Cod, false, pos, &mut never)),
+            ["cod"]
+        );
+        assert_eq!(
+            names(&death_drops(MobKind::Salmon, false, pos, &mut never)),
+            ["salmon"]
+        );
+        // rng 恒 0 → 0%100 < 5：骨粉池必中（同池序：生鱼在前）。
+        let mut always = || 0u32;
+        assert_eq!(
+            names(&death_drops(MobKind::Cod, false, pos, &mut always)),
+            ["cod", "bone_meal"]
+        );
+        assert_eq!(
+            names(&death_drops(MobKind::Salmon, false, pos, &mut always)),
+            ["salmon", "bone_meal"]
+        );
+    }
+
+    /// 热带鱼：loot 表唯一条目 tropical_fish（set_count 1），变体
+    /// packed 全量透传到 [`DropEvent::variant`]（26.1 物品组件侧持久化
+    /// 待 mcv_item inventory schema 扩容——模块头 KNOWN-DIVERGENCE）；
+    /// cod/salmon 事件变体恒 0（无变体种）。
+    #[test]
+    fn tropical_fish_variant_passes_through() {
+        let pos = Vec3::ZERO;
+        let mut never = || 42u32;
+        for v in [
+            crate::aquatic::tropical::DEFAULT,
+            crate::aquatic::tropical::COMMON_PACKED[0],
+            crate::aquatic::tropical::pack(5, true, 14, 11),
+        ] {
+            let ev = death_drops(MobKind::TropicalFish, v, false, pos, &mut never);
+            assert_eq!(names(&ev), ["tropical_fish"]);
+            assert_eq!(ev[0].count, 1, "set_count 1.0（tropical_fish.json）");
+            assert_eq!(ev[0].variant, v, "packed variant 原样透传");
+        }
+        let cod = death_drops(MobKind::Cod, 7, false, pos, &mut never);
+        assert_eq!(cod[0].variant, 0, "无变体种恒 0");
+    }
+
+    /// 美西螈：loot 表无 pools（data/.../entities/axolotl.json 只有
+    /// random_sequence 键）——恒空，掉任何东西都算错。
+    #[test]
+    fn axolotl_drops_nothing() {
+        let pos = Vec3::ZERO;
+        let mut always = || 0u32;
+        assert!(death_drops(MobKind::Axolotl, 0, true, pos, &mut always).is_empty());
+    }
+}

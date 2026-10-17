@@ -7,9 +7,10 @@ use mcv_render::mob_mesh::*;
 fn mesh_counts_and_uv_bounds() {
     let m = build_mob_mesh();
     // 盒数：鸡 8 + 牛 10 + 羊 12 + 猪 7 + 僵尸 6 + 骷髅 6 + 苦力怕 6
-    // + 蜘蛛 11 = 66（部位表见 mob_mesh.rs）
-    assert_eq!(m.verts.len(), 66 * 24);
-    assert_eq!(m.indices.len(), 66 * 36);
+    // + 蜘蛛 11 = 66（部位表见 mob_mesh.rs）+ 水生（鳕鱼 7 + 鲑鱼 8 +
+    // 美西螈 5×11 + 热带鱼 small 6×10 + large 6×12 = 202）= 268
+    assert_eq!(m.verts.len(), 268 * 24);
+    assert_eq!(m.indices.len(), 268 * 36);
     for v in &m.verts {
         for c in v.pos {
             assert!(c.is_finite());
@@ -20,7 +21,7 @@ fn mesh_counts_and_uv_bounds() {
             let n = c as f32 / 255.0;
             assert!((0.0..=1.0).contains(&n), "uv {n}");
         }
-        // meta[0] = 贴图层（< MOB_TEX_LAYERS=9）；meta[1] = kind 内局部
+        // meta[0] = 贴图层（< MOB_TEX_LAYERS=30）；meta[1] = kind 内局部
         // 部位序，必须 < MAX_MOB_PARTS=12（shader models[12] 槽位上限；
         // 全局序越界读零会让羊/猪塌缩——2026-10-10 GPU 像素测试抓到的回归）。
         assert!(v.meta[0] < MOB_TEX_LAYERS as u32 && v.meta[1] < MAX_MOB_PARTS as u32);
@@ -42,7 +43,16 @@ fn kind_slices_are_contiguous() {
 
 #[test]
 fn part_counts_match_table() {
-    assert_eq!(MOB_PART_COUNTS, [8, 6, 12, 6, 6, 6, 6, 11]);
+    assert_eq!(
+        MOB_PART_COUNTS,
+        [
+            8, 6, 12, 6, 6, 6, 6, 11, // 基础八怪
+            7, 8, // 鳕鱼 / 鲑鱼
+            10, 10, 10, 10, 10, // 美西螈五变体
+            10, 10, 10, 10, 10, 10, // 热带鱼 small 六型
+            12, 12, 12, 12, 12, 12, // 热带鱼 large 六型
+        ]
+    );
     assert_eq!(MOB_PART_COUNTS.len(), MOB_KIND_COUNT);
     // 八种贴图路径齐全（缺文件时 load 端降级不渲染，绝不程序化伪造）
     assert_eq!(MOB_TEX_FILES.len(), MOB_TEX_LAYERS);
@@ -116,6 +126,9 @@ fn pose_matrices_finite_under_extreme() {
         wing_angle: 2.0,
         head_drop: 1.0,
         head_eat_angle: 0.628,
+        in_water: false,
+        swim_phase: 3.3,
+        scale: 0.5,
     };
     for k in [
         MobModelKind::Chicken,
@@ -126,6 +139,12 @@ fn pose_matrices_finite_under_extreme() {
         MobModelKind::Skeleton,
         MobModelKind::Creeper,
         MobModelKind::Spider,
+        MobModelKind::Cod,
+        MobModelKind::Salmon,
+        MobModelKind::AxolotlLucy,
+        MobModelKind::AxolotlBlue,
+        MobModelKind::TropicalSmall0,
+        MobModelKind::TropicalLarge5,
     ] {
         for m in mob_model_matrices(k, &pose) {
             for v in m.to_cols_array() {

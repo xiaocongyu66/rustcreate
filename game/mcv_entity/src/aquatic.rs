@@ -65,16 +65,15 @@ pub const AVOID_RADIUS_SQR: f32 = 64.0;
 /// 与 passive.rs PANIC_MAX_TICKS 同约）。
 pub const FLEE_MAX_TICKS: u32 = 100;
 /// 离水扑腾水平冲量（AbstractFish.aiStep:120 `(rand*2−1)*0.05` 块/tick；
-/// 引擎 wish 幅值 ≈ 0.05√2×20 tick⁻¹ ≈ 1.4 m/s，取 0.8 对齐地表摩擦律）。
-pub const FLOP_WISH: f32 = 0.8;
+/// 每秒重掷 20 次 + 地表阻力 → 净水平 ≈1.1 m/s，wish 幅值 0.25×WALK 4.317
+/// ≈ 1.1 m/s 对齐，KNOWN-DIVERGENCE：引擎地表律收敛阶不同）。
+pub const FLOP_WISH: f32 = 0.25;
 /// 离水扑腾竖直冲量（:121 +0.4 块/tick ≈ 8 m/s ≈ 引擎 JUMP_SPEED 8.4）。
 pub const FLOP_JUMP_SPEED: f32 = 0.4;
 /// WaterAnimal.handleAirSupply 窒息伤害（hurtServer drown/dryOut, 2.0F）。
 pub const DRYOUT_DMG: f32 = 2.0;
 /// LivingEntity.shouldTakeDrowningDamage（:487-489）— air ≤ −20 才结算。
 pub const DROWN_GRACE: i32 = 20;
-/// WaterAnimal.checkSurfaceWaterAnimalSpawnRules — minSpawnLevel = sea−13。
-pub const WATER_SPAWN_BAND: i32 = 13;
 /// Axolotl.java:308-310 — useRareVariant：`nextInt(1200) == 0`（繁殖路径）。
 pub const AXOLOTL_RARE_ONE_IN: u32 = 1200;
 /// TropicalFish.finalizeSpawn — 90% 走 COMMON_VARIANTS，10% 全随机（:326）。

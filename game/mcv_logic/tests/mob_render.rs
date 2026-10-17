@@ -36,6 +36,8 @@ fn collect_instances_maps_kinds() {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
+    //AquaticVariant/WaterState 读取注册（collect 面自 M7c 起必读，未注册 read panic）。
+    mcv_entity::register_aquatic_components(&mut app.world);
     app.resources.insert(PassiveServices {
         chunks: Arc::new(chunks.clone()),
         player_pos: Vec3::new(60.0, 64.0, 60.0),
@@ -83,6 +85,8 @@ fn hostile_spawn_collects_two_instances_with_positions() {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
+    //AquaticVariant/WaterState 读取注册（collect 面自 M7c 起必读，未注册 read panic）。
+    mcv_entity::register_aquatic_components(&mut app.world);
     let a = Vec3::new(3.5, 65.0, -8.25);
     let b = Vec3::new(-12.0, 70.0, 40.0);
     mcv_entity::spawn_mob(&mut app.world, MobId::CREEPER, a);
@@ -113,6 +117,8 @@ fn radius_clip_drops_far_mobs() {
     let mut app = App::new();
     mcv_entity::register_mob_components(&mut app.world);
     mcv_entity::register_passive_components(&mut app.world);
+    //AquaticVariant/WaterState 读取注册（collect 面自 M7c 起必读，未注册 read panic）。
+    mcv_entity::register_aquatic_components(&mut app.world);
     app.resources.insert(PassiveServices {
         chunks: Arc::new(chunks),
         player_pos: Vec3::new(0.0, 64.0, 0.0),
