@@ -2717,8 +2717,13 @@ impl GameRuntime {
             let (Some(body), Some(hp)) = (bodies.get(e), healths.get(e)) else {
                 continue;
             };
-            let (rx, rz) =
-                mcv_save::chunk_region(body.pos.x.floor() as i32, body.pos.z.floor() as i32);
+            // 域键：方块坐标先取区块（div_euclid 16），再 chunk_region——
+            // 与方块 .mcrv 域 256 块粒度对齐（chunk_region 入参是区块坐标，
+            // 直喂方块坐标会把域缩成 16 块一格，迁移/删除账立刻失配）。
+            let (rx, rz) = mcv_save::chunk_region(
+                (body.pos.x.floor() as i32).div_euclid(16),
+                (body.pos.z.floor() as i32).div_euclid(16),
+            );
             let snap = EntityNbt {
                 vanilla_id: mob_vanilla_id(kind.0),
                 pos: body.pos,

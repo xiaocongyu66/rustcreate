@@ -31,7 +31,8 @@ fn mobs_survive_save_reload() {
         MobId::ZOMBIE,
         Vec3::new(1.5, 70.0, -3.25),
     );
-    // +20 格 → 不同区块域（r.1.0），域分文件面同时有证。
+    // 牛 +19 格：z 坐标 8.25 → 区块 (1, 0) → 域 r.0.0，与僵尸（区块
+    // (0, -1) → 域 r.0.-1）分文件，域分文件面同时有证。
     let _c = spawn_mob(
         &mut rt.mobs_app.world,
         MobId::COW,
@@ -52,9 +53,9 @@ fn mobs_survive_save_reload() {
         .unwrap()
         .fire_ticks = 33;
     rt.save_entities();
-    // 域档两份落盘（僵尸 r.0.0、牛 r.1.0）+ 玩家镜像。
+    // 域档两份落盘（僵尸 r.0.-1、牛 r.0.0——256 块域界同 .mcrv）+ 玩家镜像。
+    assert!(rt.save_dir.join("entities/r.0.-1.mcrve").exists());
     assert!(rt.save_dir.join("entities/r.0.0.mcrve").exists());
-    assert!(rt.save_dir.join("entities/r.1.0.mcrve").exists());
     assert!(rt.save_dir.join("playerdata/player.dat").exists());
 
     // 模拟重进：全新 runtime（mob 表从零）同一目录 load_meta。
@@ -138,13 +139,15 @@ fn moved_mobs_leave_no_stale_region_copy() {
     );
     rt.save_entities();
     assert!(rt.save_dir.join("entities/r.0.0.mcrve").exists());
+    // 迁移要跨过 256 块域界（x 17.5 只到邻区块、仍属 r.0.0）——推移到
+    // 区块 18 → 域 r.1.0。
     rt.mobs_app
         .world
         .write::<PhysBody>()
         .get_mut(e0)
         .unwrap()
         .pos
-        .x = 17.5;
+        .x = 300.5;
     rt.save_entities();
     assert!(
         !rt.save_dir.join("entities/r.0.0.mcrve").exists(),
