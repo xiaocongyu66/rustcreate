@@ -82,7 +82,7 @@ impl MaterialUniform {
 ///   常数环境强度（只乘漫反射项）；
 /// - `cam_pos`：xyz = 相机世界坐标，w = 自由。
 #[repr(C)]
-#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct PbrFrameUniform {
     pub sun_dir_day: [f32; 4],
     pub sun_color_ambient: [f32; 4],
