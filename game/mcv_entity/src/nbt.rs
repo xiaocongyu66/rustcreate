@@ -168,7 +168,7 @@ pub fn entity_to_nbt(e: &EntityNbt) -> NbtCompound {
     // 本仓无永久无敌态（MobTicks.invulnerable 是受击 i-frame，瞬态不落盘）。
     c.insert("Invulnerable", NbtValue::Byte(0));
     c.insert("PortalCooldown", NbtValue::Int(0));
-    c.insert("UUID", NbtValue::IntArray(e.uuid.iter().copied().collect()));
+    c.insert("UUID", NbtValue::IntArray(e.uuid.to_vec()));
     c.insert("Health", NbtValue::Float(e.health));
     c
 }
