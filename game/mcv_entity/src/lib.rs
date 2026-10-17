@@ -17,13 +17,14 @@ pub mod spawner;
 pub mod xp;
 
 pub use ai::{
-    AiAction, BODY_TURN_STEP, Brain, MobAiTable, MobState, Percept, ai_table, walk_body_yaw,
-    wrap_angle,
+    AiAction, BODY_TURN_STEP, Brain, MobAiTable, MobState, Percept, TELEPORT_ATTEMPTS,
+    TeleportGround, ai_table, teleport_away_target, teleport_landing, teleport_random_target,
+    try_teleport, walk_body_yaw, wrap_angle,
 };
 pub use arrow::{BOW_MIN_POWER, crit_bonus, hit_damage, mob_base_damage, ranged_power, triangle};
 pub use components::{
-    Effects, Health, LastHurt, MobArrow, MobBrain, MobIntent, MobKind, MobPath, MobTicks, PhysBody,
-    Yaw, register_mob_components, spawn_mob,
+    Effects, Health, LastHurt, MobArrow, MobBrain, MobFireball, MobIntent, MobKind, MobPath,
+    MobTicks, PhysBody, Yaw, register_mob_components, spawn_mob,
 };
 pub use defs::{MOBS, MobDef, MobId};
 pub use drops::{DropEvent, death_drops};

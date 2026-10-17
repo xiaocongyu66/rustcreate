@@ -122,6 +122,19 @@ pub struct MobArrow {
     pub player_owned: bool,
 }
 
+/// 小火球（SmallFireball；源 = BlazeAttackGoal 发射，M7d）：无重力的
+/// 加速投射物（AbstractHurtingProjectile.java:22-24,:102-127）——
+/// `v += v̂·0.1; v ×= 0.95`（Fireball 默认惯性，稳态 1.9 格/tick），
+/// 撞方块/命中玩家/寿命耗尽即移除。命中：5.0 伤害 + 点燃 5s
+/// （SmallFireball.java:38-44，主控接线伤害与玩家 fire_ticks）。
+/// TTL 兜底 100t（原版不老化，主控防泄漏面）。
+#[derive(Clone, Copy, Debug)]
+pub struct MobFireball {
+    pub pos: Vec3,
+    pub vel: Vec3,
+    pub ttl_ticks: u32,
+}
+
 /// A* 路径账本（审计 N-1 接线）：`nodes` 为起→终航点、`idx` 游标、
 /// `recalc_cd` 重算倒计时（MeleeAttackGoal.java:100-124 节奏）、
 /// `pathed_target` 上次寻路的目标点（移动 ≥1 格才触发重算，:104-107）。
@@ -162,6 +175,7 @@ pub fn register_mob_components(world: &mut World) {
     world.register::<MobIntent>();
     world.register::<MobPath>();
     world.register::<MobArrow>();
+    world.register::<MobFireball>();
     world.register::<Effects>();
     // 行走动画账本（渲染拼装消费 AnimState.phase/amount → mob_mesh 腿摆）。
     // register 幂等（ensure_store 只建空表）：register_passive_components 的

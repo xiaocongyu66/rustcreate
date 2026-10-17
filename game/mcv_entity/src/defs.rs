@@ -6,6 +6,9 @@ pub enum MobKind {
     Skeleton,
     Creeper,
     Spider,
+    Blaze,
+    EnderMan,
+    Creaking,
     Cow,
     Pig,
     Sheep,
@@ -20,10 +23,13 @@ impl MobId {
     pub const SKELETON: MobId = MobId(1);
     pub const CREEPER: MobId = MobId(2);
     pub const SPIDER: MobId = MobId(3);
-    pub const COW: MobId = MobId(4);
-    pub const PIG: MobId = MobId(5);
-    pub const SHEEP: MobId = MobId(6);
-    pub const CHICKEN: MobId = MobId(7);
+    pub const BLAZE: MobId = MobId(4);
+    pub const ENDERMAN: MobId = MobId(5);
+    pub const CREAKING: MobId = MobId(6);
+    pub const COW: MobId = MobId(7);
+    pub const PIG: MobId = MobId(8);
+    pub const SHEEP: MobId = MobId(9);
+    pub const CHICKEN: MobId = MobId(10);
 
     pub const fn def(self) -> &'static MobDef {
         &MOBS[self.0 as usize]
@@ -49,7 +55,7 @@ pub struct MobDef {
     pub half_size: [f32; 3],
 }
 
-pub static MOBS: [MobDef; 8] = [
+pub static MOBS: [MobDef; 11] = [
     // Zombie.java:130-137 — ATTACK 3.0, ARMOR 2.0, FOLLOW 35, SPEED 0.23
     MobDef {
         name: "zombie",
@@ -103,6 +109,51 @@ pub static MOBS: [MobDef; 8] = [
         hostile: true,
         xp: 5,
         half_size: [0.7, 0.45, 0.7],
+    },
+    // Blaze.java:54-56 — ATTACK 6.0, SPEED 0.23, FOLLOW 48；MAX_HEALTH 未
+    // 覆写（Attributes.java:58-60 默认 20）；xpReward=10（Blaze.java:40）。
+    // EntityType.java:277 — .sized(0.6F, 1.8F) → half [0.3, 0.9, 0.3]。
+    MobDef {
+        name: "blaze",
+        kind: MobKind::Blaze,
+        health: 20.0,
+        attack_damage: 6.0,
+        armor: 0.0,
+        follow_range: 48.0,
+        speed_attr: 0.23,
+        hostile: true,
+        xp: 10,
+        half_size: [0.3, 0.9, 0.3],
+    },
+    // EnderMan.java:113-120 — MAX_HEALTH 40, SPEED 0.3, ATTACK 7.0,
+    // FOLLOW 64；xpReward 未覆写 → Monster 默认 5。
+    // EntityType.java:407-409 — .sized(0.6F, 2.9F) → half [0.3, 1.45, 0.3]。
+    MobDef {
+        name: "enderman",
+        kind: MobKind::EnderMan,
+        health: 40.0,
+        attack_damage: 7.0,
+        armor: 0.0,
+        follow_range: 64.0,
+        speed_attr: 0.3,
+        hostile: true,
+        xp: 5,
+        half_size: [0.3, 1.45, 0.3],
+    },
+    // Creaking.java:64-69 + :127-134 — MAX_HEALTH 1, SPEED 0.4, ATTACK 3.0,
+    // FOLLOW 32；xpReward=0（Creaking.java:92）。
+    // EntityType.java:352-355 — .sized(0.9F, 2.7F) → half [0.45, 1.35, 0.45]。
+    MobDef {
+        name: "creaking",
+        kind: MobKind::Creaking,
+        health: 1.0,
+        attack_damage: 3.0,
+        armor: 0.0,
+        follow_range: 32.0,
+        speed_attr: 0.4,
+        hostile: true,
+        xp: 0,
+        half_size: [0.45, 1.35, 0.45],
     },
     // Cow: health 10, passive
     // EntityType.java:351 — .sized(0.9F, 1.4F) → half [0.45, 0.7, 0.45]

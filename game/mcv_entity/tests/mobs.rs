@@ -46,6 +46,10 @@ fn percept(pos: Vec3, target: Option<Vec3>) -> Percept {
         shelter: None,
         difficulty: 2, // normal
         waypoint: None,
+        // M7d 三怪感知：默认玩家视线零向（永不凝视 = 安全退化）、离地。
+        plook: Vec3::ZERO,
+        vel_y: 0.0,
+        on_ground: false,
     }
 }
 

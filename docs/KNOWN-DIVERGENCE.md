@@ -562,3 +562,39 @@ stairs/slab 照旧按既有形状门）：
 
 （净零口径：本条由 place-state 波登记，登记面 = axis 渲染消费滞后 1 项
 + facing 族未纳入 1 项；无旧条目同步销账。）
+
+## MOB-2 烈焰人渲染杆不自转（M7d，hostile-mod 波）
+
+- 原版：BlazeModel.setupAnim（BlazeModel.java:58-84）12 杆以 `ageInTicks`
+  绕烈焰人轴公转（三环各自角速度 −0.1/0.03/−0.05·π）。
+- 本仓：杆静态（PartAnim::Fixed 合一部位，半径/基角/y 抖动逐杆照抄）。
+  MobPose 无 age/公转输入，M7d 渲染面只锁"三怪上屏+部位矩阵"，公转属
+  动画面后续刀。
+- 关联：mob_mesh.rs BLAZE_RODS 注释。
+
+## MOB-3 末影人可拾方块集 = tag 近似（M7d）
+
+- 原版：EndermanTakeBlockGoal 走 `#minecraft:enderman_holdable` tag + 射线
+  clip（EnderMan.java:590-592 ClipContext OUTLINE）+ canPlaceAt。
+- 本仓：tag JSON 未提取，常量面交集 `dirt(2)/grass_block(3,雪态 11)/
+  sand(4)/gravel(431)/podzol(741)`；有射线路要求以"格内实现物"近似；
+  game.rs `enderman_holdable`。
+
+## MOB-4 烈焰人无自然刷（M7d 域内无下界）
+
+- 原版：Blaze 仅下界堡垒结构位生成（结构生成位门）。
+- 本仓：世界无下界域 → `try_natural_spawn` 怪单不含 Blaze（参数表/AI/
+  loot/渲染全通，spawn_mob 直呼可造；下界波合入时把结构位门接回）。
+
+## MOB-5 嘎吱怪夜+暗度门近似（M7d）
+
+- 原版：Creaking 仅苍蓝园（pale_garden）Creaking Heart 方块夜里召唤
+  （CreakingAi/heart 唤醒链），非自然暗度刷。
+- 本仓：10 群系集无 pale_garden、无 heart 方块系统 → 夜（!MONSTERS_BURN）
+  ∧ Monster.isDarkEnoughToSpawn 近似入自然刷单；群系/heart 门随该两刀补回。
+
+## MOB-6 水/雨敏感只覆盖水面（M7d）
+
+- 原版：Entity.isWet = bbox 交水 **或 处雨中**（biome 降水 + canSeeRain）。
+- 本仓：眼/脚两格液体近似（bbox 逐格采样裁剪为两格），雨滴-实体无降水
+  逼面 → 雨中敏感伤暂缺（weather.rs 现只供天光/雪判，缺雨实体事件）。

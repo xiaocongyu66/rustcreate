@@ -290,3 +290,54 @@ fn zombie_walk_anim_changes_pixels_at_nonzero_yaw() {
         assert!(changed > 30, "yaw {yaw} 摆腿应改变画面，changed={changed}");
     }
 }
+
+#[test]
+fn m7d_hostile_triad_paints_entity_pixels() {
+    // M7d 烈焰人/末影人/嘎吱怪 headless 上屏锁：各自贴图层
+    // （blaze=9 / enderman=10(+eyes 11) / creaking=12(+eyes 13)）经新部位表
+    // 投影到画面，diff 像素必须为实体色（同 four_hostile 语义）。
+    // 屏占核算：三怪在 (4,7,10) 沿视线（相机极点 −0.35 俯仰、
+    // dist≈7.4/10.9/14.9 → 高 25/38/33px 量级），合计数百像素起。
+    let (device, queue, mut renderer) = setup();
+    let extent = wgpu::Extent3d {
+        width: 320,
+        height: 240,
+        depth_or_array_layers: 1,
+    };
+    let target = OffscreenTarget::new(&device, extent);
+    let chunk = ground_chunk(&device);
+    let base = render(&device, &queue, &mut renderer, &target, &chunk, &[]);
+    let mobs = [
+        instance(
+            MobModelKind::Blaze,
+            Vec3::new(4.0, 100.3, 6.0),
+            0.0,
+            0.0,
+            0.0,
+        ),
+        instance(
+            MobModelKind::EnderMan,
+            Vec3::new(7.0, 100.0, 7.0),
+            0.0,
+            0.0,
+            0.0,
+        ),
+        instance(
+            MobModelKind::Creaking,
+            Vec3::new(10.0, 100.0, 8.0),
+            0.0,
+            0.0,
+            0.0,
+        ),
+    ];
+    let with = render(&device, &queue, &mut renderer, &target, &chunk, &mobs);
+    if let Ok(dir) = std::env::var("MCV_SCREENSHOT_DIR") {
+        let png = mcv_render::offscreen::encode_png(extent.width, extent.height, &with);
+        let _ = std::fs::write(std::path::Path::new(&dir).join("m7d-hostile-test.png"), png);
+    }
+    let changed = diff_pixels(&base, &with);
+    assert!(
+        changed > 300,
+        "M7d 三怪应画出 entity 贴图像素，changed={changed}"
+    );
+}

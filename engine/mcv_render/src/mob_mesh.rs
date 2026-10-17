@@ -81,17 +81,19 @@
 use crate::player_mesh::{PX, PlayerVertex, quadruped_faces};
 use glam::{Mat4, Vec3};
 
-/// 生物种类数（鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛）。
-pub const MOB_KIND_COUNT: usize = 8;
-/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层；蜘蛛 11 也在限内）。
+/// 生物种类数（鸡/牛/羊/猪 + 僵尸/骷髅/苦力怕/蜘蛛 + 烈焰人/末影人/嘎吱怪）。
+pub const MOB_KIND_COUNT: usize = 11;
+/// 单体最大部位数（羊 = 6 基模 + 6 羊毛层；蜘蛛 11；末影人/嘎吱怪 7；
+/// 烈焰人 2（head + 12 杆合一部位，杆不自转，见 PARTS 表）。
 pub const MAX_MOB_PARTS: usize = 12;
 /// 贴图数组层数（层序见 [`MOB_TEX_FILES`]；chicken/cow/pig 用 temperate 变体）。
-pub const MOB_TEX_LAYERS: usize = 9;
+pub const MOB_TEX_LAYERS: usize = 14;
 /// 贴图统一 pad 到 64x64（鸡/羊/骷髅/苦力怕/蜘蛛原生 64x32，上半透明
 /// ——2D 数组各层必须同尺寸）。
 pub const MOB_TEX_PX: usize = 64;
 /// 每种生物的部位数（下标 = [`MobModelKind`] 序）。
-pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] = [8, 6, 12, 6, 6, 6, 6, 11];
+pub const MOB_PART_COUNTS: [usize; MOB_KIND_COUNT] =
+    [8, 6, 12, 6, 6, 6, 6, 11, 2, 7, 7];
 /// 离屏/主控一次最多提交的生物实例数（uniform 槽位）。
 pub const MOB_MAX_INSTANCES: usize = 64;
 
@@ -110,6 +112,9 @@ pub enum MobModelKind {
     Skeleton = 5,
     Creeper = 6,
     Spider = 7,
+    Blaze = 8,
+    EnderMan = 9,
+    Creaking = 10,
 }
 
 impl MobModelKind {
@@ -127,6 +132,9 @@ impl MobModelKind {
             5 => Some(MobModelKind::Skeleton),
             6 => Some(MobModelKind::Creeper),
             7 => Some(MobModelKind::Spider),
+            8 => Some(MobModelKind::Blaze),
+            9 => Some(MobModelKind::EnderMan),
+            10 => Some(MobModelKind::Creaking),
             _ => None,
         }
     }
@@ -144,6 +152,14 @@ pub const MOB_TEX_FILES: [&str; MOB_TEX_LAYERS] = [
     "entity/skeleton/skeleton.png",
     "entity/creeper/creeper.png",
     "entity/spider/spider.png",
+    // M7d 三怪（层序 = 火人 / 末影人基模 / 末影人眼 / 嘎吱怪基模 / 嘎吱怪眼；
+    // 眼层 = 原 RenderType.eyes 发光贴图的独立 tex（EnderManRenderer/Creaking
+    // 内建 eyesLayer），本仓无 emissive 通道，以 overlay 部位微放大复刻）。
+    "entity/blaze/blaze.png",
+    "entity/enderman/enderman.png",
+    "entity/enderman/enderman_eyes.png",
+    "entity/creaking/creaking.png",
+    "entity/creaking/creaking_eyes.png",
 ];
 
 /// 部位动画角色。
@@ -301,6 +317,66 @@ static SPIDER_LEG_R: MobBox = bx([-15.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0
 static SPIDER_LEG_L: MobBox = mirrored(bx([-1.0, -1.0, -1.0], [16.0, 2.0, 2.0], [18.0, 0.0]));
 /// 蜘蛛四对腿静态 zRot（SpiderModel:56-63；0.58119464 = 2π·33/360 原版常数）。
 const SPIDER_LEG_Z_MID: f32 = 0.58119464;
+
+// ---- 烈焰人（BlazeModel.createBodyLayer，64x32；BlazeRenderer shadow=0.5
+//      为影子半径非缩放——模型 1:1 落格） ------------------------------------
+
+/// 头 8³ tex(0,0)（BlazeModel.java:21 head PartPose.ZERO）。
+static BLAZE_HEAD: MobBox = bx([-4.0, -4.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
+/// 杆 2×8×2 tex(0,16)（:23 `rod`，addBox(0,0,0)）。
+static BLAZE_ROD: MobBox = bx([-1.0, -1.0, -1.0], [2.0, 8.0, 2.0], [0.0, 16.0]);
+
+// ---- 末影人（EndermanModel，64x32） ------------------------------------------
+// Java 模型地面线在 +25（legs pivot(±2,−5) 盒 30px：−5..25），本引擎地面常数
+// 24 → 所有 pivot y 整体 −1；其余 x/z 照抄。
+
+/// 头 8³ tex(0,0)（EndermanModel.java:23-24）。
+static ENDERMAN_HEAD: MobBox = bx([-4.0, -8.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
+/// 躯干 8×12×4 tex(32,16)（:30）。
+static ENDERMAN_BODY: MobBox = bx([-4.0, 0.0, -2.0], [8.0, 12.0, 4.0], [32.0, 16.0]);
+/// 臂/腿 2×30×2 tex(56,0)（:33-42；左件 mirror 翻 UV）。
+static ENDERMAN_LIMB: MobBox = bx([-1.0, -2.0, -1.0], [2.0, 30.0, 2.0], [56.0, 0.0]);
+static ENDERMAN_LIMB_LEFT: MobBox = mirrored(bx([-1.0, -2.0, -1.0], [2.0, 30.0, 2.0], [56.0, 0.0]));
+/// 腿盒 y 起 0（腿不举臂臂 y 起 −2，共用一个盒则腿顶差 2px——照 Java 分盒）。
+static ENDERMAN_LEG_R: MobBox = bx([-1.0, 0.0, -1.0], [2.0, 30.0, 2.0], [56.0, 0.0]);
+static ENDERMAN_LEG_L: MobBox = mirrored(bx([-1.0, 0.0, -1.0], [2.0, 30.0, 2.0], [56.0, 0.0]));
+/// 眼层 = 头盒同位微放大（原版 eyesLayer 同几何经 RenderType.eyes 无变形
+/// 直绘；本仓无深度等值通道，grow 0.25 防 z-fight）。
+static ENDERMAN_EYES: MobBox = grown(bx([-4.0, -8.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]), 0.25);
+
+// ---- 嘎吱怪（CreakingModel.createMesh，64x64；root offset(0,+24,0) 后
+//      部件坐标即本引擎同款 y↑=24 地面系，pivot 取 root+child 累计绝对值） ----
+
+/// 颅 6×10×6 tex(0,0) + 冠 6×3×6 tex(28,31)（CreakingModel.java:38-45）。
+static CREAKING_SKULL: MobBox = bx([-3.0, -10.0, -3.0], [6.0, 10.0, 6.0], [0.0, 0.0]);
+static CREAKING_CROWN: MobBox = bx([-3.0, -13.0, -3.0], [6.0, 3.0, 6.0], [28.0, 31.0]);
+/// 侧髯 9×14×0 扁片 ×2（:46-48 / :34,12）。
+static CREAKING_TENDRIL_R: MobBox = bx([3.0, -13.0, 0.0], [9.0, 14.0, 0.0], [12.0, 40.0]);
+static CREAKING_TENDRIL_L: MobBox = bx([-12.0, -14.0, 0.0], [9.0, 14.0, 0.0], [34.0, 12.0]);
+/// 躯干 6×13×5 tex(0,16) + 领 6×7×5 tex(24,0)（:53）。
+static CREAKING_BODY: MobBox = bx([0.0, -3.0, -3.0], [6.0, 13.0, 5.0], [0.0, 16.0]);
+static CREAKING_COLLAR: MobBox = bx([-6.0, -4.0, -3.0], [6.0, 7.0, 5.0], [24.0, 0.0]);
+/// 臂 3×21×3 tex(22,13) + 肘垫 3×4×3 tex(46,0)（:58）。
+static CREAKING_ARM_R: MobBox = bx([-2.0, -1.5, -1.5], [3.0, 21.0, 3.0], [22.0, 13.0]);
+static CREAKING_ARM_R_PAD: MobBox = bx([-2.0, 19.5, -1.5], [3.0, 4.0, 3.0], [46.0, 0.0]);
+/// 左臂 3×16×3 tex(30,40) + 肩/肘垫（:64-69）。
+static CREAKING_ARM_L: MobBox = bx([0.0, -1.0, -1.5], [3.0, 16.0, 3.0], [30.0, 40.0]);
+static CREAKING_ARM_L_PAD0: MobBox = bx([0.0, -5.0, -1.5], [3.0, 4.0, 3.0], [52.0, 12.0]);
+static CREAKING_ARM_L_PAD1: MobBox = bx([0.0, 15.0, -1.5], [3.0, 4.0, 3.0], [52.0, 19.0]);
+/// 左腿 3×16×3 tex(42,40) + 刮地片 5×0×9 tex(45,55)（:74）。
+static CREAKING_LEG_L: MobBox = bx([-1.5, 0.0, -1.5], [3.0, 16.0, 3.0], [42.0, 40.0]);
+static CREAKING_LEG_L_FOOT: MobBox = bx([-1.5, 15.7, -4.5], [5.0, 0.0, 9.0], [45.0, 55.0]);
+/// 右腿 3×19×3 tex(0,34) + 刮地片 tex(45,46) + 膝块 3×3×3 tex(12,34)（:77-85）。
+static CREAKING_LEG_R: MobBox = bx([-3.0, -1.5, -1.5], [3.0, 19.0, 3.0], [0.0, 34.0]);
+static CREAKING_LEG_R_FOOT: MobBox = bx([-5.0, 17.2, -4.5], [5.0, 0.0, 9.0], [45.0, 46.0]);
+static CREAKING_LEG_R_KNEE: MobBox = bx([-3.0, -4.5, -1.5], [3.0, 3.0, 3.0], [12.0, 34.0]);
+/// 眼层 = 头四盒同位微放大（createEyesLayer retainExactParts("head") 同几何）。
+static CREAKING_EYES_SKULL: MobBox = grown(bx([-3.0, -10.0, -3.0], [6.0, 10.0, 6.0], [0.0, 0.0]), 0.25);
+static CREAKING_EYES_CROWN: MobBox = grown(bx([-3.0, -13.0, -3.0], [6.0, 3.0, 6.0], [28.0, 31.0]), 0.25);
+static CREAKING_EYES_TENDRIL_R: MobBox =
+    grown(bx([3.0, -13.0, 0.0], [9.0, 14.0, 0.0], [12.0, 40.0]), 0.25);
+static CREAKING_EYES_TENDRIL_L: MobBox =
+    grown(bx([-12.0, -14.0, 0.0], [9.0, 14.0, 0.0], [34.0, 12.0]), 0.25);
 
 /// 全部位表（下标序 = 鸡 8 / 牛 6 / 羊 12 / 猪 6 / 僵尸 6 / 骷髅 6 /
 /// 苦力怕 6 / 蜘蛛 11，与 [`MOB_PART_COUNTS`] 一致；
@@ -833,6 +909,164 @@ static PARTS: [&[PartDef]; MOB_KIND_COUNT] = [
             boxes: &[SPIDER_LEG_L],
         },
     ],
+    // ---- 烈焰人（BlazeModel：head PartPose.ZERO + 12 杆三环合一部位） --------
+    // 杆不自转（原版 setupAnim 以 age 绕轴公转 yRot，本仓 Pose 无该输入，
+    // KNOWN-DIVERGENCE MOB-2 登记）；三环半径/角度/y 抖动照 :25-50 数字。
+    &[
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Head,
+            boxes: &[BLAZE_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, 0.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 9,
+            anim: PartAnim::Fixed,
+            // 环1 r=9 基角 0（:26-29 y=−2+cos(i·0.5)）；环2 r=7 基角 π/4
+            //（:36-39 y=2+cos(i·0.5)）；环3 r=5 基角 0.47123894
+            //（:46-48 y=11+cos(i·0.375)），各自 +π/2 步进。
+            boxes: &BLAZE_RODS,
+        },
+    ],
+    // ---- 末影人（EndermanModel；Java 地面线 25 → pivot y −1 折到本引擎 24） --
+    &[
+        PartDef {
+            pivot: [0.0, -14.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::Head,
+            boxes: &[ENDERMAN_HEAD],
+        },
+        PartDef {
+            pivot: [0.0, -14.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 11, // enderman_eyes
+            anim: PartAnim::Head,
+            boxes: &[ENDERMAN_EYES],
+        },
+        PartDef {
+            pivot: [0.0, -15.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::Fixed,
+            boxes: &[ENDERMAN_BODY],
+        },
+        PartDef {
+            pivot: [-5.0, -13.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::WalkArm { shift: 0.0 },
+            boxes: &[ENDERMAN_LIMB],
+        },
+        PartDef {
+            pivot: [5.0, -13.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::WalkArm {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[ENDERMAN_LIMB_LEFT],
+        },
+        PartDef {
+            pivot: [-2.0, -6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[ENDERMAN_LEG_R],
+        },
+        PartDef {
+            pivot: [2.0, -6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 10,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[ENDERMAN_LEG_L],
+        },
+    ],
+    // ---- 嘎吱怪（CreakingModel；root offset(0,24,0) 后部件绝对坐标即地面 24 系） --
+    &[
+        PartDef {
+            pivot: [-4.0, -6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::Head,
+            boxes: &[CREAKING_SKULL, CREAKING_CROWN, CREAKING_TENDRIL_R, CREAKING_TENDRIL_L],
+        },
+        PartDef {
+            pivot: [-4.0, -6.0, 0.0],
+            rot_x: 0.0,
+            tex_layer: 13, // creaking_eyes
+            anim: PartAnim::Head,
+            boxes: &[
+                CREAKING_EYES_SKULL,
+                CREAKING_EYES_CROWN,
+                CREAKING_EYES_TENDRIL_R,
+                CREAKING_EYES_TENDRIL_L,
+            ],
+        },
+        PartDef {
+            pivot: [-1.0, -2.0, 1.0],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::Fixed,
+            boxes: &[CREAKING_BODY, CREAKING_COLLAR],
+        },
+        PartDef {
+            pivot: [-8.0, -4.5, 1.5],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::Fixed,
+            boxes: &[CREAKING_ARM_R, CREAKING_ARM_R_PAD],
+        },
+        PartDef {
+            pivot: [5.0, -4.0, 0.5],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::Fixed,
+            boxes: &[CREAKING_ARM_L, CREAKING_ARM_L_PAD0, CREAKING_ARM_L_PAD1],
+        },
+        PartDef {
+            pivot: [-1.0, 6.5, 0.5],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::WalkLeg { shift: 0.0 },
+            boxes: &[CREAKING_LEG_R, CREAKING_LEG_R_FOOT, CREAKING_LEG_R_KNEE],
+        },
+        PartDef {
+            pivot: [1.5, 8.0, 0.5],
+            rot_x: 0.0,
+            tex_layer: 12,
+            anim: PartAnim::WalkLeg {
+                shift: std::f32::consts::PI,
+            },
+            boxes: &[CREAKING_LEG_L, CREAKING_LEG_L_FOOT],
+        },
+    ],
+];
+
+/// 烈焰人 12 杆（BlazeModel.java:25-50 逐杆数字；盒 2×8×2 tex(0,16)，
+/// pivot (cosθ·r, y_i, sinθ·r)、盒 addBox(0,0,0) → min 即 pivot 本值；
+/// y_i = 环基准 + cos(i·0.5)（环3 = cos(i·0.375)，i 全局 8..11）。
+static BLAZE_RODS: [MobBox; 12] = [
+    // 环1（i=0..3）：r=9、基角 0
+    bx([9.0, -1.0, 0.0], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([0.0, -1.12, 9.0], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([-9.0, -1.46, 0.0], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([0.0, -1.93, -9.0], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    // 环2（i=4..7）：r=7、基角 π/4
+    bx([4.95, 1.58, 4.95], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([-4.95, 1.2, 4.95], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([-4.95, 1.01, -4.95], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([4.95, 1.06, -4.95], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    // 环3（i=8..11）：r=5、基角 0.47123894
+    bx([4.46, 10.01, 2.27], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([-2.27, 10.03, 4.46], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([-4.46, 10.18, -2.27], [2.0, 8.0, 2.0], [0.0, 16.0]),
+    bx([2.27, 10.43, -4.46], [2.0, 8.0, 2.0], [0.0, 16.0]),
 ];
 
 /// 每帧姿态（由游戏侧计算后传入渲染；与 `PlayerPose` 同约定：脚底原点、
@@ -1073,7 +1307,7 @@ pub fn update_wing_animation(flap: f32, flap_speed: f32, on_ground: bool) -> (f3
     (f, fs)
 }
 
-/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64x9 RGBA）。
+/// 从资源根加载并解码 mob 贴图数组（全部 pad 到 64x64×MOB_TEX_LAYERS RGBA）。
 /// 任一文件缺失/解码失败/尺寸不符 → None（上层按缺素材降级不渲染；
 /// 绝不用程序化占位顶替原版贴图）。M8c：读取经 AssetManager（缺文件
 /// 硬错误显式 log，不再静默 `.ok()?` 吞掉）。
@@ -1130,9 +1364,11 @@ mod tests {
         // 总盒数：鸡 8 + 牛 10（头 4 含双角 + 躯干 2 含乳房 + 腿 4）
         // + 羊 12 + 猪 7（头 2 含鼻 + 躯干 1 + 腿 4）
         // + 僵尸 6（humanoid 六部件）+ 骷髅 6 + 苦力怕 6 + 蜘蛛 11
-        // = 66
-        assert_eq!(m.verts.len(), 66 * 24);
-        assert_eq!(m.indices.len(), 66 * 36);
+        // + 烈焰人 13（头 1 + 杆 12 合一部位）+ 末影人 7（头/眼/躯干/双臂/
+        //   双腿）+ 嘎吱怪 20（头 4 + 眼 4 + 躯干 2 + 臂 2+3 + 腿 3+2）
+        // = 106
+        assert_eq!(m.verts.len(), 106 * 24);
+        assert_eq!(m.indices.len(), 106 * 36);
         // kind 切片连续
         let mut prev = 0u32;
         for r in m.slices.iter() {

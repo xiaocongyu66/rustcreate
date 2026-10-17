@@ -13,8 +13,9 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, AnimState, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind,
-    MobPath, MobTicks, PhysBody, PickupReq, Yaw, advance_walk_anim, spawn_mob,
+    AiAction, AnimState, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobFireball, MobId,
+    MobIntent, MobKind, MobPath, MobTicks, PhysBody, PickupReq, TeleportGround, Yaw,
+    advance_walk_anim, spawn_mob, teleport_away_target, teleport_landing, teleport_random_target,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
@@ -402,8 +403,18 @@ pub struct WorldView<'a> {
     pub chunks: &'a HashMap<ChunkPos, Arc<ChunkHandle>>,
 }
 
-impl VoxelAccess for WorldView<'_> {
-    /// 未加载 / 体素未就位（Empty）→ **空气**，与 26.1 一致：越界列
+/// 末影人瞬移落点扫描面（M7d）：`blocksMotion` = 体素 solid 判、
+/// 流体 = liquid 判（同一 [`WorldView`] 体素源，未载 = 空气空气原语义）。
+impl TeleportGround for WorldView<'_> {
+    fn solid(&self, p: BlockPos) -> bool {
+        self.block(p).def().solid
+    }
+    fn liquid(&self, p: BlockPos) -> bool {
+        self.block(p).def().liquid
+    }
+}
+
+impl VoxelAccess for WorldView<'_> {    /// 未加载 / 体素未就位（Empty）→ **空气**，与 26.1 一致：越界列
     /// `Level.getBlockState` 返回 VOID_AIR（Level.java:361-363），从无
     /// 「未加载=实心石」代理。旧石安全垫是真机「隐形墙」（撞上看不见
     /// 的实心边界）与「看得见却穿透」错位（石面高度≠地形）的共同根因。
@@ -4323,6 +4334,8 @@ impl GameRuntime {
                 ticks_step: n.min(u32::MAX as u64) as u32,
                 difficulty: self.difficulty.id(),
                 creative: self.mode == GameMode::Creative,
+                // 凝视锥输入：玩家视线方向快照（Camera::dir 同型）。
+                player_look: self.camera(1.0).dir(),
                 // 实体门输入：模拟票级别视图快照（DistanceManager.java:
                 // 136-138）。Arc 共享读（计数递增，每步整表克隆已消除）。
                 tickets: Arc::clone(&self.tickets),
@@ -4371,6 +4384,30 @@ impl GameRuntime {
             let dmg = mcv_entity::ai::explosion_damage((pc - b.center).length(), b.radius, 1.0);
             if dmg > 0.0 {
                 self.hurt_player(dmg, Some(b.center));
+            }
+        }
+        // 小火球命中（M7d）：5.0 伤 + 点燃 5s（SmallFireball.java:38-44；
+        // 走 hurt_player+fire_ticks.max——lavaIgnite 同款只增不减门 :634-640）。
+        let fireballs: Vec<MobFireballHit> = self
+            .mobs_app
+            .events
+            .channel::<MobFireballHit>()
+            .take();
+        for fb in fireballs {
+            self.hurt_player(fb.damage.max(1.0), Some(fb.src));
+            self.fire_ticks = self.fire_ticks.max(fb.fire_ticks as i32);
+        }
+        // 末影人方块编辑（M7d）：Take=清除（持物转 Brain.carried）、
+        // Place=落笔（合法性系统侧已过）；走 write_block_tracked 同玩家
+        // 编辑路径（MESH/SAVE/重光/流体触发面一致）。
+        let edits: Vec<MobBlockEdit> = self.mobs_app.events.channel::<MobBlockEdit>().take();
+        for edit in edits {
+            let raw = edit
+                .set
+                .map(BlockId)
+                .unwrap_or(BlockId(0)); // None = 破坏 → 空气
+            if self.write_block_tracked(edit.pos, raw) {
+                self.update_fluid_around(edit.pos);
             }
         }
         // 掉落物拾取结算：入栏走 Hotbar::add（give 路径唯一），满栏剩余留地。
@@ -5744,14 +5781,28 @@ impl GameRuntime {
                         && spawner::is_dark_enough(sky, blk, raw, &cfg, &mut rng)
                     {
                         if kind.is_none() {
-                            kind = Some(
-                                [
-                                    MobId::ZOMBIE,
-                                    MobId::SKELETON,
-                                    MobId::CREEPER,
-                                    MobId::SPIDER,
-                                ][(rng() as usize) % 4],
-                            );
+                            // 暗度门怪单（均匀采样；原版群系 spawndata 组成
+                            // 权重未提取，沿用 spawner.rs 均匀惯例）：
+                            // zombie/skeleton/creeper/spider/enderman =
+                            // Monster.checkMonsterSpawnRules 暗度门五怪（M7d
+                            // EnderMan 同门）；creaking = 夜门追加（MOB-5：
+                            // 原版仅苍蓝园 Creaking Heart 召唤，10 群系集
+                            // 无 pale_garden → 夜+暗度近似）；blaze = 下界
+                            // 堡垒专属（MOB-4）不入自然单。
+                            let mut kinds = [
+                                MobId::ZOMBIE,
+                                MobId::SKELETON,
+                                MobId::CREEPER,
+                                MobId::SPIDER,
+                                MobId::ENDERMAN,
+                            ];
+                            let total = if monsters_burn(self.time_ticks) {
+                                5
+                            } else {
+                                kinds[5] = MobId::CREAKING;
+                                6
+                            };
+                            kind = Some(kinds[(rng() as usize) % total]);
                             want = cfg.group_min
                                 + (rng() as usize) % (cfg.group_max - cfg.group_min + 1);
                         }
@@ -7556,6 +7607,9 @@ pub struct MobServices {
     /// 玩家创造态快照：创造玩家不被索敌（LivingEntity.java:928
     /// canBeSeenAsEnemy 的本仓等价门，审计 N-5）。
     pub creative: bool,
+    /// 玩家视线方向（getViewVec(1.0) 归一化；camera(1.0).dir() 快照）——
+    /// 末影人/嘎吱怪凝视锥（LivingEntity.isLookingAtMe:1723-1742）的输入。
+    pub player_look: Vec3,
     /// 票表快照（[`TicketTable`]）：实体门按实体所在块查
     /// `level_of_type(PlayerSimulation)` ≤ ENTITY_TICKING——原版
     /// `inEntityTickingRange`（DistanceManager.java:136-138）的消费侧
@@ -7581,6 +7635,24 @@ pub struct MobArrowHit {
     pub damage: f32,
 }
 
+/// 小火球命中玩家事件（M7d Blaze volley）：伤害 5.0 + 点燃 5s
+///（SmallFireball.java:38-44 onHit LivingEntity igniteForSeconds(5)）。
+#[derive(Clone, Copy)]
+pub struct MobFireballHit {
+    pub src: Vec3,
+    pub damage: f32,
+    pub fire_ticks: u32,
+}
+
+/// Mob 方块编辑事件（M7d 末影人携带拿/放）：`set = None` 破坏、
+/// `Some(id)` 放置（已由系统侧过合法性：持物格/目标格）。结算走
+/// [`GameRuntime::write_block_tracked`]（同玩家破坏路径：MESH/SAVE/重光）。
+#[derive(Clone, Copy)]
+pub struct MobBlockEdit {
+    pub pos: BlockPos,
+    pub set: Option<u16>,
+}
+
 /// 玩家箭命中 mob 事件（arrow_system 发射；结算走
 /// [`GameRuntime::settle_player_arrow_hits`]，同 try_attack 的伤害路径）。
 #[derive(Clone, Copy)]
@@ -7598,6 +7670,14 @@ pub struct PlayerArrowHitMob {
 pub struct MobExplosionHit {
     pub center: Vec3,
     pub radius: f32,
+}
+
+/// 末影人可拾取方块近似（26.1 ENDERMAN_HOLDABLE tag 与本仓方块集交集：
+/// dirt(2)/grass_block(3，含雪态 11)/sand(4)/gravel(431)/podzol(741)；
+/// 花/菌岩等 tag 其余成员未收方块集，tag JSON 未提取 → 常量面，登记
+/// KNOWN-DIVERGENCE MOB-3）。
+fn enderman_holdable(id: u16) -> bool {
+    matches!(id, 2 | 3 | 4 | 11 | 431 | 741)
 }
 
 /// 区块光照表读取 `(sky, block)`（打包字节：高 4 位天光、低 4 位方块光；
@@ -7873,6 +7953,14 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                         waypoint = Some(svc.player_pos); // 路径走完 → 直奔玩家。
                     }
                 }
+                // 湿身近似（Entity.isWet：bbox 交水/雨）：眼/脚两格任一液体
+                //（rain 分支本仓无雨滴-实体面，isSensitiveToWater 的雨伤按
+                // KNOWN-DIVERGENCE 仅水面）。
+                let block_at = |v: Vec3| {
+                    BlockPos::new(v.x.floor() as i32, v.y.floor() as i32, v.z.floor() as i32)
+                };
+                let wet = view.block(block_at(eye)).def().liquid
+                    || view.block(block_at(pos)).def().liquid;
                 let p = mcv_entity::Percept {
                     pos,
                     // 玩家=唯一可索敌实体；和平/创造豁免（N-5）。
@@ -7883,8 +7971,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     day: svc.monsters_burn,
                     // canSeeSky(眼) 的代理：眼位格天光=15。
                     sky_exposed: sky == 15,
-                    // 流体/头部装备/避猫狼/藏身点：世界尚无对应系统 → 保守值。
-                    in_water: false,
+                    in_water: wet,
                     head_armor: false,
                     has_bow: mcv_entity::ai_table(def.kind).default_bow,
                     hurt,
@@ -7893,7 +7980,19 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                     shelter: None,
                     difficulty: svc.difficulty,
                     waypoint,
+                    // 凝视锥输入：玩家视线方向 + 本体竖直速度/着地（Blaze 浮空）。
+                    plook: svc.player_look,
+                    vel_y: body.vel.y,
+                    on_ground: body.on_ground,
                 };
+                // 水/雨敏感（Entity.baseTick:2369-2371 isSensitiveToWater &&
+                // isWet → hurtServer(extinguish, 1.0F) 每 game tick 1 点）。
+                if wet
+                    && mcv_entity::ai_table(def.kind).water_hurt
+                    && let Some(h) = health.get_mut(e)
+                {
+                    h.0 -= 1.0;
+                }
                 let acts = brain.0.tick(&def, &p, &mut rng);
                 let mut next = MobIntent::IDLE;
                 for a in &acts {
@@ -7999,6 +8098,78 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
                             // Mob.java:494 igniteForSeconds(8) → Entity.java:630-632
                             // floor(8×20)=160 tick。
                             tk.fire_ticks = *t;
+                        }
+                        AiAction::Hover { lift, fall_drag } => {
+                            // Blaze.java:85-88（落阻 ×0.6，仅离地下落）+
+                            // customServerAiStep:126-131（追升 (0.3−vy)·0.3，
+                            // Brain 已按目标眼高差算毕）——物理步进前直写 vel
+                            //（原版两者都是 deltaMovement 直改；:85 `!on_ground()`
+                            // 门着地无落阻）。
+                            if !body.on_ground && body.vel.y < 0.0 && *fall_drag < 1.0 {
+                                body.vel.y *= *fall_drag;
+                            }
+                            body.vel.y += lift;
+                        }
+                        AiAction::ShootFireball { dir } => {
+                            // BlazeAttackGoal.java:236-241 → SmallFireball：
+                            // 出生点 = 身中点 +0.5（setPos Y(0.5)+0.5），初速
+                            // dir·0.1（assignDirectionalMovement 0.1）；步进
+                            // 公式/惯性在 fireball 循环（arrow_system）。
+                            let src = pos + Vec3::new(0.0, def.half_size[1] + 0.5, 0.0);
+                            commands.spawn_with(move |w, fe| {
+                                w.insert(
+                                    fe,
+                                    MobFireball {
+                                        pos: src,
+                                        vel: *dir * mcv_entity::ai::FIREBALL_INITIAL_SPEED,
+                                        ttl_ticks: 100,
+                                    },
+                                );
+                            });
+                        }
+                        AiAction::Teleport { away_from } => {
+                            // EnderMan.teleport/teleportTowards：候选点重抽 +
+                            // 落点扫描 ≤TELEPORT_ATTEMPTS 次（teleport:277-302
+                            // 向下找支撑 + randomTeleport 净空/液体双门）。
+                            let height = def.half_size[1] * 2.0;
+                            let draw = || match away_from {
+                                Some(threat) => teleport_away_target(pos, *threat, &mut rng),
+                                None => teleport_random_target(pos, &mut rng),
+                            };
+                            if let Some(land) = teleport_landing(&view, height, draw) {
+                                body.pos = land;
+                                body.pos_old = land; // 渲染插值不残留瞬移前轨迹
+                                body.vel = Vec3::ZERO;
+                                next = MobIntent::IDLE; // 落点重定（意图不跨瞬移沿用旧航向）
+                            }
+                        }
+                        AiAction::TakeBlock { pos: bp } => {
+                            // EndermanTakeBlockGoal:590-600：候选格实现物 &&
+                            // 射线无先挡（clip OUTLINE——本仓以「格内实现物」
+                            // 近似；ENDERMAN_HOLDABLE tag 以可拾取地表方块
+                            // 子集近似，登记 KNOWN-DIVERGENCE）。主控回写。
+                            let b = view.block(*bp);
+                            if enderman_holdable(b.id()) && !b.def().liquid {
+                                events.channel::<MobBlockEdit>().send(MobBlockEdit {
+                                    pos: *bp,
+                                    set: None,
+                                });
+                                brain.0.carrying = true;
+                                brain.0.carried = b.id();
+                            }
+                        }
+                        AiAction::PlaceBlock { pos: bp } => {
+                            // EndermanLeaveBlockGoal:446：目标格空气（支撑不查
+                            // ——原版只 canPlace air 门，紧贴投影近似取空气）。
+                            if view.block(*bp).id() == 0 && brain.0.carried != 0 {
+                                let carried = brain.0.carried;
+                                events.channel::<MobBlockEdit>().send(MobBlockEdit {
+                                    pos: *bp,
+                                    set: Some(carried),
+                                });
+                                brain.0.carrying = false;
+                                brain.0.carried = 0;
+                            }
                         }
                         AiAction::Nothing => {}
                     }
@@ -8180,6 +8351,69 @@ pub fn arrow_system(ctx: &mut mcv_ecs::SysCtx) {
         a.vel *= 0.99; // INERTIA（AbstractArrow.java:59）
         a.ttl_ticks = a.ttl_ticks.saturating_sub(1);
         if dead || a.ttl_ticks == 0 || a.pos.y < -8.0 {
+            commands.despawn(e);
+        }
+    });
+    // ---- 小火球循环（M7d Blaze volley；SmallFireball/AbstractHurtingProjectile
+    // 近似）：无重力；每 game tick `v = (v + v̂·0.1)·0.95`（accelPower 0.1 +
+    // inertia 0.95，稳态 1.9 格/tick，FIREBALL_* 常量表），直进撞即消失；
+    // 撞方块 → 移除（原版 onHitBlock 进一步点燃方块，本仓无火方块系统，
+    // KNOWN-DIVERGENCE）；命中玩家 AABB → MobFireballHit（伤 5 + 燃 5s）。
+    // **伤害曲线**：点击中速度无关（SmallFireball.java:38-44 固定 5.0F）。
+    let mut fireballs = world.write::<MobFireball>();
+    fireballs.for_each(|e, fb| {
+        let own = ChunkPos::new(
+            (fb.pos.x / 16.0).floor() as i32,
+            (fb.pos.z / 16.0).floor() as i32,
+        );
+        let sim_ticking = ticket::is_entity_ticking(
+            svc.tickets.level_of_type(TicketType::PlayerSimulation, own) as i32,
+        );
+        let loaded = svc
+            .chunks
+            .get(&own)
+            .is_some_and(|h| (h.stage() as u8) >= (Stage::TerrainReady as u8));
+        if !sim_ticking || !loaded {
+            return; // 环外/未载冻结（同箭矢实体门 ServerLevel.java:419）
+        }
+        // AbstractHurtingProjectile 助推步（先加速后限流）：
+        let dirn = fb.vel.normalize_or_zero();
+        fb.vel = (fb.vel + dirn * mcv_entity::ai::FIREBALL_ACCEL)
+            * mcv_entity::ai::FIREBALL_INERTIA;
+        let mut dead = false;
+        // 子步防隧穿（稳态 1.9 > 1 格，按 0.25 格/步 上限切）。
+        let steps = ((fb.vel.length() / 0.25).ceil() as u32).clamp(1, 16);
+        let step = fb.vel / steps as f32;
+        let h = mcv_game::Player::HALF;
+        let p = svc.player_pos;
+        for _ in 0..steps {
+            fb.pos += step;
+            // 撞固/液体方块即消失（入水也灭：isInWater 扑灭 Fireball 语义近似）。
+            let bp = BlockPos::new(
+                fb.pos.x.floor() as i32,
+                fb.pos.y.floor() as i32,
+                fb.pos.z.floor() as i32,
+            );
+            if view.block(bp).def().solid || view.block(bp).def().liquid {
+                dead = true;
+                break;
+            }
+            // 玩家 AABB（同一近似盒；无 owner 免除——射出者 Blast 非玩家）。
+            if (fb.pos.x - p.x).abs() < h[0]
+                && (fb.pos.z - p.z).abs() < h[2]
+                && (fb.pos.y - (p.y + h[1])).abs() < h[1]
+            {
+                events.channel::<MobFireballHit>().send(MobFireballHit {
+                    src: fb.pos,
+                    damage: mcv_entity::ai::FIREBALL_DAMAGE,
+                    fire_ticks: mcv_entity::ai::FIREBALL_FIRE_TICKS,
+                });
+                dead = true;
+                break;
+            }
+        }
+        fb.ttl_ticks = fb.ttl_ticks.saturating_sub(1);
+        if dead || fb.ttl_ticks == 0 || fb.pos.y < -8.0 {
             commands.despawn(e);
         }
     });

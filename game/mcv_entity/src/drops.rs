@@ -52,6 +52,17 @@ pub fn death_drops(
                 push("spider_eye", uniform(0, 1, rng), &mut out);
             }
         }
+        // entity/blaze.json（26.1 data/loot_table 实文）：blaze_rod
+        // uniform 0–1，条件 killed_by_player（M7d 对拍锚）。
+        MobKind::Blaze => {
+            if killed_by_player {
+                push("blaze_rod", uniform(0, 1, rng), &mut out);
+            }
+        }
+        // entity/enderman.json：ender_pearl uniform 0–1，无条件（非仅玩家击杀）。
+        MobKind::EnderMan => push("ender_pearl", uniform(0, 1, rng), &mut out),
+        // entity/creaking.json：无 pools——零掉落；xpReward=0（Creaking.java:92）。
+        MobKind::Creaking => {}
         // 被动怪：raw 肉类属后续内容，返回空。
         _ => {}
     }

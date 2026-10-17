@@ -18,7 +18,7 @@ use mcv_render::MobInstance;
 use mcv_render::mob_mesh::{MAX_MOB_PARTS, MobModelKind, MobPose, mob_model_matrices};
 
 /// 把 `mcv_entity::MobId` 映射到渲染侧模型种类（缺贴图变体时用 temperate；
-/// 敌对四怪各自有专属贴图层）。
+/// 敌对七怪各自有专属贴图层）。
 pub const fn model_kind(id: mcv_entity::MobId) -> Option<MobModelKind> {
     match id {
         mcv_entity::MobId::CHICKEN => Some(MobModelKind::Chicken),
@@ -29,7 +29,9 @@ pub const fn model_kind(id: mcv_entity::MobId) -> Option<MobModelKind> {
         mcv_entity::MobId::SKELETON => Some(MobModelKind::Skeleton),
         mcv_entity::MobId::CREEPER => Some(MobModelKind::Creeper),
         mcv_entity::MobId::SPIDER => Some(MobModelKind::Spider),
-        _ => None,
+        mcv_entity::MobId::BLAZE => Some(MobModelKind::Blaze),
+        mcv_entity::MobId::ENDERMAN => Some(MobModelKind::EnderMan),
+        mcv_entity::MobId::CREAKING => Some(MobModelKind::Creaking),
     }
 }
 
@@ -113,8 +115,9 @@ mod tests {
 
     #[test]
     fn model_kind_covers_all_spawnable() {
-        // 被动四怪 + 敌对四怪全部有模型映射（自然生成通道只出这八种，
-        // 见 GameRuntime 的 spawner 分支）。
+        // 被动四怪 + 敌对七怪全部有模型映射（自然生成通道全部 11 种，
+        // 见 GameRuntime 的 spawner 分支；M7d 烈焰人/末影人/嘎吱怪入表，
+        // 群系/结构门在 spawner 侧，缺门不缺模型）。
         for id in [
             mcv_entity::MobId::CHICKEN,
             mcv_entity::MobId::COW,
@@ -124,8 +127,15 @@ mod tests {
             mcv_entity::MobId::SKELETON,
             mcv_entity::MobId::CREEPER,
             mcv_entity::MobId::SPIDER,
+            mcv_entity::MobId::BLAZE,
+            mcv_entity::MobId::ENDERMAN,
+            mcv_entity::MobId::CREAKING,
         ] {
             assert!(model_kind(id).is_some(), "{id:?} 应有模型");
         }
+        assert_eq!(mcv_entity::MobId::CHICKEN.def().name, "chicken");
+        assert_eq!(mcv_entity::MobId::BLAZE.def().name, "blaze");
+        assert_eq!(mcv_entity::MobId::ENDERMAN.def().name, "enderman");
+        assert_eq!(mcv_entity::MobId::CREAKING.def().name, "creaking");
     }
 }
