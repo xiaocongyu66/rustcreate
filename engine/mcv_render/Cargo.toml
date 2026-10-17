@@ -6,6 +6,10 @@ license.workspace = true
 
 [features]
 gpu-tests = []
+# HDR 管线（#223 续）：RGBA16F 主纹理 + ACES tone mapping 后处理。
+# 默认关（不破 CI/默认路）；桌面 feature-gate——开启后仍按运行期后端
+# 判定（hdr::is_hdr_capable），GLES/Noop 强制回退现状 sRGB 链。
+hdr = []
 
 [dependencies]
 mcv_core.workspace = true

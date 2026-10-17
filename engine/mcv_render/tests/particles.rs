@@ -127,6 +127,7 @@ fn camera() -> Camera {
         near: 0.1,
         far: 256.0,
         bob: glam::Mat4::IDENTITY,
+        exposure: 1.0,
     }
 }
 
