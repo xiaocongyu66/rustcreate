@@ -1,9 +1,13 @@
-// Item drop pass: upright spinning billboards, one draw for all visible drops.
+// Item drop pass: one draw for all visible drops — 3D mini cubes for block
+// items (per-face atlas layers, CPU-side spin/bob), upright spinning
+// billboards for flat items (sprites / non-cube block tiles).
 // 绑定组复用世界 pass 的 frame_buf（FrameUniforms 与 terrain/particle 同源，
 // 字段布局逐字节对齐）；材料物品采 GUI 精灵表（texture_2d），方块物品采
-// 方块图集数组（texture_2d_array，顶点携带层号），tex_set 二选一。
+// 方块图集数组（texture_2d_array，顶点携带层号——立方路径六面各带
+// tiles[f]，billboard 用侧面 tile），tex_set 二选一。
 // cutout 语义（alpha discard），写深度（实体不透明相，26.1 ItemEntityRenderer
-// 的 cutout 批语义；billboard 摆位/自转在 CPU 侧完成）。
+// 的 cutout 批语义；摆位/自转/面亮度在 CPU 侧完成——面亮度乘
+// CardinalLighting DEFAULT，与 terrain.wgsl face_shade 同表）。
 
 struct FrameUniforms {
     view_proj: mat4x4<f32>,
