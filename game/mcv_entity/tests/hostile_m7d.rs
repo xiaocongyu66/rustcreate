@@ -280,15 +280,27 @@ fn enderman_chase_teleport_30t_when_far() {
     for _ in 0..6 {
         brain.tick(def, &p, &mut rng);
     }
-    // 拉开 30 格 + tp_cd 到点 → teleportTowards 逼近玩家（EnderMan.java:564-566）。
+    // 30 格被凝视 → isBeingStaredBy 支（EnderMan.java:557-562）：无 <16
+    // tp、teleportTime=0，**不发 toward**（toward 只属未凝视支）。
     let far = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0));
     brain.tp_cd = 30;
     let acts = brain.tick(def, &far, &mut rng);
+    assert!(
+        !acts.iter().any(|a| matches!(a, AiAction::Teleport { .. })),
+        "被凝视（虽 >16）→ 只清 teleportTime 不瞬移"
+    );
+    assert_eq!(brain.tp_cd, 0, "teleportTime 复位");
+    // 30 格未被凝视 + tp_cd 到点 → teleportTowards 逼近玩家
+    //（EnderMan.java:563-566 else 支：dist²>256 ∧ teleportTime≥30）。
+    let mut away_ge = stared_percept(Vec3::ZERO, Vec3::new(0.0, 0.0, 30.0));
+    away_ge.plook = Vec3::Y; // 未被凝视 → teleportTime 累计支
+    brain.tp_cd = 30;
+    let acts = brain.tick(def, &away_ge, &mut rng);
     let back = acts.iter().find_map(|a| match a {
         AiAction::Teleport { away_from } => *away_from,
         _ => None,
     });
-    let back = back.expect("30 格 + 30t → teleportTowards 逼近");
+    let back = back.expect("30 格未凝视 + 30t → teleportTowards 逼近");
     assert!(
         back.x.abs() < 1e-5 && (back.z - 30.0).abs() < 1e-5,
         "away_from = 玩家位 {back:?}"
@@ -343,13 +355,15 @@ fn enderman_daylight_escape_at_600_held() {
     day.day = true;
     day.sky_exposed = true;
     day.br = 1.0;
-    brain.target_held = 599;
+    // target_held 在目标维护段（步序 2）**先自增**再被 enderman_life 门读
+    // ——垫 598：本 tick 变 599 < 600 不逃；下轮垫 599 → 600 触发。
+    brain.target_held = 598;
     let acts = brain.tick(def, &day, &mut rng);
     assert!(
         !acts.iter().any(|a| matches!(a, AiAction::Teleport { .. })),
         "targetChangeTime<600 不逃离"
     );
-    brain.target_held = 600;
+    brain.target_held = 599; // 本 tick 自增到 600 → 逃离门触发。
     let acts = brain.tick(def, &day, &mut rng);
     assert!(
         acts.iter()
@@ -446,7 +460,10 @@ fn creaking_freezes_when_stared_and_40t_interval() {
 fn looking_at_cone_math() {
     let eye = Vec3::new(0.0, 1.62, 10.0);
     let mob = Vec3::ZERO;
-    let dir = (Vec3::new(0.0, 0.845, -10.0)).normalize(); // 直指
+    // 直指 = 视线沿「玩家眼 → mob 凝视点(0, 0.845, 0)」差向量（0, −0.775,
+    // −10）——dot = 1 ≥ 1 − 0.025/d 必过。原 fixture 误用 +0.845 仰向
+    //（与差向量 y 分量 −0.775 夹角 ≈9.2°，dot 0.987 < 0.9975 必假）。
+    let dir = (Vec3::new(0.0, 0.845 - 1.62, -10.0)).normalize(); // 直指
     assert!(looking_at(dir, eye, mob, 0.845, true, 0.025, true));
     // 视线偏 30°（dot≈0.866）< 阈值 1−0.025/d → 不凝视。
     let off = Vec3::new(

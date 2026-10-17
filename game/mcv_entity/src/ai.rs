@@ -1009,9 +1009,12 @@ impl Brain {
             self.wander_only(def, tbl, p, rng, acts);
             return;
         };
-        // 凝视判定（EnderMan.java:209-211 isBeingStaredBy → cone 0.025/dist，
-        // 冻结 Goal canUse 限 dist²≤256）：gaze 高 = 自身眼位，观测源 = 玩家眼。
-        let stared = dist * dist <= 256.0
+        // 凝视判定（EnderMan.java:209-211 isBeingStaredBy → cone 0.025/dist；
+        // 观测源 = 玩家眼，gaze 高 = 自身眼位）。激怒面（pending/持锁分支）
+        // **无 16 格门**——isBeingStaredBy 只受 TargetingConditions 射程
+        // （follow range 64）；dist²≤256 只属于 FreezeWhenLookedAt Goal 的
+        // canUse（EnderMan.java:401-407）→ 见下方 stared_close。
+        let stared = dist <= def.follow_range
             && looking_at(
                 p.plook,
                 t + Vec3::Y * mcv_game::Player::EYE,
@@ -1055,9 +1058,11 @@ impl Brain {
             self.wander_only(def, tbl, p, rng, acts);
             return;
         }
-        if stared {
-            // :557-568 — 被凝视（tick 分支）：立定对视（FreezeWhenLookedAt
-            // 停寻路 + lookAt）；4 格内瞬移离开并清 teleportTime。
+        // :556-568 — 持锁后凝视拆两面（tick 分支原文）：isBeingStaredBy →
+        // dist²<16 teleport() 离开 + teleportTime=0；dist²≤256 才"冻结"
+        //（FreezeWhenLookedAt 只锁 ≤16——被远凝视仍走 MeleeAttack 追击）。
+        let stared_close = dist * dist <= 256.0;
+        if stared && stared_close {
             acts.push(AiAction::Look(t));
             if dist < ENDERMAN_STARED_TP_DIST {
                 acts.push(AiAction::Teleport { away_from: None });
@@ -1066,12 +1071,18 @@ impl Brain {
             // 凝视中不动（无 walk 动作 = 意图 IDLE）。
             return;
         }
-        // 未被凝视teleportTime 累计（:563-566 每非凝视 tick ++）。
-        self.tp_cd += 1;
-        // :564-566 — 拉开 16 格以上且 30t 到点 → teleportTowards（背向目标）。
-        if dist > ENDERMAN_CHASE_TP_DIST && self.tp_cd >= ENDERMAN_CHASE_TP_TICKS {
+        if stared {
+            // 被凝视但 >16：isBeingStaredBy 支 teleportTime=0（无 toward），
+            // 冻结 Goal canUse 假 → 继续追击（落到下方 Melee 段）。
             self.tp_cd = 0;
-            acts.push(AiAction::Teleport { away_from: Some(t) });
+        } else {
+            // 未被凝视：teleportTime 累计（:563-566 每非凝视 tick ++），
+            // 拉开 16 格以上且 30t 到点 → teleportTowards（逼近目标）。
+            self.tp_cd += 1;
+            if dist > ENDERMAN_CHASE_TP_DIST && self.tp_cd >= ENDERMAN_CHASE_TP_TICKS {
+                self.tp_cd = 0;
+                acts.push(AiAction::Teleport { away_from: Some(t) });
+            }
         }
         // MeleeAttackGoal(1.0) 追击近战（EnderMan.java:96）——仇恨移速
         // 修正 SPEED_MODIFIER_ATTACKING ADD_VALUE +0.15（:70-72）：
