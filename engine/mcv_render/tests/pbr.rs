@@ -34,17 +34,15 @@ fn material_uniform_packing_offline_table() {
     let m = MaterialUniform::new([0.5, 0.25, 0.125, 1.0], [0.0, 0.0, 1.0], 0.75, 0.3);
     let bytes: &[u8] = bytemuck::bytes_of(&m);
     assert_eq!(bytes.len(), 48);
-    let got: Vec<f32> = bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect();
+    // f32 位模式直读切片（bytemuck cast，无逐 4B 聚合）。
+    let got: &[f32] = bytemuck::cast_slice(bytes);
     assert_eq!(
         got,
-        vec![
+        &[
             0.5, 0.25, 0.125, 1.0, // albedo（线性 RGBA）
             0.0, 0.0, 1.0, 0.0, // normal + pad
             0.75, 0.3, 1.0, 0.0, // metallic, perceptual, exposure(默认 1.0), pad
-        ]
+        ][..]
     );
     // 曝光契约位：默认 1.0（行为不变），可覆写。
     let mut m2 = m;
@@ -121,6 +119,22 @@ fn aces_tone_mapping_offline_table() {
     let e = aces_fitted([0.36, 0.36, 0.36]); // 0.18 × 2
     let h = aces_fitted([0.18, 0.18, 0.18]);
     assert!(e[0] > h[0] * 1.5, "曝光倍增必须提亮 {e:?} vs {h:?}");
+    // sRGB 量化表锚（目标 Rgba8UnormSrgb 硬件编码曲线的 CPU 对照）：
+    // 脚点 0/1 端点 + 0.5 显示线性 → 187..189（188 中心值）。
+    assert_eq!(linear_to_srgb_u8(0.0), 0);
+    assert_eq!(linear_to_srgb_u8(1.0), 255);
+    let mid_lin = 1.055 * 0.5f32.powf(1.0 / 2.4) - 0.055;
+    assert_eq!(
+        linear_to_srgb_u8(0.5),
+        (mid_lin * 255.0 + 0.5).floor() as u8
+    );
+    assert!(linear_to_srgb_u8(0.5) >= 187 && linear_to_srgb_u8(0.5) <= 189);
+    // dither 幅界 ±半 LSB（两处采样点，floor 形 fract 语义）。
+    let d0 = screen_space_dither([0.0, 0.0]);
+    let d9 = screen_space_dither([9.0, 9.0]);
+    for x in d0.into_iter().chain(d9) {
+        assert!(x.abs() <= 0.5 / 255.0 + 1e-7, "dither {x}");
+    }
 }
 
 #[test]

@@ -298,10 +298,8 @@ mod tests {
         };
         let bytes: &[u8] = bytemuck::bytes_of(&m);
         assert_eq!(bytes.len(), 48, "3×vec4 位段总长 48B");
-        let got: Vec<f32> = bytes
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
+        // 位模式逐段（f32 切片直读 = 无逐 4B 聚合）。
+        let got: &[f32] = bytemuck::cast_slice(bytes);
         let expect: &[f32] = &[
             0.5, 1.0, 0.25, 0.8, // albedo
             0.0, 1.0, 0.0, 0.0, // normal
@@ -320,13 +318,10 @@ mod tests {
         };
         let fb: &[u8] = bytemuck::bytes_of(&f);
         assert_eq!(fb.len(), 48);
-        let got: Vec<f32> = fb
-            .chunks_exact(4)
-            .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-            .collect();
+        let got: &[f32] = bytemuck::cast_slice(fb);
         assert_eq!(
             got,
-            vec![1.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.1, 3.0, 4.0, 5.0, 0.0]
+            &[1.0, 0.0, 0.0, 1.0, 0.5, 0.5, 0.5, 0.1, 3.0, 4.0, 5.0, 0.0]
         );
     }
 
