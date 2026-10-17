@@ -42,6 +42,10 @@ serde_json = "1"
 # GZIP)。纯 Rust 后端(miniz_oxide),不引入 C 工具链。
 flate2 = "1"
 image = "0.25"
+# rayon：TaskPool 执行端（用户拍板 2026-10-17「rayon 全量替换自研
+# TaskPool」——worker 线程/工作窃取归 rayon，调度纪律仍在本仓 pool.rs）。
+# 版本锚定 lock 既有传递面（image/v_frame 已带 1.12，不新增传递闭包）。
+rayon = "1.12"
 
 [profile.release]
 opt-level = 3
