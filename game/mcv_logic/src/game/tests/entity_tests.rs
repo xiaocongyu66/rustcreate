@@ -85,10 +85,14 @@ fn mobs_survive_save_reload() {
         .expect("僵尸实体");
     let yaw = rt2.mobs_app.world.read::<Yaw>().get(e).expect("yaw").0;
     assert!((yaw - 1.25).abs() < 1e-4, "弧度朝向随档 {yaw}");
-    let body = rt2.mobs_app.world.read::<PhysBody>().get(e).expect("body");
+    // RefMut 是语句级临时——get 的引用必须先落守卫绑定再断言
+    //（E0716：临时值语句末即释放）。
+    let bodies = rt2.mobs_app.world.read::<PhysBody>();
+    let body = bodies.get(e).expect("body");
     assert!(body.on_ground);
     assert_eq!(body.vel, Vec3::ZERO, "静止怪 Motion 归零随档");
-    let ticks = rt2.mobs_app.world.read::<MobTicks>().get(e).expect("ticks");
+    let ticks_guard = rt2.mobs_app.world.read::<MobTicks>();
+    let ticks = ticks_guard.get(e).expect("ticks");
     assert_eq!(ticks.fire_ticks, 33, "燃烧账随档");
     // 幂等：重复 load_meta 不翻倍。
     rt2.load_meta();

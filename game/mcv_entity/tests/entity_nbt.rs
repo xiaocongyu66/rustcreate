@@ -15,9 +15,12 @@ fn list_d(v: [f64; 3]) -> NbtValue {
     NbtValue::List(NbtList::from_vec(v.map(NbtValue::Double).to_vec()))
 }
 
-/// Rotation 面二元 Float 表（YRot 后 XPitch，度）。
-fn list_f(v: [f32; 2]) -> NbtValue {
-    NbtValue::List(NbtList::from_vec(v.map(NbtValue::Float).to_vec()))
+/// Rotation 面 Float 表（YRot 后 XPitch，度）。切片入参：容错测试需 1 元
+/// 形状坏变体，2 元正形走同一路径。
+fn list_f(v: &[f32]) -> NbtValue {
+    NbtValue::List(NbtList::from_vec(
+        v.iter().copied().map(NbtValue::Float).collect(),
+    ))
 }
 
 fn zombie() -> EntityNbt {
@@ -62,7 +65,7 @@ fn official_keys_and_shapes() {
     assert_eq!(c.get_int_array("UUID"), Some(&entity_uuid(42, 7)[..]));
     assert!(matches!(
         c.get("Health"),
-        Some(NbtValue::Float(f) if f == 13.5)
+        Some(NbtValue::Float(f)) if *f == 13.5
     ));
 }
 
@@ -162,7 +165,7 @@ fn corrupt_and_hostile_input_contained() {
     // 形状坏 Rotation（1 元）→ orElse(Vec2.ZERO) 同缺键：YRot 0=南 →
     // 本仓半圈差 yaw≈π（与缺键路径汇合，不允许 North 偏差）。
     let mut badrot = mk("minecraft:pig", Some([1.0, 64.0, 1.0]), None);
-    badrot.insert("Rotation", list_f([90.0]));
+    badrot.insert("Rotation", list_f(&[90.0]));
     let back = entity_from_nbt(&badrot).expect("坏形状 Rotation 仍加载");
     assert!(
         (back.yaw - std::f32::consts::PI).abs() < 1e-6,
@@ -220,7 +223,9 @@ fn entities_root_shell_roundtrip() {
     let mut root = NbtCompound::new();
     root.insert(
         "Entities",
-        NbtValue::List(NbtList::from_vec(vec![entity_to_nbt(&zombie())])),
+        NbtValue::List(NbtList::from_vec(vec![NbtValue::Compound(entity_to_nbt(
+            &zombie(),
+        ))])),
     );
     let bytes = write_gzip(&root).expect("write");
     let back = read_gzip(&bytes).expect("read");
