@@ -426,6 +426,7 @@ fn creaking_activates_only_when_stared_in_12() {
     assert!(acts.iter().any(|a| matches!(a, AiAction::Walk { .. })));
     // 未凝视 → 休眠（游走速度乘 0.3 = CREAKING_IDLE_SPEED_MULT）。
     let mut brain = Brain::new();
+    let mut rng = || 240u32; // 游走门同上（121 落空），speed 0.3 须走 Wander 支。
     let mut p = percept(Vec3::ZERO, Some(Vec3::new(5.0, 0.0, 0.0)));
     p.plook = Vec3::Y; // 看别处（dot < 0.5）
     let acts = brain.tick(def, &p, &mut rng);
