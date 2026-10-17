@@ -378,7 +378,7 @@ pub fn passive_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             let wish = match wander.mode {
                 PassiveMode::Wander | PassiveMode::Panic => {
                     let mult = if wander.mode == PassiveMode::Panic {
-                        panic_speed_mult(id)
+                        panic_speed_mult(kind.0)
                     } else {
                         1.0
                     };
