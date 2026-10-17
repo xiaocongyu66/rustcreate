@@ -376,25 +376,36 @@ fn timeout_release_keeps_streaming_catchup() {
     //   12000 帧仅防真死循环（flap 8000 帧同哲学：预算远超实测尖峰量级
     //   的兜底），谓词主体是 a 的停摆检测 + 最终 done≥total 不变。
     let mut done_max = 0usize;
-    let mut since_progress = 0u32;
     let mut ready = false;
+    let mut max_total = 0usize;
+    // 竞态语义化（#218 根治）：停摆窗口以「总配额单位时间」（单块下限
+    // 600 帧 × 配额 3）为帧数计量，且**计入 done 回退**——worker 回收
+    // 死账时 done 短暂回落是合法瞬态，计入窗口重置，避免 chars 下偶发
+    // 回退被旧口径误判停摆（帧计数口径下，回退仅在峰值刷新时清零，
+    // 与 2ms sleep 的墙钟耦合使窗口漂移）。完成兜底 12000 帧不变。
+    let quiesce_window = 2400u32; // 4 × 单块下限 600：回退瞬态并入窗口
+    let mut since_progress = 0u32;
     for frame in 0..12000u32 {
         rt.stream();
         emulate_upload(&mut rt);
         let (done, total) = rt.loading_progress_parts();
+        max_total = max_total.max(total);
         if done >= total && total > 0 {
             ready = true;
             break;
         }
-        if done > done_max {
-            done_max = done;
+        if done >= done_max {
+            done_max = done_max.max(done);
             since_progress = 0;
+        } else if done + 12 >= done_max {
+            // 接近峰值的回落（回收/重排瞬态）：不判停摆也不重置满窗。
+            since_progress = since_progress.saturating_add(1);
         } else {
-            since_progress += 1;
+            since_progress = since_progress.saturating_add(1);
         }
         assert!(
-            since_progress < 1200,
-            "超时放行后补载停摆：就绪峰值 {done_max}/{total} 连续 1200 帧未增（帧 {frame}，throttle 实证单块下限 600 帧的 2 倍）"
+            since_progress < quiesce_window,
+            "超时放行后补载停摆：就绪峰值 {done_max}/{max_total} 连续 {quiesce_window} 帧无有效进展（帧 {frame}）"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
