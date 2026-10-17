@@ -15,15 +15,18 @@ pub enum SpawnCategory {
     Creature,
     Ambient,
     WaterAmbient,
+    /// 美西螈（MobCategory.AXOLOTLS：cap 5、persistent、despawn 128）。
+    Axolotl,
     Misc,
 }
 
 /// (cap, despawn_distance, persistent) from MobCategory.java:40-48.
-pub const SPAWN_CAPS: [(SpawnCategory, u32, i32, bool); 5] = [
+pub const SPAWN_CAPS: [(SpawnCategory, u32, i32, bool); 6] = [
     (SpawnCategory::Monster, 70, 128, false),
     (SpawnCategory::Creature, 10, 128, true),
     (SpawnCategory::Ambient, 15, 128, true),
     (SpawnCategory::WaterAmbient, 20, 64, true),
+    (SpawnCategory::Axolotl, 5, 128, true),
     (SpawnCategory::Misc, 0, 128, true), // MISC cap -1 = 不参与自然生成
 ];
 

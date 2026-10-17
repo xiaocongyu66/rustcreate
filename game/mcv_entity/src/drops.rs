@@ -14,11 +14,40 @@ pub struct DropEvent {
     pub item: &'static str,
     pub count: u32,
     pub pos: Vec3,
+    /// 变体元数据透传（TropicalFish：packed variant 全量——pattern+底色+
+    /// 花纹色，TropicalFish.packVariant；其余种恒 0）。物品栈组件持久化
+    /// 待 mcv_item inventory schema 扩容（ AquaticSupp 模块头注）。
+    pub variant: u32,
 }
 
 /// uniform[min, max]（含端点），由外部 rng 驱动。
 fn uniform(min: u32, max: u32, rng: &mut impl FnMut() -> u32) -> u32 {
     min + rng() % (max - min + 1)
+}
+
+/// 鱼类掉落统一面（entity/{cod,salmon,tropical_fish}.json）：生鱼 ×1 +
+/// 骨粉 5%（random_chance 0.05）。美西螈无 loot 表 → 恒空。
+fn fish_drops(
+    item: &'static str,
+    variant: u32,
+    pos: Vec3,
+    rng: &mut impl FnMut() -> u32,
+) -> Vec<DropEvent> {
+    let mut out = vec![DropEvent {
+        item,
+        count: 1,
+        pos,
+        variant,
+    }];
+    if rng() % 100 < 5 {
+        out.push(DropEvent {
+            item: "bone_meal",
+            count: 1,
+            pos,
+            variant: 0,
+        });
+    }
+    out
 }
 
 /// 击杀掉落。`killed_by_player`：spider_eye 仅玩家击杀掉落（原版条件简化为
@@ -29,10 +58,26 @@ pub fn death_drops(
     pos: Vec3,
     rng: &mut impl FnMut() -> u32,
 ) -> Vec<DropEvent> {
+    death_drops_variant(kind, 0, killed_by_player, pos, rng)
+}
+
+/// 带变体的掉落（水生怪：TropicalFish 的 packed variant 随掉落透传）。
+pub fn death_drops_variant(
+    kind: MobKind,
+    variant: u32,
+    killed_by_player: bool,
+    pos: Vec3,
+    rng: &mut impl FnMut() -> u32,
+) -> Vec<DropEvent> {
     let mut out = Vec::new();
     let push = |item: &'static str, count: u32, out: &mut Vec<DropEvent>| {
         if count > 0 {
-            out.push(DropEvent { item, count, pos });
+            out.push(DropEvent {
+                item,
+                count,
+                pos,
+                variant: 0,
+            });
         }
     };
     match kind {
@@ -52,6 +97,11 @@ pub fn death_drops(
                 push("spider_eye", uniform(0, 1, rng), &mut out);
             }
         }
+        // 水生：生鱼 ×1 + 骨粉 5%（鱼 loot 表经典值）；美西螈无 loot 表。
+        MobKind::Cod => out = fish_drops("cod", 0, pos, rng),
+        MobKind::Salmon => out = fish_drops("salmon", 0, pos, rng),
+        MobKind::TropicalFish => out = fish_drops("tropical_fish", variant, pos, rng),
+        MobKind::Axolotl => {}
         // 被动怪：raw 肉类属后续内容，返回空。
         _ => {}
     }

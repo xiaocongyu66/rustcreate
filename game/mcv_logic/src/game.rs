@@ -13,8 +13,10 @@ use mcv_entity::combat;
 use mcv_entity::defs::speed_m_s;
 use mcv_entity::spawner;
 use mcv_entity::{
-    AiAction, AnimState, Health, ItemDrop, LastHurt, MobArrow, MobBrain, MobId, MobIntent, MobKind,
-    MobPath, MobTicks, PhysBody, PickupReq, Yaw, advance_walk_anim, spawn_mob,
+    AiAction, AnimState, AquaticMode, AquaticServices, AquaticVariant, Health, ItemDrop, LastHurt,
+    MobArrow, MobBrain, MobId, MobIntent, MobKind, MobPath, MobTicks, PhysBody, PickupReq,
+    WaterState, Yaw, advance_walk_anim, aquatic_ai_system, finalize_variant,
+    register_aquatic_components, spawn_aquatic_mob, spawn_mob,
 };
 use mcv_game::{Player, VoxelAccess, step_entity};
 use mcv_platform::touch::TouchState;
@@ -1828,9 +1830,16 @@ impl GameRuntime {
         // 由 spawn_mob 装配（mob_ai_system 每 60 Hz 步推进——行走摆动面）；
         // WanderState 仅测试侧 passive 路线消费，游戏内不插（空表视图）。
         mcv_entity::register_passive_components(&mut rt.mobs_app.world);
+        // 水生组件（WaterState/AquaticVariant/AquaticMode）：mob_render 收集器
+        // 读前两者，aquatic_ai_system 消费全部；未注册 read 会 panic。
+        register_aquatic_components(&mut rt.mobs_app.world);
         // 启动期注册、注册序即执行序(Godot ClassDB 原则)。
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_ai", mob_ai_system);
+        // 水生 AI 双轨（与 mob_ai 按 AquaticMode 组件互斥：Brain 路线在水生
+        // 实体处 early-return，见 mob_ai_system 实体门）。
+        rt.mobs_app
+            .add_system(mcv_ecs::Stage::Fixed, "aquatic_ai", aquatic_ai_system);
         rt.mobs_app
             .add_system(mcv_ecs::Stage::Fixed, "mob_arrows", arrow_system);
         // 掉落物：物理/寿命系统 + 拾取/合并系统（同一 World，视图分区，
@@ -4332,6 +4341,14 @@ impl GameRuntime {
                 chunks: Arc::clone(&self.chunks),
                 player_pos: self.player.pos,
             });
+            // 水生系统同快照（AquaticServices——确定性随机源与 passive 同
+            // 约定：种子取 game_ticks，单怪/多怪全程可复现）。
+            resources.insert(AquaticServices {
+                chunks: Arc::clone(&self.chunks),
+                player_pos: self.player.pos,
+                on_tick: self.on_tick,
+                seed: self.game_ticks.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1,
+            });
             let mut ctx = mcv_ecs::SysCtx {
                 world,
                 resources,
@@ -5629,20 +5646,27 @@ impl GameRuntime {
                 .map(|(_, cap, ..)| *cap)
                 .unwrap_or(0)
         };
-        let (mut monsters, mut animals) = (0u32, 0u32);
+        let (mut monsters, mut animals, mut water_ambient, mut axolotls) = (0u32, 0u32, 0u32, 0u32);
         {
             let kinds = self.mobs_app.world.read::<MobKind>();
             for (_, k) in kinds.iter() {
-                if k.0.def().hostile {
-                    monsters += 1;
-                } else {
-                    animals += 1;
+                match k.0 {
+                    m if m.def().hostile => monsters += 1,
+                    MobId::COD | MobId::SALMON | MobId::TROPICAL_FISH => water_ambient += 1,
+                    MobId::AXOLOTL => axolotls += 1,
+                    _ => animals += 1,
                 }
             }
         }
         let monster_cap = cap_of(spawner::SpawnCategory::Monster);
         let animal_cap = cap_of(spawner::SpawnCategory::Creature);
-        if monsters >= monster_cap && animals >= animal_cap {
+        let water_cap = cap_of(spawner::SpawnCategory::WaterAmbient);
+        let axolotl_cap = cap_of(spawner::SpawnCategory::Axolotl);
+        if monsters >= monster_cap
+            && animals >= animal_cap
+            && water_ambient >= water_cap
+            && axolotls >= axolotl_cap
+        {
             return;
         }
         let center = (
@@ -5730,6 +5754,57 @@ impl GameRuntime {
                         || dist_sqr > spawner::MAX_SPAWN_DIST * spawner::MAX_SPAWN_DIST
                     {
                         continue;
+                    }
+                    // 水生通道（SpawnPlacements IN_WATER）：
+                    // - 鱼三族（WaterAnimal.checkSurfaceWaterAnimalSpawnRules
+                    //   :66-79 逐式：y∈[sea−13, sea] + 下方水 + 上方水；本格
+                    //   水由 IN_WATER 语义补上）；亮度门取经典 WaterAnimal 规
+                    //   （raw>8，任务 pacing 要求——26.1 check 已删该段，
+                    //   KNOWN-DIVERGENCE 挂账）；
+                    // - 美西螈（Axolotl.checkAxolotlSpawnRules：下方 ∈
+                    //   AXOLOTLS_SPAWNABLE_ON = clay，id 214；无 y 带）。
+                    // 群内同种（原版 spawn group + SchoolSpawnGroupData）。
+                    let water_cell = self.block_at(cell).0 == 5; // water
+                    let above = BlockPos::new(cell.x, cell.y + 1, cell.z);
+                    let below = BlockPos::new(cell.x, cell.y - 1, cell.z);
+                    if water_cell && self.block_at(above).0 == 5 && self.block_at(below).0 == 5 {
+                        let (sky, blk) = chunk_light(&self.chunks, cell);
+                        let lit = spawner::raw_brightness(sky, blk, 0)
+                            > spawner::ANIMAL_MIN_RAW_BRIGHTNESS;
+                        let in_band =
+                            (mcv_core::SEA_LEVEL - mcv_entity::aquatic::WATER_SPAWN_BAND
+                                ..=mcv_core::SEA_LEVEL)
+                                .contains(&cell.y);
+                        let is_fish_group = want == 0 && water_ambient < water_cap && lit && in_band
+                            || want != 0
+                                && kind.is_some_and(|k| matches!(k, MobId::COD | MobId::SALMON | MobId::TROPICAL_FISH));
+                        let is_axolotl_group = want == 0
+                            && axolotls < axolotl_cap
+                            && self.block_at(below).0 == 214
+                                // clay（AXOLOTLS_SPAWNABLE_ON，表序 214）
+                            && lit
+                            || want != 0 && kind == Some(MobId::AXOLOTL);
+                        if is_fish_group || is_axolotl_group {
+                            if kind.is_none() {
+                                kind = Some(if is_fish_group {
+                                    [MobId::COD, MobId::SALMON, MobId::TROPICAL_FISH]
+                                        [(rng() as usize) % 3]
+                                } else {
+                                    MobId::AXOLOTL
+                                });
+                                want = 3 + (rng() as usize) % 6; // 鱼群 3..8（FISH_CLUSTER 上限）
+                            }
+                            let wk = kind.unwrap();
+                            let variant = finalize_variant(wk, &mut rng);
+                            spawn_aquatic_mob(&mut self.mobs_app.world, wk, center, variant);
+                            if matches!(wk, MobId::COD | MobId::SALMON | MobId::TROPICAL_FISH) {
+                                water_ambient += 1;
+                            } else {
+                                axolotls += 1;
+                            }
+                            got += 1;
+                            continue;
+                        }
                     }
                     // ON_GROUND：本格 + 头顶非碰撞、下方实心（SpawnPlacements
                     // .ON_GROUND，isValidEmptySpawnBlock 近似）。不中即拒该步
@@ -5916,7 +5991,15 @@ impl GameRuntime {
                     // 死亡判定读回组件现值（语义同原 mob.health <= 0.0）。
                     if struck && hp.0 <= 0.0 {
                         // 带上 defs::MobKind 枚举（death_drops 按种类查 loot）。
-                        slain = Some((target, def.xp, def.kind));
+                        // 热带鱼变体随掉落透传（TropicalFish.packVariant）。
+                        let variant = self
+                            .mobs_app
+                            .world
+                            .read::<AquaticVariant>()
+                            .get(target)
+                            .map(|v| v.0)
+                            .unwrap_or(0);
+                        slain = Some((target, def.xp, def.kind, variant));
                     }
                 }
             }
@@ -5930,7 +6013,7 @@ impl GameRuntime {
                 let dir = Vec3::new(b.pos.x - eye.x, 0.0, b.pos.z - eye.z);
                 b.vel = combat::knockback_velocity(b.vel, b.on_ground, 0.0, 0.4, dir);
             }
-            if let Some((e, xp, kind)) = slain {
+            if let Some((e, xp, kind, variant)) = slain {
                 // 击杀掉落（26.1 LivingEntity.die → loot）：despawn 前取位姿。
                 let pos = self
                     .mobs_app
@@ -5941,7 +6024,7 @@ impl GameRuntime {
                 self.mobs_app.world.despawn(e);
                 self.player_xp += xp;
                 let mut rng = spawn_rng();
-                for ev in mcv_entity::death_drops(kind, true, pos, &mut rng) {
+                for ev in mcv_entity::death_drops_variant(kind, variant, true, pos, &mut rng) {
                     if let Some(item) = mcv_item::item_by_name(ev.item) {
                         mcv_entity::spawn_item_drop(
                             &mut self.mobs_app.world,
@@ -7647,6 +7730,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         mut intents,
         mut paths,
         mut anims,
+        aquatic,
     ) = (
         world.write::<PhysBody>(),
         world.read::<MobKind>(),
@@ -7657,6 +7741,7 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
         world.write::<MobIntent>(),
         world.write::<MobPath>(),
         world.write::<AnimState>(),
+        world.read::<AquaticMode>(),
     );
     let view = WorldView {
         chunks: &svc.chunks,
@@ -7732,6 +7817,11 @@ pub fn mob_ai_system(ctx: &mut mcv_ecs::SysCtx) {
             return;
         };
         let def = *id.def();
+        // 水生双轨（AquaticMode 组件持有者）在 Brain 面跳过：AI/物理/消散
+        // 全在 aquatic_ai_system（与 passive.rs 同款双轨互不触碰约定）。
+        if aquatic.get(e).is_some() {
+            return;
+        }
         let (Some(tk), Some(brain), Some(intent)) =
             (ticks.get_mut(e), brains.get_mut(e), intents.get_mut(e))
         else {

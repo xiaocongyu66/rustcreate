@@ -4,6 +4,7 @@
 //! All constants from mc-ref/NOTES-mobs.md & NOTES-2.md (source line refs).
 
 pub mod ai;
+pub mod aquatic;
 pub mod arrow;
 pub mod combat;
 pub mod components;
@@ -20,13 +21,18 @@ pub use ai::{
     AiAction, BODY_TURN_STEP, Brain, MobAiTable, MobState, Percept, ai_table, walk_body_yaw,
     wrap_angle,
 };
+pub use aquatic::{
+    AquaticBehavior, AquaticMode, AquaticServices, AquaticVariant, WaterState, aquatic_ai_system,
+    axolotl, dry_out_step, finalize_variant, flop_impulse, register_aquatic_components, salmon,
+    spawn_aquatic_mob, tropical,
+};
 pub use arrow::{BOW_MIN_POWER, crit_bonus, hit_damage, mob_base_damage, ranged_power, triangle};
 pub use components::{
     Effects, Health, LastHurt, MobArrow, MobBrain, MobIntent, MobKind, MobPath, MobTicks, PhysBody,
     Yaw, register_mob_components, spawn_mob,
 };
 pub use defs::{MOBS, MobDef, MobId};
-pub use drops::{DropEvent, death_drops};
+pub use drops::{DropEvent, death_drops, death_drops_variant};
 pub use effect::{
     ALL_KINDS, Bundle, DeathBurst, EffectBook, Harm, Kind, MAX_AMPLIFIER, apply_instant,
     apply_tick, attribute_modifier, blend_durations, blend_step, category, color, death_burst,
