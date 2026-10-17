@@ -167,6 +167,8 @@ fn grass_surface_contains_pattern_not_flat_tint() {
         particles: None,
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -246,6 +248,8 @@ fn frustum_cull_does_not_shift_chunk_origins() {
         particles: None,
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -420,6 +424,8 @@ fn terrain_sky_and_hud_render() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
 
     let mut encoder = device.create_command_encoder(&Default::default());
@@ -526,6 +532,8 @@ fn terrain_multi_array_grass_render() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -597,6 +605,8 @@ fn mining_crack_and_outline_darken_target() {
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -817,6 +827,8 @@ fn water_pass_renders_uploaded_water_vertices() {
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1000,6 +1012,8 @@ fn gles_fallback_world_frame_smoke() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1076,6 +1090,8 @@ fn cloud_pipeline_compiles_and_paints_sky() {
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut encoder = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1172,6 +1188,8 @@ fn cjk_text_stays_within_line_box() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut encoder = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1259,6 +1277,8 @@ fn celestial_sun_texture_paints_core() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1334,6 +1354,8 @@ fn missing_assets_never_paint_fake_pixels() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1423,6 +1445,8 @@ fn missing_assets_never_paint_fake_pixels() {
         particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     let mut enc = device.create_command_encoder(&Default::default());
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1543,6 +1567,8 @@ fn four_mobs_paint_with_vanilla_textures() {
             particles: None, // M8a 接线：Some((&runtime.particles, tick_frac)),
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1715,6 +1741,8 @@ fn first_person_hand_paints_bottom_right() {
             particles: None,
             hand,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
@@ -1985,6 +2013,8 @@ fn adjacent_chunks_merge_into_one_draw_unit() {
         particles: None,
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
     let st = renderer.last_frame_stats();
@@ -2073,6 +2103,8 @@ fn batch_rebuild_uses_fresh_member_bytes() {
             particles: None,
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
         let mut enc = device.create_command_encoder(&Default::default());
@@ -2250,6 +2282,8 @@ fn staging_upload_flush_contract() {
         particles: None,
         hand: None,
         drops: None,
+        sprites: &[],
+        sprite_fence: 0,
     };
     renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);
     let mut enc = device.create_command_encoder(&Default::default());
@@ -2448,6 +2482,8 @@ fn wood_family_samples_render_thin_templates() {
             particles: None,
             hand: None,
             drops: None,
+            sprites: &[],
+            sprite_fence: 0,
         };
         let mut enc = device.create_command_encoder(&Default::default());
         renderer.draw_frame(&target.color_view(), &target.depth_view(), &scene);

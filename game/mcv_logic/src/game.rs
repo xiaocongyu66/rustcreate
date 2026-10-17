@@ -7151,8 +7151,14 @@ impl GameRuntime {
         gui: Option<&mcv_render::gui::SpriteSheet>,
         show_touch: bool,
         show_hotbar: bool,
-    ) -> Vec<HudQuad> {
+    ) -> mcv_render::sprite2d::HudBatch {
         let mut quads = Vec::new();
+        // #222 批 A 接线（HUD 方块物品图标 → instanced 精灵批）：图标不再
+        // 进 hud quad 流，改由 sprite2d 管线一次 instanced draw；`fence` =
+        // 图标原插入点（快捷栏底/选中框之后），计数文字/耐久条/心/饥饿仍
+        // 画在图标之上——画家序与旧通路逐字节同序。
+        let mut sprites = Vec::new();
+        let mut sprite_fence: u32 = 0;
         let s = mcv_render::gui_scale(height);
         let white = [1.0, 1.0, 1.0, 1.0];
         let sel = self.player.sel_slot % 9;
@@ -7186,6 +7192,9 @@ impl GameRuntime {
                     23.0 * s,
                     white,
                 ));
+                // #222 栅栏：图标画在此处之前收集的 quad 之后、后续（计数/
+                // 耐久/心/饥饿）之前——与旧 push 顺序逐字节同位。
+                sprite_fence = quads.len() as u32;
                 // 槽内容（26.1 Gui.renderSlot）：Block 物品取方块图集侧面 tile，
                 // 其余物品取 GUI 精灵表图标；count>1 右下角计数；损伤工具画耐久条。
                 for (i, stack) in self.hotbar.slots.iter().enumerate() {
@@ -7198,12 +7207,14 @@ impl GameRuntime {
                     // 物同一函数（26.1 Gui.renderSlot 的 Block→方块 tile、
                     // 其余→item sprite 分支）。
                     match item_icon(stack) {
-                        mcv_render::gpu::HandItem::Block(bid) => quads.push(text::tile_icon(
-                            mcv_core::BLOCKS[bid as usize].tiles[2],
-                            ix,
-                            iy,
-                            16.0 * s,
-                        )),
+                        mcv_render::gpu::HandItem::Block(bid) => {
+                            sprites.push(mcv_render::sprite2d::SpriteCmd::icon(
+                                mcv_core::BLOCKS[bid as usize].tiles[2],
+                                ix,
+                                iy,
+                                16.0 * s,
+                            ))
+                        }
                         mcv_render::gpu::HandItem::Sprite(name) => {
                             quads.extend(g.sprite_full(name, ix, iy, 16.0 * s, 16.0 * s, white))
                         }
@@ -7515,7 +7526,11 @@ impl GameRuntime {
             self.time_ticks
         );
         quads.extend(text::text_quads(&line, 8.0, 8.0, 1.5, [1.0, 1.0, 1.0, 0.9]));
-        quads
+        mcv_render::sprite2d::HudBatch {
+            quads,
+            sprites,
+            sprite_fence,
+        }
     }
 }
 

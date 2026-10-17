@@ -1234,6 +1234,11 @@ pub struct Scene<'a> {
     pub height: f32,
     pub chunks: &'a [RenderChunk],
     pub hud: &'a [HudQuad],
+    /// #222 批 A：2D 精灵批（HUD 方块物品图标接线面）。空批不画。
+    pub sprites: &'a [crate::sprite2d::SpriteCmd],
+    /// 精灵栅栏：精灵批画在 `hud[fence]` 之前（图标原插入点），计数文字/
+    /// 耐久条仍覆盖图标——画家序与旧通路逐字节同序。> hud 长度时钳末尾。
+    pub sprite_fence: u32,
     /// 云：(资源, 设置)；None 或 enabled=false 不画（天空后、地形前）。
     pub cloud: Option<(&'a crate::Clouds, crate::CloudSettings)>,
     /// 玩家模型：(12 部位模型矩阵, 皮肤层 0=steve 1=alex)；第三人称时传入。
@@ -1307,6 +1312,8 @@ pub struct Renderer {
     water_pipeline: wgpu::RenderPipeline,
     sky_pipeline: wgpu::RenderPipeline,
     hud_pipeline: wgpu::RenderPipeline,
+    sprites: crate::sprite2d::SpriteBatch,
+    sprite_bind: wgpu::BindGroup,
     frame_buf: wgpu::Buffer,
     origins_buf: wgpu::Buffer,
     sky_buf: wgpu::Buffer,
@@ -2585,6 +2592,28 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let sprites = {
+            // ---- sprite2d（#222 批 A）-----------------------------------
+            // instanced 正交 2D 精灵批：MANIFEST_LAYERS 图集数组通道复用
+            // （数组烘入 sprite2d.wgsl 占位，绑定 1..=4 + sampler 5 与该
+            // 文件声明同源）；uniform 复用 hud uniform（screen vec4 同布局），
+            // sampler 复用 hud 最近邻。
+            let sprite_arrays = atlas_arrays_wgsl(
+                &counts,
+                &[1, 2, 3, 4][..counts.len()],
+                "spr_samp",
+                "sample_terrain_sprite",
+            );
+            let sprite_src = include_str!("../assets/sprite2d.wgsl")
+                .replace("@@SPRITE2D_TERRAIN_ARRAYS@@", &sprite_arrays);
+            assert!(!sprite_src.contains("@@"), "sprite2d.wgsl 占位未替换");
+            let batch =
+                crate::sprite2d::SpriteBatch::new(&device, color_format, &sprite_src, counts.len());
+            let sprite_bind =
+                batch.build_bind_group(&device, &hud_uniform, &terrain_views, &hud_sampler);
+            (batch, sprite_bind)
+        };
+        let (sprites, sprite_bind) = sprites;
 
         // ---- player pipeline -------------------------------------------
         let player_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
@@ -2991,6 +3020,8 @@ impl Renderer {
             water_pipeline,
             sky_pipeline,
             hud_pipeline,
+            sprites,
+            sprite_bind,
             frame_buf,
             origins_buf,
             sky_buf,
@@ -3581,8 +3612,11 @@ impl Renderer {
             self.draw_hand(&mut encoder, color, depth, cam, hand);
         }
 
-        // HUD pass
-        if !scene.hud.is_empty() {
+        // HUD pass（#222 批 A：栅栏内嵌精灵批）——hud[0..fence) → 精灵一次
+        // instanced draw → hud[fence..)，栅栏 = 图标原插入点，计数文字/
+        // 耐久条仍画在图标之上，画家序与旧通路逐字节同序；空精灵批时
+        // 两段连续 = 与旧单 draw_indexed 同语义。
+        if !scene.hud.is_empty() || !scene.sprites.is_empty() {
             // 防溢出:菜单铺贴 quad 数量超预期时截断并告警,而不是 panic
             let hud: &[HudQuad] = if scene.hud.len() as u32 > self.max_hud_quads {
                 log::warn!(
@@ -3602,6 +3636,8 @@ impl Renderer {
             let wh = [scene.width, scene.height, scene.time, 0.0];
             self.queue
                 .write_buffer(&self.hud_uniform, 0, bytemuck::cast_slice(&wh));
+            // 栅栏钳在截断面内（越界 = 「画在 hud 末尾」）。
+            let fence = (scene.sprite_fence as usize).min(hud.len());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("hud"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3618,14 +3654,30 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_pipeline(&self.hud_pipeline);
-            pass.set_bind_group(0, &self.hud_bind, &[]);
-            pass.set_vertex_buffer(0, self.hud_vbuf.slice(..(verts.len() * HUD_STRIDE) as u64));
-            pass.set_index_buffer(
-                self.hud_ibuf.slice(..(indices.len() * 4) as u64),
-                wgpu::IndexFormat::Uint32,
-            );
-            pass.draw_indexed(0..(indices.len() as u32), 0, 0..1);
+            let draw_hud_range = |pass: &mut wgpu::RenderPass<'_>, a: usize, b: usize| {
+                if a >= b {
+                    return;
+                }
+                pass.set_pipeline(&self.hud_pipeline);
+                pass.set_bind_group(0, &self.hud_bind, &[]);
+                pass.set_vertex_buffer(0, self.hud_vbuf.slice(..(verts.len() * HUD_STRIDE) as u64));
+                pass.set_index_buffer(
+                    self.hud_ibuf.slice(..(indices.len() * 4) as u64),
+                    wgpu::IndexFormat::Uint32,
+                );
+                pass.draw_indexed((a as u32 * 6)..(b as u32 * 6), 0, 0..1);
+            };
+            draw_hud_range(&mut pass, 0, fence);
+            if !scene.sprites.is_empty() {
+                self.sprites.draw(
+                    &mut pass,
+                    &self.sprite_bind,
+                    [scene.width, scene.height, scene.time, 0.0],
+                    &self.queue,
+                    scene.sprites,
+                );
+            }
+            draw_hud_range(&mut pass, fence, hud.len());
         }
 
         self.last_stats = stats;

@@ -17,6 +17,7 @@ pub mod offscreen;
 pub mod particle_renderer;
 pub mod particles;
 pub mod player_mesh;
+pub mod sprite2d;
 pub mod text;
 pub mod unifont;
 
@@ -39,6 +40,7 @@ pub use particles::ParticleEngine;
 pub use player_mesh::{
     PlayerPose, PlayerVertex, SKIN_LAYERS, model_matrices, update_walk_animation,
 };
+pub use sprite2d::{Anchor, HudBatch, SpriteBatch, SpriteCmd};
 
 use glam::Vec3;
 
