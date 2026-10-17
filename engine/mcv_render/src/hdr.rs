@@ -22,6 +22,8 @@
 //! 曝光：[`HdrStage::set_exposure`] 直取 `Camera::exposure`（线性乘子，
 //! 默认 1.0 = 行为不变；bevy `2^exposure` stops 语义为有意偏差）。
 
+use wgpu::util::DeviceExt;
+
 /// HDR 主纹理格式（bevy tonemapping/node.rs:47 同款）。
 pub const HDR_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -207,14 +209,16 @@ impl HdrStage {
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: out_view,
                 resolve_target: None,
+                depth_slice: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
                 },
             })],
-            depth_stencil: None,
+            depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,
+            multiview_mask: None,
         });
         rpass.set_pipeline(&self.pipeline);
         rpass.set_bind_group(0, &self.bind, &[]);

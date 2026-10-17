@@ -376,7 +376,7 @@ mod tests {
         let frame = PbrFrameUniform {
             sun_dir_day: [0.0, 0.0, 1.0, 1.0],
             sun_color_ambient: [1.0, 1.0, 1.0, 0.0],
-            cam_pos: [0.0, 0.0, 2.0],
+            cam_pos: [0.0, 0.0, 2.0, 0.0],
         };
         let out = evaluate_pbr_reference(
             [0.0, 0.0, 1.0],

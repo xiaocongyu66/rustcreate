@@ -148,7 +148,7 @@ fn pbr_brdf_and_composition_offline_table() {
     let frame = PbrFrameUniform {
         sun_dir_day: [0.0, 0.0, 1.0, 1.0],
         sun_color_ambient: [1.0, 1.0, 1.0, 0.25],
-        cam_pos: [0.0, 0.0, 2.0],
+        cam_pos: [0.0, 0.0, 2.0, 0.0],
     };
     let out = evaluate_pbr_reference(
         [0.0, 0.0, 1.0],
@@ -314,7 +314,7 @@ mod gpu {
         let frame = PbrFrameUniform {
             sun_dir_day: [0.0, 0.6, 1.0, 1.0],
             sun_color_ambient: [1.0, 0.9, 0.8, 0.15],
-            cam_pos: [0.0, 0.0, 3.0],
+            cam_pos: [0.0, 0.0, 3.0, 0.0],
         };
         let mat_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pbr-probe-mat"),
@@ -347,14 +347,16 @@ mod gpu {
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: &target.color_view(),
                     resolve_target: None,
+                    depth_slice: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
-                depth_stencil: None,
+                depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
             pass.set_pipeline(&pipeline);
             pass.set_bind_group(0, &bind, &[]);
