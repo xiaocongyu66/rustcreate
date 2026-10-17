@@ -164,14 +164,15 @@ fn vs_probe(@builtin(vertex_index) vi: u32) -> ProbeOut {
 
 @fragment
 fn fs_probe(in: ProbeOut) -> @location(0) vec4<f32> {
-    // 单位球位于屏幕中心：uv→球面法线，球外丢弃（静默输出 0）。
+    // 单位球位于屏幕中心：uv→球面法线，球外输出品红（probe 取证色——
+    // 区分「分支不可达」与「着色归零」）。
     let p = in.uv * 2.0 - vec2<f32>(1.0, 1.0);
     let r2 = dot(p, p);
     if (r2 > 1.0) {
-        return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return vec4<f32>(1.0, 0.0, 1.0, 1.0);
     }
     let n = vec3<f32>(p.x, p.y, sqrt(1.0 - r2));
-    // V 指向相机（固定 +Z 偏上），光取 uniform。
+    // V 指向相机（固定 +Z），光取 uniform。
     let v = vec3<f32>(0.0, 0.0, 1.0);
     let l = probe_frame.sun_dir_day.xyz;
     let rgb = evaluate_pbr(n, v, l, probe_material, probe_frame);

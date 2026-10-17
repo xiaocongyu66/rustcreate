@@ -410,7 +410,7 @@ mod gpu {
                         linear_to_srgb_u8(lin[2] * exposure),
                     ]
                 } else {
-                    [0, 0, 0]
+                    [255, 0, 255]
                 };
                 for ch in 0..3 {
                     let got = px[i + ch];
