@@ -9,5 +9,7 @@ mcv_core.workspace = true
 mcv_game.workspace = true
 mcv_ecs.workspace = true
 mcv_item.workspace = true
+# #222 批 A：实体落盘 NBT 走全仓共享底座（只用不改——API 消费面）。
+mcv_nbt.workspace = true
 glam.workspace = true
 log.workspace = true

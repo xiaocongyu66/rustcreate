@@ -562,3 +562,34 @@ stairs/slab 照旧按既有形状门）：
 
 （净零口径：本条由 place-state 波登记，登记面 = axis 渲染消费滞后 1 项
 + facing 族未纳入 1 项；无旧条目同步销账。）
+
+## ENT-NBT 实体落盘 NBT（#222 批 A，scene-nbt）的登记偏差
+
+实体 Mob/玩家 → NBT 打通 EntitiesTag（26.1 Entity.java:1979-2004 的
+12 核心键：id/Pos/Motion/Rotation/fall_distance/Fire/Air/OnGround/
+Invulnerable/PortalCooldown/UUID + Health，LivingEntity.java:724）。恢复
+语义（缺键走默认、未知 tag 跳过、未知 id 跳过不入表、坐标域钳制、速度
+分量 |v|>10 归零）逐条对齐 Entity.load :2064-2096。档面：怪按区块域写
+`entities/r.<rx>.<rz>.mcrve`（gzip NBT，根 `{"Entities":[…]}`——26.1 实体
+为 Anvil entities/r.x.z.mca 逐 chunk 分节），玩家写 playerdata/player.dat。
+简化/偏差面：
+
+1. **ENT-NBT-CONST 常量填充键**：fall_distance/PortalCooldown/Invulnerable
+   常量落盘（本仓未跟踪坠落账/传送门账/永久无敌态——MobTicks.invulnerable
+   是受击 i-frame 瞬态，语义不同不映射）；怪 Air 恒 300（无 mob 溺水账，
+   玩家侧取 GameRuntime.air_supply 实值）。
+2. **ENT-NBT-UUID**：无运行时身份账，UUID 按 SplitMix64(seed, ECS idx) 合成
+   ——同实体同会话稳定，跨会话不保（原版 UUID 持久化配对/脱机名语义无）。
+3. **ENT-NBT-PLAYER**：玩家档 player.dat 带 `id:"minecraft:player"`（原版
+   playerdata/<uuid>.dat 无 id 键）；恢复权威仍 level.meta，player.dat 为
+   同拍 NBT 镜像不反哺读侧（双源回退会打架）。
+4. **ENT-NBT-ROT**：Rotation 以原版度域存（YRot/XPitch），本仓弧度朝向
+   0=北 ↔ 原版 0=南差半圈，编解码侧 yaw_deg_to_rad/yaw_rad_to_deg 圆周
+   双射换算；度存储带 ~1e-4 rad 浮点回环误差（原版同以度存，非位级 regret）。
+5. **ENT-NBT-NAN**：Motion 非 finite 分量读侧归 0（原版 NaN 可穿
+   |v|>10 分类直进 setDeltaMovement，物理不可用——收窄）。
+6. **ENT-NBT-SCOPE**：投射物（MobArrow）/经验球（XpOrb）/掉落物（ItemDrop）
+   不落盘（原版持久化，本仓会话内 ephemeral）；怪 AI 状态（Brain/路径/
+   效果账）不落盘，恢复即 Brain::new() 起点。
+
+（净零口径：本条由 #222 批 A 登记，登记面 = ENT-NBT 1–6；无旧条目同步销账。）
