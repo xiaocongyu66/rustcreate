@@ -322,8 +322,6 @@ const SPIDER_LEG_Z_MID: f32 = 0.58119464;
 
 /// 头 8³ tex(0,0)（BlazeModel.java:21 head PartPose.ZERO）。
 static BLAZE_HEAD: MobBox = bx([-4.0, -4.0, -4.0], [8.0, 8.0, 8.0], [0.0, 0.0]);
-/// 杆 2×8×2 tex(0,16)（:23 `rod`，addBox(0,0,0)）。
-static BLAZE_ROD: MobBox = bx([-1.0, -1.0, -1.0], [2.0, 8.0, 2.0], [0.0, 16.0]);
 
 // ---- 末影人（EndermanModel，64x32） ------------------------------------------
 // Java 模型地面线在 +25（legs pivot(±2,−5) 盒 30px：−5..25），本引擎地面常数
