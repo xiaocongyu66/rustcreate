@@ -151,9 +151,21 @@ pub struct FluidCell {
 pub fn decode(b: BlockId) -> Option<FluidCell> {
     fluid_of(b.id())?;
     Some(match b.state() {
-        0 => FluidCell { amount: 8, falling: false, source: true },
-        8..=15 => FluidCell { amount: 8, falling: true, source: false },
-        level => FluidCell { amount: 8 - level, falling: false, source: false },
+        0 => FluidCell {
+            amount: 8,
+            falling: false,
+            source: true,
+        },
+        8..=15 => FluidCell {
+            amount: 8,
+            falling: true,
+            source: false,
+        },
+        level => FluidCell {
+            amount: 8 - level,
+            falling: false,
+            source: false,
+        },
     })
 }
 
@@ -204,8 +216,16 @@ impl Dir {
     }
 }
 
-impl BlockPos {
-    pub fn step(self, d: Dir) -> BlockPos {
+/// `BlockPos` 邻格位移扩展 trait：`BlockPos` 定义在 mcv_core（crate 外
+/// 类型，E0116 不能补 inherent impl）——以 trait 供本模块与宿主 game.rs
+/// 的六邻/坡寻位移共用（Java 原文 `pos.relative(dir)`，FF:169 等）。
+pub trait BlockPosExt {
+    fn step(self, d: Dir) -> BlockPos;
+}
+
+impl BlockPosExt for BlockPos {
+    #[inline]
+    fn step(self, d: Dir) -> BlockPos {
         let (dx, dy, dz) = d.delta();
         BlockPos::new(self.x + dx, self.y + dy, self.z + dz)
     }
@@ -351,18 +371,18 @@ pub fn tick(kind: FluidKind, at: &Read<'_>, pos: BlockPos, cur: BlockId) -> Plan
     let mut plan = Plan::default();
     let self_cell = decode(cur);
     let mut own = self_cell;
-    if let Some(f) = self_cell {
-        if !f.source {
-            let new = get_new_liquid(kind, at, pos);
-            if new.is_none() {
-                plan.self_write = SelfWrite::Air;
-                own = None;
-            } else if new != Some(f) {
-                let c = new.expect("just checked");
-                plan.self_write = SelfWrite::Change(encode(kind, c));
-                plan.self_reschedule = true; // FF:454
-                own = Some(c);
-            }
+    if let Some(f) = self_cell
+        && !f.source
+    {
+        let new = get_new_liquid(kind, at, pos);
+        if new.is_none() {
+            plan.self_write = SelfWrite::Air;
+            own = None;
+        } else if new != Some(f) {
+            let c = new.expect("just checked");
+            plan.self_write = SelfWrite::Change(encode(kind, c));
+            plan.self_reschedule = true; // FF:454
+            own = Some(c);
         }
     }
     spread(kind, at, pos, own, &mut plan);
@@ -413,13 +433,21 @@ pub fn get_new_liquid(kind: FluidKind, at: &Read<'_>, pos: BlockPos) -> Option<F
         // FF:179-184：底部 solid（blocksMotion 面）或同族源。
         let below = at(pos.step(Dir::Down));
         if blocks_motion(below) || is_source_of(kind, below) {
-            return Some(FluidCell { amount: 8, falling: false, source: true });
+            return Some(FluidCell {
+                amount: 8,
+                falling: false,
+                source: true,
+            });
         }
     }
     let above = at(pos.step(Dir::Up));
     if same_fluid(kind, above) && !full_solid(above) {
         // FF:189-191：上方同族 → getFlowing(8, true)。
-        return Some(FluidCell { amount: 8, falling: true, source: false });
+        return Some(FluidCell {
+            amount: 8,
+            falling: true,
+            source: false,
+        });
     }
     let amount = highest - drop_off(kind);
     (amount > 0).then_some(FluidCell {
@@ -435,9 +463,8 @@ fn spread(kind: FluidKind, at: &Read<'_>, pos: BlockPos, own: Option<FluidCell>,
     let below_pos = pos.step(Dir::Down);
     let below_block = at(below_pos);
     // FF:122 canMaybePassThrough(DOWN)：非同族源 && 可侵 && 不被整立方阻。
-    let down_ok = !is_source_of(kind, below_block)
-        && can_hold_any(below_block)
-        && !full_solid(below_block);
+    let down_ok =
+        !is_source_of(kind, below_block) && can_hold_any(below_block) && !full_solid(below_block);
     if down_ok {
         let new_below = get_new_liquid(kind, at, below_pos);
         // FF:125 既有流体替换门 + FF:126 容器门（本仓恒过）。
@@ -505,12 +532,14 @@ fn spread_to(
     new_cell: Option<FluidCell>,
     plan: &mut Plan,
 ) {
-    if kind == FluidKind::Lava && dir == Dir::Down {
-        if target_block.id() == WATER && decode(target_block).is_some() {
-            // LF:207-214：LiquidBlock 含水 → 置石头（嘶声不做）。
-            plan.lava_stone.push(target);
-            return;
-        }
+    if kind == FluidKind::Lava
+        && dir == Dir::Down
+        && target_block.id() == WATER
+        && decode(target_block).is_some()
+    {
+        // LF:207-214：LiquidBlock 含水 → 置石头（嘶声不做）。
+        plan.lava_stone.push(target);
+        return;
     }
     // FF:271-273 beforeDestroyingBlock：非空才毁（掉落由宿主结算）。
     if target_block.0 != 0 {
@@ -614,7 +643,8 @@ impl FluidQueue {
         if !self.pending.insert(key) {
             return;
         }
-        self.heap.push(Reverse(((due, self.seq), (pos.x, pos.y, pos.z), fluid)));
+        self.heap
+            .push(Reverse(((due, self.seq), (pos.x, pos.y, pos.z), fluid)));
         self.seq += 1;
     }
 
@@ -636,5 +666,135 @@ impl FluidQueue {
     /// 在途笔数（观测/测试面）。
     pub fn len(&self) -> usize {
         self.heap.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// 只读小世界（未列格 = 空气，WorldView::block 语义）。
+    fn world(pairs: &[(BlockPos, BlockId)]) -> impl Fn(BlockPos) -> BlockId + '_ {
+        let map: HashMap<BlockPos, BlockId> = pairs.iter().copied().collect();
+        move |p| map.get(&p).copied().unwrap_or(BlockId(0))
+    }
+
+    /// legacy LEVEL 编码（LB:69-77 + :124-127 钳 8）：0=源、8=falling、
+    /// 1..7=流动量 8−L；encode→decode 回路保距，非流体无流体态。
+    #[test]
+    fn encode_decode_legacy_level_roundtrip() {
+        let cases = [
+            (
+                FluidCell {
+                    amount: 8,
+                    falling: false,
+                    source: true,
+                },
+                0u8,
+            ),
+            (
+                FluidCell {
+                    amount: 8,
+                    falling: true,
+                    source: false,
+                },
+                8,
+            ),
+            (
+                FluidCell {
+                    amount: 7,
+                    falling: false,
+                    source: false,
+                },
+                1,
+            ),
+            (
+                FluidCell {
+                    amount: 1,
+                    falling: false,
+                    source: false,
+                },
+                7,
+            ),
+        ];
+        for (cell, level) in cases {
+            let b = encode(FluidKind::Water, cell);
+            assert_eq!(b.state(), level);
+            assert_eq!(decode(b), Some(cell));
+        }
+        assert!(decode(BlockId(0)).is_none());
+    }
+
+    /// getNewLiquid 三门（FF:160-195）：双源+实底 → 源再生（water=GR:92
+    /// true）；lava 同条件不源化（GR:47 false）只回落差；四周空 → 脱水
+    /// None；上方同族 → falling 满柱（:186-191）。
+    #[test]
+    fn get_new_liquid_regen_dry_falling() {
+        let at = BlockPos::new(0, 64, 0);
+        let read = world(&[
+            (BlockPos::new(1, 64, 0), BlockId(WATER)),
+            (BlockPos::new(-1, 64, 0), BlockId(WATER)),
+            (BlockPos::new(0, 63, 0), BlockId(STONE)),
+        ]);
+        assert!(get_new_liquid(FluidKind::Water, &read, at).unwrap().source);
+
+        let read = world(&[
+            (BlockPos::new(1, 64, 0), BlockId(LAVA)),
+            (BlockPos::new(0, 63, 0), BlockId(STONE)),
+        ]);
+        let cell = get_new_liquid(FluidKind::Lava, &read, at).unwrap();
+        assert!(!cell.source);
+        assert_eq!((cell.amount, cell.falling), (6, false)); // 8 − dropOff 2
+
+        assert_eq!(get_new_liquid(FluidKind::Water, &world(&[]), at), None);
+
+        let read = world(&[(BlockPos::new(0, 65, 0), BlockId(WATER).with_state(3))]);
+        let cell = get_new_liquid(FluidKind::Water, &read, at).unwrap();
+        assert_eq!((cell.amount, cell.falling), (8, true));
+    }
+
+    /// tick 脱水面（FF:446-449）：流动格四周空 → SelfWrite::Air、无
+    /// spread；源横流面（FF:136-138 → :142-158）：实底挡下 → 四向侧漫
+    /// 各落 amount−dropOff（态 1=8−7…即 LEVEL 1）。
+    #[test]
+    fn tick_plan_dry_and_side_spread() {
+        let at = BlockPos::new(0, 64, 0);
+        let plan = tick(
+            FluidKind::Water,
+            &world(&[]),
+            at,
+            BlockId(WATER).with_state(2),
+        );
+        assert_eq!(plan.self_write, SelfWrite::Air);
+        assert!(plan.spread.is_empty() && !plan.self_reschedule);
+
+        let read = world(&[(BlockPos::new(0, 63, 0), BlockId(STONE))]);
+        let plan = tick(FluidKind::Water, &read, at, BlockId(WATER));
+        assert_eq!(plan.self_write, SelfWrite::Stay);
+        assert_eq!(plan.spread.len(), 4);
+        assert!(plan.spread.iter().all(|(p, b)| {
+            p.y == at.y && p != &at && b.state() == 1 && decode(*b).unwrap().amount == 7
+        }));
+    }
+
+    /// 队列面（简化面 ①）：同 (格,流体) 在途单账去重；最早到者优先；
+    /// 未到时不许出；出账后重调度不再被吞。
+    #[test]
+    fn fluid_queue_dedup_and_order() {
+        let mut q = FluidQueue::new();
+        let a = BlockPos::new(1, 2, 3);
+        q.schedule(10, a, WATER);
+        q.schedule(10, a, WATER);
+        assert_eq!(q.len(), 1);
+        q.schedule(5, BlockPos::new(0, 0, 0), WATER);
+        assert_eq!(q.pop_due(9).unwrap().0, BlockPos::new(0, 0, 0));
+        assert!(q.pop_due(9).is_none()); // due=10 未到
+        assert_eq!(q.pop_due(10).unwrap().0, a);
+        q.schedule(12, a, WATER);
+        assert_eq!(q.len(), 1);
+        assert!(q.pop_due(11).is_none());
+        assert_eq!(q.pop_due(12).unwrap().0, a);
+        assert!(q.is_empty());
     }
 }

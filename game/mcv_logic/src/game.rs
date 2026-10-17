@@ -21,6 +21,39 @@ use mcv_platform::touch::TouchState;
 use mcv_render::gpu::RenderChunk;
 use mcv_render::{Camera, HudQuad, text};
 
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
+use crate::fluid::BlockPosExt;
 use crate::ticket::{self, TicketTable, TicketType};
 
 pub const RENDER_DIST: i32 = 8;
@@ -5370,7 +5403,8 @@ impl GameRuntime {
         if plan.self_reschedule {
             let mut adapt = DropRng(spawn_rng());
             let delay = crate::fluid::spread_delay(kind, old_cell, new_cell, &mut adapt) as u64;
-            self.fluid_queue.schedule(self.game_ticks + delay, pos, kind.raw());
+            self.fluid_queue
+                .schedule(self.game_ticks + delay, pos, kind.raw());
         }
         // ② 漫毁掉落（beforeDestroyingBlock；嘶声 levelEvent 1501 不做）
         for (p, destroyed_raw) in &plan.destroyed {
