@@ -162,11 +162,12 @@ fn pbr_brdf_and_composition_offline_table() {
     for x in out {
         assert!((x - expect).abs() < 1e-4, "合成锚 {x} vs {expect}");
     }
-    // 环境项（w=0.25）在背光点（l=-z）：NdotL=0 → 纯环境。
+    // 环境项（w=0.25）在背光点：L 与 N 夹角 >90° → NdotL=0 → 纯环境。
+    // L 取斜向背光（-y），不用 L=-V——L+V=0 半向量退化（NaN 面外）。
     let out_back = evaluate_pbr_reference(
         [0.0, 0.0, 1.0],
         [0.0, 0.0, 1.0],
-        [0.0, 0.0, -1.0],
+        [0.0, -1.0, 0.0],
         &mat,
         &frame,
     );
