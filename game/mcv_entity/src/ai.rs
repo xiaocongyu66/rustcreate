@@ -1211,6 +1211,11 @@ impl Brain {
                 if rng().is_multiple_of(WANDER_INTERVAL_AVG) {
                     self.wander_target = random_point_around(p.pos, rng);
                     self.state = MobState::Wander;
+                    // 触发即行：Idle→Wander 同 tick 发首步（否则休眠支当
+                    // tick 全 Nothing，下一拍才走——游走门消耗 rng 一次
+                    // 的语义下，这会让「窗内必游走」的 liveness 空拍）。
+                    acts.push(self.walk_toward(p, self.wander_target, tbl.stroll_speed));
+                    return;
                 }
                 acts.push(AiAction::Nothing);
             }
