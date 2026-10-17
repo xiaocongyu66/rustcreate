@@ -137,6 +137,8 @@ fn step_as(
         sky_darken: 0,
         difficulty,
         creative,
+        // 凝视锥输入：测试无凝视面 → 零向安全退化（永不凝视）。
+        player_look: glam::Vec3::ZERO,
         // 实体门输入：与运行时同构的玩家票快照（refresh_player_tickets
         // 镜像；Arc 共享读与运行时注入同形——计数递增而非表克隆）。
         tickets: Arc::new(player_tickets(player)),

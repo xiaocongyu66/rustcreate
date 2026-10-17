@@ -5785,17 +5785,17 @@ impl GameRuntime {
                             // 原版仅苍蓝园 Creaking Heart 召唤，10 群系集
                             // 无 pale_garden → 夜+暗度近似）；blaze = 下界
                             // 堡垒专属（MOB-4）不入自然单。
-                            let mut kinds = [
+                            let kinds = [
                                 MobId::ZOMBIE,
                                 MobId::SKELETON,
                                 MobId::CREEPER,
                                 MobId::SPIDER,
                                 MobId::ENDERMAN,
+                                MobId::CREAKING,
                             ];
                             let total = if monsters_burn(self.time_ticks) {
-                                5
+                                5 // 白天嘎吱怪不入单（夜门，MOB-5 近似）。
                             } else {
-                                kinds[5] = MobId::CREAKING;
                                 6
                             };
                             kind = Some(kinds[(rng() as usize) % total]);

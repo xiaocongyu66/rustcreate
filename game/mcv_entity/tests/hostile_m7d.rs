@@ -562,9 +562,10 @@ fn teleport_candidate_ranges_match_vanilla() {
 #[test]
 fn m7d_loot_matches_vanilla_tables() {
     let pos = Vec3::new(1.5, 64.0, 2.5);
-    // entity/blaze.json：blaze_rod uniform 0–1 且 killed_by_player 条件。
+    // entity/blaze.json：blaze_rod uniform 0–1 且 killed_by_player 条件
+    //（count==0 被 push 过滤 = 空事件，两端覆盖以 seen_rod/seen_empty 表达）。
     let mut seen_rod = false;
-    let mut rod_zero = false;
+    let mut seen_empty = false;
     for seed in 0..300u64 {
         let mut rng = lcg(seed + 17);
         let no_kill = death_drops(MobKind::Blaze, false, pos, &mut rng);
@@ -575,18 +576,16 @@ fn m7d_loot_matches_vanilla_tables() {
         let mut rng = lcg(seed + 17);
         let z = death_drops(MobKind::Blaze, true, pos, &mut rng);
         assert!(z.len() <= 1);
+        if z.is_empty() {
+            seen_empty = true;
+        }
         for d in &z {
             assert_eq!(d.item, "blaze_rod");
-            assert!((0..=1).contains(&d.count), "uniform 0–1，得 {}", d.count);
-            if d.count == 0 {
-                rod_zero = true;
-            }
-            if d.count == 1 {
-                seen_rod = true;
-            }
+            assert_eq!(d.count, 1, "uniform 0–1 → 非零即 1");
+            seen_rod = true;
         }
     }
-    assert!(seen_rod && rod_zero, "0–1 两端都必须覆盖到（300 seed）");
+    assert!(seen_rod && seen_empty, "0–1 两端必须都覆盖（300 seed）");
     // entity/enderman.json：ender_pearl uniform 0–1，无 killed_by_player 条件。
     let mut seen_pearl = false;
     for seed in 0..300u64 {

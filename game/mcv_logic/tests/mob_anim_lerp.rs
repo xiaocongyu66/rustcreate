@@ -104,6 +104,8 @@ fn step(app: &mut App, chunks: &HashMap<ChunkPos, Arc<ChunkHandle>>, player: Vec
         sky_darken: 0,
         difficulty: 2, // normal：敌对怪可索敌
         creative: false,
+        // 凝视锥输入：测试无凝视面 → 零向安全退化（永不凝视）。
+        player_look: glam::Vec3::ZERO,
         tickets: Arc::new(player_tickets(player)),
     });
     let mut ctx = SysCtx {
