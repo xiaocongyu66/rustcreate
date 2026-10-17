@@ -378,8 +378,7 @@ pub fn tick(kind: FluidKind, at: &Read<'_>, pos: BlockPos, cur: BlockId) -> Plan
         if new.is_none() {
             plan.self_write = SelfWrite::Air;
             own = None;
-        } else if new != Some(f) {
-            let c = new.expect("just checked");
+        } else if let Some(c) = new {
             plan.self_write = SelfWrite::Change(encode(kind, c));
             plan.self_reschedule = true; // FF:454
             own = Some(c);
@@ -624,9 +623,13 @@ fn slope_distance(kind: FluidKind, at: &Read<'_>, pos: BlockPos, pass: i32, from
 
 /// 流体 scheduled tick 队列：`(到时, seq)` 最小堆 + (格, 流体) 在途单账。
 /// 与原版 LevelTicks 的时间序等价（_due 最早先出；同拍按 seq FIFO）。
+/// 最小堆条目：((_due, seq), (x, y, z), 流体编码)——时间序先出、
+/// 同拍 seq FIFO（别名化以满足 clippy type_complexity）。
+type QueueEntry = Reverse<((u64, u64), (i32, i32, i32), u16)>;
+
 #[derive(Default)]
 pub struct FluidQueue {
-    heap: BinaryHeap<Reverse<((u64, u64), (i32, i32, i32), u16)>>,
+    heap: BinaryHeap<QueueEntry>,
     pending: HashSet<(i32, i32, i32, u16)>,
     seq: u64,
 }
