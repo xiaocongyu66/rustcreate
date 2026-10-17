@@ -229,6 +229,9 @@ mod gpu {
     fn f32_to_f16(v: f32) -> u16 {
         let bits = v.to_bits();
         let sign = ((bits >> 16) & 0x8000) as u16;
+        if v == 0.0 {
+            return sign; // ±0（指数域为 0，正规编码以外）
+        }
         let exp = ((bits >> 23) & 0xff) as i32 - 127 + 15;
         let man = ((bits >> 13) & 0x3ff) as u16;
         assert!(exp > 0 && exp < 31, "测试域溢出 {v}");
@@ -413,9 +416,10 @@ mod gpu {
                     let got = px[i + ch];
                     assert!(
                         (got as i32 - expect[ch] as i32).abs() <= 1,
-                        "pbr probe px({x},{y})ch{ch}: gpu={} cpu={}",
+                        "pbr probe px({x},{y})ch{ch}: gpu={} cpu={} | gpu_row8={:02x?}",
                         got,
-                        expect[ch]
+                        expect[ch],
+                        &px[8 * 64..8 * 64 + 64]
                     );
                 }
                 if r2 <= 1.0 {
