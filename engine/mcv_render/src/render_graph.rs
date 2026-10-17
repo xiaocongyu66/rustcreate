@@ -6,8 +6,10 @@
 //!   本仓 [`PassNode`]：`execute(&mut self, &mut FrameCtx)` —— 节点保留
 //!   `&mut self`（批次调度状态允许），帧上下面合并进单一 `FrameCtx`；
 //! - `Edges`（`add_node_edge` 显式边 + InputSlot/OutputSlot 槽位连接）→
-//!   本仓两条边源：节点 `deps()` 显式依赖 **∪** `reads()` 资源到全体
-//!   `writes()` 者的自动边（Bevy 槽位配对的保守超集，读者必后于写者）；
+//!   本仓：排序边 = 显式 `deps()`；`reads()`/`writes()` 是资源面校验——
+//!   拓序后每读者必须**已有先序写者**（存在性；新值可见性靠显式 deps 链，
+//!   读后又写的链式 pass 不构造全连自动边——全连会在 hand/hud 这类
+//!   「Load 续画」节点间接出假环）。
 //! - 拓序 runner（graph_runner.rs 按边拓扑执行）→ [`Plan`]：Kahn 拓序，
 //!   并列按**注册序**破平（默认图世界→手持→HUD 即帧序）；
 //! - `RenderGraphError`（节点/边/槽错）→ [`GraphError`]：缺边
@@ -65,7 +67,7 @@ impl fmt::Display for GraphError {
             GraphError::MissingProducer { node, resource } => {
                 write!(
                     f,
-                    "render-graph: 节点 {node:?} 读资源 {resource:?} 无生产者（缺边）"
+                    "render-graph: 节点 {node:?} 读资源 {resource:?} 无先序写者（缺边）"
                 )
             }
             GraphError::Cycle { remaining } => {
@@ -96,15 +98,18 @@ pub struct FrameCtx<'f, 's> {
     pub tick: u64,
 }
 
-/// 单 pass 节点。`name` 是注册键；`deps` 显式边；`reads/writes` 是资源
-/// 槽声明（编译面自动配对 + 文档化）。执行体 = 原 draw_frame 三块逐字。
+/// 单 pass 节点。`name` 是注册键；`deps` 是唯一排序边；`reads/writes` 是
+/// 资源面声明（编译面校验 + 文档化）。执行体 = 原 draw_frame 三块逐字。
 pub trait PassNode {
     fn name(&self) -> NodeName;
-    /// 显式前置节点名；全部必须已注册，缺者编译面 [`GraphError::MissingDependency`]。
+    /// 显式前置节点名（**唯一排序边源**）；全部必须已注册，缺者编译面
+    /// [`GraphError::MissingDependency`]。
     fn deps(&self) -> &'static [NodeName] {
         &[]
     }
-    /// 声明消费的帧资源（自动边源：写到读）。
+    /// 声明消费的帧资源：拓序后该位置之前须**已有写者**，否则编译面
+    /// [`GraphError::MissingProducer`]。读后又写的链式 pass（Load 续画）
+    /// 新值可见性由显式 deps 链保证，此处只锁存在性。
     fn reads(&self) -> &'static [ResourceId] {
         &[]
     }
@@ -178,9 +183,10 @@ impl RenderGraph {
         self.dirty
     }
 
-    /// 编译面：重名 → 缺边（依赖/资源两侧）→ 拓序（环）。
-    /// 边集 = 显式 deps ∪ 读→写者自动边（自边除外——节点内部次序即
-    /// 语义，如 hand 同帧清深度续画颜色）。
+    /// 编译面：重名 → 缺边（deps 未注册）→ Kahn 拓序（环）→ 资源先序
+    /// 存在性（读者之前须有写者）。排序边只取显式 `deps()`——不做读→写
+    /// 全连自动边（hand/hud「Load 续画」双双读又写 color，全连必出假环；
+    /// 存在性校验保留缺边报错面，链内新值可见性是 deps 链的装配责任）。
     pub fn compile(&self) -> Result<Plan, GraphError> {
         let n = self.nodes.len();
 
@@ -191,7 +197,7 @@ impl RenderGraph {
             }
         }
 
-        // 2) 边集（u 前驱 → v 后继），去重防 Kahn 入度双计。
+        // 2) 排序边 = 显式 deps（去重防 Kahn 入度双计）。
         let mut edges: Vec<Vec<usize>> = vec![Vec::new(); n];
         let mut indegree = vec![0usize; n];
         let mut link = |u: usize, v: usize, edges: &mut Vec<Vec<usize>>| {
@@ -203,7 +209,6 @@ impl RenderGraph {
 
         let index_of = |name: NodeName| self.nodes.iter().position(|nd| nd.name() == name);
 
-        // 2a) 显式 deps 边 + 缺边检查。
         for (i, nd) in self.nodes.iter().enumerate() {
             for dep in nd.deps() {
                 let target = index_of(*dep).ok_or(GraphError::MissingDependency {
@@ -211,25 +216,6 @@ impl RenderGraph {
                     dep,
                 })?;
                 link(target, i, &mut edges);
-            }
-        }
-
-        // 2b) 资源自动边：每读者连向全体写者（无写者 → 缺边 MissingProducer）。
-        for (i, nd) in self.nodes.iter().enumerate() {
-            for r in nd.reads() {
-                let mut produced = false;
-                for (p, producer) in self.nodes.iter().enumerate() {
-                    if producer.writes().contains(r) {
-                        produced = true;
-                        link(p, i, &mut edges);
-                    }
-                }
-                if !produced {
-                    return Err(GraphError::MissingProducer {
-                        node: nd.name(),
-                        resource: r,
-                    });
-                }
             }
         }
 
@@ -256,6 +242,29 @@ impl RenderGraph {
                 .map(|i| self.nodes[i].name())
                 .collect();
             return Err(GraphError::Cycle { remaining });
+        }
+
+        // 4) 资源面存在性：每读者的拓序位置之前须已有写者（读后又写的
+        //    链式 pass 合法——自己或链上节点提供；只锁「无任何先序生产者」
+        //    的真缺边）。
+        let mut pos = vec![0usize; n];
+        for (rank, &i) in order.iter().enumerate() {
+            pos[i] = rank;
+        }
+        for (i, nd) in self.nodes.iter().enumerate() {
+            for r in nd.reads() {
+                let has_earlier = self
+                    .nodes
+                    .iter()
+                    .enumerate()
+                    .any(|(p, producer)| producer.writes().contains(r) && pos[p] < pos[i]);
+                if !has_earlier {
+                    return Err(GraphError::MissingProducer {
+                        node: nd.name(),
+                        resource: r,
+                    });
+                }
+            }
         }
 
         Ok(Plan {
@@ -350,8 +359,9 @@ impl PassNode for HudPassNode {
     }
 }
 
-/// 默认装配：world → hand → hud（自动边 world→hand/hud、hand→hud 与
-/// 显式 deps 同向，拓序稳定即注册序）。
+/// 默认装配：world → hand → hud（hand/hud 各显式 deps 链到前节点；
+/// 「Load 续画」链不靠资源自动边——全连在双双读又写的节点间出假环，
+/// 可见性由链保证）。拓序稳定即注册序 = 帧序。
 pub(crate) fn default_frame_graph() -> RenderGraph {
     let mut g = RenderGraph::new();
     g.add_node(WorldPassNode);
@@ -487,14 +497,15 @@ mod tests {
     }
 
     #[test]
-    fn resource_edges_order_writer_before_reader() {
-        // 只注册资源面（无显式 deps）：写者 world 必排在读者 hud 前。
+    fn reader_without_earlier_producer_is_compile_error() {
+        // 读者排在唯一写者之前（hud 反注册在前）：拓序 [hud, world]，
+        // hud 读 color 时先序无写者 → 编译面缺边。
         let g = graph(vec![
             Box::new(Stub {
                 name: "hud",
                 deps: &[],
                 reads: &[RES_COLOR],
-                writes: &[RES_COLOR],
+                writes: &[],
             }),
             Box::new(Stub {
                 name: "world",
@@ -503,7 +514,39 @@ mod tests {
                 writes: &[RES_COLOR, RES_DEPTH],
             }),
         ]);
-        let plan = g.compile().expect("资源边图必编译");
-        assert_eq!(plan.execution_order(), &["world", "hud"][..]);
+        assert_eq!(
+            g.compile(),
+            Err(GraphError::MissingProducer {
+                node: "hud",
+                resource: RES_COLOR,
+            })
+        );
+    }
+
+    #[test]
+    fn chained_read_write_passes_are_legal() {
+        // default 图的骨架：写者序内、读者有先序写者即编译；序=注册序。
+        let g = graph(vec![
+            Box::new(Stub {
+                name: "world",
+                deps: &[],
+                reads: &[],
+                writes: &[RES_COLOR, RES_DEPTH],
+            }),
+            Box::new(Stub {
+                name: "hand",
+                deps: &["world"],
+                reads: &[RES_COLOR],
+                writes: &[RES_COLOR],
+            }),
+            Box::new(Stub {
+                name: "hud",
+                deps: &["hand"],
+                reads: &[RES_COLOR],
+                writes: &[RES_COLOR],
+            }),
+        ]);
+        let plan = g.compile().expect("链式读写图必编译");
+        assert_eq!(plan.execution_order(), &["world", "hand", "hud"][..]);
     }
 }
