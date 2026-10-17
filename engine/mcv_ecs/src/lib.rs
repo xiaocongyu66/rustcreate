@@ -55,6 +55,7 @@ pub mod app;
 pub mod commands;
 pub mod events;
 pub mod plugin;
+pub mod query;
 pub mod resources;
 pub mod schedule;
 
@@ -62,6 +63,7 @@ pub use app::App;
 pub use commands::CommandQueue;
 pub use events::{EventBus, Events};
 pub use plugin::{Plugin, plain_plugin};
+pub use query::{Access, Query2, Query3};
 pub use resources::Resources;
 pub use schedule::{DEFAULT_FIXED_DT, MAX_CATCHUP_STEPS, Schedule, Stage, SysCtx, System};
 
